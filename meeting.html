@@ -556,9 +556,9 @@
     });
 
     if (hasUncompleted) {
-      topicElement.classList.add('has-tasks'); // タスクあり（未完了）: 紫系
+      topicElement.classList.add('has-tasks'); // 未完了タスクあり（紫系）
     } else {
-      topicElement.classList.add('all-completed'); // タスクすべて完了済: 緑系
+      topicElement.classList.add('all-completed'); // タスクすべて完了済（緑系）
     }
   }
 
@@ -592,4 +592,326 @@
       </div>
     `;
 
-    const check
+    const checkbox = div.querySelector('.t-task-checkbox');
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        div.classList.add('completed');
+      } else {
+        div.classList.remove('completed');
+      }
+      updateTopicStatusStyle(topicElement);
+      triggerAutoSave();
+    });
+
+    div.querySelector('.btn-del-task').addEventListener('click', () => {
+      div.remove();
+      updateTopicStatusStyle(topicElement);
+      triggerAutoSave();
+    });
+    div.querySelectorAll('input, textarea').forEach(input => {
+      input.addEventListener('input', triggerAutoSave);
+    });
+    taskList.appendChild(div);
+    initAutoResize(div);
+    updateTopicStatusStyle(topicElement);
+  }
+
+  function addTopicItem(cardElement, topicData = {}) {
+    const topicList = cardElement.querySelector('.topic-list');
+    if (!topicList) return;
+    const div = document.createElement('div');
+    div.className = 'topic-item';
+    div.innerHTML = `
+      <button type="button" class="btn-del btn-del-topic">✕</button>
+      <div class="meeting-row">
+        <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
+          <div class="field-label">議題タイトル</div>
+          <input type="text" class="t-topic-title" placeholder="例: 梱包ミスの再発防止策について" value="${topicData.title || ''}">
+        </div>
+      </div>
+      <div class="field-group" style="margin-top: 8px;">
+        <div class="field-label">💬 議論・決定事項概要</div>
+        <textarea class="t-topic-summary" rows="1" placeholder="議論内容や決定事項を入力">${topicData.summary || ''}</textarea>
+      </div>
+      <div class="topic-sub-list"></div>
+      <button type="button" class="btn-add btn-add-topic-sub">＋ 箇条書き追加</button>
+      <div class="task-list"></div>
+      <button type="button" class="btn-add btn-add-task">＋ タスク追加</button>
+    `;
+
+    div.querySelector('.btn-del-topic').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    div.querySelector('.btn-add-topic-sub').addEventListener('click', () => {
+      addTopicSubItem(div);
+      triggerAutoSave();
+    });
+    div.querySelector('.btn-add-task').addEventListener('click', () => {
+      addTaskItem(div);
+      triggerAutoSave();
+    });
+    div.querySelectorAll('input, textarea').forEach(input => {
+      input.addEventListener('input', triggerAutoSave);
+    });
+
+    if (topicData.subs && Array.isArray(topicData.subs)) {
+      topicData.subs.forEach(subVal => addTopicSubItem(div, subVal));
+    }
+    if (topicData.tasks && Array.isArray(topicData.tasks)) {
+      topicData.tasks.forEach(taskObj => addTaskItem(div, taskObj));
+    }
+
+    topicList.appendChild(div);
+    updateTopicStatusStyle(div);
+    initAutoResize(div);
+  }
+
+  function addMeetingCard(meetingData = {}) {
+    const meetingList = document.getElementById('meeting-list');
+    const card = document.createElement('div');
+    card.className = 'meeting-card';
+    card.innerHTML = `
+      <button type="button" class="btn-del btn-del-meeting">✕</button>
+      <div class="meeting-header-row">
+        <div class="field-group">
+          <div class="field-label">定例タイトル</div>
+          <input type="text" class="m-title" placeholder="例: 第1回 定例ミーティング" value="${meetingData.title || ''}">
+        </div>
+      </div>
+
+      <div class="attendee-section">
+        <div class="field-label" style="margin-bottom: 6px;">👥 参加者</div>
+        <div class="attendee-list"></div>
+        <button type="button" class="btn-add btn-add-attendee">＋ 参加者追加</button>
+      </div>
+
+      <div class="meeting-share-section">
+        <div class="field-label" style="margin-bottom: 6px;">📢 全体共有事項</div>
+        <div class="share-sub-list"></div>
+        <button type="button" class="btn-add btn-add-share-sub">＋ 共有事項追加</button>
+      </div>
+
+      <div class="field-label" style="margin-bottom: 6px;">📌 議題・トピック一覧</div>
+      <div class="topic-list"></div>
+      <button type="button" class="btn-add btn-add-topic">＋ 議題追加</button>
+    `;
+
+    card.querySelector('.btn-del-meeting').addEventListener('click', () => {
+      card.remove();
+      updateTabs();
+      triggerAutoSave();
+    });
+
+    const titleInput = card.querySelector('.m-title');
+    titleInput.addEventListener('input', () => {
+      updateTabs();
+      triggerAutoSave();
+    });
+
+    card.querySelector('.btn-add-attendee').addEventListener('click', () => {
+      addAttendeeItem(card);
+      triggerAutoSave();
+    });
+    card.querySelector('.btn-add-share-sub').addEventListener('click', () => {
+      addShareSubItem(card);
+      triggerAutoSave();
+    });
+    card.querySelector('.btn-add-topic').addEventListener('click', () => {
+      addTopicItem(card);
+      triggerAutoSave();
+    });
+
+    if (meetingData.attendees && Array.isArray(meetingData.attendees)) {
+      meetingData.attendees.forEach(name => addAttendeeItem(card, name));
+    } else {
+      addAttendeeItem(card);
+    }
+
+    if (meetingData.shares && Array.isArray(meetingData.shares)) {
+      meetingData.shares.forEach(shareText => addShareSubItem(card, shareText));
+    }
+
+    if (meetingData.topics && Array.isArray(meetingData.topics)) {
+      meetingData.topics.forEach(topicObj => addTopicItem(card, topicObj));
+    }
+
+    meetingList.appendChild(card);
+    updateTabs();
+    initAutoResize(card);
+  }
+
+  async function loadDataFromCloud(dateStr) {
+    saveStatusEl.textContent = "データを読み込み中...";
+    try {
+      const docRef = doc(db, "shipment_meetings", dateStr);
+      const docSnap = await getDoc(docRef);
+
+      document.getElementById('ship-count').value = "";
+      document.getElementById('error-count').value = "";
+      calcErrorRate(false);
+      document.getElementById('meeting-list').innerHTML = "";
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        document.getElementById('ship-count').value = data.shipCount !== undefined ? data.shipCount : "";
+        document.getElementById('error-count').value = data.errorCount !== undefined ? data.errorCount : "";
+        calcErrorRate(false);
+
+        if (data.meetings && Array.isArray(data.meetings) && data.meetings.length > 0) {
+          data.meetings.forEach(m => addMeetingCard(m));
+        } else {
+          addMeetingCard();
+        }
+        saveStatusEl.textContent = "データを読み込みました";
+      } else {
+        addMeetingCard();
+        saveStatusEl.textContent = "新規データです";
+      }
+      updateTabs();
+      initAutoResize();
+    } catch (error) {
+      console.error("読み込みエラー:", error);
+      saveStatusEl.textContent = "読み込みに失敗しました";
+    }
+  }
+
+  async function saveDataToCloud(isAuto = false) {
+    const dateStr = dateInput.value;
+    if (!dateStr) return;
+
+    if (!isAuto) saveStatusEl.textContent = "保存中...";
+
+    const shipCount = parseFloat(document.getElementById('ship-count').value) || 0;
+    const errorCount = parseFloat(document.getElementById('error-count').value) || 0;
+    const errorRate = parseFloat(document.getElementById('error-rate').value) || 0;
+
+    const meetings = [];
+    document.querySelectorAll('.meeting-card').forEach(card => {
+      const mTitle = card.querySelector('.m-title').value;
+      const attendees = [];
+      card.querySelectorAll('.m-attendee-input').forEach(input => {
+        if (input.value.trim() !== "") attendees.push(input.value);
+      });
+
+      const shares = [];
+      card.querySelectorAll('.m-share-input').forEach(textarea => {
+        if (textarea.value.trim() !== "") shares.push(textarea.value);
+      });
+
+      const topics = [];
+      card.querySelectorAll('.topic-item').forEach(topicEl => {
+        const title = topicEl.querySelector('.t-topic-title').value;
+        const summary = topicEl.querySelector('.t-topic-summary').value;
+        const subs = [];
+        topicEl.querySelectorAll('.t-sub-input').forEach(textarea => {
+          if (textarea.value.trim() !== "") subs.push(textarea.value);
+        });
+
+        const tasks = [];
+        topicEl.querySelectorAll('.task-item').forEach(taskEl => {
+          const completed = taskEl.querySelector('.t-task-checkbox').checked;
+          const task = taskEl.querySelector('.t-task-name').value;
+          const assignee = taskEl.querySelector('.t-task-assignee').value;
+          const limit = taskEl.querySelector('.t-task-limit').value;
+          tasks.push({ completed, task, assignee, limit });
+        });
+
+        topics.push({ title, summary, subs, tasks });
+      });
+
+      meetings.push({ title: mTitle, attendees, shares, topics });
+    });
+
+    try {
+      const docRef = doc(db, "shipment_meetings", dateStr);
+      await setDoc(docRef, {
+        shipCount,
+        errorCount,
+        errorRate,
+        meetings,
+        updatedAt: new Date().toISOString()
+      });
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      saveStatusEl.textContent = isAuto ? `自動保存しました (${timeStr})` : `保存しました (${timeStr})`;
+    } catch (error) {
+      console.error("保存エラー:", error);
+      saveStatusEl.textContent = "保存に失敗しました";
+    }
+  }
+
+  document.getElementById('ship-count').addEventListener('input', () => calcErrorRate(true));
+  document.getElementById('error-count').addEventListener('input', () => calcErrorRate(true));
+
+  document.getElementById('btn-add-meeting').addEventListener('click', () => {
+    addMeetingCard();
+    triggerAutoSave();
+  });
+
+  document.getElementById('btn-save').addEventListener('click', () => saveDataToCloud(false));
+  document.getElementById('btn-save-top').addEventListener('click', () => saveDataToCloud(false));
+
+  dateInput.addEventListener('change', (e) => {
+    loadDataFromCloud(e.target.value);
+  });
+
+  const modal = document.getElementById('history-modal');
+  const historyListContainer = document.getElementById('history-list-container');
+
+  document.getElementById('btn-open-history').addEventListener('click', async () => {
+    modal.style.display = 'flex';
+    historyListContainer.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">読み込み中...</div>';
+    try {
+      const querySnapshot = await getDocs(collection(db, "shipment_meetings"));
+      historyListContainer.innerHTML = "";
+      if (querySnapshot.empty) {
+        historyListContainer.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">保存されたデータはありません</div>';
+        return;
+      }
+
+      const docsData = [];
+      querySnapshot.forEach((d) => {
+        docsData.push({ id: d.id, data: d.data() });
+      });
+
+      docsData.sort((a, b) => b.id.localeCompare(a.id));
+
+      docsData.forEach(item => {
+        const dateStr = item.id;
+        const meetings = item.data.meetings || [];
+        const firstMeetingTitle = meetings.length > 0 && meetings[0].title ? meetings[0].title : "タイトルなし";
+
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        div.innerHTML = `
+          <div>
+            <div style="font-weight: bold; color: #2c3e50;">📅 ${dateStr}</div>
+            <div style="font-size: 12px; color: #7f8c8d; margin-top: 2px;">${firstMeetingTitle}</div>
+          </div>
+          <span style="color: #3498db; font-size: 13px; font-weight: bold;">開く →</span>
+        `;
+        div.addEventListener('click', () => {
+          dateInput.value = dateStr;
+          loadDataFromCloud(dateStr);
+          modal.style.display = 'none';
+        });
+        historyListContainer.appendChild(div);
+      });
+    } catch (err) {
+      console.error("履歴取得エラー:", err);
+      historyListContainer.innerHTML = '<div style="text-align: center; color: #e74c3c; padding: 20px;">読み込みに失敗しました</div>';
+    }
+  });
+
+  document.getElementById('modal-x').addEventListener('click', () => modal.style.display = 'none');
+  document.getElementById('modal-close-btn').addEventListener('click', () => modal.style.display = 'none');
+  window.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+
+  loadDataFromCloud(dateInput.value);
+</script>
+
+</body>
+</html>
