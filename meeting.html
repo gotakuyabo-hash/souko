@@ -185,11 +185,10 @@
 
   .topic-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
   
-  /* 議題アイテムのステータス別カラー（左ボーダーと背景色） */
   .topic-item { 
     background: #f8f9fa; 
     border: 1px solid #e0e0e0; 
-    border-left: 6px solid #cbd5e1; /* タスクなし：グレー */
+    border-left: 6px solid #cbd5e1; 
     border-radius: 6px; 
     padding: 12px; 
     position: relative; 
@@ -198,12 +197,12 @@
   .topic-item.has-tasks {
     background: #fbf8fd;
     border-color: #e8daef;
-    border-left: 6px solid #8e44ad; /* 未完了タスクあり：紫系 */
+    border-left: 6px solid #8e44ad; 
   }
   .topic-item.all-completed {
     background: #f4fcf7;
     border-color: #d4efdf;
-    border-left: 6px solid #27ae60; /* タスクすべて完了済：緑系 */
+    border-left: 6px solid #27ae60; 
   }
 
   .meeting-row { display: flex; gap: 12px; margin-bottom: 10px; }
@@ -298,13 +297,27 @@
   }
   .btn-history:active { background-color: #2471a3; }
 
+  /* 「もとに戻す」ボタン用スタイル */
+  .btn-undo {
+    background-color: #e67e22; color: #fff; border: none; border-radius: 4px;
+    padding: 8px 12px; font-size: 13px; font-weight: bold; cursor: pointer; white-space: nowrap;
+    display: none; /* 初期状態は非表示 */
+  }
+  .btn-undo:active { background-color: #d35400; }
+
+  .save-status-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: -8px;
+    margin-bottom: 12px;
+    height: 24px;
+  }
   .save-status {
     font-size: 12px;
     color: #666;
     text-align: right;
-    margin-top: -8px;
-    margin-bottom: 12px;
-    height: 18px;
+    flex-grow: 1;
   }
 
   .modal-overlay {
@@ -324,6 +337,24 @@
   }
   .history-item:hover { background: #eef2f5; border-color: #3498db; }
   .modal-close { background: #e74c3c; color: #fff; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; }
+
+  /* 削除確認モーダル専用 */
+  .confirm-modal-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .confirm-modal-buttons button {
+    flex: 1;
+    padding: 10px;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    font-size: 15px;
+  }
+  .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
+  .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
 </style>
 </head>
 <body>
@@ -341,7 +372,10 @@
   </div>
 
   <button type="button" class="btn-save-log btn-save-top" id="btn-save-top">💾 クラウドに保存（Firestore同期）</button>
-  <div class="save-status" id="save-status"></div>
+  <div class="save-status-container">
+    <button type="button" class="btn-undo" id="btn-undo">↩️ 変更をもとに戻す</button>
+    <div class="save-status" id="save-status"></div>
+  </div>
 
   <div class="section-title">📊 前週出荷実績・エラー率</div>
   <div class="metrics-grid">
@@ -380,6 +414,7 @@
   <button type="button" class="btn-save-log" id="btn-save">💾 クラウドに保存（Firestore同期）</button>
 </div>
 
+<!-- 開催日一覧モーダル -->
 <div class="modal-overlay" id="history-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -390,6 +425,20 @@
       <div style="text-align: center; color: #7f8c8d; padding: 20px;">読み込み中...</div>
     </div>
     <button type="button" class="modal-close" id="modal-close-btn">閉じる</button>
+  </div>
+</div>
+
+<!-- 削除確認ダイアログモーダル -->
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal-content" style="max-width: 320px; text-align: center;">
+    <div class="modal-header" style="justify-content: center; color: #e74c3c;">⚠️ 削除の確認</div>
+    <div style="font-size: 15px; color: #333; margin: 10px 0 20px 0;" id="confirm-msg">
+      本当にこの項目を削除しますか？
+    </div>
+    <div class="confirm-modal-buttons">
+      <button type="button" class="btn-confirm-no" id="confirm-no">キャンセル</button>
+      <button type="button" class="btn-confirm-yes" id="confirm-yes">削除する</button>
+    </div>
   </div>
 </div>
 
@@ -415,6 +464,35 @@
 
   let autoSaveTimer = null;
   const saveStatusEl = document.getElementById('save-status');
+  const undoBtn = document.getElementById('btn-undo');
+
+  let lastSavedState = null; // 「もとに戻す」用の直前バックアップデータ
+
+  // 削除確認モーダルの制御用
+  const confirmModal = document.getElementById('confirm-modal');
+  const confirmMsg = document.getElementById('confirm-msg');
+  const confirmYes = document.getElementById('confirm-yes');
+  const confirmNo = document.getElementById('confirm-no');
+  let pendingDeleteCallback = null;
+
+  function showConfirmDialog(message, callback) {
+    confirmMsg.textContent = message;
+    pendingDeleteCallback = callback;
+    confirmModal.style.display = 'flex';
+  }
+
+  confirmYes.onclick = () => {
+    confirmModal.style.display = 'none';
+    if (pendingDeleteCallback) {
+      pendingDeleteCallback();
+      pendingDeleteCallback = null;
+    }
+  };
+
+  confirmNo.onclick = () => {
+    confirmModal.style.display = 'none';
+    pendingDeleteCallback = null;
+  };
 
   function autoResize(textarea) {
     textarea.style.height = 'auto';
@@ -440,6 +518,68 @@
     autoSaveTimer = setTimeout(() => {
       saveDataToCloud(true);
     }, 1500);
+  }
+
+  // 現在の画面上の全データをオブジェクトとして収集する関数
+  function collectCurrentData() {
+    const shipCount = parseFloat(document.getElementById('ship-count').value) || 0;
+    const errorCount = parseFloat(document.getElementById('error-count').value) || 0;
+    const errorRate = parseFloat(document.getElementById('error-rate').value) || 0;
+
+    const meetings = [];
+    document.querySelectorAll('.meeting-card').forEach(card => {
+      const mTitle = card.querySelector('.m-title').value;
+      const attendees = [];
+      card.querySelectorAll('.m-attendee-input').forEach(input => {
+        if (input.value.trim() !== "") attendees.push(input.value);
+      });
+
+      const shares = [];
+      card.querySelectorAll('.m-share-input').forEach(textarea => {
+        if (textarea.value.trim() !== "") shares.push(textarea.value);
+      });
+
+      const topics = [];
+      card.querySelectorAll('.topic-item').forEach(topicEl => {
+        const title = topicEl.querySelector('.t-topic-title').value;
+        const summary = topicEl.querySelector('.t-topic-summary').value;
+        const subs = [];
+        topicEl.querySelectorAll('.t-sub-input').forEach(textarea => {
+          if (textarea.value.trim() !== "") subs.push(textarea.value);
+        });
+
+        const tasks = [];
+        topicEl.querySelectorAll('.task-item').forEach(taskEl => {
+          const completed = taskEl.querySelector('.t-task-checkbox').checked;
+          const task = taskEl.querySelector('.t-task-name').value;
+          const assignee = taskEl.querySelector('.t-task-assignee').value;
+          const limit = taskEl.querySelector('.t-task-limit').value;
+          tasks.push({ completed, task, assignee, limit });
+        });
+
+        topics.push({ title, summary, subs, tasks });
+      });
+
+      meetings.push({ title: mTitle, attendees, shares, topics });
+    });
+
+    return { shipCount, errorCount, errorRate, meetings };
+  }
+
+  // データを画面に復元する関数
+  function restoreDataToUI(data) {
+    document.getElementById('ship-count').value = data.shipCount !== undefined ? data.shipCount : "";
+    document.getElementById('error-count').value = data.errorCount !== undefined ? data.errorCount : "";
+    calcErrorRate(false);
+
+    document.getElementById('meeting-list').innerHTML = "";
+    if (data.meetings && Array.isArray(data.meetings) && data.meetings.length > 0) {
+      data.meetings.forEach(m => addMeetingCard(m));
+    } else {
+      addMeetingCard();
+    }
+    updateTabs();
+    initAutoResize();
   }
 
   function calcErrorRate(triggerSave = true) {
@@ -495,8 +635,10 @@
       <button type="button" class="btn-del btn-del-attendee" style="font-size:14px; padding:0 4px;">✕</button>
     `;
     div.querySelector('.btn-del-attendee').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
+      showConfirmDialog("この参加者を削除しますか？", () => {
+        div.remove();
+        triggerAutoSave();
+      });
     });
     div.querySelector('.m-attendee-input').addEventListener('input', triggerAutoSave);
     attendeeList.appendChild(div);
@@ -513,8 +655,10 @@
       <button type="button" class="btn-del btn-del-sub">✕</button>
     `;
     div.querySelector('.btn-del-sub').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
+      showConfirmDialog("この共有事項を削除しますか？", () => {
+        div.remove();
+        triggerAutoSave();
+      });
     });
     shareSubList.appendChild(div);
     initAutoResize(div);
@@ -531,34 +675,31 @@
       <button type="button" class="btn-del btn-del-topic-sub" style="font-size:14px; padding:0 4px;">✕</button>
     `;
     div.querySelector('.btn-del-topic-sub').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
+      showConfirmDialog("この箇条書きを削除しますか？", () => {
+        div.remove();
+        triggerAutoSave();
+      });
     });
     subList.appendChild(div);
     initAutoResize(div);
   }
 
-  // 議題内のタスク状態を判定して背景・左側ボーダーの色を更新する
   function updateTopicStatusStyle(topicElement) {
     const taskItems = topicElement.querySelectorAll('.task-item');
     topicElement.classList.remove('has-tasks', 'all-completed');
 
-    if (taskItems.length === 0) {
-      return; // タスクなし（デフォルト）
-    }
+    if (taskItems.length === 0) return;
 
     let hasUncompleted = false;
     taskItems.forEach(taskEl => {
       const isChecked = taskEl.querySelector('.t-task-checkbox').checked;
-      if (!isChecked) {
-        hasUncompleted = true;
-      }
+      if (!isChecked) hasUncompleted = true;
     });
 
     if (hasUncompleted) {
-      topicElement.classList.add('has-tasks'); // 未完了タスクあり（紫系）
+      topicElement.classList.add('has-tasks');
     } else {
-      topicElement.classList.add('all-completed'); // タスクすべて完了済（緑系）
+      topicElement.classList.add('all-completed');
     }
   }
 
@@ -604,9 +745,11 @@
     });
 
     div.querySelector('.btn-del-task').addEventListener('click', () => {
-      div.remove();
-      updateTopicStatusStyle(topicElement);
-      triggerAutoSave();
+      showConfirmDialog("このタスクを削除しますか？", () => {
+        div.remove();
+        updateTopicStatusStyle(topicElement);
+        triggerAutoSave();
+      });
     });
     div.querySelectorAll('input, textarea').forEach(input => {
       input.addEventListener('input', triggerAutoSave);
@@ -640,8 +783,10 @@
     `;
 
     div.querySelector('.btn-del-topic').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
+      showConfirmDialog("この議題（トピック）を削除しますか？", () => {
+        div.remove();
+        triggerAutoSave();
+      });
     });
     div.querySelector('.btn-add-topic-sub').addEventListener('click', () => {
       addTopicSubItem(div);
@@ -698,9 +843,11 @@
     `;
 
     card.querySelector('.btn-del-meeting').addEventListener('click', () => {
-      card.remove();
-      updateTabs();
-      triggerAutoSave();
+      showConfirmDialog("この定例カード全体を削除しますか？", () => {
+        card.remove();
+        updateTabs();
+        triggerAutoSave();
+      });
     });
 
     const titleInput = card.querySelector('.m-title');
@@ -740,7 +887,6 @@
     updateTabs();
     initAutoResize(card);
     
-    // カード内のすべての議題に対して色状態を強制更新
     card.querySelectorAll('.topic-item').forEach(topicEl => {
       updateTopicStatusStyle(topicEl);
     });
@@ -769,18 +915,20 @@
           addMeetingCard();
         }
         saveStatusEl.textContent = "データを読み込みました";
+        lastSavedState = collectCurrentData(); // ロード時の状態をバックアップ
       } else {
         addMeetingCard();
         saveStatusEl.textContent = "新規データです";
+        lastSavedState = collectCurrentData();
       }
       
-      // 読み込み直後に全議題のステータス色を再適用
       document.querySelectorAll('.topic-item').forEach(topicEl => {
         updateTopicStatusStyle(topicEl);
       });
 
       updateTabs();
       initAutoResize();
+      undoBtn.style.display = 'none';
     } catch (error) {
       console.error("読み込みエラー:", error);
       saveStatusEl.textContent = "読み込みに失敗しました";
@@ -791,48 +939,13 @@
     const dateStr = dateInput.value;
     if (!dateStr) return;
 
+    // 保存する直前の状態を「もとに戻す」用に保持
+    lastSavedState = collectCurrentData();
+    undoBtn.style.display = 'inline-block'; // 戻せるようにボタンを表示
+
     if (!isAuto) saveStatusEl.textContent = "保存中...";
 
-    const shipCount = parseFloat(document.getElementById('ship-count').value) || 0;
-    const errorCount = parseFloat(document.getElementById('error-count').value) || 0;
-    const errorRate = parseFloat(document.getElementById('error-rate').value) || 0;
-
-    const meetings = [];
-    document.querySelectorAll('.meeting-card').forEach(card => {
-      const mTitle = card.querySelector('.m-title').value;
-      const attendees = [];
-      card.querySelectorAll('.m-attendee-input').forEach(input => {
-        if (input.value.trim() !== "") attendees.push(input.value);
-      });
-
-      const shares = [];
-      card.querySelectorAll('.m-share-input').forEach(textarea => {
-        if (textarea.value.trim() !== "") shares.push(textarea.value);
-      });
-
-      const topics = [];
-      card.querySelectorAll('.topic-item').forEach(topicEl => {
-        const title = topicEl.querySelector('.t-topic-title').value;
-        const summary = topicEl.querySelector('.t-topic-summary').value;
-        const subs = [];
-        topicEl.querySelectorAll('.t-sub-input').forEach(textarea => {
-          if (textarea.value.trim() !== "") subs.push(textarea.value);
-        });
-
-        const tasks = [];
-        topicEl.querySelectorAll('.task-item').forEach(taskEl => {
-          const completed = taskEl.querySelector('.t-task-checkbox').checked;
-          const task = taskEl.querySelector('.t-task-name').value;
-          const assignee = taskEl.querySelector('.t-task-assignee').value;
-          const limit = taskEl.querySelector('.t-task-limit').value;
-          tasks.push({ completed, task, assignee, limit });
-        });
-
-        topics.push({ title, summary, subs, tasks });
-      });
-
-      meetings.push({ title: mTitle, attendees, shares, topics });
-    });
+    const { shipCount, errorCount, errorRate, meetings } = lastSavedState;
 
     try {
       const docRef = doc(db, "shipment_meetings", dateStr);
@@ -851,6 +964,16 @@
       saveStatusEl.textContent = "保存に失敗しました";
     }
   }
+
+  // 「もとに戻す」ボタンの処理
+  undoBtn.addEventListener('click', () => {
+    if (lastSavedState) {
+      restoreDataToUI(lastSavedState);
+      saveStatusEl.textContent = "直前の状態に戻しました";
+      undoBtn.style.display = 'none';
+      triggerAutoSave(); // 戻した内容で再度保存をスケジュール
+    }
+  });
 
   document.getElementById('ship-count').addEventListener('input', () => calcErrorRate(true));
   document.getElementById('error-count').addEventListener('input', () => calcErrorRate(true));
