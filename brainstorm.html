@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>オンライン共有ブレインストーミング</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK (Compat v9) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <style>
+        body { background: #f8fafc; font-family: sans-serif; color: #1e293b; }
+        .sticky-note {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .sticky-note:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="p-4 max-w-7xl mx-auto">
+    <!-- ヘッダー -->
+    <header class="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <div>
+            <div class="flex items-center gap-2">
+                <a href="index.html" class="text-sm text-blue-600 hover:underline font-bold">&larr; ポータルに戻る</a>
+            </div>
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-800 mt-1">💡 オンライン共有ブレインストーミング</h1>
+            <p class="text-xs sm:text-sm text-gray-500">リアルタイムで付箋の追加やスレッド形式でのリプライができるアイデア出しボードです。</p>
+        </div>
+        <div id="connection-status" class="text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800 font-bold">
+            接続中...
+        </div>
+    </header>
+
+    <!-- 入力フォームエリア（新規親付箋の作成） -->
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6">
+        <form id="note-form" class="space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div class="md:col-span-3 space-y-2">
+                    <input type="text" id="note-title" placeholder="📌 タイトルを入力（任意）" class="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-bold">
+                    <textarea id="note-text" rows="2" required placeholder="新しいアイデア（親付箋）の本文を入力してください..." class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm resize-none"></textarea>
+                </div>
+                <div class="space-y-2 flex flex-col justify-between">
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="author-name" placeholder="お名前（任意）" class="w-full p-2 border rounded-lg text-sm">
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <!-- 色選択 -->
+                        <div class="flex gap-1.5" id="color-picker">
+                            <button type="button" data-color="yellow" class="w-6 h-6 rounded-full bg-amber-200 border-2 border-amber-500 ring-2 ring-offset-1 ring-amber-400"></button>
+                            <button type="button" data-color="pink" class="w-6 h-6 rounded-full bg-rose-200 border-2 border-transparent"></button>
+                            <button type="button" data-color="blue" class="w-6 h-6 rounded-full bg-sky-200 border-2 border-transparent"></button>
+                            <button type="button" data-color="green" class="w-6 h-6 rounded-full bg-emerald-200 border-2 border-transparent"></button>
+                            <button type="button" data-color="purple" class="w-6 h-6 rounded-full bg-purple-200 border-2 border-transparent"></button>
+                        </div>
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow transition active:scale-95">
+                            親付箋を貼る
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- ボード（付箋一覧グリッド） -->
+    <div id="notes-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <!-- JavaScriptで動的に生成されます -->
+    </div>
+
+    <!-- リプライ入力モーダル -->
+    <div id="reply-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-xl max-w-lg w-full p-5 shadow-xl border border-slate-200 space-y-4">
+            <div class="flex justify-between items-center">
+                <h3 class="font-bold text-slate-800 text-base">💬 このアイデアにリプライを追加</h3>
+                <button type="button" onclick="closeReplyModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">×</button>
+            </div>
+            <p id="reply-target-text" class="text-xs bg-slate-100 p-2.5 rounded text-slate-600 line-clamp-2"></p>
+            <form id="reply-form" class="space-y-3">
+                <input type="hidden" id="reply-parent-id">
+                <input type="hidden" id="reply-parent-color">
+                <textarea id="reply-text" rows="3" required placeholder="返信内容や深掘りしたアイデアを入力..." class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm resize-none"></textarea>
+                <input type="text" id="reply-author" placeholder="お名前（任意）" class="w-full p-2 border rounded-lg text-sm">
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeReplyModal()" class="px-4 py-2 border rounded-lg text-sm text-slate-600 hover:bg-slate-50 font-bold">キャンセル</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm shadow font-bold">リプライを送信</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- Firebase 設定 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        // Firebase初期化
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        // DOM要素
+        const authorInput = document.getElementById('author-name');
+        const replyAuthorInput = document.getElementById('reply-author');
+
+        // ローカルストレージからお名前を復元
+        const savedAuthorName = localStorage.getItem('brainstorm_author_name');
+        if (savedAuthorName) {
+            authorInput.value = savedAuthorName;
+            replyAuthorInput.value = savedAuthorName;
+        }
+
+        // お名前が変更されたら両方の入力欄とローカルストレージを同期する
+        authorInput.addEventListener('input', (e) => {
+            const val = e.target.value;
+            replyAuthorInput.value = val;
+            localStorage.setItem('brainstorm_author_name', val);
+        });
+
+        replyAuthorInput.addEventListener('input', (e) => {
+            const val = e.target.value;
+            authorInput.value = val;
+            localStorage.setItem('brainstorm_author_name', val);
+        });
+
+        // 接続状態の簡易チェック
+        const statusEl = document.getElementById('connection-status');
+        db.collection("brainstorm_notes").limit(1).get().then(() => {
+            statusEl.textContent = "🟢 接続完了";
+            statusEl.className = "text-xs px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold";
+        }).catch(err => {
+            statusEl.textContent = "🔴 接続エラー";
+            statusEl.className = "text-xs px-3 py-1 rounded-full bg-rose-100 text-rose-800 font-bold";
+            console.error(err);
+        });
+
+        // 色の定義
+        const colorClasses = {
+            yellow: { bg: 'bg-amber-100', border: 'border-amber-300', text: 'text-amber-900', title: 'text-amber-950', replyBg: 'bg-amber-50/80 border-amber-200 text-amber-900' },
+            pink: { bg: 'bg-rose-100', border: 'border-rose-300', text: 'text-rose-900', title: 'text-rose-950', replyBg: 'bg-rose-50/80 border-rose-200 text-rose-900' },
+            blue: { bg: 'bg-sky-100', border: 'border-sky-300', text: 'text-sky-900', title: 'text-sky-950', replyBg: 'bg-sky-50/80 border-sky-200 text-sky-900' },
+            green: { bg: 'bg-emerald-100', border: 'border-emerald-300', text: 'text-emerald-900', title: 'text-emerald-950', replyBg: 'bg-emerald-50/80 border-emerald-200 text-emerald-900' },
+            purple: { bg: 'bg-purple-100', border: 'border-purple-300', text: 'text-purple-900', title: 'text-purple-950', replyBg: 'bg-purple-50/80 border-purple-200 text-purple-900' }
+        };
+
+        let selectedColor = 'yellow';
+
+        // カラーピッカーの選択処理
+        const colorButtons = document.querySelectorAll('#color-picker button');
+        colorButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                colorButtons.forEach(b => {
+                    b.classList.remove('border-amber-500', 'ring-2', 'ring-offset-1', 'ring-amber-400');
+                    b.classList.add('border-transparent');
+                });
+                btn.classList.remove('border-transparent');
+                btn.classList.add('border-amber-500', 'ring-2', 'ring-offset-1', 'ring-amber-400');
+                selectedColor = btn.getAttribute('data-color');
+            });
+        });
+
+        // 親付箋フォーム送信
+        const form = document.getElementById('note-form');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const titleInput = document.getElementById('note-title');
+            const textInput = document.getElementById('note-text');
+
+            const title = titleInput.value.trim();
+            const text = textInput.value.trim();
+            const author = authorInput.value.trim() || '名無し';
+
+            if (!text) return;
+
+            // 送信時にもお名前を保存
+            localStorage.setItem('brainstorm_author_name', authorInput.value.trim());
+
+            try {
+                await db.collection('brainstorm_notes').add({
+                    parentId: null, // 親付箋
+                    title: title || '',
+                    text: text,
+                    author: author,
+                    color: selectedColor,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                titleInput.value = '';
+                textInput.value = '';
+            } catch (err) {
+                alert('追加に失敗しました: ' + err.message);
+            }
+        });
+
+        // リプライフォーム送信
+        const replyForm = document.getElementById('reply-form');
+        replyForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const parentId = document.getElementById('reply-parent-id').value;
+            const parentColor = document.getElementById('reply-parent-color').value;
+            const textInput = document.getElementById('reply-text');
+
+            const text = textInput.value.trim();
+            const author = replyAuthorInput.value.trim() || '名無し';
+
+            if (!text) return;
+
+            // 送信時にもお名前を保存
+            localStorage.setItem('brainstorm_author_name', replyAuthorInput.value.trim());
+
+            try {
+                await db.collection('brainstorm_notes').add({
+                    parentId: parentId, // 子付箋（親のIDを保持）
+                    title: '',
+                    text: text,
+                    author: author,
+                    color: parentColor, // 親と同じカラーを継承
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                textInput.value = '';
+                closeReplyModal();
+            } catch (err) {
+                alert('リプライの送信に失敗しました: ' + err.message);
+            }
+        });
+
+        // リアルタイムリスナー (Firestoreから取得してツリー構築)
+        const grid = document.getElementById('notes-grid');
+        db.collection('brainstorm_notes')
+            .orderBy('createdAt', 'asc') // 古い順に取得して組み立て
+            .onSnapshot((snapshot) => {
+                const allNotes = [];
+                snapshot.forEach((doc) => {
+                    allNotes.push({ id: doc.id, ...doc.data() });
+                });
+
+                grid.innerHTML = '';
+                const parents = allNotes.filter(n => !n.parentId);
+
+                if (parents.length === 0) {
+                    grid.innerHTML = '<p class="text-gray-400 col-span-full text-center py-8">まだアイデアがありません。最初の親付箋を追加してみましょう！</p>';
+                    return;
+                }
+
+                // 新しい親が上に来るように逆順で並べ替え
+                parents.reverse();
+
+                parents.forEach((parent) => {
+                    const c = colorClasses[parent.color] || colorClasses.yellow;
+
+                    // この親に対するリプライ（子）を抽出
+                    const replies = allNotes.filter(n => n.parentId === parent.id);
+
+                    const card = document.createElement('div');
+                    card.className = `sticky-note ${c.bg} ${c.border} border p-4 rounded-xl shadow-sm flex flex-col justify-between relative group min-h-[140px]`;
+
+                    let parentTimeStr = '';
+                    if (parent.createdAt) {
+                        const date = parent.createdAt.toDate();
+                        parentTimeStr = `${date.getMonth()+1}/${date.getDate()} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+                    }
+
+                    let titleHtml = parent.title ? `<h3 class="${c.title} font-bold text-sm pb-1.5 mb-1.5 border-b border-black/10">${escapeHtml(parent.title)}</h3>` : '';
+
+                    // リプライ一覧のHTML生成
+                    let repliesHtml = '';
+                    if (replies.length > 0) {
+                        repliesHtml = '<div class="mt-3 pt-2 border-t border-black/10 space-y-2">';
+                        replies.forEach(reply => {
+                            let replyTimeStr = '';
+                            if (reply.createdAt) {
+                                const rDate = reply.createdAt.toDate();
+                                replyTimeStr = `${rDate.getMonth()+1}/${rDate.getDate()} ${String(rDate.getHours()).padStart(2,'0')}:${String(rDate.getMinutes()).padStart(2,'0')}`;
+                            }
+                            repliesHtml += `
+                                <div class="${c.replyBg} border p-2.5 rounded-lg text-xs relative group/reply">
+                                    <p class="whitespace-pre-wrap break-words mb-1">${escapeHtml(reply.text)}</p>
+                                    <div class="flex justify-between items-center text-[10px] text-slate-500 pt-1 border-t border-black/5">
+                                        <span class="font-bold">↳ ✍️ ${escapeHtml(reply.author)}</span>
+                                        <div class="flex items-center gap-1.5">
+                                            <span>${replyTimeStr}</span>
+                                            <button onclick="deleteNote('${reply.id}')" class="text-rose-500 hover:text-rose-700 opacity-0 group-hover/reply:opacity-100 transition font-bold px-1">×</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        repliesHtml += '</div>';
+                    }
+
+                    card.innerHTML = `
+                        <div>
+                            ${titleHtml}
+                            <p class="${c.text} text-sm whitespace-pre-wrap break-words mb-2">${escapeHtml(parent.text)}</p>
+                            ${repliesHtml}
+                        </div>
+                        <div class="flex justify-between items-end pt-3 mt-3 border-t border-black/10 text-xs text-slate-500">
+                            <span class="font-bold truncate max-w-[100px]">✍️ ${escapeHtml(parent.author)}</span>
+                            <div class="flex items-center gap-2">
+                                <span>${parentTimeStr}</span>
+                                <button onclick="openReplyModal('${parent.id}', '${parent.color}', \`${escapeHtml(parent.text).replace(/`/g, '\\`')}\`)" class="bg-white/80 hover:bg-white text-blue-600 px-2 py-0.5 rounded shadow-sm text-xs font-bold transition">返信</button>
+                                <button onclick="deleteNote('${parent.id}')" class="text-rose-500 hover:text-rose-700 opacity-0 group-hover:opacity-100 transition font-bold px-1 py-0.5 rounded">×</button>
+                            </div>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            });
+
+        // リプライモーダルを開く
+        window.openReplyModal = function(parentId, color, text) {
+            document.getElementById('reply-parent-id').value = parentId;
+            document.getElementById('reply-parent-color').value = color;
+            document.getElementById('reply-target-text').textContent = "対象: " + text;
+
+            // モーダルを開く際にも現在保存されている名前を反映
+            const currentSavedName = localStorage.getItem('brainstorm_author_name');
+            if (currentSavedName) {
+                replyAuthorInput.value = currentSavedName;
+            }
+
+            document.getElementById('reply-modal').classList.remove('hidden');
+            document.getElementById('reply-text').focus();
+        };
+
+        // リプライモーダルを閉じる
+        window.closeReplyModal = function() {
+            document.getElementById('reply-modal').classList.add('hidden');
+            document.getElementById('reply-text').value = '';
+        };
+
+        // 削除関数（親を削除すると紐づくリプライも一緒に削除、あるいは単体削除）
+        window.deleteNote = async function(id) {
+            if (confirm('この付箋（または返信）を削除してもよろしいですか？')) {
+                try {
+                    // 親が削除された場合、紐づくリプライもすべて削除する
+                    const snapshot = await db.collection('brainstorm_notes').where('parentId', '==', id).get();
+                    const batch = db.batch();
+                    snapshot.forEach((doc) => {
+                        batch.delete(doc.ref);
+                    });
+                    batch.delete(db.collection('brainstorm_notes').doc(id));
+                    await batch.commit();
+                } catch (err) {
+                    alert('削除に失敗しました: ' + err.message);
+                }
+            }
+        };
+
+        // HTMLエスケープ
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+    </script>
+</body>
+</html>

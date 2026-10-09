@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>受注CSV ピック数算出 & zaico連動ツール</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f8fafc; color: #1e293b; }
+        .back-link { display: inline-block; margin-bottom: 15px; color: #2563eb; text-decoration: none; font-weight: bold; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
+        th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }
+        th { background: #f1f5f9; }
+        .unregistered { background: #fff3cd; }
+        button { cursor: pointer; padding: 6px 12px; background: #2563eb; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        button:hover { background: #1d4ed8; }
+        .btn-success { background: #28a745; }
+        .btn-success:hover { background: #218838; }
+        .actions-bar { margin-top: 15px; display: flex; gap: 10px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
+        .tab-btn { background: #e2e8f0; color: #475569; padding: 8px 16px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #2563eb; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .search-box { margin-bottom: 15px; width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div style="max-width: 1000px; margin: 0 auto;">
+        <a href="index.html" class="back-link">← ポータルサイトに戻る</a>
+
+        <!-- タブ切り替えボタン -->
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="switchTab('orderTab')">📦 受注CSV・出庫指示</button>
+            <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（棚番・倍率）</button>
+        </div>
+
+        <!-- タブ1: 受注CSV・出庫指示 -->
+        <div id="orderTab" class="tab-content active">
+            <div class="card">
+                <h2>受注CSV ピック数算出 & zaico連動ツール</h2>
+                <div style="margin-top: 15px;">
+                    <p>受注CSVファイル（例: order_*.csv）を選択してください：</p>
+                    <input type="file" id="csvFile" accept=".csv" style="margin-top: 8px;">
+                </div>
+                <div class="actions-bar" id="actionsBar" style="display:none;">
+                    <button onclick="sortByShelf()">棚番順でソート</button>
+                    <button onclick="sendToZaico()" class="btn-success">zaicoに出庫指示を送信</button>
+                </div>
+                <div id="resultArea"></div>
+            </div>
+        </div>
+
+        <!-- タブ2: 商品マスタ管理 -->
+        <div id="masterTab" class="tab-content">
+            <div class="card">
+                <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。</p>
+                <div style="margin-top: 15px;">
+                    <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
+                </div>
+                <div class="actions-bar">
+                    <button onclick="loadMasterItems()">マスタデータを再読み込み</button>
+                </div>
+                <div id="masterResultArea">
+                    <p style="margin-top: 15px;">「マスタデータを再読み込み」ボタンを押してデータを取得してください。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const URL_PROCESS_ORDER = "https://processorder-l22atg5m7q-uc.a.run.app";
+        const URL_SET_MULTIPLIER = "https://setmultiplier-l22atg5m7q-uc.a.run.app";
+        const URL_GET_MASTER = "https://getmasteritems-l22atg5m7q-uc.a.run.app";
+        const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
+
+        let currentResults = [];
+        let masterItemsCache = [];
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            if (tabId === 'orderTab') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('orderTab').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('masterTab').classList.add('active');
+                if (masterItemsCache.length === 0) {
+                    loadMasterItems();
+                }
+            }
+        }
+
+        document.getElementById('csvFile').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const decoder = new TextDecoder('shift-jis');
+                const text = decoder.decode(arrayBuffer);
+
+                const rows = parseCSVRows(text);
+                const rawItemsMap = new Map();
+
+                for (let i = 1; i < rows.length; i++) {
+                    const cols = rows[i];
+                    // G列（インデックス6）が "1-0" の場合は親セットと判定してスキップ
+                    const itemNo = cols[6] || '';
+                    if (itemNo === '1-0') {
+                        continue;
+                    }
+
+                    if (cols.length > 31 && cols[31]) {
+                        const productName = cols[31];
+                        const quantity = cols[34] ? Number(cols[34]) : 1;
+
+                        // 同じ商品名（または同一行）ごとに注文数をまとめる
+                        if (rawItemsMap.has(productName)) {
+                            rawItemsMap.set(productName, rawItemsMap.get(productName) + quantity);
+                        } else {
+                            rawItemsMap.set(productName, quantity);
+                        }
+                    }
+                }
+
+                // Map から配列へ変換
+                const items = [];
+                rawItemsMap.forEach((quantity, productName) => {
+                    items.push({ productName, quantity });
+                });
+
+                await processAndRender(items);
+            } catch (err) {
+                console.error(err);
+                alert('処理中にエラーが発生しました: ' + err.message);
+            }
+        });
+
+        async function processAndRender(items) {
+            showStatus("データを解析中...");
+            try {
+                const res = await fetch(URL_PROCESS_ORDER, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    // サーバーから返ってきた結果に対してもバーコード（SKU）単位で注文数を合算する処理
+                    const aggregatedMap = new Map();
+                    data.results.forEach(item => {
+                        const key = item.barcode;
+                        if (aggregatedMap.has(key)) {
+                            const existing = aggregatedMap.get(key);
+                            existing.orderQty += item.orderQty;
+                            existing.pickCount = existing.orderQty * (existing.multiplier || 1);
+                        } else {
+                            aggregatedMap.set(key, { ...item });
+                        }
+                    });
+
+                    currentResults = Array.from(aggregatedMap.values());
+                    renderTable(currentResults);
+                    document.getElementById('actionsBar').style.display = 'flex';
+                } else {
+                    alert('サーバーエラー: ' + data.error);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('通信エラーが発生しました。');
+            }
+        }
+
+        function parseCSVRows(text) {
+            const rows = [];
+            let currentRow = [];
+            let currentField = '';
+            let inQuotes = false;
+            let i = 0;
+            while (i < text.length) {
+                const char = text[i];
+                const nextChar = text[i + 1] || '';
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        currentField += '"';
+                        i++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    currentRow.push(currentField.trim());
+                    currentField = '';
+                } else if ((char === '\r' && nextChar === '\n') || (char === '\n' && !inQuotes)) {
+                    if (char === '\r' && nextChar === '\n') i++;
+                    currentRow.push(currentField.trim());
+                    if (currentRow.some(field => field !== '')) rows.push(currentRow);
+                    currentRow = [];
+                    currentField = '';
+                } else {
+                    currentField += char;
+                }
+                i++;
+            }
+            if (currentField !== '' || currentRow.length > 0) {
+                currentRow.push(currentField.trim());
+                if (currentRow.some(field => field !== '')) rows.push(currentRow);
+            }
+            return rows;
+        }
+
+        function showStatus(msg) {
+            document.getElementById('resultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
+        }
+
+        function renderTable(results) {
+            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み）</b></p>
+                <table>
+                <thead>
+                    <tr>
+                        <th>商品名 (AF列)</th>
+                        <th>バーコード</th>
+                        <th>注文数</th>
+                        <th>倍率</th>
+                        <th>棚番</th>
+                        <th>ピック数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            results.forEach((item, index) => {
+                const isUnreg = item.status === "UNREGISTERED";
+                html += `<tr id="row_${index}" class="${isUnreg ? 'unregistered' : ''}">
+                    <td>${item.productName}</td>
+                    <td><code>${item.barcode}</code></td>
+                    <td>${item.orderQty}</td>
+                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;"></td>
+                    <td><input type="text" id="shelf_${index}" value="${item.shelfNumber || ''}" style="width: 80px;" placeholder="例: A-1-2"></td>
+                    <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
+                    <td><button onclick="registerItem('${item.barcode}', ${index}, ${item.orderQty}, \`${item.productName.replace(/`/g, '\\`')}\`)">保存して計算</button></td>
+                </tr>`;
+            });
+
+            html += `</tbody></table>`;
+            document.getElementById('resultArea').innerHTML = html;
+        }
+
+        async function registerItem(barcode, index, orderQty, productName) {
+            const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
+            const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
+
+            try {
+                const res = await fetch(URL_SET_MULTIPLIER, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    const row = document.getElementById(`row_${index}`);
+                    row.classList.remove('unregistered');
+                    currentResults[index].multiplier = multiplier;
+                    currentResults[index].shelfNumber = shelfNumber;
+                    currentResults[index].pickCount = orderQty * multiplier;
+                    document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
+                    alert('保存しました！');
+                } else {
+                    alert('保存失敗: ' + data.error);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('通信エラーが発生しました。');
+            }
+        }
+
+        function sortByShelf() {
+            currentResults.sort((a, b) => {
+                const sA = a.shelfNumber || "";
+                const sB = b.shelfNumber || "";
+                return sA.localeCompare(sB);
+            });
+            renderTable(currentResults);
+            alert('棚番順にソートしました！');
+        }
+
+        async function sendToZaico() {
+            if (!confirm('棚番順に並び替えられた状態で、zaicoに出庫指示を送信しますか？\n（未登録の商品も無視して送信します）')) return;
+
+            try {
+                showStatus("zaicoに出庫指示を送信中...");
+                const res = await fetch(URL_CREATE_SHIPMENT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: currentResults })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)`);
+                    showStatus("<b>出庫指示の送信が完了しました。</b>");
+                } else {
+                    alert('送信失敗: ' + data.error);
+                    showStatus("<b>送信に失敗しました。</b>");
+                }
+            } catch (err) {
+                console.error(err);
+                alert('通信エラーが発生しました。');
+            }
+        }
+
+        // --- 商品マスタ管理用関数 ---
+        async function loadMasterItems() {
+            const masterArea = document.getElementById('masterResultArea');
+            masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
+            try {
+                const res = await fetch(URL_GET_MASTER);
+                const data = await res.json();
+                if (data.success) {
+                    masterItemsCache = data.items || [];
+                    renderMasterTable(masterItemsCache);
+                } else {
+                    masterArea.innerHTML = `<p style="color:red; margin-top:15px;">取得失敗: ${data.error || '不明なエラー'}</p>`;
+                }
+            } catch (err) {
+                console.error(err);
+                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">通信エラーが発生しました。</p>';
+            }
+        }
+
+        function renderMasterTable(items) {
+            const masterArea = document.getElementById('masterResultArea');
+            if (!items || items.length === 0) {
+                masterArea.innerHTML = '<p style="margin-top:15px;">登録されているマスタデータはありません。</p>';
+                return;
+            }
+            let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを読み込みました</b></p>
+                <table>
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>バーコード</th>
+                        <th>セット倍率</th>
+                        <th>棚番</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            items.forEach((item, i) => {
+                const name = item.product_name || item.productName || item.itemName || item.name || '';
+                const shelf = item.shelf_number || item.shelfNumber || item.shelf || '';
+                const barcode = item.barcode || item.code || item.qr || '';
+                const multiplier = item.multiplier || 1;
+
+                html += `<tr id="master_row_${i}">
+                    <td><input type="text" id="master_name_${i}" value="${name}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                    <td><code>${barcode}</code></td>
+                    <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
+                    <td><input type="text" id="master_shelf_${i}" value="${shelf}" style="width:100px; padding:4px;"></td>
+                    <td><button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button></td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+            masterArea.innerHTML = html;
+        }
+
+        function filterMasterTable() {
+            const keyword = document.getElementById('masterSearch').value.toLowerCase();
+            const filtered = masterItemsCache.filter(item => {
+                const name = (item.product_name || item.productName || item.itemName || item.name || '').toLowerCase();
+                const barcode = (item.barcode || item.code || '').toLowerCase();
+                const shelf = (item.shelf_number || item.shelfNumber || item.shelf || '').toLowerCase();
+                return name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
+            });
+            renderMasterTable(filtered);
+        }
+
+        async function updateMaster(barcode, i) {
+            const productName = document.getElementById(`master_name_${i}`).value.trim();
+            const multiplier = Number(document.getElementById(`master_mult_${i}`).value) || 1;
+            const shelfNumber = document.getElementById(`master_shelf_${i}`).value.trim();
+
+            try {
+                const res = await fetch(URL_SET_MULTIPLIER, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('マスタを更新しました！');
+                    const target = masterItemsCache.find(item => (item.barcode || item.code) === barcode);
+                    if (target) {
+                        target.product_name = productName;
+                        target.productName = productName;
+                        target.multiplier = multiplier;
+                        target.shelf_number = shelfNumber;
+                        target.shelfNumber = shelfNumber;
+                    }
+                } else {
+                    alert('更新失敗: ' + data.error);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('通信エラー');
+            }
+        }
+    </script>
+</body>
+</html>

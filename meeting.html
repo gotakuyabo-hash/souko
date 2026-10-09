@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>出荷実績 ＆ 議事録・タスク管理（Firestore同期版）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #222;
+    background-color: #f4f6f8;
+    font-size: 16px;
+  }
+  .card {
+    background: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 16px;
+  }
+  .header {
+    background-color: #1a252f;
+    color: white;
+    text-align: center;
+    padding: 14px 0;
+    font-size: 18px;
+    font-weight: bold;
+    border-radius: 6px;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-left: 15px;
+    padding-right: 15px;
+  }
+  .header a { color: #fff; font-size: 14px; text-decoration: none; background: #34495e; padding: 6px 10px; border-radius: 4px; }
+  .date-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #eef2f5;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .date-label { font-size: 16px; font-weight: bold; color: #555; white-space: nowrap; }
+  input[type="date"], input[type="text"], input[type="number"], textarea {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 16px;
+    background: #fff;
+    width: 100%;
+    font-family: inherit;
+  }
+  textarea {
+    resize: none;
+    overflow: hidden;
+    min-height: 40px;
+    line-height: 1.5;
+  }
+  .section-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #2c3e50;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 6px;
+    margin: 24px 0 12px 0;
+  }
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .metrics-card {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 12px 8px;
+    text-align: center;
+  }
+  .metrics-title {
+    font-size: 12px;
+    color: #666;
+    font-weight: bold;
+    margin-bottom: 6px;
+    white-space: nowrap;
+  }
+  .metrics-input-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .metrics-input-wrapper input {
+    text-align: center;
+    font-size: 20px;
+    font-weight: bold;
+    color: #2c3e50;
+    max-width: 80px;
+  }
+  .metrics-input-wrapper input[readonly] { background: #e9ecef; color: #27ae60; }
+  .unit { font-size: 14px; color: #555; font-weight: bold; }
+
+  .meeting-tabs-container {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #cbd5e1;
+  }
+  .meeting-tabs-header {
+    display: flex;
+    gap: 6px;
+    flex-grow: 1;
+    overflow-x: auto;
+  }
+  .meeting-tab-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #e2e8f0;
+    color: #4a5568;
+    border: none;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .meeting-tab-btn.active {
+    background: #1a252f;
+    color: #fff;
+  }
+  .btn-add-tab-inline {
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: bold;
+    background: #ebf5fb;
+    color: #2980b9;
+    border: 1px dashed #3498db;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+  }
+
+  .meeting-card {
+    background: #fdfdfd;
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 16px;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    display: none;
+  }
+  .meeting-card.active-tab {
+    display: block;
+  }
+  .meeting-header-row { display: flex; gap: 12px; margin-bottom: 12px; }
+
+  .attendee-section { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed #dcdfe6; }
+  .attendee-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .attendee-item {
+    display: flex; align-items: center; gap: 8px; background: #fcfcfc; border: 1px solid #e9ecef; border-radius: 6px; padding: 6px 8px; position: relative;
+  }
+  .attendee-item input { border: none; outline: none; background: transparent; padding: 0; }
+
+  .meeting-share-section { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed #dcdfe6; }
+  .share-sub-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .share-sub-item {
+    display: flex; align-items: center; gap: 8px; background: #fcfcfc; border: 1px solid #e9ecef; border-radius: 6px; padding: 6px 8px; position: relative;
+  }
+  .share-sub-item textarea { border: none; outline: none; background: transparent; padding: 0; }
+
+  .topic-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+  .topic-item { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; position: relative; }
+  .meeting-row { display: flex; gap: 12px; margin-bottom: 10px; }
+  .meeting-row:last-child { margin-bottom: 0; }
+  .field-group { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .field-label { font-size: 12px; font-weight: bold; color: #7f8c8d; }
+
+  .topic-sub-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .topic-sub-item {
+    display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #e9ecef; border-radius: 4px; padding: 4px 8px;
+  }
+  .topic-sub-item textarea { border: none; outline: none; background: transparent; padding: 0; }
+
+  .task-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+  .task-item {
+    background: #ebf5fb;
+    border: 1px solid #b3d4fc;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 8px;
+    position: relative;
+    display: block;
+    transition: background-color 0.2s, opacity 0.2s;
+  }
+  /* タスク完了時のスタイル（背景を薄いグレーにしてテキストに打ち消し線） */
+  .task-item.completed {
+    background: #edf2f7;
+    border-color: #cbd5e0;
+  }
+  .task-item.completed textarea,
+  .task-item.completed input {
+    color: #a0aec0;
+    text-decoration: line-through;
+  }
+
+  .task-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .task-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    padding-right: 24px;
+  }
+  .task-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #2980b9;
+    cursor: pointer;
+  }
+  .task-checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+  }
+
+  .btn-del { color: #e74c3c; font-size: 18px; font-weight: bold; cursor: pointer; padding: 2px 8px; border: none; background: transparent; }
+  .btn-del-meeting { position: absolute; top: 12px; right: 12px; }
+  .btn-del-topic { position: absolute; top: 8px; right: 8px; }
+  .btn-del-task {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    border: 1px solid #ffcbd1;
+  }
+
+  .btn-add {
+    width: 100%; padding: 12px; background: #ebf5fb; color: #2980b9; border: 1px dashed #3498db; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; text-align: center;
+  }
+  .btn-add-attendee { padding: 6px; font-size: 13px; background: #e8f8f5; color: #16a085; border: 1px dashed #1abc9c; }
+  .btn-add-share-sub { padding: 6px; font-size: 13px; background: #fef9e7; color: #d68910; border: 1px dashed #f1c40f; }
+  .btn-add-topic { background: #e8f8f5; color: #16a085; border: 1px dashed #1abc9c; margin-top: 6px; }
+  .btn-add-topic-sub { padding: 4px; font-size: 12px; background: #eaf2f8; color: #2980b9; border: 1px dashed #5499c7; margin-top: 6px; }
+  .btn-add-task { padding: 6px; font-size: 13px; background: #f4ecf7; color: #8e44ad; border: 1px dashed #af7ac5; margin-top: 8px; }
+
+  .btn-save-log {
+    width: 100%; padding: 14px; background-color: #27ae60; color: #fff; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; text-align: center; margin-top: 16px;
+  }
+  .btn-save-log:active { background-color: #219150; }
+  .btn-save-top { margin-top: 0; margin-bottom: 16px; }
+
+  .btn-history {
+    padding: 8px 12px; background-color: #2980b9; color: #fff; border: none; border-radius: 4px; font-size: 13px; font-weight: bold; cursor: pointer; white-space: nowrap;
+  }
+  .btn-history:active { background-color: #2471a3; }
+
+  .save-status {
+    font-size: 12px;
+    color: #666;
+    text-align: right;
+    margin-top: -8px;
+    margin-bottom: 12px;
+    height: 18px;
+  }
+
+  /* モーダルウィンドウのスタイル */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+    z-index: 1000; display: none; padding: 16px;
+  }
+  .modal-content {
+    background: #fff; width: 100%; max-width: 400px; border-radius: 8px; padding: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 80vh; display: flex; flex-direction: column;
+  }
+  .modal-header { font-size: 16px; font-weight: bold; color: #2c3e50; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .modal-body { overflow-y: auto; flex-grow: 1; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .history-item {
+    padding: 10px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px;
+    cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 14px;
+  }
+  .history-item:hover { background: #eef2f5; border-color: #3498db; }
+  .modal-close { background: #e74c3c; color: #fff; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="header">
+    <span>📊 出荷実績 ＆ 議事録メモ</span>
+    <a href="index.html">🏠 ポータルへ戻る</a>
+  </div>
+
+  <div class="date-box">
+    <span class="date-label">データ登録日</span>
+    <input type="date" id="today-date">
+    <button type="button" class="btn-history" id="btn-open-history">📅 開催日一覧</button>
+  </div>
+
+  <button type="button" class="btn-save-log btn-save-top" id="btn-save-top">💾 クラウドに保存（Firestore同期）</button>
+  <div class="save-status" id="save-status"></div>
+
+  <div class="section-title">📊 前週出荷実績・エラー率</div>
+  <div class="metrics-grid">
+    <div class="metrics-card">
+      <div class="metrics-title">前週出荷件数</div>
+      <div class="metrics-input-wrapper">
+        <input type="number" id="ship-count" placeholder="0">
+        <span class="unit">件</span>
+      </div>
+    </div>
+    <div class="metrics-card">
+      <div class="metrics-title">誤出荷数</div>
+      <div class="metrics-input-wrapper">
+        <input type="number" id="error-count" placeholder="0">
+        <span class="unit">件</span>
+      </div>
+    </div>
+    <div class="metrics-card">
+      <div class="metrics-title">誤出荷率</div>
+      <div class="metrics-input-wrapper">
+        <input type="text" id="error-rate" value="0.00" readonly>
+        <span class="unit">%</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">📝 議事録・タスクメモ</div>
+
+  <div class="meeting-tabs-container">
+    <div class="meeting-tabs-header" id="meeting-tabs-header"></div>
+    <button type="button" class="btn-add-tab-inline" id="btn-add-meeting">＋ 定例追加</button>
+  </div>
+
+  <div class="meeting-list" id="meeting-list"></div>
+
+  <button type="button" class="btn-save-log" id="btn-save">💾 クラウドに保存（Firestore同期）</button>
+</div>
+
+<!-- 開催日一覧モーダル -->
+<div class="modal-overlay" id="history-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span>📋 定例開催日一覧（タイトル入力済）</span>
+      <span style="cursor: pointer; font-size: 18px; color: #7f8c8d;" id="modal-x">✕</span>
+    </div>
+    <div class="modal-body" id="history-list-container">
+      <div style="text-align: center; color: #7f8c8d; padding: 20px;">読み込み中...</div>
+    </div>
+    <button type="button" class="modal-close" id="modal-close-btn">閉じる</button>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+    authDomain: "souko-2de57.firebaseapp.com",
+    projectId: "souko-2de57",
+    storageBucket: "souko-2de57.firebasestorage.app",
+    messagingSenderId: "642116656086",
+    appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+    measurementId: "G-8WG8GWQGCR"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const dateInput = document.getElementById('today-date');
+  dateInput.value = new Date().toISOString().split('T')[0];
+
+  let autoSaveTimer = null;
+  const saveStatusEl = document.getElementById('save-status');
+
+  function autoResize(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+  }
+
+  function initAutoResize(container = document) {
+    container.querySelectorAll('textarea').forEach(textarea => {
+      autoResize(textarea);
+      textarea.removeEventListener('input', handleInputResize);
+      textarea.addEventListener('input', handleInputResize);
+    });
+  }
+
+  function handleInputResize(e) {
+    autoResize(e.target);
+    triggerAutoSave();
+  }
+
+  function triggerAutoSave() {
+    clearTimeout(autoSaveTimer);
+    saveStatusEl.textContent = "変更を検知しました...";
+    autoSaveTimer = setTimeout(() => {
+      saveDataToCloud(true);
+    }, 1500);
+  }
+
+  function calcErrorRate(triggerSave = true) {
+    const ship = parseFloat(document.getElementById('ship-count').value) || 0;
+    const error = parseFloat(document.getElementById('error-count').value) || 0;
+    const rateInput = document.getElementById('error-rate');
+    rateInput.value = ship > 0 ? ((error / ship) * 100).toFixed(2) : "0.00";
+    if (triggerSave) triggerAutoSave();
+  }
+
+  function updateTabs() {
+    const headerContainer = document.getElementById('meeting-tabs-header');
+    const meetingList = document.getElementById('meeting-list');
+    const cards = meetingList.querySelectorAll('.meeting-card');
+
+    headerContainer.innerHTML = "";
+    if (cards.length === 0) return;
+
+    cards.forEach((card, index) => {
+      const titleInput = card.querySelector('.m-title');
+      const titleText = titleInput.value.trim() !== "" ? titleInput.value : `定例 ${index + 1}`;
+
+      const tabBtn = document.createElement('button');
+      tabBtn.type = "button";
+      tabBtn.className = `meeting-tab-btn ${card.classList.contains('active-tab') ? 'active' : ''}`;
+      tabBtn.textContent = titleText;
+
+      tabBtn.addEventListener('click', () => {
+        cards.forEach(c => c.classList.remove('active-tab'));
+        card.classList.add('active-tab');
+        updateTabs();
+      });
+
+      headerContainer.appendChild(tabBtn);
+    });
+
+    if (!meetingList.querySelector('.meeting-card.active-tab')) {
+      cards[0].classList.add('active-tab');
+      if (headerContainer.firstChild) {
+        headerContainer.firstChild.classList.add('active');
+      }
+    }
+  }
+
+  function addAttendeeItem(cardElement, val = "") {
+    const attendeeList = cardElement.querySelector('.attendee-list');
+    if (!attendeeList) return;
+    const div = document.createElement('div');
+    div.className = 'attendee-item';
+    div.innerHTML = `
+      <span>👤</span>
+      <input type="text" class="m-attendee-input" placeholder="参加者名を入力" value="${val}">
+      <button type="button" class="btn-del btn-del-attendee" style="font-size:14px; padding:0 4px;">✕</button>
+    `;
+    div.querySelector('.btn-del-attendee').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    div.querySelector('.m-attendee-input').addEventListener('input', triggerAutoSave);
+    attendeeList.appendChild(div);
+  }
+
+  function addShareSubItem(cardElement, val = "") {
+    const shareSubList = cardElement.querySelector('.share-sub-list');
+    if (!shareSubList) return;
+    const div = document.createElement('div');
+    div.className = 'share-sub-item';
+    div.innerHTML = `
+      <span>・</span>
+      <textarea class="m-share-input" rows="1" placeholder="共有事項を入力">${val}</textarea>
+      <button type="button" class="btn-del btn-del-sub">✕</button>
+    `;
+    div.querySelector('.btn-del-sub').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    shareSubList.appendChild(div);
+    initAutoResize(div);
+  }
+
+  function addTopicSubItem(topicElement, val = "") {
+    const subList = topicElement.querySelector('.topic-sub-list');
+    if (!subList) return;
+    const div = document.createElement('div');
+    div.className = 'topic-sub-item';
+    div.innerHTML = `
+      <span>・</span>
+      <textarea class="t-sub-input" rows="1" placeholder="箇条書きを追加">${val}</textarea>
+      <button type="button" class="btn-del btn-del-topic-sub" style="font-size:14px; padding:0 4px;">✕</button>
+    `;
+    div.querySelector('.btn-del-topic-sub').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    subList.appendChild(div);
+    initAutoResize(div);
+  }
+
+  function addTaskItem(topicElement, taskData = {}) {
+    const taskList = topicElement.querySelector('.task-list');
+    if (!taskList) return;
+    const div = document.createElement('div');
+    div.className = `task-item ${taskData.completed ? 'completed' : ''}`;
+
+    div.innerHTML = `
+      <button type="button" class="btn-del btn-del-task">✕</button>
+      <div class="task-header-row">
+        <label class="task-checkbox-label">
+          <input type="checkbox" class="t-task-checkbox" ${taskData.completed ? 'checked' : ''}>
+          <span>完了</span>
+        </label>
+      </div>
+      <div class="field-group" style="margin-bottom: 8px;">
+        <div class="field-label" style="color: #2980b9;">📝 タスク・アクション内容</div>
+        <textarea class="t-task-name" rows="1" placeholder="例: 作業マニュアルの修正">${taskData.task || ''}</textarea>
+      </div>
+      <div class="task-row">
+        <div class="field-group">
+          <div class="field-label" style="color: #2980b9;">👤 担当者</div>
+          <input type="text" class="t-task-assignee" placeholder="例: 山田" value="${taskData.assignee || ''}">
+        </div>
+        <div class="field-group">
+          <div class="field-label" style="color: #2980b9;">📅 期限</div>
+          <input type="date" class="t-task-limit" value="${taskData.limit || ''}">
+        </div>
+      </div>
+    `;
+
+    const checkbox = div.querySelector('.t-task-checkbox');
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        div.classList.add('completed');
+      } else {
+        div.classList.remove('completed');
+      }
+      triggerAutoSave();
+    });
+
+    div.querySelector('.btn-del-task').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    div.querySelectorAll('input, textarea').forEach(input => {
+      input.addEventListener('input', triggerAutoSave);
+    });
+    taskList.appendChild(div);
+    initAutoResize(div);
+  }
+
+  function addTopicItem(cardElement, topicData = {}) {
+    const topicList = cardElement.querySelector('.topic-list');
+    if (!topicList) return;
+    const div = document.createElement('div');
+    div.className = 'topic-item';
+    div.innerHTML = `
+      <button type="button" class="btn-del btn-del-topic">✕</button>
+      <div class="meeting-row">
+        <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
+          <div class="field-label">議題</div>
+          <input type="text" class="t-topic" placeholder="例: 誤出荷対策" value="${topicData.topic || ''}">
+        </div>
+        <div class="field-group" style="flex: 1;">
+          <div class="field-label">発話者</div>
+          <input type="text" class="t-speaker" placeholder="名前" value="${topicData.speaker || ''}">
+        </div>
+      </div>
+      <div class="meeting-row">
+        <div class="field-group">
+          <div class="field-label">決定事項・共有内容</div>
+          <textarea class="t-content" rows="1" placeholder="例: ダブルチェック徹底">${topicData.content || ''}</textarea>
+        </div>
+      </div>
+      <div class="topic-sub-section" style="margin-top: 6px;">
+        <div class="field-label">箇条書き・詳細メモ</div>
+        <div class="topic-sub-list"></div>
+        <button type="button" class="btn-add btn-add-topic-sub">＋ 箇条書きを追加</button>
+      </div>
+      <div class="topic-task-section" style="margin-top: 12px; padding-top: 8px; border-top: 1px dashed #e9ecef;">
+        <div class="field-label">📌 タスク / アクション項目</div>
+        <div class="task-list"></div>
+        <button type="button" class="btn-add btn-add-task">＋ タスクを追加</button>
+      </div>
+    `;
+    div.querySelector('.btn-del-topic').addEventListener('click', () => {
+      div.remove();
+      triggerAutoSave();
+    });
+    div.querySelector('.btn-add-topic-sub').addEventListener('click', () => {
+      addTopicSubItem(div);
+      triggerAutoSave();
+    });
+    div.querySelector('.btn-add-task').addEventListener('click', () => {
+      addTaskItem(div);
+      triggerAutoSave();
+    });
+    div.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', triggerAutoSave);
+    });
+    topicList.appendChild(div);
+
+    if (topicData.subItems && topicData.subItems.length > 0) {
+      topicData.subItems.forEach(s => addTopicSubItem(div, s));
+    }
+
+    if (topicData.tasks && topicData.tasks.length > 0) {
+      topicData.tasks.forEach(t => addTaskItem(div, t));
+    } else {
+      addTaskItem(div);
+    }
+    initAutoResize(div);
+  }
+
+  function addMeetingCard(meetingData = {}) {
+    const list = document.getElementById('meeting-list');
+    if (!list) return;
+
+    list.querySelectorAll('.meeting-card').forEach(c => c.classList.remove('active-tab'));
+
+    const card = document.createElement('div');
+    card.className = 'meeting-card active-tab';
+    const defaultMeetingDate = meetingData.meetingDate || dateInput.value;
+
+    card.innerHTML = `
+      <button type="button" class="btn-del btn-del-meeting">✕</button>
+      <div class="meeting-header-row">
+        <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
+          <div class="field-label">定例タイトル</div>
+          <input type="text" class="m-title" placeholder="例: 週間定例会議" value="${meetingData.title || ''}">
+        </div>
+        <div class="field-group" style="flex: 1;">
+          <div class="field-label">開催日</div>
+          <input type="date" class="m-meeting-date" value="${defaultMeetingDate}">
+        </div>
+      </div>
+      <div class="attendee-section">
+        <div class="field-label" style="margin-bottom: 4px;">参加者</div>
+        <div class="attendee-list"></div>
+        <button type="button" class="btn-add btn-add-attendee">＋ 参加者を追加</button>
+      </div>
+      <div class="meeting-share-section">
+        <div class="field-label" style="margin-bottom: 4px;">共有事項</div>
+        <div class="share-sub-list"></div>
+        <button type="button" class="btn-add btn-add-share-sub">＋ 共有事項を追加</button>
+      </div>
+      <div class="topic-list"></div>
+      <button type="button" class="btn-add btn-add-topic">＋ 議題を追加</button>
+    `;
+
+    card.querySelector('.btn-del-meeting').addEventListener('click', () => {
+      card.remove();
+      const remainingCards = list.querySelectorAll('.meeting-card');
+      if (remainingCards.length > 0) {
+        remainingCards[0].classList.add('active-tab');
+      }
+      updateTabs();
+      triggerAutoSave();
+    });
+
+    card.querySelector('.m-title').addEventListener('input', () => {
+      updateTabs();
+      triggerAutoSave();
+    });
+    card.querySelector('.m-meeting-date').addEventListener('input', triggerAutoSave);
+
+    card.querySelector('.btn-add-attendee').addEventListener('click', () => {
+      addAttendeeItem(card);
+      triggerAutoSave();
+    });
+    card.querySelector('.btn-add-share-sub').addEventListener('click', () => {
+      addShareSubItem(card);
+      triggerAutoSave();
+    });
+    card.querySelector('.btn-add-topic').addEventListener('click', () => {
+      addTopicItem(card);
+      triggerAutoSave();
+    });
+    list.appendChild(card);
+
+    if (meetingData.attendees) {
+      if (Array.isArray(meetingData.attendees)) {
+        if (meetingData.attendees.length > 0) {
+          meetingData.attendees.forEach(a => addAttendeeItem(card, a));
+        } else {
+          addAttendeeItem(card);
+        }
+      } else if (typeof meetingData.attendees === 'string') {
+        const names = meetingData.attendees.split(/[、,，\s]+/).filter(n => n.trim() !== "");
+        if (names.length > 0) {
+          names.forEach(a => addAttendeeItem(card, a));
+        } else {
+          addAttendeeItem(card);
+        }
+      }
+    } else {
+      addAttendeeItem(card);
+    }
+
+    if (meetingData.shares && meetingData.shares.length > 0) {
+      meetingData.shares.forEach(s => addShareSubItem(card, s));
+    } else {
+      addShareSubItem(card);
+    }
+
+    if (meetingData.topics && meetingData.topics.length > 0) {
+      meetingData.topics.forEach(t => addTopicItem(card, t));
+    } else {
+      addTopicItem(card);
+    }
+
+    updateTabs();
+    initAutoResize(card);
+  }
+
+  async function loadDataForDate(dateStr) {
+    document.getElementById('ship-count').value = "";
+    document.getElementById('error-count').value = "";
+    document.getElementById('error-rate').value = "0.00";
+    document.getElementById('meeting-list').innerHTML = "";
+    document.getElementById('meeting-tabs-header').innerHTML = "";
+    saveStatusEl.textContent = "";
+
+    try {
+      const docRef = doc(db, "meeting_logs", dateStr);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        document.getElementById('ship-count').value = d.shipCount || "";
+        document.getElementById('error-count').value = d.errorCount || "";
+        calcErrorRate(false);
+
+        if (d.meetings && d.meetings.length > 0) {
+          d.meetings.forEach(m => addMeetingCard(m));
+          saveStatusEl.textContent = "データを読み込みました";
+          return;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      saveStatusEl.textContent = "読み込みエラーが発生しました";
+    }
+
+    if (document.getElementById('meeting-list').children.length === 0) {
+      addMeetingCard();
+    }
+  }
+
+  async function saveDataToCloud(isAuto = false) {
+    const dateStr = dateInput.value;
+    if (!dateStr) return;
+
+    const meetings = [];
+    document.querySelectorAll('.meeting-card').forEach(card => {
+      const attendees = [];
+      card.querySelectorAll('.m-attendee-input').forEach(input => {
+        if (input.value.trim() !== "") attendees.push(input.value);
+      });
+
+      const shares = [];
+      card.querySelectorAll('.m-share-input').forEach(input => {
+        if (input.value.trim() !== "") shares.push(input.value);
+      });
+      const topics = [];
+      card.querySelectorAll('.topic-item').forEach(topicItem => {
+        const subItems = [];
+        topicItem.querySelectorAll('.t-sub-input').forEach(subInput => {
+          if (subInput.value.trim() !== "") subItems.push(subInput.value);
+        });
+
+        const tasks = [];
+        topicItem.querySelectorAll('.task-item').forEach(taskItem => {
+          const taskName = taskItem.querySelector('.t-task-name').value;
+          const assignee = taskItem.querySelector('.t-task-assignee').value;
+          const limit = taskItem.querySelector('.t-task-limit').value;
+          const completed = taskItem.querySelector('.t-task-checkbox').checked;
+          if (taskName.trim() !== "" || assignee.trim() !== "" || limit !== "") {
+            tasks.push({ task: taskName, assignee, limit, completed });
+          }
+        });
+
+        topics.push({
+          topic: topicItem.querySelector('.t-topic').value,
+          speaker: topicItem.querySelector('.t-speaker').value,
+          content: topicItem.querySelector('.t-content').value,
+          subItems: subItems,
+          tasks: tasks
+        });
+      });
+      meetings.push({
+        title: card.querySelector('.m-title').value,
+        meetingDate: card.querySelector('.m-meeting-date').value,
+        attendees,
+        shares, topics
+      });
+    });
+
+    const payload = {
+      shipCount: document.getElementById('ship-count').value,
+      errorCount: document.getElementById('error-count').value,
+      errorRate: document.getElementById('error-rate').value,
+      meetings,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      await setDoc(doc(db, "meeting_logs", dateStr), payload);
+      const nowStr = new Date().toLocaleTimeString();
+      saveStatusEl.textContent = `自動保存しました (${nowStr})`;
+      if (!isAuto) {
+        alert("クラウドに保存しました！");
+      }
+    } catch(e) {
+      console.error(e);
+      saveStatusEl.textContent = "保存に失敗しました";
+      if (!isAuto) {
+        alert("保存に失敗しました。");
+      }
+    }
+  }
+
+  async function openHistoryModal() {
+    const modal = document.getElementById('history-modal');
+    const container = document.getElementById('history-list-container');
+    container.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">開催日をスキャン中...</div>';
+    modal.style.display = 'flex';
+
+    try {
+      const querySnapshot = await getDocs(collection(db, "meeting_logs"));
+      const listData = [];
+
+      querySnapshot.forEach((document) => {
+        const dateStr = document.id;
+        const data = document.data();
+        if (data.meetings && Array.isArray(data.meetings)) {
+          const validMeetings = data.meetings.filter(m => m.title && m.title.trim() !== "");
+          if (validMeetings.length > 0) {
+            const titles = validMeetings.map(m => m.title).join(' / ');
+            listData.push({ date: dateStr, titles });
+          }
+        }
+      });
+
+      listData.sort((a, b) => b.date.localeCompare(a.date));
+
+      container.innerHTML = "";
+      if (listData.length === 0) {
+        container.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">定例タイトルが入力された記録はまだありません。</div>';
+        return;
+      }
+
+      listData.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        div.innerHTML = `
+          <div>
+            <div style="font-weight: bold; color: #2980b9;">📅 ${item.date}</div>
+            <div style="font-size: 12px; color: #555; margin-top: 2px;">${item.titles}</div>
+          </div>
+          <span style="color: #95a5a6;">▶</span>
+        `;
+        div.addEventListener('click', () => {
+          dateInput.value = item.date;
+          loadDataForDate(item.date);
+          modal.style.display = 'none';
+        });
+        container.appendChild(div);
+      });
+
+    } catch (e) {
+      console.error(e);
+      container.innerHTML = '<div style="text-align: center; color: #e74c3c; padding: 20px;">開催日リストの取得に失敗しました。</div>';
+    }
+  }
+
+  const modal = document.getElementById('history-modal');
+  document.getElementById('btn-open-history').addEventListener('click', openHistoryModal);
+  document.getElementById('modal-x').addEventListener('click', () => modal.style.display = 'none');
+  document.getElementById('modal-close-btn').addEventListener('click', () => modal.style.display = 'none');
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+
+  document.getElementById('ship-count').addEventListener('input', () => calcErrorRate(true));
+  document.getElementById('error-count').addEventListener('input', () => calcErrorRate(true));
+  document.getElementById('btn-add-meeting').addEventListener('click', () => {
+    addMeetingCard();
+    triggerAutoSave();
+  });
+  dateInput.addEventListener('change', () => loadDataForDate(dateInput.value));
+
+  document.getElementById('btn-save').addEventListener('click', () => saveDataToCloud(false));
+  document.getElementById('btn-save-top').addEventListener('click', () => saveDataToCloud(false));
+
+  loadDataForDate(dateInput.value);
+</script>
+</body>
+</html>

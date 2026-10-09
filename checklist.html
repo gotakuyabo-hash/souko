@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日次報告チェックリスト</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f4f6f8; font-family: sans-serif; padding: 15px; }
+        .card { background: white; padding: 20px; border-radius: 8px; max-width: 900px; margin: 0 auto 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .section-title { font-size: 1rem; color: #2c3e50; background: #eef2f7; padding: 10px 12px; border-left: 4px solid #3498db; margin: 20px 0 12px 0; border-radius: 0 6px 6px 0; font-weight: bold; }
+        .form-group { padding: 12px 12px 12px 42px; border: 1px solid #dcdde1; border-radius: 8px; background: #fff; position: relative; margin-bottom: 12px; }
+        .form-group input[type="text"], .form-group textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; box-sizing: border-box; resize: vertical; background: #fff; margin-top: 4px; }
+        .form-group textarea { height: 80px; }
+        .field-title-input { width: 100%; font-weight: bold; font-size: 0.9rem; padding: 6px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 6px; background: #fafafa; }
+        .checkbox-card { border: 1px dashed #e74c3c; background: #fdf7f7; }
+        .bullet-card { border: 1px dashed #3498db; background: #f7fbfe; }
+        .checkbox-label { display: flex; align-items: center; font-weight: 600; cursor: pointer; color: #c0392b; font-size: 0.95rem; width: 100%; }
+        .checkbox-label input[type="checkbox"] { transform: scale(1.4); margin-right: 12px; cursor: pointer; }
+        .sort-buttons { position: absolute; top: 10px; left: 8px; display: flex; flex-direction: column; gap: 3px; }
+        .btn-sort { background: #bdc3c7; color: white; border: none; border-radius: 4px; width: 26px; height: 24px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+        .btn-del-item { position: absolute; top: 10px; right: 10px; background: #e74c3c; color: white; border: none; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; z-index: 10; }
+        .btn-add-group { display: flex; gap: 6px; margin-top: 8px; }
+        .btn-add { flex: 1; padding: 8px 4px; background: #ebf5fb; color: #2980b9; border: 1px dashed #3498db; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; }
+        .btn-add-bullet { background: #f0fdf4; color: #27ae60; border: 1px dashed #27ae60; }
+        .btn-add-check { background: #fef5f5; color: #c0392b; border: 1px dashed #e74c3c; }
+    </style>
+</head>
+<body>
+    <div style="max-width: 900px; margin: 0 auto;">
+        <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
+        <div class="card">
+            <div class="flex justify-between items-center border-b pb-3 mb-4">
+                <div>
+                    <h1 class="text-xl font-bold text-slate-800">📋 倉庫管理者 日次報告チェックリスト</h1>
+                    <p class="text-xs text-gray-500">Firestoreリアルタイム同期版</p>
+                </div>
+                <button onclick="saveChecklistData()" class="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm">💾 クラウド保存</button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6 bg-slate-50 p-3 rounded-lg">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">対象日</label>
+                    <input type="date" id="commonDate" onchange="loadChecklistByDate(this.value)" class="w-full p-2 border rounded bg-white">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">管理者名</label>
+                    <input type="text" id="reporterName" placeholder="氏名を入力" class="w-full p-2 border rounded bg-white">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="loadChecklistByDate(document.getElementById('commonDate').value)" class="w-full bg-cyan-600 text-white p-2 rounded font-bold text-sm hover:bg-cyan-700">データを読み込む</button>
+                </div>
+            </div>
+
+            <span id="status-msg" class="block text-center font-bold text-emerald-600 text-sm mb-4"></span>
+
+            <div class="section-title">■ 出勤時〜10:00｜立ち上げ確認</div>
+            <div class="dynamic-list" id="list-morning"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('morning', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('morning', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('morning', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="section-title">■ 11:00〜12:00｜午前進捗確認</div>
+            <div class="dynamic-list" id="list-noon"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('noon', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('noon', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('noon', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="section-title">■ 13:00〜14:00｜午後立ち上げ</div>
+            <div class="dynamic-list" id="list-afternoon"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('afternoon', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('afternoon', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('afternoon', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="section-title">■ 15:00〜｜当日出荷の山場</div>
+            <div class="dynamic-list" id="list-peak"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('peak', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('peak', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('peak', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="section-title">■ 17:00〜｜締め・翌日準備</div>
+            <div class="dynamic-list" id="list-evening"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('evening', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('evening', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('evening', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="section-title">■ 終業時振り返り（1分）</div>
+            <div class="dynamic-list" id="list-reflection"></div>
+            <div class="btn-add-group">
+                <button onclick="addItem('reflection', 'text')" class="btn-add">＋ 項目を追加</button>
+                <button onclick="addItem('reflection', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
+                <button onclick="addItem('reflection', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
+            </div>
+
+            <div class="mt-6 text-center">
+                <button onclick="saveChecklistData()" class="w-full bg-emerald-600 text-white p-3 rounded-lg font-bold text-lg hover:bg-emerald-700">💾 この日のデータを保存する</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
+        let autoSaveTimer = null; // オートセーブ用タイマー
+
+        const defaultSections = {
+            morning: [
+                { title: "① 物量チェック（最重要） / 前回想定との差分", value: "", type: "text", placeholder: "例：＋500件、想定内 など" },
+                { title: "② メンバー配置表の最終チェック / 判断内容（誰に何を依頼）", value: "", type: "textarea", placeholder: "配置の狙いや特記事項を入力" },
+                { title: "③ チャット・連絡確認 / 注意点・共有事項", value: "", type: "textarea", placeholder: "共有事項を入力" }
+            ],
+            noon: [
+                { title: "遅れ／詰まり", value: "", type: "text", placeholder: "現状の遅れや詰まり具合" },
+                { title: "実施フォロー", value: "", type: "text", placeholder: "打った対策やフォロー内容" }
+            ],
+            afternoon: [
+                { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
+                { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" }
+            ],
+            peak: [
+                { title: "当日出荷の山場・記入欄", value: "", type: "textarea", placeholder: "ピークタイムの状況" },
+                { title: "フジックス入庫確認", checked: false, type: "checkbox" },
+                { title: "medishopee出荷報告確認", checked: false, type: "checkbox" }
+            ],
+            evening: [
+                { title: "17:00 冷凍の集荷を確認しました", checked: false, type: "checkbox" },
+                { title: "ニッシントーアチャット報告確認", checked: false, type: "checkbox" },
+                { title: "Amazonバッグ発注確認", checked: false, type: "checkbox" },
+                { title: "翌日物量見込み（バック）：（ ）杯", value: "", type: "text", placeholder: "例：1200杯" },
+                { title: "注意点", value: "", type: "textarea", placeholder: "翌日に向けた注意点" }
+            ],
+            reflection: [
+                { title: "今日一番詰まった工程", value: "", type: "text", placeholder: "最もボトルネックになった工程" },
+                { title: "明日気をつける点", value: "", type: "textarea", placeholder: "翌日への申し送り" }
+            ]
+        };
+
+        const reporterNameInput = document.getElementById('reporterName');
+
+        window.removeElement = (elem) => {
+            elem.remove();
+            executeAutoSave(); // 項目削除時も自動保存
+        };
+
+        window.moveItem = (elem, direction) => {
+            const card = elem.closest('.item-card');
+            if (!card) return;
+            if (direction === 'up' && card.previousElementSibling) card.parentNode.insertBefore(card, card.previousElementSibling);
+            else if (direction === 'down' && card.nextElementSibling) card.parentNode.insertBefore(card.nextElementSibling, card);
+            executeAutoSave(); // 並び替え時も自動保存
+        };
+
+        window.addItem = (sectionKey, itemType = 'text', itemData = null) => {
+            const listContainer = document.getElementById(`list-${sectionKey}`);
+            const div = document.createElement('div');
+            const typeVal = (itemData && itemData.type != null) ? itemData.type : itemType;
+            const titleVal = (itemData && itemData.title != null) ? itemData.title : '';
+            const valueVal = (itemData && itemData.value != null) ? itemData.value : '';
+            const checkedVal = (itemData && itemData.checked != null) ? itemData.checked : false;
+            const placeholderVal = (itemData && itemData.placeholder != null) ? itemData.placeholder : '内容を入力';
+
+            const sortBtns = `<div class="sort-buttons"><button type="button" class="btn-sort" onclick="moveItem(this, 'up')">▲</button><button type="button" class="btn-sort" onclick="moveItem(this, 'down')">▼</button></div>`;
+
+            if (typeVal === 'checkbox') {
+                div.className = 'form-group item-card checkbox-card';
+                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><label class="checkbox-label"><input type="checkbox" class="field-check-input" ${checkedVal ? 'checked' : ''}><input type="text" class="field-title-input" placeholder="チェック項目名" value="${titleVal}" style="margin:0; background:transparent; border:none; border-bottom:1px solid #ccc;"></label>`;
+            } else if (typeVal === 'bullet') {
+                div.className = 'form-group item-card bullet-card';
+                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 1.2rem; font-weight: bold; color: #3498db;">・</span><input type="text" class="field-title-input" placeholder="箇条書き項目" value="${titleVal}" style="margin:0; flex:1;"></div>`;
+            } else {
+                div.className = 'form-group item-card';
+                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><input type="text" class="field-title-input" placeholder="項目名" value="${titleVal}">` + (typeVal === 'textarea' ? `<textarea class="field-value-input" placeholder="${placeholderVal}">${valueVal}</textarea>` : `<input type="text" class="field-value-input" placeholder="${placeholderVal}" value="${valueVal}">`);
+            }
+            listContainer.appendChild(div);
+            setupInputEvents(div); // 動的に追加された要素にもイベントを付与
+            if (!itemData) executeAutoSave(); // 新規追加時も自動保存
+        };
+
+        function renderSections(dataObj) {
+            ['morning', 'noon', 'afternoon', 'peak', 'evening', 'reflection'].forEach(key => {
+                document.getElementById(`list-${key}`).innerHTML = '';
+                (dataObj && dataObj[key] ? dataObj[key] : defaultSections[key]).forEach(item => addItem(key, item.type, item));
+            });
+        }
+
+        // ── オートセーブ用のイベント設定 ──
+        function setupInputEvents(container) {
+            const inputs = container.querySelectorAll('input, textarea');
+            inputs.forEach(input => {
+                // 文字入力中 / チェック変更中（1.5秒デバウンス）
+                input.addEventListener('input', triggerAutoSave);
+                input.addEventListener('change', triggerAutoSave);
+
+                // フォーカスが外れたとき（blur）は即時保存
+                input.addEventListener('blur', async () => {
+                    clearTimeout(autoSaveTimer);
+                    await executeAutoSave();
+                });
+            });
+        }
+
+        function triggerAutoSave() {
+            const msg = document.getElementById('status-msg');
+            msg.className = "block text-center font-bold text-amber-500 text-sm mb-4";
+            msg.innerText = "変更を検出し待機中...";
+
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(async () => {
+                await executeAutoSave();
+            }, 1500);
+        }
+
+        async function executeAutoSave() {
+            const date = document.getElementById('commonDate').value;
+            if (!date) return;
+            const currentName = reporterNameInput.value.trim();
+
+            // ローカルストレージに管理者名を常時保存
+            if (currentName) {
+                localStorage.setItem('checklist_reporter_name', currentName);
+            }
+
+            const sectionsData = {};
+            ['morning', 'noon', 'afternoon', 'peak', 'evening', 'reflection'].forEach(key => {
+                const items = [];
+                document.querySelectorAll(`#list-${key} .item-card`).forEach(card => {
+                    const titleElem = card.querySelector('.field-title-input');
+                    const title = titleElem ? titleElem.value.trim() : '';
+                    if (card.classList.contains('checkbox-card')) {
+                        const checkElem = card.querySelector('.field-check-input');
+                        items.push({ title, checked: checkElem ? checkElem.checked : false, type: 'checkbox' });
+                    } else if (card.classList.contains('bullet-card')) {
+                        items.push({ title, type: 'bullet' });
+                    } else {
+                        const valElem = card.querySelector('.field-value-input');
+                        items.push({ title, value: valElem ? valElem.value.trim() : '', type: valElem && valElem.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text' });
+                    }
+                });
+                sectionsData[key] = items;
+            });
+
+            try {
+                await setDoc(doc(db, "warehouse_reports", date), {
+                    date, name: currentName || "未設定", sections: sectionsData, updatedAt: new Date().toISOString()
+                });
+                const msg = document.getElementById('status-msg');
+                msg.className = "block text-center font-bold text-emerald-600 text-sm mb-4";
+                msg.innerText = "自動保存しました";
+                setTimeout(() => {
+                    if (msg.innerText === "自動保存しました") msg.innerText = '';
+                }, 2000);
+            } catch (err) {
+                console.error(err);
+                const msg = document.getElementById('status-msg');
+                msg.className = "block text-center font-bold text-red-600 text-sm mb-4";
+                msg.innerText = "自動保存に失敗しました";
+            }
+        }
+
+        window.loadChecklistByDate = async (date) => {
+            if (!date) return;
+            try {
+                const docSnap = await getDoc(doc(db, "warehouse_reports", date));
+                if (docSnap.exists()) {
+                    reporterNameInput.value = docSnap.data().name || '';
+                    renderSections(docSnap.data().sections);
+                } else {
+                    // データが存在しない日付の場合はローカルストレージの保存名を復元
+                    const savedName = localStorage.getItem('checklist_reporter_name');
+                    reporterNameInput.value = savedName ? savedName : '';
+                    renderSections(null);
+                }
+            } catch(err) { console.error(err); }
+        };
+
+        window.saveChecklistData = async () => {
+            clearTimeout(autoSaveTimer); // 手動保存時はタイマーをクリア
+            const date = document.getElementById('commonDate').value;
+            if (!date) { alert('対象日を選択してください。'); return; }
+            await executeAutoSave();
+            const msg = document.getElementById('status-msg');
+            msg.className = "block text-center font-bold text-emerald-600 text-sm mb-4";
+            msg.innerText = "チェックリストをクラウドに保存しました！";
+            setTimeout(() => msg.innerText = '', 2500);
+        };
+
+        window.onload = () => {
+            const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+            document.getElementById('commonDate').value = today;
+
+            // 初回ロード時にローカルストレージから名前を反映
+            const savedName = localStorage.getItem('checklist_reporter_name');
+            if (savedName) {
+                reporterNameInput.value = savedName;
+            }
+
+            loadChecklistByDate(today);
+
+            // 管理者名の変更時も自動保存＆ローカル保存
+            reporterNameInput.addEventListener('input', triggerAutoSave);
+            reporterNameInput.addEventListener('blur', async () => {
+                clearTimeout(autoSaveTimer);
+                await executeAutoSave();
+            });
+        };
+    </script>
+</body>
+</html>

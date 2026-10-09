@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>倉庫管理システム 総合ポータル</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f8fafc; font-family: sans-serif; padding: 15px; color: #1e293b; }
+        .card {
+            background: white;
+            padding: 14px;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+            border: 1px solid #e2e8f0;
+            position: relative;
+        }
+        .card:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+    <div style="max-width: 900px; margin: 0 auto;">
+        <header class="mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold text-slate-800 mb-1">🏢 倉庫管理システム 総合ポータル</h1>
+                <p class="text-xs sm:text-sm text-gray-600">各ツールへのアクセス・並び替えができます（ローカル保存）</p>
+            </div>
+            <div class="flex gap-2 w-full sm:w-auto">
+                <button onclick="openAddCategoryModal()" class="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded shadow transition">
+                    ＋ カテゴリ追加
+                </button>
+                <button onclick="resetDefault()" class="bg-gray-200 hover:bg-gray-300 text-slate-700 text-xs px-3 py-2 rounded transition" title="初期配置に戻す">
+                    初期化
+                </button>
+            </div>
+        </header>
+
+        <!-- ポータル本体（JavaScriptで描画） -->
+        <div id="portal-container"></div>
+    </div>
+
+    <!-- カテゴリ追加モーダル -->
+    <div id="categoryModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg p-5 w-full max-w-md shadow-xl">
+            <h3 class="font-bold text-base mb-3 text-slate-800">新規カテゴリの追加</h3>
+            <input type="text" id="newCategoryName" placeholder="カテゴリ名（例: 特殊ツール）" class="w-full border border-slate-300 rounded p-2 text-sm mb-4 focus:outline-none focus:border-blue-500">
+            <div class="flex justify-end gap-2">
+                <button onclick="closeAddCategoryModal()" class="px-4 py-2 bg-gray-100 text-gray-600 text-xs rounded hover:bg-gray-200">キャンセル</button>
+                <button onclick="addCategory()" class="px-4 py-2 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">追加する</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- カテゴリ移動モーダル -->
+    <div id="moveModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg p-5 w-full max-w-md shadow-xl">
+            <h3 class="font-bold text-base mb-3 text-slate-800">移動先のカテゴリを選択</h3>
+            <input type="hidden" id="moveCardId">
+            <select id="targetCategorySelect" class="w-full border border-slate-300 rounded p-2 text-sm mb-4 focus:outline-none focus:border-blue-500"></select>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeMoveModal()" class="px-4 py-2 bg-gray-100 text-gray-600 text-xs rounded hover:bg-gray-200">キャンセル</button>
+                <button onclick="executeMoveCard()" class="px-4 py-2 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">移動する</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初期データ定義
+        const defaultData = {
+            categories: [
+                { id: "shipping", name: "🚚 送り状ツール" },
+                { id: "communication", name: "💬 連絡アプリ" },
+                { id: "others", name: "🛠️ その他ツール" }
+            ],
+            cards: [
+                { id: "shipping-format", category: "shipping", title: "🚚 出荷・送り状自動整形", desc: "受注CSV・ヤマト・佐川CSV整形、検品シート印刷", href: "shipping-format.html" },
+                { id: "shipping-link", category: "shipping", title: "🔗 追跡番号紐づけ", desc: "発行済みCSVと受注CSVの突合・Shift-JIS出力", href: "shipping-link.html" },
+                { id: "shipping-simulator", category: "shipping", title: "⚙️ 受注データ処理シミュレーター", desc: "ステータス変更（220更新）、不要行除外・抽出（振り分けくん）", href: "shipping-simulator.html" },
+
+                { id: "request", category: "communication", title: "📋 スタッフ間 依頼・伝言管理", desc: "From・To・タスク内容を指定した依頼・伝言の共有（Firestore同期・完了/削除対応）", href: "request.html" },
+                { id: "notes", category: "communication", title: "💬 チーム共有ノート", desc: "カテゴリ分け投稿、キーワード検索、連絡事項の共有", href: "notes.html" },
+                { id: "meeting", category: "communication", title: "📝 議事録 ＆ 出荷実績管理", desc: "定例会議の議事録・共有事項・議題管理および前週出荷実績（Firestore同期）", href: "meeting.html" },
+
+                { id: "zaico", category: "others", title: "📦 zaico連携・受注解析", desc: "zaico在庫同期、バーコード抽出、倍率・棚番設定、出庫指示送信", href: "zaico.html" },
+                { id: "timer", category: "others", title: "⏱️ 作業タイム計測", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html" },
+                { id: "label", category: "others", title: "🏷️ 処理済みラベル管理", desc: "サーマル用紙（100mm×150mm）印刷、セラー・担当者管理", href: "label.html" },
+                { id: "material", category: "others", title: "📋 資材発注依頼", desc: "資材の発注希望依頼、日付検索・ステータス管理", href: "material.html" },
+                { id: "checklist", category: "others", title: "📋 日次報告チェックリスト", desc: "出勤時〜終業時までの管理者チェックリスト（Firestore同期）", href: "checklist.html" },
+                { id: "shukka", category: "others", title: "📊 出荷件数 日別集計", desc: "サービス別の出荷件数入力・総合計算出・サービス管理", href: "shukka.html" },
+                { id: "skill", category: "others", title: "📊 スキル棚卸し管理", desc: "メンバー別の業務スキル評価・チェックリスト管理（印刷対応）", href: "skill.html" },
+                { id: "brainstorm", category: "others", title: "💡 オンライン共有ブレインストーミング", desc: "リアルタイムで付箋を追加・共有できるアイデア出しボード（Firestore同期）", href: "brainstorm.html" }
+            ]
+        };
+
+        // ローカルストレージからのデータ読み込み
+        function loadData() {
+            const saved = localStorage.getItem('warehouse_portal_data');
+            if (saved) {
+                try { return JSON.parse(saved); } catch (e) { }
+            }
+            return JSON.parse(JSON.stringify(defaultData));
+        }
+
+        function saveData(data) {
+            localStorage.setItem('warehouse_portal_data', JSON.stringify(data));
+            render();
+        }
+
+        // 画面描画
+        function render() {
+            const data = loadData();
+            const container = document.getElementById('portal-container');
+            container.innerHTML = '';
+
+            data.categories.forEach((cat, catIndex) => {
+                const section = document.createElement('section');
+                section.className = 'mb-8';
+
+                // カテゴリヘッダー（カテゴリごとの上下移動ボタン付き）
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'flex justify-between items-center mb-3 pb-1 border-b border-slate-200';
+
+                const titleHeading = document.createElement('h2');
+                titleHeading.className = 'text-sm font-bold text-slate-600 uppercase tracking-wider';
+                titleHeading.textContent = cat.name;
+                headerDiv.appendChild(titleHeading);
+
+                const catControls = document.createElement('div');
+                catControls.className = 'flex items-center gap-1';
+
+                if (catIndex > 0) {
+                    const upBtn = createSmallButton('▲ 上へ', () => moveCategory(catIndex, -1));
+                    catControls.appendChild(upBtn);
+                }
+                if (catIndex < data.categories.length - 1) {
+                    const downBtn = createSmallButton('▼ 下へ', () => moveCategory(catIndex, 1));
+                    catControls.appendChild(downBtn);
+                }
+                // カテゴリ削除ボタン（中身のカードがある場合は警告するか他へ移す必要があるので、今回はシンプルに空の時または全カードごと削除に配慮するか、あるいはシンプルに維持）
+                if (data.categories.length > 1) {
+                    const delBtn = createSmallButton('× 削除', () => deleteCategory(cat.id), 'text-red-500 hover:bg-red-50');
+                    catControls.appendChild(delBtn);
+                }
+
+                headerDiv.appendChild(catControls);
+                section.appendChild(headerDiv);
+
+                // カード一覧グリッド
+                const gridDiv = document.createElement('div');
+                gridDiv.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4';
+
+                const catCards = data.cards.filter(card => card.category === cat.id);
+
+                if (catCards.length === 0) {
+                    const emptyMsg = document.createElement('p');
+                    emptyMsg.className = 'text-xs text-gray-400 col-span-2 py-2 text-center bg-white rounded border border-dashed border-slate-200';
+                    emptyMsg.textContent = 'このカテゴリにはツールがありません（「カテゴリ移動」で移動できます）';
+                    gridDiv.appendChild(emptyMsg);
+                } else {
+                    catCards.forEach((card, cardIndex) => {
+                        const cardEl = document.createElement('div');
+                        cardEl.className = 'card flex flex-col justify-between';
+
+                        // メインコンテンツ部分（クリックでリンク先へ）
+                        const linkArea = document.createElement('a');
+                        linkArea.href = card.href;
+                        linkArea.className = 'block text-decoration-none mb-3';
+                        linkArea.innerHTML = `
+                            <h3 class="font-bold text-blue-600 text-base sm:text-lg mb-1">${card.title}</h3>
+                            <p class="text-xs text-gray-500 leading-relaxed">${card.desc}</p>
+                        `;
+                        cardEl.appendChild(linkArea);
+
+                        // 操作ボタンエリア（上へ・下へ・カテゴリ移動）
+                        const actionArea = document.createElement('div');
+                        actionArea.className = 'flex items-center justify-between pt-2 border-t border-slate-100 text-xs';
+
+                        const orderBtns = document.createElement('div');
+                        orderBtns.className = 'flex gap-1';
+                        if (cardIndex > 0) {
+                            orderBtns.appendChild(createSmallButton('▲', () => moveCardOrder(card.id, -1), 'px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600'));
+                        }
+                        if (cardIndex < catCards.length - 1) {
+                            orderBtns.appendChild(createSmallButton('▼', () => moveCardOrder(card.id, 1), 'px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600'));
+                        }
+                        actionArea.appendChild(orderBtns);
+
+                        const moveBtn = createSmallButton('📁 カテゴリ移動', () => openMoveModal(card.id), 'px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded');
+                        actionArea.appendChild(moveBtn);
+
+                        cardEl.appendChild(actionArea);
+                        gridDiv.appendChild(cardEl);
+                    });
+                }
+
+                section.appendChild(gridDiv);
+                container.appendChild(section);
+            });
+        }
+
+        function createSmallButton(text, onClick, className = 'text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600') {
+            const btn = document.createElement('button');
+            btn.className = className;
+            btn.textContent = text;
+            btn.onclick = onClick;
+            return btn;
+        }
+
+        // --- 操作ロジック ---
+        function moveCategory(index, direction) {
+            const data = loadData();
+            const targetIndex = index + direction;
+            if (targetIndex < 0 || targetIndex >= data.categories.length) return;
+
+            const temp = data.categories[index];
+            data.categories[index] = data.categories[targetIndex];
+            data.categories[targetIndex] = temp;
+            saveData(data);
+        }
+
+        function deleteCategory(catId) {
+            const data = loadData();
+            // 該当カテゴリのカードを「others」などに逃がすか確認
+            const hasCards = data.cards.some(c => c.category === catId);
+            if (hasCards) {
+                alert('このカテゴリに属するツールが存在するため削除できません。先に別のカテゴリへ移動してください。');
+                return;
+            }
+            if (confirm('このカテゴリを削除してもよろしいですか？')) {
+                data.categories = data.categories.filter(c => c.id !== catId);
+                saveData(data);
+            }
+        }
+
+        function moveCardOrder(cardId, direction) {
+            const data = loadData();
+            const card = data.cards.find(c => c.id === cardId);
+            if (!card) return;
+
+            const catCards = data.cards.filter(c => c.category === card.category);
+            const indexInCat = catCards.findIndex(c => c.id === cardId);
+            const targetIndexInCat = indexInCat + direction;
+
+            if (targetIndexInCat < 0 || targetIndexInCat >= catCards.length) return;
+
+            const targetCard = catCards[targetIndexInCat];
+
+            // 全体配列でのインデックスを入れ替え
+            const globalIndex1 = data.cards.findIndex(c => c.id === cardId);
+            const globalIndex2 = data.cards.findIndex(c => c.id === targetCard.id);
+
+            const temp = data.cards[globalIndex1];
+            data.cards[globalIndex1] = data.cards[globalIndex2];
+            data.cards[globalIndex2] = temp;
+
+            saveData(data);
+        }
+
+        // モーダル操作
+        function openAddCategoryModal() {
+            document.getElementById('newCategoryName').value = '';
+            document.getElementById('categoryModal').classList.remove('hidden');
+        }
+        function closeAddCategoryModal() {
+            document.getElementById('categoryModal').classList.add('hidden');
+        }
+        function addCategory() {
+            const name = document.getElementById('newCategoryName').value.trim();
+            if (!name) return;
+            const data = loadData();
+            const newId = 'cat_' + Date.now();
+            data.categories.push({ id: newId, name: name });
+            saveData(data);
+            closeAddCategoryModal();
+        }
+
+        function openMoveModal(cardId) {
+            const data = loadData();
+            document.getElementById('moveCardId').value = cardId;
+            const select = document.getElementById('targetCategorySelect');
+            select.innerHTML = '';
+            data.categories.forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.name;
+                select.appendChild(opt);
+            });
+            document.getElementById('moveModal').classList.remove('hidden');
+        }
+        function closeMoveModal() {
+            document.getElementById('moveModal').classList.add('hidden');
+        }
+        function executeMoveCard() {
+            const cardId = document.getElementById('moveCardId').value;
+            const targetCatId = document.getElementById('targetCategorySelect').value;
+            const data = loadData();
+            const card = data.cards.find(c => c.id === cardId);
+            if (card) {
+                card.category = targetCatId;
+                saveData(data);
+            }
+            closeMoveModal();
+        }
+
+        function resetDefault() {
+            if (confirm('配置とカテゴリを初期状態に戻しますか？')) {
+                localStorage.removeItem('warehouse_portal_data');
+                render();
+            }
+        }
+
+        // 初回描画実行
+        render();
+    </script>
+</body>
+</html>

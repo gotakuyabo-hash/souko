@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>資材発注依頼</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f4f6f8; font-family: sans-serif; padding: 12px; color: #1e293b; }
+        .card { background: white; padding: 16px; border-radius: 8px; max-width: 600px; margin: 0 auto 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+    <div style="max-width: 600px; margin: 0 auto;">
+        <a href="index.html" class="text-blue-600 font-bold mb-3 inline-block text-sm">← ポータルサイトに戻る</a>
+
+        <div class="card">
+            <h2 class="text-base font-bold mb-3">📦 資材発注依頼</h2>
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <div><label class="text-xs font-bold text-gray-700">依頼日</label><input type="date" id="mat-date" class="w-full p-2 border rounded mt-1 text-sm bg-white"></div>
+                <div><label class="text-xs font-bold text-gray-700">依頼者</label><input type="text" id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white" placeholder="名前"></div>
+            </div>
+            <div id="mat-list" class="space-y-3 mb-3"></div>
+            <button onclick="addMatItem()" class="w-full bg-sky-50 text-sky-700 p-2.5 border border-dashed border-sky-300 rounded font-bold text-xs mb-3">＋ 発注資材を追加</button>
+            <button onclick="saveOrder()" class="w-full bg-emerald-600 text-white p-3 rounded font-bold text-sm">💾 発注依頼を保存する</button>
+        </div>
+
+        <div class="card">
+            <h3 class="font-bold mb-3 text-base">⏳ 発注履歴</h3>
+
+            <div class="bg-slate-50 p-3 rounded border mb-4 text-xs space-y-2">
+                <div class="font-bold text-gray-700">🔍 日付で検索・絞り込み</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-[10px] text-gray-500">開始日</label>
+                        <input type="date" id="filter-start-date" class="w-full p-2 border rounded bg-white text-xs" onchange="filterHistory()">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-500">終了日</label>
+                        <input type="date" id="filter-end-date" class="w-full p-2 border rounded bg-white text-xs" onchange="filterHistory()">
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-1 pt-1">
+                    <button onclick="setFilterPreset('today')" class="bg-white border px-2.5 py-1.5 rounded text-xs hover:bg-gray-100">今日</button>
+                    <button onclick="setFilterPreset('7days')" class="bg-white border px-2.5 py-1.5 rounded text-xs hover:bg-gray-100">過去7日間</button>
+                    <button onclick="setFilterPreset('thisMonth')" class="bg-white border px-2.5 py-1.5 rounded text-xs hover:bg-gray-100">今月</button>
+                    <button onclick="clearFilter()" class="bg-gray-200 text-gray-700 px-2.5 py-1.5 rounded text-xs hover:bg-gray-300 ml-auto">条件クリア</button>
+                </div>
+            </div>
+
+            <div id="history-list" class="space-y-3 text-sm">読み込み中...</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
+
+        document.getElementById('mat-date').valueAsDate = new Date();
+
+        let allHistoryData = [];
+
+        window.addMatItem = () => {
+            document.getElementById('mat-list').innerHTML += `<div class="mat-row p-3 border rounded bg-slate-50 relative"><button onclick="this.parentElement.remove()" class="absolute top-2 right-2 text-red-600 font-bold px-2 py-1">✕</button><div class="grid grid-cols-3 gap-2 mb-2"><div class="col-span-2"><label class="text-[10px] font-bold text-gray-600">資材名</label><input type="text" class="m-name w-full p-1.5 border rounded text-sm bg-white" placeholder="ダンボール"></div><div><label class="text-[10px] font-bold text-gray-600">数量</label><input type="number" class="m-qty w-full p-1.5 border rounded text-sm bg-white" placeholder="100" inputmode="numeric"></div></div><div><label class="text-[10px] font-bold text-gray-600">備考</label><input type="text" class="m-memo w-full p-1.5 border rounded text-sm bg-white"></div></div>`;
+        };
+        addMatItem();
+
+        window.saveOrder = async () => {
+            const items = [];
+            document.querySelectorAll('.mat-row').forEach(r => {
+                items.push(`・${r.querySelector('.m-name').value || '資材'} : ${r.querySelector('.m-qty').value || 1}個 (${r.querySelector('.m-memo').value})`);
+            });
+            await addDoc(collection(db, "material_orders"), {
+                createdAt: serverTimestamp(),
+                date: document.getElementById('mat-date').value,
+                requester: document.getElementById('mat-req').value || "未設定",
+                status: "未発注",
+                text: `■依頼者: ${document.getElementById('mat-req').value}\n` + items.join('\n')
+            });
+            alert("保存しました！");
+            document.getElementById('mat-list').innerHTML = ''; addMatItem();
+        };
+
+        onSnapshot(query(collection(db, "material_orders"), orderBy("createdAt", "desc")), (snap) => {
+            allHistoryData = [];
+            snap.forEach(docSnap => {
+                allHistoryData.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            filterHistory();
+        });
+
+        window.markDone = async (id) => {
+            await setDoc(doc(db, "material_orders", id), { status: "発注済み" }, { merge: true });
+        };
+
+        window.deleteOrder = async (id) => {
+            if (confirm("この発注履歴を削除してもよろしいですか？")) {
+                try {
+                    await deleteDoc(doc(db, "material_orders", id));
+                } catch (error) {
+                    alert("削除に失敗しました: " + error.message);
+                }
+            }
+        };
+
+        window.renderHistory = (dataList) => {
+            const h = document.getElementById('history-list');
+            h.innerHTML = '';
+
+            if (dataList.length === 0) {
+                h.innerHTML = `<p class="text-gray-500 text-center py-4 text-xs">該当する発注履歴はありません。</p>`;
+                return;
+            }
+
+            dataList.forEach(d => {
+                const id = d.id, isDone = d.status === "発注済み";
+                h.innerHTML += `
+                    <div class="p-3 border rounded ${isDone ? 'bg-gray-100 opacity-75' : ''}">
+                        <div class="flex justify-between items-center font-bold mb-1 text-xs">
+                            <span>📅 ${d.date} (${d.requester})</span>
+                            <span class="${isDone ? 'text-emerald-600' : 'text-red-600'}">${d.status}</span>
+                        </div>
+                        <div class="whitespace-pre-wrap text-xs text-gray-700 mb-2">${d.text}</div>
+                        <div class="flex gap-2">
+                            ${!isDone ? `<button onclick="markDone('${id}')" class="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded font-bold">✅ 発注済みにする</button>` : ''}
+                            <button onclick="deleteOrder('${id}')" class="bg-red-50 text-red-600 border border-red-200 text-xs px-3 py-1.5 rounded font-bold ml-auto hover:bg-red-100">🗑️ 削除</button>
+                        </div>
+                    </div>`;
+            });
+        };
+
+        window.filterHistory = () => {
+            const startDate = document.getElementById('filter-start-date').value;
+            const endDate = document.getElementById('filter-end-date').value;
+
+            const filtered = allHistoryData.filter(item => {
+                if (!item.date) return true;
+                if (startDate && item.date < startDate) return false;
+                if (endDate && item.date > endDate) return false;
+                return true;
+            });
+
+            renderHistory(filtered);
+        };
+
+        window.setFilterPreset = (type) => {
+            const today = new Date();
+            const formatDate = (d) => d.toISOString().split('T')[0];
+
+            if (type === 'today') {
+                const t = formatDate(today);
+                document.getElementById('filter-start-date').value = t;
+                document.getElementById('filter-end-date').value = t;
+            } else if (type === '7days') {
+                const past = new Date();
+                past.setDate(today.getDate() - 7);
+                document.getElementById('filter-start-date').value = formatDate(past);
+                document.getElementById('filter-end-date').value = formatDate(today);
+            } else if (type === 'thisMonth') {
+                const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+                document.getElementById('filter-start-date').value = formatDate(firstDay);
+                document.getElementById('filter-end-date').value = formatDate(today);
+            }
+            filterHistory();
+        };
+
+        window.clearFilter = () => {
+            document.getElementById('filter-start-date').value = '';
+            document.getElementById('filter-end-date').value = '';
+            renderHistory(allHistoryData);
+        };
+    </script>
+</body>
+</html>
