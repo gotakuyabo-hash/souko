@@ -184,7 +184,28 @@
   .share-sub-item textarea { border: none; outline: none; background: transparent; padding: 0; }
 
   .topic-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
-  .topic-item { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; position: relative; }
+  
+  /* 議題アイテムのステータス別カラー */
+  .topic-item { 
+    background: #f8f9fa; 
+    border: 1px solid #e0e0e0; 
+    border-left: 5px solid #cbd5e1; /* デフォルト（タスクなし） */
+    border-radius: 6px; 
+    padding: 12px; 
+    position: relative; 
+    transition: background-color 0.2s, border-color 0.2s;
+  }
+  .topic-item.has-tasks {
+    background: #fbf8fd;
+    border-color: #e8daef;
+    border-left: 5px solid #8e44ad; /* 未完了タスクあり（紫系） */
+  }
+  .topic-item.all-completed {
+    background: #f4fcf7;
+    border-color: #d4efdf;
+    border-left: 5px solid #27ae60; /* タスクすべて完了済（緑系） */
+  }
+
   .meeting-row { display: flex; gap: 12px; margin-bottom: 10px; }
   .meeting-row:last-child { margin-bottom: 0; }
   .field-group { display: flex; flex-direction: column; gap: 4px; flex: 1; }
@@ -207,7 +228,6 @@
     display: block;
     transition: background-color 0.2s, opacity 0.2s;
   }
-  /* タスク完了時のスタイル（背景を薄いグレーにしてテキストに打ち消し線） */
   .task-item.completed {
     background: #edf2f7;
     border-color: #cbd5e0;
@@ -287,7 +307,6 @@
     height: 18px;
   }
 
-  /* モーダルウィンドウのスタイル */
   .modal-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
@@ -361,7 +380,6 @@
   <button type="button" class="btn-save-log" id="btn-save">💾 クラウドに保存（Firestore同期）</button>
 </div>
 
-<!-- 開催日一覧モーダル -->
 <div class="modal-overlay" id="history-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -520,6 +538,30 @@
     initAutoResize(div);
   }
 
+  // 議題内のタスク状態を判定して背景・左側ボーダーの色を更新する
+  function updateTopicStatusStyle(topicElement) {
+    const taskItems = topicElement.querySelectorAll('.task-item');
+    topicElement.classList.remove('has-tasks', 'all-completed');
+
+    if (taskItems.length === 0) {
+      return; // タスクなし（デフォルト）
+    }
+
+    let hasUncompleted = false;
+    taskItems.forEach(taskEl => {
+      const isChecked = taskEl.querySelector('.t-task-checkbox').checked;
+      if (!isChecked) {
+        hasUncompleted = true;
+      }
+    });
+
+    if (hasUncompleted) {
+      topicElement.classList.add('has-tasks'); // タスクあり（未完了）: 紫系
+    } else {
+      topicElement.classList.add('all-completed'); // タスクすべて完了済: 緑系
+    }
+  }
+
   function addTaskItem(topicElement, taskData = {}) {
     const taskList = topicElement.querySelector('.task-list');
     if (!taskList) return;
@@ -550,371 +592,4 @@
       </div>
     `;
 
-    const checkbox = div.querySelector('.t-task-checkbox');
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked) {
-        div.classList.add('completed');
-      } else {
-        div.classList.remove('completed');
-      }
-      triggerAutoSave();
-    });
-
-    div.querySelector('.btn-del-task').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
-    });
-    div.querySelectorAll('input, textarea').forEach(input => {
-      input.addEventListener('input', triggerAutoSave);
-    });
-    taskList.appendChild(div);
-    initAutoResize(div);
-  }
-
-  function addTopicItem(cardElement, topicData = {}) {
-    const topicList = cardElement.querySelector('.topic-list');
-    if (!topicList) return;
-    const div = document.createElement('div');
-    div.className = 'topic-item';
-    div.innerHTML = `
-      <button type="button" class="btn-del btn-del-topic">✕</button>
-      <div class="meeting-row">
-        <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
-          <div class="field-label">議題</div>
-          <input type="text" class="t-topic" placeholder="例: 誤出荷対策" value="${topicData.topic || ''}">
-        </div>
-        <div class="field-group" style="flex: 1;">
-          <div class="field-label">発話者</div>
-          <input type="text" class="t-speaker" placeholder="名前" value="${topicData.speaker || ''}">
-        </div>
-      </div>
-      <div class="meeting-row">
-        <div class="field-group">
-          <div class="field-label">決定事項・共有内容</div>
-          <textarea class="t-content" rows="1" placeholder="例: ダブルチェック徹底">${topicData.content || ''}</textarea>
-        </div>
-      </div>
-      <div class="topic-sub-section" style="margin-top: 6px;">
-        <div class="field-label">箇条書き・詳細メモ</div>
-        <div class="topic-sub-list"></div>
-        <button type="button" class="btn-add btn-add-topic-sub">＋ 箇条書きを追加</button>
-      </div>
-      <div class="topic-task-section" style="margin-top: 12px; padding-top: 8px; border-top: 1px dashed #e9ecef;">
-        <div class="field-label">📌 タスク / アクション項目</div>
-        <div class="task-list"></div>
-        <button type="button" class="btn-add btn-add-task">＋ タスクを追加</button>
-      </div>
-    `;
-    div.querySelector('.btn-del-topic').addEventListener('click', () => {
-      div.remove();
-      triggerAutoSave();
-    });
-    div.querySelector('.btn-add-topic-sub').addEventListener('click', () => {
-      addTopicSubItem(div);
-      triggerAutoSave();
-    });
-    div.querySelector('.btn-add-task').addEventListener('click', () => {
-      addTaskItem(div);
-      triggerAutoSave();
-    });
-    div.querySelectorAll('input').forEach(input => {
-      input.addEventListener('input', triggerAutoSave);
-    });
-    topicList.appendChild(div);
-
-    if (topicData.subItems && topicData.subItems.length > 0) {
-      topicData.subItems.forEach(s => addTopicSubItem(div, s));
-    }
-
-    if (topicData.tasks && topicData.tasks.length > 0) {
-      topicData.tasks.forEach(t => addTaskItem(div, t));
-    } else {
-      addTaskItem(div);
-    }
-    initAutoResize(div);
-  }
-
-  function addMeetingCard(meetingData = {}) {
-    const list = document.getElementById('meeting-list');
-    if (!list) return;
-
-    list.querySelectorAll('.meeting-card').forEach(c => c.classList.remove('active-tab'));
-
-    const card = document.createElement('div');
-    card.className = 'meeting-card active-tab';
-    const defaultMeetingDate = meetingData.meetingDate || dateInput.value;
-
-    card.innerHTML = `
-      <button type="button" class="btn-del btn-del-meeting">✕</button>
-      <div class="meeting-header-row">
-        <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
-          <div class="field-label">定例タイトル</div>
-          <input type="text" class="m-title" placeholder="例: 週間定例会議" value="${meetingData.title || ''}">
-        </div>
-        <div class="field-group" style="flex: 1;">
-          <div class="field-label">開催日</div>
-          <input type="date" class="m-meeting-date" value="${defaultMeetingDate}">
-        </div>
-      </div>
-      <div class="attendee-section">
-        <div class="field-label" style="margin-bottom: 4px;">参加者</div>
-        <div class="attendee-list"></div>
-        <button type="button" class="btn-add btn-add-attendee">＋ 参加者を追加</button>
-      </div>
-      <div class="meeting-share-section">
-        <div class="field-label" style="margin-bottom: 4px;">共有事項</div>
-        <div class="share-sub-list"></div>
-        <button type="button" class="btn-add btn-add-share-sub">＋ 共有事項を追加</button>
-      </div>
-      <div class="topic-list"></div>
-      <button type="button" class="btn-add btn-add-topic">＋ 議題を追加</button>
-    `;
-
-    card.querySelector('.btn-del-meeting').addEventListener('click', () => {
-      card.remove();
-      const remainingCards = list.querySelectorAll('.meeting-card');
-      if (remainingCards.length > 0) {
-        remainingCards[0].classList.add('active-tab');
-      }
-      updateTabs();
-      triggerAutoSave();
-    });
-
-    card.querySelector('.m-title').addEventListener('input', () => {
-      updateTabs();
-      triggerAutoSave();
-    });
-    card.querySelector('.m-meeting-date').addEventListener('input', triggerAutoSave);
-
-    card.querySelector('.btn-add-attendee').addEventListener('click', () => {
-      addAttendeeItem(card);
-      triggerAutoSave();
-    });
-    card.querySelector('.btn-add-share-sub').addEventListener('click', () => {
-      addShareSubItem(card);
-      triggerAutoSave();
-    });
-    card.querySelector('.btn-add-topic').addEventListener('click', () => {
-      addTopicItem(card);
-      triggerAutoSave();
-    });
-    list.appendChild(card);
-
-    if (meetingData.attendees) {
-      if (Array.isArray(meetingData.attendees)) {
-        if (meetingData.attendees.length > 0) {
-          meetingData.attendees.forEach(a => addAttendeeItem(card, a));
-        } else {
-          addAttendeeItem(card);
-        }
-      } else if (typeof meetingData.attendees === 'string') {
-        const names = meetingData.attendees.split(/[、,，\s]+/).filter(n => n.trim() !== "");
-        if (names.length > 0) {
-          names.forEach(a => addAttendeeItem(card, a));
-        } else {
-          addAttendeeItem(card);
-        }
-      }
-    } else {
-      addAttendeeItem(card);
-    }
-
-    if (meetingData.shares && meetingData.shares.length > 0) {
-      meetingData.shares.forEach(s => addShareSubItem(card, s));
-    } else {
-      addShareSubItem(card);
-    }
-
-    if (meetingData.topics && meetingData.topics.length > 0) {
-      meetingData.topics.forEach(t => addTopicItem(card, t));
-    } else {
-      addTopicItem(card);
-    }
-
-    updateTabs();
-    initAutoResize(card);
-  }
-
-  async function loadDataForDate(dateStr) {
-    document.getElementById('ship-count').value = "";
-    document.getElementById('error-count').value = "";
-    document.getElementById('error-rate').value = "0.00";
-    document.getElementById('meeting-list').innerHTML = "";
-    document.getElementById('meeting-tabs-header').innerHTML = "";
-    saveStatusEl.textContent = "";
-
-    try {
-      const docRef = doc(db, "meeting_logs", dateStr);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const d = docSnap.data();
-        document.getElementById('ship-count').value = d.shipCount || "";
-        document.getElementById('error-count').value = d.errorCount || "";
-        calcErrorRate(false);
-
-        if (d.meetings && d.meetings.length > 0) {
-          d.meetings.forEach(m => addMeetingCard(m));
-          saveStatusEl.textContent = "データを読み込みました";
-          return;
-        }
-      }
-    } catch (e) {
-      console.error(e);
-      saveStatusEl.textContent = "読み込みエラーが発生しました";
-    }
-
-    if (document.getElementById('meeting-list').children.length === 0) {
-      addMeetingCard();
-    }
-  }
-
-  async function saveDataToCloud(isAuto = false) {
-    const dateStr = dateInput.value;
-    if (!dateStr) return;
-
-    const meetings = [];
-    document.querySelectorAll('.meeting-card').forEach(card => {
-      const attendees = [];
-      card.querySelectorAll('.m-attendee-input').forEach(input => {
-        if (input.value.trim() !== "") attendees.push(input.value);
-      });
-
-      const shares = [];
-      card.querySelectorAll('.m-share-input').forEach(input => {
-        if (input.value.trim() !== "") shares.push(input.value);
-      });
-      const topics = [];
-      card.querySelectorAll('.topic-item').forEach(topicItem => {
-        const subItems = [];
-        topicItem.querySelectorAll('.t-sub-input').forEach(subInput => {
-          if (subInput.value.trim() !== "") subItems.push(subInput.value);
-        });
-
-        const tasks = [];
-        topicItem.querySelectorAll('.task-item').forEach(taskItem => {
-          const taskName = taskItem.querySelector('.t-task-name').value;
-          const assignee = taskItem.querySelector('.t-task-assignee').value;
-          const limit = taskItem.querySelector('.t-task-limit').value;
-          const completed = taskItem.querySelector('.t-task-checkbox').checked;
-          if (taskName.trim() !== "" || assignee.trim() !== "" || limit !== "") {
-            tasks.push({ task: taskName, assignee, limit, completed });
-          }
-        });
-
-        topics.push({
-          topic: topicItem.querySelector('.t-topic').value,
-          speaker: topicItem.querySelector('.t-speaker').value,
-          content: topicItem.querySelector('.t-content').value,
-          subItems: subItems,
-          tasks: tasks
-        });
-      });
-      meetings.push({
-        title: card.querySelector('.m-title').value,
-        meetingDate: card.querySelector('.m-meeting-date').value,
-        attendees,
-        shares, topics
-      });
-    });
-
-    const payload = {
-      shipCount: document.getElementById('ship-count').value,
-      errorCount: document.getElementById('error-count').value,
-      errorRate: document.getElementById('error-rate').value,
-      meetings,
-      updatedAt: new Date().toISOString()
-    };
-
-    try {
-      await setDoc(doc(db, "meeting_logs", dateStr), payload);
-      const nowStr = new Date().toLocaleTimeString();
-      saveStatusEl.textContent = `自動保存しました (${nowStr})`;
-      if (!isAuto) {
-        alert("クラウドに保存しました！");
-      }
-    } catch(e) {
-      console.error(e);
-      saveStatusEl.textContent = "保存に失敗しました";
-      if (!isAuto) {
-        alert("保存に失敗しました。");
-      }
-    }
-  }
-
-  async function openHistoryModal() {
-    const modal = document.getElementById('history-modal');
-    const container = document.getElementById('history-list-container');
-    container.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">開催日をスキャン中...</div>';
-    modal.style.display = 'flex';
-
-    try {
-      const querySnapshot = await getDocs(collection(db, "meeting_logs"));
-      const listData = [];
-
-      querySnapshot.forEach((document) => {
-        const dateStr = document.id;
-        const data = document.data();
-        if (data.meetings && Array.isArray(data.meetings)) {
-          const validMeetings = data.meetings.filter(m => m.title && m.title.trim() !== "");
-          if (validMeetings.length > 0) {
-            const titles = validMeetings.map(m => m.title).join(' / ');
-            listData.push({ date: dateStr, titles });
-          }
-        }
-      });
-
-      listData.sort((a, b) => b.date.localeCompare(a.date));
-
-      container.innerHTML = "";
-      if (listData.length === 0) {
-        container.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">定例タイトルが入力された記録はまだありません。</div>';
-        return;
-      }
-
-      listData.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'history-item';
-        div.innerHTML = `
-          <div>
-            <div style="font-weight: bold; color: #2980b9;">📅 ${item.date}</div>
-            <div style="font-size: 12px; color: #555; margin-top: 2px;">${item.titles}</div>
-          </div>
-          <span style="color: #95a5a6;">▶</span>
-        `;
-        div.addEventListener('click', () => {
-          dateInput.value = item.date;
-          loadDataForDate(item.date);
-          modal.style.display = 'none';
-        });
-        container.appendChild(div);
-      });
-
-    } catch (e) {
-      console.error(e);
-      container.innerHTML = '<div style="text-align: center; color: #e74c3c; padding: 20px;">開催日リストの取得に失敗しました。</div>';
-    }
-  }
-
-  const modal = document.getElementById('history-modal');
-  document.getElementById('btn-open-history').addEventListener('click', openHistoryModal);
-  document.getElementById('modal-x').addEventListener('click', () => modal.style.display = 'none');
-  document.getElementById('modal-close-btn').addEventListener('click', () => modal.style.display = 'none');
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.style.display = 'none';
-  });
-
-  document.getElementById('ship-count').addEventListener('input', () => calcErrorRate(true));
-  document.getElementById('error-count').addEventListener('input', () => calcErrorRate(true));
-  document.getElementById('btn-add-meeting').addEventListener('click', () => {
-    addMeetingCard();
-    triggerAutoSave();
-  });
-  dateInput.addEventListener('change', () => loadDataForDate(dateInput.value));
-
-  document.getElementById('btn-save').addEventListener('click', () => saveDataToCloud(false));
-  document.getElementById('btn-save-top').addEventListener('click', () => saveDataToCloud(false));
-
-  loadDataForDate(dateInput.value);
-</script>
-</body>
-</html>
+    const check
