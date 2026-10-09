@@ -185,11 +185,11 @@
 
   .topic-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
   
-  /* 議題アイテムのステータス別カラー */
+  /* 議題アイテムのステータス別カラー（左ボーダーと背景色） */
   .topic-item { 
     background: #f8f9fa; 
     border: 1px solid #e0e0e0; 
-    border-left: 5px solid #cbd5e1; /* デフォルト（タスクなし） */
+    border-left: 6px solid #cbd5e1; /* タスクなし：グレー */
     border-radius: 6px; 
     padding: 12px; 
     position: relative; 
@@ -198,12 +198,12 @@
   .topic-item.has-tasks {
     background: #fbf8fd;
     border-color: #e8daef;
-    border-left: 5px solid #8e44ad; /* 未完了タスクあり（紫系） */
+    border-left: 6px solid #8e44ad; /* 未完了タスクあり：紫系 */
   }
   .topic-item.all-completed {
     background: #f4fcf7;
     border-color: #d4efdf;
-    border-left: 5px solid #27ae60; /* タスクすべて完了済（緑系） */
+    border-left: 6px solid #27ae60; /* タスクすべて完了済：緑系 */
   }
 
   .meeting-row { display: flex; gap: 12px; margin-bottom: 10px; }
@@ -739,6 +739,11 @@
     meetingList.appendChild(card);
     updateTabs();
     initAutoResize(card);
+    
+    // カード内のすべての議題に対して色状態を強制更新
+    card.querySelectorAll('.topic-item').forEach(topicEl => {
+      updateTopicStatusStyle(topicEl);
+    });
   }
 
   async function loadDataFromCloud(dateStr) {
@@ -768,6 +773,12 @@
         addMeetingCard();
         saveStatusEl.textContent = "新規データです";
       }
+      
+      // 読み込み直後に全議題のステータス色を再適用
+      document.querySelectorAll('.topic-item').forEach(topicEl => {
+        updateTopicStatusStyle(topicEl);
+      });
+
       updateTabs();
       initAutoResize();
     } catch (error) {
