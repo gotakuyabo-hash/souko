@@ -16,7 +16,7 @@
     <!-- 設定カード -->
     <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
         <details class="text-xs" id="settingsDetails">
-            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ 送信先グループ設定（タップして展開）</summary>
+            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ 送信先グループ・メンション設定（タップして展開）</summary>
             <div class="mt-3 space-y-3 pt-2 border-t border-slate-100">
                 <div>
                     <button type="button" onclick="fetchChatRooms()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-xs">🔄 チャットグループ一覧を取得する</button>
@@ -32,8 +32,14 @@
                     <input type="text" id="cwRoomId" placeholder="自動入力されます" readonly class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-500">
                 </div>
                 <div>
-                    <label class="block font-medium mb-1">担当者 宛先ID (メンション用・任意)</label>
-                    <input type="text" id="cwAccountId" placeholder="例: 9876543" class="w-full border border-slate-300 rounded p-2 text-xs">
+                    <label class="block font-medium mb-1">担当者 メンション先（宛先選択）</label>
+                    <select id="memberSelect" onchange="onMemberSelectChange()" class="w-full border border-slate-300 rounded p-2 text-xs bg-white">
+                        <option value="">-- グループ選択後にメンバーが読み込まれます --</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">選択中のアカウントID（メンション用）</label>
+                    <input type="text" id="cwAccountId" placeholder="自動入力されます（空欄ならメンションなし）" readonly class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-500">
                 </div>
                 <div>
                     <label class="block font-medium mb-1">GAS ウェブアプリURL</label>
@@ -120,6 +126,10 @@
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
             if (savedGas) document.getElementById('gasUrl').value = savedGas;
+
+            if (savedRoom) {
+                fetchRoomMembers(savedRoom, savedAccount);
+            }
         });
 
         async function fetchChatRooms() {
@@ -159,9 +169,57 @@
             }
         }
 
-        function onRoomSelectChange() {
+        async function onRoomSelectChange() {
             const select = document.getElementById('roomSelect');
-            document.getElementById('cwRoomId').value = select.value;
+            const roomId = select.value;
+            document.getElementById('cwRoomId').value = roomId;
+            
+            if (roomId) {
+                await fetchRoomMembers(roomId);
+            }
+        }
+
+        async function fetchRoomMembers(roomId, selectedAccountId = '') {
+            const gasUrl = document.getElementById('gasUrl').value.trim();
+            const statusMsg = document.getElementById('statusMsg');
+            const memberSelect = document.getElementById('memberSelect');
+
+            try {
+                statusMsg.innerText = "グループのメンバーを取得中...";
+                memberSelect.innerHTML = '<option value="">読み込み中...</option>';
+
+                const res = await fetch(gasUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: 'getMembers', roomId: roomId })
+                });
+
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error(data.message || 'メンバー取得失敗');
+
+                const members = data.members;
+                memberSelect.innerHTML = '<option value="">-- メンションなし（全員参加） --</option>';
+                
+                members.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.account_id;
+                    opt.textContent = `${m.name} (${m.role_name || 'メンバー'})`;
+                    if (String(m.account_id) === String(selectedAccountId)) {
+                        opt.selected = true;
+                    }
+                    memberSelect.appendChild(opt);
+                });
+
+                statusMsg.innerText = "設定の準備が整いました！";
+            } catch (err) {
+                memberSelect.innerHTML = '<option value="">メンバー取得エラー</option>';
+                statusMsg.innerText = "";
+            }
+        }
+
+        function onMemberSelectChange() {
+            const select = document.getElementById('memberSelect');
+            document.getElementById('cwAccountId').value = select.value;
         }
 
         function saveSettings() {
