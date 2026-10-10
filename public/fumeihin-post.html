@@ -10,7 +10,7 @@
 
     <header class="mb-4 text-center">
         <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
-        <p class="text-xs text-slate-500">GAS中継・Chatwork自動報告 ＆ 履歴保存</p>
+        <p class="text-xs text-slate-500">カメラ撮影・GAS中継・Chatwork自動報告</p>
     </header>
 
     <!-- 設定カード -->
@@ -74,8 +74,13 @@
                 <label class="block text-xs font-bold mb-1">詳細メモ・保管場所など</label>
                 <textarea id="memo" rows="2" placeholder="例: 棚A-3に一時保管しています。確認お願いします。" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500"></textarea>
             </div>
+            <div>
+                <label class="block text-xs font-bold mb-1">📷 証拠写真（カメラ起動・選択）</label>
+                <!-- capture="environment" を指定するとスマホで直接外カメラが起動しやすくなります -->
+                <input type="file" id="reportImage" accept="image/*" capture="environment" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100">
+            </div>
             <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
-                🚀 Chatworkに報告 ＆ 記録
+                🚀 画像付きでChatwork報告 ＆ 記録
             </button>
         </form>
         <p id="statusMsg" class="text-center text-xs text-slate-500 mt-2 min-h-[1.5rem]"></p>
@@ -229,6 +234,20 @@
             alert('設定を保存しました！');
         }
 
+        // ファイルをBase64に変換するヘルパー関数
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    // "data:image/jpeg;base64,xxxxxx" のカンマ以降を取り出す
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+
         const reportForm = document.getElementById('reportForm');
         const statusMsg = document.getElementById('statusMsg');
         const historyList = document.getElementById('historyList');
@@ -240,6 +259,7 @@
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
             const gasUrl = document.getElementById('gasUrl').value.trim();
+            const imageInput = document.getElementById('reportImage');
             
             const roomId = document.getElementById('cwRoomId').value.trim() || localStorage.getItem('fumeihin_cw_room');
             const accountId = document.getElementById('cwAccountId').value.trim() || localStorage.getItem('fumeihin_cw_account');
@@ -258,7 +278,7 @@
                     createdAt: new Date().toISOString()
                 });
 
-                // 2. Chatwork通知（GAS経由）
+                // 2. Chatwork通知（GAS経由：画像がある場合はBase64に変換して送信）
                 if (roomId && gasUrl) {
                     statusMsg.innerText = "Chatworkへ送信中...";
                     
@@ -272,18 +292,29 @@
                                       `----------------------------------\n` +
                                       `ご確認とご対応よろしくお願いいたします。`;
 
+                    let payloadData = {
+                        action: 'sendMessage',
+                        roomId: roomId,
+                        messageBody: messageBody
+                    };
+
+                    // 画像ファイルが選択されている場合
+                    if (imageInput.files && imageInput.files[0]) {
+                        const file = imageInput.files[0];
+                        const base64Data = await fileToBase64(file);
+                        payloadData.imageBase64 = base64Data;
+                        payloadData.imageName = file.name || 'evidence.jpg';
+                        payloadData.imageMimeType = file.type || 'image/jpeg';
+                    }
+
                     await fetch(gasUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({
-                            action: 'sendMessage',
-                            roomId: roomId,
-                            messageBody: messageBody
-                        })
+                        body: JSON.stringify(payloadData)
                     });
                 }
 
-                statusMsg.innerText = "報告＆送信完了しました！";
+                statusMsg.innerText = "報告＆画像付き送信完了しました！";
                 reportForm.reset();
                 window.loadHistoryFromFirestore();
             } catch (err) {
