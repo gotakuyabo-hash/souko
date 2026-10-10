@@ -297,11 +297,10 @@
   }
   .btn-history:active { background-color: #2471a3; }
 
-  /* 「もとに戻す」ボタン用スタイル */
   .btn-undo {
     background-color: #e67e22; color: #fff; border: none; border-radius: 4px;
     padding: 8px 12px; font-size: 13px; font-weight: bold; cursor: pointer; white-space: nowrap;
-    display: none; /* 初期状態は非表示 */
+    display: none;
   }
   .btn-undo:active { background-color: #d35400; }
 
@@ -338,7 +337,6 @@
   .history-item:hover { background: #eef2f5; border-color: #3498db; }
   .modal-close { background: #e74c3c; color: #fff; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; }
 
-  /* 削除確認モーダル専用 */
   .confirm-modal-buttons {
     display: flex;
     gap: 10px;
@@ -414,7 +412,6 @@
   <button type="button" class="btn-save-log" id="btn-save">💾 クラウドに保存（Firestore同期）</button>
 </div>
 
-<!-- 開催日一覧モーダル -->
 <div class="modal-overlay" id="history-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -428,7 +425,6 @@
   </div>
 </div>
 
-<!-- 削除確認ダイアログモーダル -->
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal-content" style="max-width: 320px; text-align: center;">
     <div class="modal-header" style="justify-content: center; color: #e74c3c;">⚠️ 削除の確認</div>
@@ -466,9 +462,8 @@
   const saveStatusEl = document.getElementById('save-status');
   const undoBtn = document.getElementById('btn-undo');
 
-  let lastSavedState = null; // 「もとに戻す」用の直前バックアップデータ
+  let lastSavedState = null;
 
-  // 削除確認モーダルの制御用
   const confirmModal = document.getElementById('confirm-modal');
   const confirmMsg = document.getElementById('confirm-msg');
   const confirmYes = document.getElementById('confirm-yes');
@@ -520,7 +515,6 @@
     }, 1500);
   }
 
-  // 現在の画面上の全データをオブジェクトとして収集する関数
   function collectCurrentData() {
     const shipCount = parseFloat(document.getElementById('ship-count').value) || 0;
     const errorCount = parseFloat(document.getElementById('error-count').value) || 0;
@@ -566,7 +560,6 @@
     return { shipCount, errorCount, errorRate, meetings };
   }
 
-  // データを画面に復元する関数
   function restoreDataToUI(data) {
     document.getElementById('ship-count').value = data.shipCount !== undefined ? data.shipCount : "";
     document.getElementById('error-count').value = data.errorCount !== undefined ? data.errorCount : "";
@@ -915,7 +908,7 @@
           addMeetingCard();
         }
         saveStatusEl.textContent = "データを読み込みました";
-        lastSavedState = collectCurrentData(); // ロード時の状態をバックアップ
+        lastSavedState = collectCurrentData();
       } else {
         addMeetingCard();
         saveStatusEl.textContent = "新規データです";
@@ -939,9 +932,8 @@
     const dateStr = dateInput.value;
     if (!dateStr) return;
 
-    // 保存する直前の状態を「もとに戻す」用に保持
     lastSavedState = collectCurrentData();
-    undoBtn.style.display = 'inline-block'; // 戻せるようにボタンを表示
+    undoBtn.style.display = 'inline-block';
 
     if (!isAuto) saveStatusEl.textContent = "保存中...";
 
@@ -965,13 +957,12 @@
     }
   }
 
-  // 「もとに戻す」ボタンの処理
   undoBtn.addEventListener('click', () => {
     if (lastSavedState) {
       restoreDataToUI(lastSavedState);
       saveStatusEl.textContent = "直前の状態に戻しました";
       undoBtn.style.display = 'none';
-      triggerAutoSave(); // 戻した内容で再度保存をスケジュール
+      triggerAutoSave();
     }
   });
 
