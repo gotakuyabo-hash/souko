@@ -11,6 +11,7 @@
             --card-bg: #ffffff;
             --text-color: #1e293b;
             --border-color: #cbd5e1;
+            --danger-color: #ef4444;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -70,6 +71,14 @@
         .btn-secondary {
             background-color: #64748b;
         }
+        .btn-danger {
+            background-color: var(--danger-color);
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            width: auto;
+            margin: 0;
+            display: inline-block;
+        }
         form label {
             display: block;
             font-size: 0.875rem;
@@ -77,20 +86,27 @@
             margin-bottom: 4px;
             margin-top: 10px;
         }
-        form input, form textarea {
+        form input, form textarea, select {
             width: 100%;
             padding: 10px;
             border: 1px solid var(--border-color);
             border-radius: 6px;
             font-size: 1rem;
+            background: #fff;
+        }
+        .filter-container {
+            margin-bottom: 12px;
         }
         .history-list {
             list-style: none;
         }
         .history-item {
-            padding: 10px;
+            padding: 12px;
             border-bottom: 1px solid #e2e8f0;
             font-size: 0.875rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
         }
         .history-item:last-child { border-bottom: none; }
         .meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
@@ -100,12 +116,27 @@
         .file-input-wrap input {
             display: none;
         }
+        dialog {
+            border: none;
+            border-radius: 12px;
+            padding: 20px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        dialog::backdrop {
+            background: rgba(0, 0, 0, 0.5);
+        }
+        .dialog-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
     </style>
 
-    <!-- Firebase SDKの読み込み -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -120,17 +151,17 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // グローバルに公開
         window.db = db;
         window.collection = collection;
         window.addDoc = addDoc;
         window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
+        window.doc = doc;
         window.query = query;
         window.orderBy = orderBy;
         window.limit = limit;
         window.serverTimestamp = serverTimestamp;
 
-        // 読み込み完了後に履歴を取得
         window.addEventListener('DOMContentLoaded', () => {
             if (window.loadHistoryFromFirestore) {
                 window.loadHistoryFromFirestore();
@@ -173,10 +204,24 @@
 
     <div class="card">
         <h3 style="font-size: 1rem; margin-bottom: 8px;">クラウド保存履歴</h3>
+        <div class="filter-container">
+            <select id="monthFilter">
+                <option value="">すべての月を表示</option>
+            </select>
+        </div>
         <ul id="historyList" class="history-list">
             <li style="color: #64748b; text-align: center; padding: 8px;">読み込み中...</li>
         </ul>
     </div>
+
+    <dialog id="confirmDialog">
+        <p style="font-weight: bold; margin-bottom: 8px;">削除の確認</p>
+        <p id="confirmMessage" style="font-size: 0.875rem; color: #64748b; margin-bottom: 16px;">この記録を削除してもよろしいですか？</p>
+        <div class="dialog-buttons">
+            <button type="button" class="btn btn-secondary" id="cancelDeleteBtn" style="margin: 0;">キャンセル</button>
+            <button type="button" class="btn btn-danger" id="executeDeleteBtn" style="width: 100%; margin: 0;">削除する</button>
+        </div>
+    </dialog>
 
     <script>
         const video = document.getElementById('camera');
@@ -186,10 +231,16 @@
         const statusMsg = document.getElementById('statusMsg');
         const logForm = document.getElementById('logForm');
         const historyList = document.getElementById('historyList');
+        const monthFilter = document.getElementById('monthFilter');
+        const confirmDialog = document.getElementById('confirmDialog');
+        const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+        const executeDeleteBtn = document.getElementById('executeDeleteBtn');
 
         let mediaStream = null;
         let scanning = false;
         let barcodeDetector = null;
+        let allHistoryData = [];
+        let targetDeleteId = null;
 
         if ('BarcodeDetector' in window) {
             BarcodeDetector.getSupportedFormats().then(formats => {
@@ -266,7 +317,6 @@
             reader.readAsDataURL(file);
         });
 
-        // Firestoreへの保存処理
         logForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const num = trackingInput.value.trim();
@@ -292,34 +342,98 @@
             }
         });
 
-        // Firestoreから履歴を読み込む関数
         window.loadHistoryFromFirestore = async function() {
             if (!window.db) return;
             try {
-                const q = window.query(window.collection(window.db, "invoices"), window.orderBy("createdAt", "desc"), window.limit(20));
+                const q = window.query(window.collection(window.db, "invoices"), window.orderBy("createdAt", "desc"), window.limit(100));
                 const querySnapshot = await window.getDocs(q);
                 
-                let historyData = [];
-                querySnapshot.forEach((doc) => {
-                    historyData.push(doc.data());
+                allHistoryData = [];
+                querySnapshot.forEach((docSnap) => {
+                    allHistoryData.push({ id: docSnap.id, ...docSnap.data() });
                 });
 
-                if (historyData.length === 0) {
-                    historyList.innerHTML = '<li style="color: #64748b; text-align: center; padding: 8px;">まだ記録はありません</li>';
-                    return;
-                }
-
-                historyList.innerHTML = historyData.map(item => `
-                    <li class="history-item">
-                        <strong>${item.number}</strong> (${item.amount ? item.amount + '円' : '金額未設定'})<br>
-                        <span>${item.memo || 'メモなし'}</span>
-                        <div class="meta">${new Date(item.createdAt).toLocaleString()}</div>
-                    </li>
-                `).join('');
+                updateMonthFilterOptions();
+                renderHistoryList();
             } catch (err) {
                 historyList.innerHTML = '<li style="color: #ef4444; text-align: center; padding: 8px;">履歴の読み込みに失敗しました</li>';
             }
         };
+
+        function updateMonthFilterOptions() {
+            const months = new Set();
+            allHistoryData.forEach(item => {
+                if (item.createdAt) {
+                    const date = new Date(item.createdAt);
+                    if (!isNaN(date)) {
+                        const y = date.getFullYear();
+                        const m = String(date.getMonth() + 1).padStart(2, '0');
+                        months.add(`${y}-${m}`);
+                    }
+                }
+            });
+
+            const sortedMonths = Array.from(months).sort().reverse();
+            const currentSelected = monthFilter.value;
+
+            monthFilter.innerHTML = '<option value="">すべての月を表示</option>' + 
+                sortedMonths.map(ym => {
+                    const [y, m] = ym.split('-');
+                    return `<option value="${ym}">${y}年${parseInt(m, 10)}月</option>`;
+                }).join('');
+
+            if (months.has(currentSelected)) {
+                monthFilter.value = currentSelected;
+            }
+        }
+
+        function renderHistoryList() {
+            const selectedMonth = monthFilter.value;
+            const filteredData = allHistoryData.filter(item => {
+                if (!selectedMonth || !item.createdAt) return true;
+                return item.createdAt.startsWith(selectedMonth);
+            });
+
+            if (filteredData.length === 0) {
+                historyList.innerHTML = '<li style="color: #64748b; text-align: center; padding: 8px;">記録はありません</li>';
+                return;
+            }
+
+            historyList.innerHTML = filteredData.map(item => `
+                <li class="history-item">
+                    <div>
+                        <strong>${item.number}</strong> (${item.amount ? item.amount + '円' : '金額未設定'})<br>
+                        <span>${item.memo || 'メモなし'}</span>
+                        <div class="meta">${new Date(item.createdAt).toLocaleString()}</div>
+                    </div>
+                    <button class="btn btn-danger" onclick="openDeleteDialog('${item.id}')">削除</button>
+                </li>
+            `).join('');
+        }
+
+        monthFilter.addEventListener('change', renderHistoryList);
+
+        window.openDeleteDialog = function(id) {
+            targetDeleteId = id;
+            confirmDialog.showModal();
+        };
+
+        cancelDeleteBtn.addEventListener('click', () => {
+            targetDeleteId = null;
+            confirmDialog.close();
+        });
+
+        executeDeleteBtn.addEventListener('click', async () => {
+            if (!targetDeleteId || !window.db) return;
+            try {
+                await window.deleteDoc(window.doc(window.db, "invoices", targetDeleteId));
+                confirmDialog.close();
+                targetDeleteId = null;
+                window.loadHistoryFromFirestore();
+            } catch (err) {
+                alert("削除に失敗しました: " + err.message);
+            }
+        });
     </script>
 </body>
 </html>
