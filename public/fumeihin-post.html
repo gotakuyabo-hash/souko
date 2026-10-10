@@ -10,7 +10,7 @@
 
     <header class="mb-4 text-center">
         <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
-        <p class="text-xs text-slate-500">カメラ撮影・GAS中継・Chatwork自動報告</p>
+        <p class="text-xs text-slate-500">履歴検索・絞り込み・削除対応版</p>
     </header>
 
     <!-- 設定カード -->
@@ -22,9 +22,13 @@
                     <button type="button" onclick="fetchChatRooms()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-xs">🔄 チャットグループ一覧を取得する</button>
                 </div>
                 <div>
-                    <label class="block font-medium mb-1">送信先グループ（ルーム選択）</label>
+                    <label class="block font-medium mb-1">🔍 グループ名で絞り込み</label>
+                    <input type="text" id="roomSearchInput" placeholder="例: 倉庫, 運営" oninput="filterRooms()" class="w-full border border-slate-300 rounded p-2 text-xs bg-slate-50">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">送信先グループ（よく使う順・ルーム選択）</label>
                     <select id="roomSelect" onchange="onRoomSelectChange()" class="w-full border border-slate-300 rounded p-2 text-xs bg-white">
-                        <option value="">-- 上のボタンを押してグループを選択してください --</option>
+                        <option value="">-- 上のボタンを押してグループを取得してください --</option>
                     </select>
                 </div>
                 <div>
@@ -37,10 +41,9 @@
                         <option value="">-- グループ選択後にメンバーが読み込まれます --</option>
                     </select>
                 </div>
-                <div>
-                    <label class="block font-medium mb-1">選択中のアカウントID（メンション用）</label>
-                    <input type="text" id="cwAccountId" placeholder="自動入力されます（空欄ならメンションなし）" readonly class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-500">
-                </div>
+                <input type="hidden" id="cwAccountId">
+                <input type="hidden" id="cwAccountName">
+                
                 <div>
                     <label class="block font-medium mb-1">GAS ウェブアプリURL</label>
                     <input type="text" id="gasUrl" value="https://script.google.com/macros/s/AKfycbwgKjStq9vJe-eslIldR8aTHfNC5VX6RPszqdyJ6K2LeD2TaQPAabCckVQNWz44QSO39A/exec" class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-600">
@@ -65,6 +68,7 @@
                 <label class="block text-xs font-bold mb-1">ステータス・状態</label>
                 <select id="issueType" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white focus:outline-none focus:border-blue-500">
                     <option value="宛名・注文者不明">宛名・注文者不明</option>
+                    <option value="注文番号不明">注文番号不明</option>
                     <option value="商品破損・不備あり">商品破損・不備あり</option>
                     <option value="納品数不足・過剰">納品数不足・過剰</option>
                     <option value="その他確認事項">その他確認事項</option>
@@ -76,7 +80,6 @@
             </div>
             <div>
                 <label class="block text-xs font-bold mb-1">📷 証拠写真（カメラ起動・選択）</label>
-                <!-- capture="environment" を指定するとスマホで直接外カメラが起動しやすくなります -->
                 <input type="file" id="reportImage" accept="image/*" capture="environment" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100">
             </div>
             <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
@@ -86,9 +89,25 @@
         <p id="statusMsg" class="text-center text-xs text-slate-500 mt-2 min-h-[1.5rem]"></p>
     </div>
 
-    <!-- 履歴カード -->
+    <!-- 履歴カード（検索・絞り込み付き） -->
     <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-        <h3 class="font-bold text-sm mb-2 text-slate-700">📋 報告履歴（クラウド）</h3>
+        <div class="flex justify-between items-center mb-2">
+            <h3 class="font-bold text-sm text-slate-700">📋 報告履歴</h3>
+            <button type="button" onclick="loadHistoryFromFirestore()" class="text-[11px] text-blue-600 underline">🔄 更新</button>
+        </div>
+
+        <!-- 履歴フィルター（検索 ＆ 日付） -->
+        <div class="grid grid-cols-2 gap-2 mb-3">
+            <div>
+                <label class="block text-[10px] text-slate-500 mb-0.5">キーワード検索</label>
+                <input type="text" id="historySearchKeyword" placeholder="セラー名・番号など" oninput="filterHistoryView()" class="w-full border border-slate-300 rounded p-1.5 text-xs">
+            </div>
+            <div>
+                <label class="block text-[10px] text-slate-500 mb-0.5">日付絞り込み</label>
+                <input type="date" id="historyDateFilter" onchange="filterHistoryView()" class="w-full border border-slate-300 rounded p-1.5 text-xs bg-white">
+            </div>
+        </div>
+
         <ul id="historyList" class="space-y-2 text-xs">
             <li class="text-center text-slate-400 py-2">読み込み中...</li>
         </ul>
@@ -96,7 +115,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -115,21 +134,27 @@
         window.collection = collection;
         window.addDoc = addDoc;
         window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
+        window.doc = doc;
         window.query = query;
         window.orderBy = orderBy;
-        window.limit = limit;
 
         window.loadHistoryFromFirestore();
     </script>
 
     <script>
+        let allRoomsData = [];
+        let allHistoryData = []; // 取得した全履歴を保持
+
         window.addEventListener('DOMContentLoaded', () => {
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
             const savedAccount = localStorage.getItem('fumeihin_cw_account') || '';
+            const savedAccountName = localStorage.getItem('fumeihin_cw_account_name') || '';
             const savedGas = localStorage.getItem('fumeihin_gas_url') || '';
 
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
+            document.getElementById('cwAccountName').value = savedAccountName;
             if (savedGas) document.getElementById('gasUrl').value = savedGas;
 
             if (savedRoom) {
@@ -143,7 +168,6 @@
 
             try {
                 statusMsg.innerText = "チャットグループ一覧を取得中...";
-                
                 const res = await fetch(gasUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -153,20 +177,9 @@
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error(data.message || '取得失敗');
 
-                const rooms = data.rooms;
-                const select = document.getElementById('roomSelect');
-                const currentRoomId = document.getElementById('cwRoomId').value;
-
-                select.innerHTML = '<option value="">-- グループを選択してください --</option>';
-                rooms.forEach(room => {
-                    const opt = document.createElement('option');
-                    opt.value = room.room_id;
-                    opt.textContent = `[${room.type}] ${room.name} (${room.room_id})`;
-                    if (room.room_id === currentRoomId) opt.selected = true;
-                    select.appendChild(opt);
-                });
-
-                statusMsg.innerText = `グループを ${rooms.length}件 取得しました！`;
+                allRoomsData = data.rooms;
+                renderRoomOptions(allRoomsData);
+                statusMsg.innerText = `グループを ${allRoomsData.length}件 取得しました！`;
                 document.getElementById('settingsDetails').open = true;
             } catch (err) {
                 alert('取得エラー: ' + err.message);
@@ -174,14 +187,49 @@
             }
         }
 
+        function renderRoomOptions(rooms, filterKeyword = '') {
+            const select = document.getElementById('roomSelect');
+            const currentRoomId = document.getElementById('cwRoomId').value;
+            const usageCounts = JSON.parse(localStorage.getItem('fumeihin_room_counts') || '{}');
+
+            const sortedRooms = [...rooms].sort((a, b) => {
+                return (usageCounts[b.room_id] || 0) - (usageCounts[a.room_id] || 0);
+            });
+
+            const keyword = filterKeyword.toLowerCase();
+            const filtered = sortedRooms.filter(room => room.name.toLowerCase().includes(keyword));
+
+            select.innerHTML = '<option value="">-- グループを選択してください --</option>';
+            filtered.forEach(room => {
+                const count = usageCounts[room.room_id] || 0;
+                const opt = document.createElement('option');
+                opt.value = room.room_id;
+                const pinBadge = count > 0 ? `🔥(${count}回) ` : '';
+                opt.textContent = `${pinBadge}[${room.type}] ${room.name} (${room.room_id})`;
+                if (String(room.room_id) === String(currentRoomId)) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        function filterRooms() {
+            const keyword = document.getElementById('roomSearchInput').value;
+            if (allRoomsData.length > 0) renderRoomOptions(allRoomsData, keyword);
+        }
+
         async function onRoomSelectChange() {
             const select = document.getElementById('roomSelect');
             const roomId = select.value;
             document.getElementById('cwRoomId').value = roomId;
-            
             if (roomId) {
+                incrementRoomUsage(roomId);
                 await fetchRoomMembers(roomId);
             }
+        }
+
+        function incrementRoomUsage(roomId) {
+            const usageCounts = JSON.parse(localStorage.getItem('fumeihin_room_counts') || '{}');
+            usageCounts[roomId] = (usageCounts[roomId] || 0) + 1;
+            localStorage.setItem('fumeihin_room_counts', JSON.stringify(usageCounts));
         }
 
         async function fetchRoomMembers(roomId, selectedAccountId = '') {
@@ -203,18 +251,14 @@
                 if (data.status !== 'success') throw new Error(data.message || 'メンバー取得失敗');
 
                 const members = data.members;
-                memberSelect.innerHTML = '<option value="">-- メンションなし（全員参加） --</option>';
-                
+                memberSelect.innerHTML = '<option value="">-- メンションなし --</option>';
                 members.forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.account_id;
                     opt.textContent = `${m.name} (${m.role_name || 'メンバー'})`;
-                    if (String(m.account_id) === String(selectedAccountId)) {
-                        opt.selected = true;
-                    }
+                    if (String(m.account_id) === String(selectedAccountId)) opt.selected = true;
                     memberSelect.appendChild(opt);
                 });
-
                 statusMsg.innerText = "設定の準備が整いました！";
             } catch (err) {
                 memberSelect.innerHTML = '<option value="">メンバー取得エラー</option>';
@@ -224,33 +268,32 @@
 
         function onMemberSelectChange() {
             const select = document.getElementById('memberSelect');
-            document.getElementById('cwAccountId').value = select.value;
+            const accountId = select.value;
+            document.getElementById('cwAccountId').value = accountId;
+            const selectedOpt = select.options[select.selectedIndex];
+            const accountName = accountId ? selectedOpt.textContent.split(' (')[0] : '';
+            document.getElementById('cwAccountName').value = accountName;
         }
 
         function saveSettings() {
             localStorage.setItem('fumeihin_cw_room', document.getElementById('cwRoomId').value.trim());
             localStorage.setItem('fumeihin_cw_account', document.getElementById('cwAccountId').value.trim());
+            localStorage.setItem('fumeihin_cw_account_name', document.getElementById('cwAccountName').value.trim());
             localStorage.setItem('fumeihin_gas_url', document.getElementById('gasUrl').value.trim());
             alert('設定を保存しました！');
         }
 
-        // ファイルをBase64に変換するヘルパー関数
         function fileToBase64(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
-                reader.onload = () => {
-                    // "data:image/jpeg;base64,xxxxxx" のカンマ以降を取り出す
-                    const base64String = reader.result.split(',')[1];
-                    resolve(base64String);
-                };
+                reader.onload = () => resolve(reader.result.split(',')[1]);
                 reader.onerror = error => reject(error);
             });
         }
 
         const reportForm = document.getElementById('reportForm');
         const statusMsg = document.getElementById('statusMsg');
-        const historyList = document.getElementById('historyList');
 
         reportForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -263,13 +306,13 @@
             
             const roomId = document.getElementById('cwRoomId').value.trim() || localStorage.getItem('fumeihin_cw_room');
             const accountId = document.getElementById('cwAccountId').value.trim() || localStorage.getItem('fumeihin_cw_account');
+            const accountName = document.getElementById('cwAccountName').value.trim() || localStorage.getItem('fumeihin_cw_account_name');
 
             if (!seller || !window.db) return;
 
             try {
                 statusMsg.innerText = "クラウドに保存中...";
 
-                // 1. Firebaseに保存
                 await window.addDoc(window.collection(window.db, "fumeihin_reports"), {
                     seller: seller,
                     referenceNumber: refNum || "なし",
@@ -278,11 +321,9 @@
                     createdAt: new Date().toISOString()
                 });
 
-                // 2. Chatwork通知（GAS経由：画像がある場合はBase64に変換して送信）
                 if (roomId && gasUrl) {
                     statusMsg.innerText = "Chatworkへ送信中...";
-                    
-                    let mention = accountId ? `[To:${accountId}] ご担当者様\n\n` : '';
+                    let mention = accountId ? `[To:${accountId}] ${accountName}さん\n\n` : '';
                     let messageBody = `${mention}【不明品・確認のご連絡】\n` +
                                       `----------------------------------\n` +
                                       `■ セラー・取引先: ${seller}\n` +
@@ -290,19 +331,13 @@
                                       `■ 状態: ${issueType}\n` +
                                       `■ メモ: ${memo || 'なし'}\n` +
                                       `----------------------------------\n` +
-                                      `ご確認とご対応よろしくお願いいたします。`;
+                                      `お手数お掛け致しますが、ご確認宜しくお願い致します。`;
 
-                    let payloadData = {
-                        action: 'sendMessage',
-                        roomId: roomId,
-                        messageBody: messageBody
-                    };
+                    let payloadData = { action: 'sendMessage', roomId: roomId, messageBody: messageBody };
 
-                    // 画像ファイルが選択されている場合
                     if (imageInput.files && imageInput.files[0]) {
                         const file = imageInput.files[0];
-                        const base64Data = await fileToBase64(file);
-                        payloadData.imageBase64 = base64Data;
+                        payloadData.imageBase64 = await fileToBase64(file);
                         payloadData.imageName = file.name || 'evidence.jpg';
                         payloadData.imageMimeType = file.type || 'image/jpeg';
                     }
@@ -314,7 +349,7 @@
                     });
                 }
 
-                statusMsg.innerText = "報告＆画像付き送信完了しました！";
+                statusMsg.innerText = "報告＆送信完了しました！";
                 reportForm.reset();
                 window.loadHistoryFromFirestore();
             } catch (err) {
@@ -322,29 +357,79 @@
             }
         });
 
+        // 履歴の読み込み
         window.loadHistoryFromFirestore = async function() {
             if (!window.db) return;
+            const historyList = document.getElementById('historyList');
             try {
-                const q = window.query(window.collection(window.db, "fumeihin_reports"), window.orderBy("createdAt", "desc"), window.limit(10));
+                const q = window.query(window.collection(window.db, "fumeihin_reports"), window.orderBy("createdAt", "desc"));
                 const querySnapshot = await window.getDocs(q);
                 
-                let historyData = [];
-                querySnapshot.forEach((doc) => { historyData.push(doc.data()); });
+                allHistoryData = [];
+                querySnapshot.forEach((docSnap) => {
+                    allHistoryData.push({ id: docSnap.id, ...docSnap.data() });
+                });
 
-                if (historyData.length === 0) {
-                    historyList.innerHTML = '<li class="text-center text-slate-400 py-2">まだ報告履歴はありません</li>';
-                    return;
-                }
-
-                historyList.innerHTML = historyData.map(item => `
-                    <li class="p-2.5 bg-slate-50 rounded border border-slate-100">
-                        <strong class="text-amber-600 text-sm">${item.seller}</strong> [${item.issueType}]<br>
-                        <span class="text-slate-600">番号: ${item.referenceNumber} / メモ: ${item.memo || 'なし'}</span>
-                        <div class="text-[10px] text-slate-400 mt-1">${new Date(item.createdAt).toLocaleString()}</div>
-                    </li>
-                `).join('');
+                filterHistoryView();
             } catch (err) {
                 historyList.innerHTML = '<li class="text-center text-red-500 py-2">履歴の読み込み失敗</li>';
+            }
+        };
+
+        // 履歴の検索・絞り込みフィルター適用と描画
+        window.filterHistoryView = function() {
+            const historyList = document.getElementById('historyList');
+            const keyword = document.getElementById('historySearchKeyword').value.toLowerCase();
+            const dateFilter = document.getElementById('historyDateFilter').value; // "YYYY-MM-DD"
+
+            const filtered = allHistoryData.filter(item => {
+                const itemDateStr = item.createdAt ? item.createdAt.split('T')[0] : '';
+                
+                // 日付一致チェック
+                if (dateFilter && itemDateStr !== dateFilter) return false;
+
+                // キーワード一致チェック（セラー名、伝票番号、メモ、ステータス）
+                if (keyword) {
+                    const targetText = `${item.seller} ${item.referenceNumber} ${item.issueType} ${item.memo}`.toLowerCase();
+                    if (!targetText.includes(keyword)) return false;
+                }
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                historyList.innerHTML = '<li class="text-center text-slate-400 py-2">該当する履歴はありません</li>';
+                return;
+            }
+
+            historyList.innerHTML = filtered.map(item => `
+                <li class="p-2.5 bg-slate-50 rounded border border-slate-100 flex justify-between items-start">
+                    <div>
+                        <strong class="text-amber-600 text-sm">${item.seller}</strong> <span class="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.5 rounded">${item.issueType}</span><br>
+                        <span class="text-slate-600">番号: ${item.referenceNumber} / メモ: ${item.memo || 'なし'}</span>
+                        <div class="text-[10px] text-slate-400 mt-1">${new Date(item.createdAt).toLocaleString()}</div>
+                    </div>
+                    <button type="button" onclick="deleteHistoryItem('${item.id}', '${item.seller}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 bg-red-50 rounded border border-red-100 ml-2 whitespace-nowrap">🗑️ 削除</button>
+                </li>
+            `).join('');
+        };
+
+        // 削除処理（確認ダイアログ付き）
+        window.deleteHistoryItem = async function(docId, sellerName) {
+            if (!confirm(`「${sellerName}」の報告履歴を削除してもよろしいですか？`)) {
+                return; // キャンセルされたら何もしない
+            }
+
+            try {
+                const statusMsg = document.getElementById('statusMsg');
+                statusMsg.innerText = "履歴を削除中...";
+
+                await window.deleteDoc(window.doc(window.db, "fumeihin_reports", docId));
+                
+                statusMsg.innerText = "履歴を削除しました。";
+                window.loadHistoryFromFirestore(); // リスト再読み込み
+            } catch (err) {
+                alert('削除エラー: ' + err.message);
+                statusMsg.innerText = "";
             }
         };
     </script>
