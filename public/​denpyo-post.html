@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>着払い伝票スキャナー & 請求台帳</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #1e293b;
+            --border-color: #cbd5e1;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 16px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 { font-size: 1.25rem; margin-bottom: 16px; text-align: center; }
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            height: 240px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .scan-overlay {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%; height: 60px;
+            border: 2px dashed rgba(255,255,255,0.8);
+            border-radius: 6px;
+            pointer-events: none;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+        .btn:active { opacity: 0.9; }
+        .btn-secondary {
+            background-color: #64748b;
+        }
+        form label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: bold;
+            margin-bottom: 4px;
+            margin-top: 10px;
+        }
+        form input, form textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        .history-list {
+            list-style: none;
+        }
+        .history-item {
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.875rem;
+        }
+        .history-item:last-child { border-bottom: none; }
+        .meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+        .file-input-wrap {
+            margin-bottom: 8px;
+        }
+        .file-input-wrap input {
+            display: none;
+        }
+    </style>
+
+    <!-- Firebase SDKの読み込み (Compat版またはESモジュール) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // グローバルに公開してDOM側から叩けるようにする
+        window.db = db;
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.query = query;
+        window.orderBy = orderBy;
+        window.limit = limit;
+        window.serverTimestamp = serverTimestamp;
+
+        // アプリ起動時に履歴をロード
+        window.loadHistoryFromFirestore();
+    </script>
+</head>
+<body>
+
+    <h1>着払い伝票スキャナー</h1>
+
+    <div class="card">
+        <div class="video-container">
+            <video id="camera" autoplay playsinline muted></video>
+            <div class="scan-overlay"></div>
+        </div>
+        <button class="btn" id="startCameraBtn">カメラを起動する</button>
+        
+        <div class="file-input-wrap">
+            <label class="btn btn-secondary" for="fileInput">画像ファイルから読み取る</label>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+        <p id="statusMsg" style="text-align: center; font-size: 0.85rem; color: #64748b; margin-top: 8px;"></p>
+    </div>
+
+    <div class="card">
+        <form id="logForm">
+            <label for="trackingNumber">送り状番号</label>
+            <input type="text" id="trackingNumber" placeholder="スキャンまたは手入力" required>
+
+            <label for="amount">請求金額 (円)</label>
+            <input type="number" id="amount" placeholder="例: 1200">
+
+            <label for="memo">宛先・メモ</label>
+            <textarea id="memo" rows="2" placeholder="〇〇様 / 返送品など"></textarea>
+
+            <button type="submit" class="btn" style="margin-top: 16px;">Firebaseに記録を保存</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3 style="font-size: 1rem; margin-bottom: 8px;">クラウド保存履歴</h3>
+        <ul id="historyList" class="history-list">
+            <li style="color: #64748b; text-align: center; padding: 8px;">読み込み中...</li>
+        </ul>
+    </div>
+
+    <script>
+        const video = document.getElementById('camera');
+        const startCameraBtn = document.getElementById('startCameraBtn');
+        const fileInput = document.getElementById('fileInput');
+        const trackingInput = document.getElementById('trackingNumber');
+        const statusMsg = document.getElementById('statusMsg');
+        const logForm = document.getElementById('logForm');
+        const historyList = document.getElementById('historyList');
+
+        let mediaStream = null;
+        let scanning = false;
+        let barcodeDetector = null;
+
+        if ('BarcodeDetector' in window) {
+            BarcodeDetector.getSupportedFormats().then(formats => {
+                barcodeDetector = new BarcodeDetector({ formats: formats.length ? formats : ['code_128', 'ean_13', 'qr_code'] });
+            }).catch(() => {});
+        }
+
+        startCameraBtn.addEventListener('click', async () => {
+            if (scanning) { stopCamera(); return; }
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { exact: 'environment' } }
+                }).catch(() => navigator.mediaDevices.getUserMedia({ video: true }));
+                video.srcObject = mediaStream;
+                await video.play();
+                scanning = true;
+                startCameraBtn.innerText = "カメラを停止する";
+                statusMsg.innerText = "バーコードを枠内に合わせてください";
+                requestAnimationFrame(scanVideoFrame);
+            } catch (err) {
+                statusMsg.innerText = "カメラの起動に失敗しました";
+            }
+        });
+
+        function stopCamera() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(t => t.stop());
+                mediaStream = null;
+            }
+            video.srcObject = null;
+            scanning = false;
+            startCameraBtn.innerText = "カメラを起動する";
+            statusMsg.innerText = "";
+        }
+
+        async function scanVideoFrame() {
+            if (!scanning) return;
+            if (video.readyState === video.HAVE_ENOUGH_DATA && barcodeDetector) {
+                try {
+                    const barcodes = await barcodeDetector.detect(video);
+                    if (barcodes.length > 0) {
+                        trackingInput.value = barcodes[0].rawValue;
+                        statusMsg.innerText = `検出成功: ${barcodes[0].rawValue}`;
+                        stopCamera();
+                        return;
+                    }
+                } catch (e) {}
+            }
+            requestAnimationFrame(scanVideoFrame);
+        }
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file || !barcodeDetector) return;
+            statusMsg.innerText = "画像を解析中...";
+            const img = document.createElement('img');
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                img.src = event.target.result;
+                img.onload = async () => {
+                    try {
+                        const barcodes = await barcodeDetector.detect(img);
+                        if (barcodes.length > 0) {
+                            trackingInput.value = barcodes[0].rawValue;
+                            statusMsg.innerText = `検出成功: ${barcodes[0].rawValue}`;
+                        } else {
+                            statusMsg.innerText = "バーコードが検出されませんでした";
+                        }
+                    } catch (err) {
+                        statusMsg.innerText = "解析エラー";
+                    }
+                };
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Firestoreへの保存処理
+        logForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const num = trackingInput.value.trim();
+            const amount = document.getElementById('amount').value.trim();
+            const memo = document.getElementById('memo').value.trim();
+
+            if (!num || !window.db) return;
+
+            try {
+                statusMsg.innerText = "クラウドに保存中...";
+                await window.addDoc(window.collection(window.db, "invoices"), {
+                    number: num,
+                    amount: amount ? Number(amount) : 0,
+                    memo: memo || "",
+                    createdAt: new Date().toISOString()
+                });
+
+                statusMsg.innerText = "保存完了しました！";
+                logForm.reset();
+                window.loadHistoryFromFirestore();
+            } catch (err) {
+                statusMsg.innerText = "保存に失敗しました: " + err.message;
+            }
+        });
+
+        // Firestoreから履歴を読み込む関数
+        window.loadHistoryFromFirestore = async function() {
+            if (!window.db) return;
+            try {
+                const q = window.query(window.collection(window.db, "invoices"), window.orderBy("createdAt", "desc"), window.limit(20));
+                const querySnapshot = await window.getDocs(q);
+                
+                let historyData = [];
+                querySnapshot.forEach((doc) => {
+                    historyData.push(doc.data());
+                });
+
+                if (historyData.length === 0) {
+                    historyList.innerHTML = '<li style="color: #64748b; text-align: center; padding: 8px;">まだ記録はありません</li>';
+                    return;
+                }
+
+                historyList.innerHTML = historyData.map(item => `
+                    <li class="history-item">
+                        <strong>${item.number}</strong> (${item.amount ? item.amount + '円' : '金額未設定'})<br>
+                        <span>${item.memo || 'メモなし'}</span>
+                        <div class="meta">${new Date(item.createdAt).toLocaleString()}</div>
+                    </li>
+                `).join('');
+            } catch (err) {
+                historyList.innerHTML = '<li style="color: #ef4444; text-align: center; padding: 8px;">履歴の読み込みに失敗しました</li>';
+            }
+        };
+    </script>
+</body>
+</html>
