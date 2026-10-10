@@ -144,7 +144,7 @@
 
     <script>
         let allRoomsData = [];
-        let allHistoryData = []; // 取得した全履歴を保持
+        let allHistoryData = [];
 
         window.addEventListener('DOMContentLoaded', () => {
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
@@ -324,9 +324,9 @@
                 if (roomId && gasUrl) {
                     statusMsg.innerText = "Chatworkへ送信中...";
                     let mention = accountId ? `[To:${accountId}] ${accountName}さん\n\n` : '';
-                    let messageBody = `${mention}【不明品・確認のご連絡】\n` +
+                    let messageBody = `${mention}いつもお世話になっております。\n` +
+                                      `【不明品・確認のご連絡】\n` +
                                       `----------------------------------\n` +
-                                      `■ セラー・取引先: ${seller}\n` +
                                       `■ 該当番号: ${refNum || 'なし'}\n` +
                                       `■ 状態: ${issueType}\n` +
                                       `■ メモ: ${memo || 'なし'}\n` +
@@ -357,7 +357,6 @@
             }
         });
 
-        // 履歴の読み込み
         window.loadHistoryFromFirestore = async function() {
             if (!window.db) return;
             const historyList = document.getElementById('historyList');
@@ -376,19 +375,16 @@
             }
         };
 
-        // 履歴の検索・絞り込みフィルター適用と描画
         window.filterHistoryView = function() {
             const historyList = document.getElementById('historyList');
             const keyword = document.getElementById('historySearchKeyword').value.toLowerCase();
-            const dateFilter = document.getElementById('historyDateFilter').value; // "YYYY-MM-DD"
+            const dateFilter = document.getElementById('historyDateFilter').value;
 
             const filtered = allHistoryData.filter(item => {
                 const itemDateStr = item.createdAt ? item.createdAt.split('T')[0] : '';
                 
-                // 日付一致チェック
                 if (dateFilter && itemDateStr !== dateFilter) return false;
 
-                // キーワード一致チェック（セラー名、伝票番号、メモ、ステータス）
                 if (keyword) {
                     const targetText = `${item.seller} ${item.referenceNumber} ${item.issueType} ${item.memo}`.toLowerCase();
                     if (!targetText.includes(keyword)) return false;
@@ -413,10 +409,9 @@
             `).join('');
         };
 
-        // 削除処理（確認ダイアログ付き）
         window.deleteHistoryItem = async function(docId, sellerName) {
             if (!confirm(`「${sellerName}」の報告履歴を削除してもよろしいですか？`)) {
-                return; // キャンセルされたら何もしない
+                return;
             }
 
             try {
@@ -426,7 +421,7 @@
                 await window.deleteDoc(window.doc(window.db, "fumeihin_reports", docId));
                 
                 statusMsg.innerText = "履歴を削除しました。";
-                window.loadHistoryFromFirestore(); // リスト再読み込み
+                window.loadHistoryFromFirestore();
             } catch (err) {
                 alert('削除エラー: ' + err.message);
                 statusMsg.innerText = "";
