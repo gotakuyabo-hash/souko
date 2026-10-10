@@ -47,11 +47,11 @@
     </div>
 
     <script>
-        // ご自身のGASのウェブアプリURL
-        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxuO_lObsnGyfQjNjplXAKPBtTNyhNlOWfquFyTSW1G2jAApymUXlMSP8J63ZDlloH-xQ/exec";
+        // ご自身のGASのウェブアプリURL（必ず /exec で終わるURLにしてください）
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycb.../exec"; // ←ご自身の正しいURLに書き換えてください
         
         let allRoomsCache = [];
-        let currentRoomMembers = []; // ルームのメンバー一覧（メンション用）
+        let currentRoomMembers = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -180,7 +180,6 @@
             container.innerHTML = '';
 
             try {
-                // メッセージとメンバー（メンション用）を同時に取得
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -243,45 +242,53 @@
                 let data = JSON.parse(rawText);
                 if (data.status !== "success") throw new Error(data.message || "不明なエラー");
 
-                // 送信者情報を取得して初期の返信案にメンションを自動付与または選択できるようにする
                 const senderId = parentCard.getAttribute('data-sender-id');
                 const senderName = parentCard.getAttribute('data-sender-name');
-                const initialReply = data.reply;
-
-                renderReplyEditor(replyArea, initialReply, messageText, senderId, senderName);
+                renderReplyEditor(replyArea, data.reply, messageText, senderId, senderName);
             } catch (e) {
                 replyArea.innerHTML = `<span class="text-xs text-red-500 font-bold p-2">生成失敗: ${escapeHtml(e.message)}</span>`;
             }
         }
 
-        // 編集・メンション選択UIの描画
+        // メンション選択UIの描画（全メンバーを網羅）
         function renderReplyEditor(container, replyText, originalMessage, senderId, senderName) {
-            // メンション用のドロップダウン選択肢作成
-            let memberOptions = '<option value="">-- メンション（宛先）を追加 --</option>';
+            let memberOptions = '<option value="">-- 👤 メンション（宛先）を選ぶ --</option>';
+            
+            // 重複を防ぐためのセット
+            let addedIds = new Set();
+
+            // 発言者を先頭に追加
             if (senderId && senderName) {
-                memberOptions += `<option value="${senderId}" data-name="${senderName}">👤 発言者: ${senderName}</option>`;
+                memberOptions += `<option value="${senderId}" data-name="${senderName}">発言者: ${senderName}</option>`;
+                addedIds.add(String(senderId));
             }
-            currentRoomMembers.forEach(m => {
-                if (String(m.account_id) !== String(senderId)) {
-                    memberOptions += `<option value="${m.account_id}" data-name="${m.name}">${escapeHtml(m.name)}</option>`;
-                }
-            });
+
+            // ルームのメンバー一覧を追加
+            if (currentRoomMembers && currentRoomMembers.length > 0) {
+                currentRoomMembers.forEach(m => {
+                    const mId = String(m.account_id);
+                    if (!addedIds.has(mId)) {
+                        memberOptions += `<option value="${mId}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
+                        addedIds.add(mId);
+                    }
+                });
+            }
 
             container.innerHTML = `
                 <div class="bg-indigo-50/60 p-3 rounded-lg border border-indigo-100 space-y-2">
-                    <div class="flex justify-between items-center">
-                        <span class="font-bold text-xs text-indigo-800">🤖 AI返信案（編集可能）:</span>
-                        <select onchange="insertMention(this)" class="text-xs border border-indigo-200 rounded p-1 bg-white text-indigo-900 focus:outline-none">
+                    <div class="flex justify-between items-center gap-2">
+                        <span class="font-bold text-xs text-indigo-800">🤖 AI返信案:</span>
+                        <select onchange="insertMention(this)" class="text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none shadow-sm">
                             ${memberOptions}
                         </select>
                     </div>
                     <textarea class="reply-textarea w-full h-28 text-sm p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">${escapeHtml(replyText)}</textarea>
                     
                     <div class="flex gap-2">
-                        <button onclick="sendReplyToChatwork(this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                        <button onclick="sendReplyToChatwork(this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2.5 rounded-lg font-bold shadow-sm">
                             📤 Chatworkに送信
                         </button>
-                        <button onclick="saveSpecificTrainingFromCard(this, \`${encodeURIComponent(originalMessage)}\`)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-2 rounded-lg font-bold">
+                        <button onclick="saveSpecificTrainingFromCard(this, \`${encodeURIComponent(originalMessage)}\`)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-2.5 rounded-lg font-bold">
                             💾 学習に保存
                         </button>
                     </div>
@@ -289,7 +296,7 @@
             `;
         }
 
-        // メンション挿入処理
+        // メンション挿入処理（確実にカーソル先頭や文章の頭に挿入）
         function insertMention(selectEl) {
             const accountId = selectEl.value;
             const selectedOpt = selectEl.options[selectEl.selectedIndex];
@@ -301,10 +308,9 @@
             const mentionTag = `[to:${accountId}] ${name}さん\n`;
 
             textarea.value = mentionTag + textarea.value;
-            selectEl.selectedIndex = 0; // 選択をリセット
+            selectEl.selectedIndex = 0; // プルダウンをリセット
         }
 
-        // Chatworkへメッセージ送信
         async function sendReplyToChatwork(btnEl) {
             const roomId = document.getElementById('roomSelect').value;
             const card = btnEl.closest('.ai-reply-area');
@@ -331,7 +337,7 @@
                 if (data.status !== "success") throw new Error(data.message);
 
                 btnEl.textContent = "✅ 送信完了！";
-                btnEl.className = "flex-1 bg-slate-300 text-white text-xs py-2 rounded-lg cursor-default";
+                btnEl.className = "flex-1 bg-slate-300 text-white text-xs py-2.5 rounded-lg cursor-default";
             } catch (e) {
                 alert('送信失敗: ' + e.message);
                 btnEl.disabled = false;
@@ -347,7 +353,7 @@
             await saveToFirestore(inputMessage, outputText);
             btnEl.textContent = '✅ 保存完了！';
             btnEl.disabled = true;
-            btnEl.className = 'bg-slate-300 text-white text-xs px-3 py-2 rounded-lg cursor-default';
+            btnEl.className = 'bg-slate-300 text-white text-xs px-3 py-2.5 rounded-lg cursor-default';
         }
 
         async function saveToFirestore(input, output) {
