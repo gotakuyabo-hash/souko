@@ -34,6 +34,13 @@
         }
         .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
         .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
+        /* 画像モーダル用スタイル */
+        .image-modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;
+            z-index: 2000; display: none; padding: 16px; cursor: pointer;
+        }
+        .image-modal-content { max-width: 90%; max-height: 90%; border-radius: 8px; object-fit: contain; }
     </style>
 </head>
 <body>
@@ -66,6 +73,14 @@
                     <label class="block text-xs font-semibold text-gray-600 mb-1">タスク内容</label>
                     <textarea id="taskContent" required rows="3" placeholder="依頼内容や伝言事項を入力してください..." class="w-full border border-gray-300 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">画像添付 (任意)</label>
+                    <input type="file" id="imageInput" accept="image/*" class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+                    <div id="imagePreviewContainer" class="mt-2 hidden relative inline-block">
+                        <img id="imagePreview" src="" alt="プレビュー" class="h-20 rounded border border-gray-300 object-cover">
+                        <button type="button" onclick="clearImageInput()" class="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold">×</button>
+                    </div>
+                </div>
                 <div class="flex justify-end gap-2">
                     <button type="button" id="cancelEditBtn" onclick="cancelEdit()" class="hidden bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-4 py-2 rounded-lg text-sm transition">
                         キャンセル
@@ -84,7 +99,7 @@
             </div>
             <div class="flex rounded-lg bg-gray-200 p-1">
                 <button id="tabActive" onclick="switchTab('active')" class="flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md bg-white text-blue-600 shadow-sm transition">未完了リスト</button>
-                <button id="tabHistory" onclick="switchTab('history')" class="flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 hover:text-gray-900 transition">完了済み履歴</button>
+                <button id="tabHistory" onclick="switchTab('history')" class="flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 hover:text-gray-900 transition">完了済み履歴 (直近7日)</button>
             </div>
         </div>
 
@@ -111,10 +126,16 @@
         </div>
     </div>
 
+    <!-- 画像拡大表示モーダル -->
+    <div class="image-modal-overlay" id="image-modal" onclick="closeImageModal()">
+        <img class="image-modal-content" id="modal-img" src="">
+    </div>
+
     <!-- Firebase SDK & アプリケーションロジック -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -128,6 +149,7 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
+        const storage = getStorage(app);
 
         // 削除確認モーダル関連の要素
         const confirmModal = document.getElementById('confirm-modal');
@@ -155,6 +177,15 @@
             pendingDeleteCallback = null;
         };
 
+        // 画像拡大モーダル関数
+        window.openImageModal = (url) => {
+            document.getElementById('modal-img').src = url;
+            document.getElementById('image-modal').style.display = 'flex';
+        };
+        window.closeImageModal = () => {
+            document.getElementById('image-modal').style.display = 'none';
+        };
+
         const requestForm = document.getElementById('requestForm');
         const requestList = document.getElementById('requestList');
         const formTitle = document.getElementById('formTitle');
@@ -166,15 +197,40 @@
         const tabHistory = document.getElementById('tabHistory');
         const listTitle = document.getElementById('listTitle');
         const fromNameInput = document.getElementById('fromName');
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 
         let currentTab = 'active'; // 'active' または 'history'
         let allRequests = [];
+        let selectedFile = null;
 
         // ページ読み込み時にローカルストレージからFrom名を復元
         const savedFromName = localStorage.getItem('staff_request_from_name');
         if (savedFromName) {
             fromNameInput.value = savedFromName;
         }
+
+        // 画像選択時のプレビュー処理
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    imagePreview.src = event.target.result;
+                    imagePreviewContainer.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        window.clearImageInput = () => {
+            imageInput.value = '';
+            selectedFile = null;
+            imagePreviewContainer.classList.add('hidden');
+            imagePreview.src = '';
+        };
 
         // 日付フォーマット関数
         function formatDate(timestamp) {
@@ -213,13 +269,19 @@
         // リストの描画
         window.renderList = () => {
             const keyword = searchInput.value.toLowerCase().trim();
+            const now = Date.now();
+            const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000; // 7日間のミリ秒
 
             let filtered = allRequests.filter(item => {
                 const status = item.status || 'pending';
                 if (currentTab === 'active') {
                     return status !== 'completed';
                 } else {
-                    return status === 'completed';
+                    // 完了済み かつ 完了日時から7日以内のものだけを表示（日が経った古いものは隠す）
+                    if (status !== 'completed') return false;
+                    if (!item.completedAt) return true; // 完了日時がなければとりあえず表示
+                    const completedTime = item.completedAt.toMillis();
+                    return (now - completedTime) <= SEVEN_DAYS_MS;
                 }
             });
 
@@ -235,7 +297,7 @@
 
             requestList.innerHTML = "";
             if (filtered.length === 0) {
-                const msg = currentTab === 'active' ? '現在、未完了の依頼はありません。' : '完了済みの履歴はありません。';
+                const msg = currentTab === 'active' ? '現在、未完了の依頼はありません。' : '直近7日間の完了済み履歴はありません（古い履歴は非表示になりました）。';
                 requestList.innerHTML = `<p class="text-xs text-gray-500 text-center py-6 bg-white rounded-lg border border-gray-200">${msg}</p>`;
                 return;
             }
@@ -247,9 +309,18 @@
                 const cardDiv = document.createElement('div');
                 cardDiv.className = `card p-4 transition ${isCompleted ? 'bg-gray-50' : 'bg-white'}`;
 
+                // 画像表示エリアの生成
+                let imageHtml = '';
+                if (data.imageUrl) {
+                    imageHtml = `
+                        <div class="mb-3">
+                            <img src="${data.imageUrl}" alt="添付画像" onclick="openImageModal('${data.imageUrl}')" class="h-24 w-auto rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition shadow-sm">
+                        </div>
+                    `;
+                }
+
                 let bottomSection = '';
                 if (isCompleted) {
-                    // 完了済みの場合は対応メモを表示
                     bottomSection = `
                         <div class="mt-3 pt-3 border-t border-gray-200 bg-emerald-50/50 p-2.5 rounded-lg text-xs space-y-1">
                             <div class="flex items-center justify-between text-emerald-900 font-medium">
@@ -260,7 +331,6 @@
                         </div>
                     `;
                 } else {
-                    // 未完了の場合は対応内容の入力欄を常に表示
                     bottomSection = `
                         <div class="mt-3 pt-3 border-t border-gray-100 space-y-2 bg-slate-50 p-3 rounded-lg">
                             <label class="block text-xs font-semibold text-gray-600 mb-1">📝 対応内容・メモ</label>
@@ -280,6 +350,7 @@
                         <span class="text-xs text-gray-400">${formatDate(data.createdAt)}</span>
                     </div>
                     <p class="text-sm text-slate-700 whitespace-pre-wrap mb-2">${escapeHtml(data.task || '')}</p>
+                    ${imageHtml}
                     ${bottomSection}
                     <div class="flex justify-end gap-2 pt-3 mt-2 border-t border-gray-100">
                         ${isCompleted 
@@ -287,7 +358,7 @@
                             : `<button onclick="completeRequest('${id}')" class="text-xs bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1.5 rounded font-medium transition">完了にする</button>`
                         }
                         ${!isCompleted ? `<button onclick="startEdit('${id}', \`${escapeAttr(data.from || '')}\`, \`${escapeAttr(data.to || '')}\`, \`${escapeAttr(data.task || '')}\`)" class="text-xs bg-amber-50 text-amber-600 hover:bg-amber-100 px-3 py-1.5 rounded font-medium transition">編集</button>` : ''}
-                        <button onclick="deleteRequest('${id}')" class="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded font-medium transition">削除</button>
+                        <button onclick="deleteRequest('${id}', '${data.imageUrl || ''}')" class="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded font-medium transition">削除</button>
                     </div>
                 `;
                 requestList.appendChild(cardDiv);
@@ -304,7 +375,7 @@
             } else {
                 tabHistory.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md bg-white text-blue-600 shadow-sm transition";
                 tabActive.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 hover:text-gray-900 transition";
-                listTitle.textContent = "📜 完了済みの履歴リスト";
+                listTitle.textContent = "📜 完了済みの履歴リスト (直近7日間)";
                 cancelEdit();
             }
             renderList();
@@ -314,7 +385,7 @@
             renderList();
         });
 
-        // フォーム送信
+        // フォーム送信（新規登録・更新）
         requestForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const editId = editIdInput.value;
@@ -326,32 +397,50 @@
 
             localStorage.setItem('staff_request_from_name', from);
 
+            submitBtn.disabled = true;
+            submitBtn.textContent = "送信中...";
+
             try {
+                let imageUrl = null;
+                // 画像が新しく選択されている場合はFirebase Storageへアップロード
+                if (selectedFile) {
+                    const storageRef = ref(storage, `request_images/${Date.now()}_${selectedFile.name}`);
+                    const snapshot = await uploadBytes(storageRef, selectedFile);
+                    imageUrl = await getDownloadURL(snapshot.ref);
+                }
+
                 if (editId) {
-                    await updateDoc(doc(db, "staff_requests", editId), {
-                        from: from,
-                        to: to,
-                        task: task
-                    });
+                    // 編集時：画像が変更されていれば新しいURLを設定
+                    const updateData = { from: from, to: to, task: task };
+                    if (imageUrl) {
+                        updateData.imageUrl = imageUrl;
+                    }
+                    await updateDoc(doc(db, "staff_requests", editId), updateData);
                     cancelEdit();
                 } else {
+                    // 新規登録時
                     await addDoc(collection(db, "staff_requests"), {
                         from: from,
                         to: to,
                         task: task,
+                        imageUrl: imageUrl || null,
                         status: 'pending',
                         createdAt: serverTimestamp()
                     });
                     document.getElementById('taskContent').value = '';
+                    clearImageInput();
                 }
                 fetchRequests();
             } catch (error) {
                 console.error("保存エラー: ", error);
                 alert("保存に失敗しました。");
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = editId ? "更新する" : "送信する";
             }
         });
 
-        // カード内の対応メモを読み取って完了状態にする
+        // 完了状態にする
         window.completeRequest = async (id) => {
             const noteInput = document.getElementById(`note_${id}`);
             const note = noteInput ? noteInput.value.trim() : '';
@@ -402,6 +491,7 @@
             fromNameInput.value = currentSavedName ? currentSavedName : "";
             document.getElementById('toName').value = "";
             document.getElementById('taskContent').value = "";
+            clearImageInput();
 
             formTitle.textContent = "✍️ 新規依頼・伝言を登録";
             submitBtn.textContent = "送信する";
@@ -409,10 +499,20 @@
             cancelEditBtn.classList.add('hidden');
         };
 
-        window.deleteRequest = (id) => {
+        // 削除（画像がある場合はStorageからも削除を試みる）
+        window.deleteRequest = (id, imageUrl) => {
             showConfirmDialog("この依頼を削除してもよろしいですか？", async () => {
                 try {
                     await deleteDoc(doc(db, "staff_requests", id));
+                    // 画像があればStorageからも削除（オプション）
+                    if (imageUrl) {
+                        try {
+                            const imageRef = ref(storage, imageUrl);
+                            await deleteObject(imageRef);
+                        } catch (imgErr) {
+                            console.log("画像削除スキップまたは失敗: ", imgErr);
+                        }
+                    }
                     fetchRequests();
                 } catch (error) {
                     console.error("削除エラー: ", error);
