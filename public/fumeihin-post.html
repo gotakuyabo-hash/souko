@@ -10,7 +10,7 @@
 
     <header class="mb-4 text-center">
         <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
-        <p class="text-xs text-slate-500">チャットグループ自動取得 ＆ Chatwork報告・履歴管理</p>
+        <p class="text-xs text-slate-500">チャットグループ自動取得 ＆ 画像付きChatwork報告</p>
     </header>
 
     <!-- 設定カード -->
@@ -68,8 +68,12 @@
                 <label class="block text-xs font-bold mb-1">詳細メモ・保管場所など</label>
                 <textarea id="memo" rows="2" placeholder="例: 棚A-3に一時保管しています。確認お願いします。" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500"></textarea>
             </div>
+            <div>
+                <label class="block text-xs font-bold mb-1">📷 証拠写真・画像添付 (任意)</label>
+                <input type="file" id="reportImage" accept="image/*" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            </div>
             <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
-                🚀 セラーへChatwork報告 ＆ 記録
+                🚀 画像付きでChatwork報告 ＆ 記録
             </button>
         </form>
         <p id="statusMsg" class="text-center text-xs text-slate-500 mt-2 min-h-[1.5rem]"></p>
@@ -122,12 +126,10 @@
             document.getElementById('cwAccountId').value = savedAccount;
 
             if (savedToken) {
-                // すでにトークンがあれば自動でグループ一覧を取得しておく
                 fetchChatRooms(true);
             }
         });
 
-        // Chatwork APIからグループ一覧を取得
         async function fetchChatRooms(isAuto = false) {
             const token = document.getElementById('cwApiToken').value.trim();
             const statusMsg = document.getElementById('statusMsg');
@@ -168,7 +170,6 @@
             }
         }
 
-        // プルダウンで選択されたらルームID欄に自動反映
         function onRoomSelectChange() {
             const select = document.getElementById('roomSelect');
             document.getElementById('cwRoomId').value = select.value;
@@ -191,6 +192,7 @@
             const refNum = document.getElementById('referenceNumber').value.trim();
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
+            const imageInput = document.getElementById('reportImage');
 
             if (!seller || !window.db) return;
 
@@ -206,7 +208,7 @@
                     createdAt: new Date().toISOString()
                 });
 
-                // 2. Chatwork送信
+                // 2. Chatwork送信（画像がある場合はファイルをアップロード、なければテキストのみ）
                 const apiToken = localStorage.getItem('fumeihin_cw_token');
                 const roomId = localStorage.getItem('fumeihin_cw_room');
                 const accountId = localStorage.getItem('fumeihin_cw_account');
@@ -222,14 +224,30 @@
                                       `----------------------------------\n` +
                                       `ご確認とご対応よろしくお願いいたします。`;
 
-                    await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/messages`, {
-                        method: 'POST',
-                        headers: {
-                            'X-ChatWorkToken': apiToken,
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        },
-                        body: new URLSearchParams({ body: messageBody })
-                    });
+                    if (imageInput.files && imageInput.files[0]) {
+                        // 画像がある場合：ChatworkのファイルアップロードAPIを使用
+                        const formData = new FormData();
+                        formData.append('file', imageInput.files[0]);
+                        formData.append('message', messageBody);
+
+                        await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/files`, {
+                            method: 'POST',
+                            headers: {
+                                'X-ChatWorkToken': apiToken
+                            },
+                            body: formData
+                        });
+                    } else {
+                        // 画像がない場合：通常のメッセージ送信
+                        await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/messages`, {
+                            method: 'POST',
+                            headers: {
+                                'X-ChatWorkToken': apiToken,
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            },
+                            body: new URLSearchParams({ body: messageBody })
+                        });
+                    }
                 }
 
                 statusMsg.innerText = "報告＆Chatwork送信完了！";
