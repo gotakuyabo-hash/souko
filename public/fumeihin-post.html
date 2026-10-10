@@ -16,19 +16,15 @@
     <!-- 設定カード -->
     <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
         <details class="text-xs" id="settingsDetails">
-            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ Chatwork ＆ GAS 設定（タップして展開）</summary>
+            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ 送信先グループ設定（タップして展開）</summary>
             <div class="mt-3 space-y-3 pt-2 border-t border-slate-100">
                 <div>
-                    <label class="block font-medium mb-1">APIトークン</label>
-                    <div class="flex gap-2">
-                        <input type="password" id="cwApiToken" placeholder="Chatwork APIトークン" class="w-full border border-slate-300 rounded p-2 text-xs">
-                        <button type="button" onclick="fetchChatRooms()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold whitespace-nowrap">グループ取得</button>
-                    </div>
+                    <button type="button" onclick="fetchChatRooms()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-xs">🔄 チャットグループ一覧を取得する</button>
                 </div>
                 <div>
                     <label class="block font-medium mb-1">送信先グループ（ルーム選択）</label>
                     <select id="roomSelect" onchange="onRoomSelectChange()" class="w-full border border-slate-300 rounded p-2 text-xs bg-white">
-                        <option value="">-- まずAPIトークンを入れてグループ取得を押してください --</option>
+                        <option value="">-- 上のボタンを押してグループを選択してください --</option>
                     </select>
                 </div>
                 <div>
@@ -117,27 +113,18 @@
 
     <script>
         window.addEventListener('DOMContentLoaded', () => {
-            const savedToken = localStorage.getItem('fumeihin_cw_token') || '';
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
             const savedAccount = localStorage.getItem('fumeihin_cw_account') || '';
             const savedGas = localStorage.getItem('fumeihin_gas_url') || '';
 
-            document.getElementById('cwApiToken').value = savedToken;
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
             if (savedGas) document.getElementById('gasUrl').value = savedGas;
         });
 
-        async function fetchChatRooms(isAuto = false) {
-            // 入力欄が空ならlocalStorageからフォールバック
-            const token = document.getElementById('cwApiToken').value.trim() || localStorage.getItem('fumeihin_cw_token');
+        async function fetchChatRooms() {
             const gasUrl = document.getElementById('gasUrl').value.trim();
             const statusMsg = document.getElementById('statusMsg');
-            
-            if (!token) {
-                if (!isAuto) alert('APIトークンを入力してください');
-                return;
-            }
 
             try {
                 statusMsg.innerText = "チャットグループ一覧を取得中...";
@@ -145,7 +132,7 @@
                 const res = await fetch(gasUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'getRooms', apiToken: token })
+                    body: JSON.stringify({ action: 'getRooms' })
                 });
 
                 const data = await res.json();
@@ -178,7 +165,6 @@
         }
 
         function saveSettings() {
-            localStorage.setItem('fumeihin_cw_token', document.getElementById('cwApiToken').value.trim());
             localStorage.setItem('fumeihin_cw_room', document.getElementById('cwRoomId').value.trim());
             localStorage.setItem('fumeihin_cw_account', document.getElementById('cwAccountId').value.trim());
             localStorage.setItem('fumeihin_gas_url', document.getElementById('gasUrl').value.trim());
@@ -197,7 +183,6 @@
             const memo = document.getElementById('memo').value.trim();
             const gasUrl = document.getElementById('gasUrl').value.trim();
             
-            const apiToken = document.getElementById('cwApiToken').value.trim() || localStorage.getItem('fumeihin_cw_token');
             const roomId = document.getElementById('cwRoomId').value.trim() || localStorage.getItem('fumeihin_cw_room');
             const accountId = document.getElementById('cwAccountId').value.trim() || localStorage.getItem('fumeihin_cw_account');
 
@@ -216,7 +201,7 @@
                 });
 
                 // 2. Chatwork通知（GAS経由）
-                if (apiToken && roomId && gasUrl) {
+                if (roomId && gasUrl) {
                     statusMsg.innerText = "Chatworkへ送信中...";
                     
                     let mention = accountId ? `[To:${accountId}] ご担当者様\n\n` : '';
@@ -234,7 +219,6 @@
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({
                             action: 'sendMessage',
-                            apiToken: apiToken,
                             roomId: roomId,
                             messageBody: messageBody
                         })
