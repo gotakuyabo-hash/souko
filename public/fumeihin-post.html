@@ -72,10 +72,6 @@
                 <label class="block text-xs font-bold mb-1">詳細メモ・保管場所など</label>
                 <textarea id="memo" rows="2" placeholder="例: 棚A-3に一時保管しています。確認お願いします。" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500"></textarea>
             </div>
-            <div>
-                <label class="block text-xs font-bold mb-1">📷 証拠写真・画像添付 (任意)</label>
-                <input type="file" id="reportImage" accept="image/*" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-            </div>
             <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
                 🚀 Chatworkに報告 ＆ 記録
             </button>
@@ -130,30 +126,32 @@
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
             if (savedGas) document.getElementById('gasUrl').value = savedGas;
-
-            if (savedToken) {
-                fetchChatRooms(true);
-            }
         });
 
         async function fetchChatRooms(isAuto = false) {
             const token = document.getElementById('cwApiToken').value.trim();
+            const gasUrl = document.getElementById('gasUrl').value.trim();
             const statusMsg = document.getElementById('statusMsg');
+            
             if (!token) {
                 if (!isAuto) alert('APIトークンを入力してください');
                 return;
             }
 
             try {
-                if (!isAuto) statusMsg.innerText = "チャットグループ一覧を取得中...";
-                const response = await fetch('https://api.chatwork.com/v2/rooms', {
-                    method: 'GET',
-                    headers: { 'X-ChatWorkToken': token }
+                statusMsg.innerText = "チャットグループ一覧を取得中...";
+                
+                // GAS経由でルーム一覧を取得（CORS回避）
+                const res = await fetch(gasUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // GASとの通信安定用
+                    body: JSON.stringify({ action: 'getRooms', apiToken: token })
                 });
 
-                if (!response.ok) throw new Error('APIトークンが無効か、通信に失敗しました');
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error(data.message || '取得失敗');
 
-                const rooms = await response.json();
+                const rooms = data.rooms;
                 const select = document.getElementById('roomSelect');
                 const currentRoomId = document.getElementById('cwRoomId').value;
 
@@ -161,17 +159,15 @@
                 rooms.forEach(room => {
                     const opt = document.createElement('option');
                     opt.value = room.room_id;
-                    opt.textContent = `[${room.type}] ${room.name} (${room.room_id})` ;
+                    opt.textContent = `[${room.type}] ${room.name} (${room.room_id})`;
                     if (room.room_id === currentRoomId) opt.selected = true;
                     select.appendChild(opt);
                 });
 
-                if (!isAuto) {
-                    statusMsg.innerText = `グループを ${rooms.length}件 取得しました！`;
-                    document.getElementById('settingsDetails').open = true;
-                }
+                statusMsg.innerText = `グループを ${rooms.length}件 取得しました！`;
+                document.getElementById('settingsDetails').open = true;
             } catch (err) {
-                if (!isAuto) alert('取得エラー: ' + err.message);
+                alert('取得エラー: ' + err.message);
                 statusMsg.innerText = "";
             }
         }
@@ -234,9 +230,9 @@
 
                     await fetch(gasUrl, {
                         method: 'POST',
-                        mode: 'no-cors', // GASへのPOST時のCORS対策
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({
+                            action: 'sendMessage',
                             apiToken: apiToken,
                             roomId: roomId,
                             messageBody: messageBody
