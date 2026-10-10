@@ -197,7 +197,6 @@
                     allRequests.push({ id: docSnap.id, ...docSnap.data() });
                 });
 
-                // 日付順（新しい順）に並び替え
                 allRequests.sort((a, b) => {
                     const timeA = a.createdAt ? a.createdAt.toMillis() : 0;
                     const timeB = b.createdAt ? b.createdAt.toMillis() : 0;
@@ -211,11 +210,10 @@
             }
         }
 
-        // リストの描画（タブと検索キーワードでフィルター）
+        // リストの描画
         window.renderList = () => {
             const keyword = searchInput.value.toLowerCase().trim();
 
-            // タブによる絞り込み（active: 未完了、history: 完了済み）
             let filtered = allRequests.filter(item => {
                 const status = item.status || 'pending';
                 if (currentTab === 'active') {
@@ -225,13 +223,13 @@
                 }
             });
 
-            // キーワード検索による絞り込み（From, To, タスク内容）
             if (keyword) {
                 filtered = filtered.filter(item => {
                     const from = (item.from || '').toLowerCase();
                     const to = (item.to || '').toLowerCase();
                     const task = (item.task || '').toLowerCase();
-                    return from.includes(keyword) || to.includes(keyword) || task.includes(keyword);
+                    const note = (item.completedNote || '').toLowerCase();
+                    return from.includes(keyword) || to.includes(keyword) || task.includes(keyword) || note.includes(keyword);
                 });
             }
 
@@ -247,7 +245,29 @@
                 const isCompleted = data.status === 'completed';
 
                 const cardDiv = document.createElement('div');
-                cardDiv.className = `card p-4 transition ${isCompleted ? 'bg-gray-50 opacity-80' : 'bg-white'}`;
+                cardDiv.className = `card p-4 transition ${isCompleted ? 'bg-gray-50' : 'bg-white'}`;
+
+                let bottomSection = '';
+                if (isCompleted) {
+                    // 完了済みの場合は対応メモを表示
+                    bottomSection = `
+                        <div class="mt-3 pt-3 border-t border-gray-200 bg-emerald-50/50 p-2.5 rounded-lg text-xs space-y-1">
+                            <div class="flex items-center justify-between text-emerald-900 font-medium">
+                                <span>✅ 対応完了</span>
+                                <span class="text-gray-400">${formatDate(data.completedAt)}</span>
+                            </div>
+                            ${data.completedNote ? `<p class="text-slate-700 whitespace-pre-wrap">対応メモ: ${escapeHtml(data.completedNote)}</p>` : ''}
+                        </div>
+                    `;
+                } else {
+                    // 未完了の場合は対応内容の入力欄を常に表示
+                    bottomSection = `
+                        <div class="mt-3 pt-3 border-t border-gray-100 space-y-2 bg-slate-50 p-3 rounded-lg">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">📝 対応内容・メモ</label>
+                            <input type="text" id="note_${id}" placeholder="例: 電話連絡済み、〇〇棚に補充完了 など" class="w-full border border-gray-300 rounded p-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                        </div>
+                    `;
+                }
 
                 cardDiv.innerHTML = `
                     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2">
@@ -259,15 +279,15 @@
                         </div>
                         <span class="text-xs text-gray-400">${formatDate(data.createdAt)}</span>
                     </div>
-                    <p class="text-sm text-slate-700 whitespace-pre-wrap mb-3 ${isCompleted ? 'line-through text-gray-400' : ''}">${escapeHtml(data.task || '')}</p>
-                    <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
-                        <button onclick="toggleStatus('${id}', '${data.status || 'pending'}')" class="text-xs px-3 py-1.5 rounded font-medium transition ${isCompleted ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-emerald-600 text-white hover:bg-emerald-700'}">
-                            ${isCompleted ? '未完了に戻す' : '完了にする'}
-                        </button>
+                    <p class="text-sm text-slate-700 whitespace-pre-wrap mb-2">${escapeHtml(data.task || '')}</p>
+                    ${bottomSection}
+                    <div class="flex justify-end gap-2 pt-3 mt-2 border-t border-gray-100">
+                        ${isCompleted 
+                            ? `<button onclick="revertStatus('${id}')" class="text-xs bg-gray-200 text-gray-700 hover:bg-gray-300 px-3 py-1.5 rounded font-medium transition">未完了に戻す</button>`
+                            : `<button onclick="completeRequest('${id}')" class="text-xs bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1.5 rounded font-medium transition">完了にする</button>`
+                        }
                         ${!isCompleted ? `<button onclick="startEdit('${id}', \`${escapeAttr(data.from || '')}\`, \`${escapeAttr(data.to || '')}\`, \`${escapeAttr(data.task || '')}\`)" class="text-xs bg-amber-50 text-amber-600 hover:bg-amber-100 px-3 py-1.5 rounded font-medium transition">編集</button>` : ''}
-                        <button onclick="deleteRequest('${id}')" class="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded font-medium transition">
-                            削除
-                        </button>
+                        <button onclick="deleteRequest('${id}')" class="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded font-medium transition">削除</button>
                     </div>
                 `;
                 requestList.appendChild(cardDiv);
@@ -290,12 +310,11 @@
             renderList();
         };
 
-        // 検索窓の入力イベント
         searchInput.addEventListener('input', () => {
             renderList();
         });
 
-        // フォーム送信（新規登録 ＆ 更新）
+        // フォーム送信
         requestForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const editId = editIdInput.value;
@@ -332,7 +351,37 @@
             }
         });
 
-        // 編集モード開始
+        // カード内の対応メモを読み取って完了状態にする
+        window.completeRequest = async (id) => {
+            const noteInput = document.getElementById(`note_${id}`);
+            const note = noteInput ? noteInput.value.trim() : '';
+
+            try {
+                await updateDoc(doc(db, "staff_requests", id), {
+                    status: 'completed',
+                    completedNote: note || '',
+                    completedAt: serverTimestamp()
+                });
+                fetchRequests();
+            } catch (error) {
+                console.error("完了更新エラー: ", error);
+            }
+        };
+
+        // 未完了に戻す
+        window.revertStatus = async (id) => {
+            try {
+                await updateDoc(doc(db, "staff_requests", id), {
+                    status: 'pending',
+                    completedNote: null,
+                    completedAt: null
+                });
+                fetchRequests();
+            } catch (error) {
+                console.error("ステータス戻しエラー: ", error);
+            }
+        };
+
         window.startEdit = (id, from, to, task) => {
             editIdInput.value = id;
             fromNameInput.value = from;
@@ -347,7 +396,6 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
-        // 編集キャンセル
         window.cancelEdit = () => {
             editIdInput.value = "";
             const currentSavedName = localStorage.getItem('staff_request_from_name');
@@ -361,20 +409,6 @@
             cancelEditBtn.classList.add('hidden');
         };
 
-        // 完了ステータスの切り替え
-        window.toggleStatus = async (id, currentStatus) => {
-            const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-            try {
-                await updateDoc(doc(db, "staff_requests", id), {
-                    status: newStatus
-                });
-                fetchRequests();
-            } catch (error) {
-                console.error("更新エラー: ", error);
-            }
-        };
-
-        // 削除（モーダル確認付き）
         window.deleteRequest = (id) => {
             showConfirmDialog("この依頼を削除してもよろしいですか？", async () => {
                 try {
@@ -386,7 +420,6 @@
             });
         };
 
-        // XSS対策用エスケープ
         function escapeHtml(str) {
             return str.replace(/[&'`<>]/g, function(match) {
                 return {
@@ -411,7 +444,6 @@
             });
         }
 
-        // 初期読み込み
         fetchRequests();
     </script>
 </body>
