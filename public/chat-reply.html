@@ -48,7 +48,7 @@
 
     <script>
         // ご自身のGASのウェブアプリURLに書き換えてください
-        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxuO_lObsnGyfQjNjplXAKPBtTNyhNlOWfquFyTSW1G2jAApymUXlMSP8J63ZDlloH-xQ/exec";
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyIqdVCj9OtlqsUUqv33aUH4U2qes9DIUJyKwBE6piOcvmcKmozFqjkk2yxvSM0ZG-1Fg/exec";
         
         let allRoomsCache = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v1";
@@ -232,8 +232,16 @@
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ action: "generate_reply", message: messageText })
                 });
-                const data = await response.json();
-                if (data.status !== "success") throw new Error(data.message);
+                
+                const rawText = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(rawText);
+                } catch (parseErr) {
+                    throw new Error("サーバーからの応答形式が不正です: " + rawText.substring(0, 100));
+                }
+
+                if (data.status !== "success") throw new Error(data.message || "不明なサーバーエラー");
 
                 const safeInput = encodeURIComponent(messageText);
                 const safeOutput = encodeURIComponent(data.reply);
@@ -246,7 +254,8 @@
                     </button>
                 `;
             } catch (e) {
-                replyArea.innerHTML = '<span class="text-xs text-red-500">生成に失敗しました</span>';
+                // 詳細なエラーを画面に表示する
+                replyArea.innerHTML = `<span class="text-xs text-red-500 font-bold">生成失敗: ${escapeHtml(e.message)}</span>`;
             }
         }
 
