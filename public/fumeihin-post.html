@@ -57,10 +57,6 @@
     <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
         <form id="reportForm" class="space-y-3">
             <div>
-                <label class="block text-xs font-bold mb-1">セラー名 / 取引先名</label>
-                <input type="text" id="sellerName" placeholder="例: A社ショップ" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500">
-            </div>
-            <div>
                 <label class="block text-xs font-bold mb-1">伝票番号 / 注文番号 (任意)</label>
                 <input type="text" id="referenceNumber" placeholder="バーコード読取または手入力" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500">
             </div>
@@ -100,7 +96,7 @@
         <div class="grid grid-cols-2 gap-2 mb-3">
             <div>
                 <label class="block text-[10px] text-slate-500 mb-0.5">キーワード検索</label>
-                <input type="text" id="historySearchKeyword" placeholder="セラー名・番号など" oninput="filterHistoryView()" class="w-full border border-slate-300 rounded p-1.5 text-xs">
+                <input type="text" id="historySearchKeyword" placeholder="番号・メモなど" oninput="filterHistoryView()" class="w-full border border-slate-300 rounded p-1.5 text-xs">
             </div>
             <div>
                 <label class="block text-[10px] text-slate-500 mb-0.5">日付絞り込み</label>
@@ -297,7 +293,6 @@
 
         reportForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const seller = document.getElementById('sellerName').value.trim();
             const refNum = document.getElementById('referenceNumber').value.trim();
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
@@ -308,13 +303,12 @@
             const accountId = document.getElementById('cwAccountId').value.trim() || localStorage.getItem('fumeihin_cw_account');
             const accountName = document.getElementById('cwAccountName').value.trim() || localStorage.getItem('fumeihin_cw_account_name');
 
-            if (!seller || !window.db) return;
+            if (!window.db) return;
 
             try {
                 statusMsg.innerText = "クラウドに保存中...";
 
                 await window.addDoc(window.collection(window.db, "fumeihin_reports"), {
-                    seller: seller,
                     referenceNumber: refNum || "なし",
                     issueType: issueType,
                     memo: memo || "",
@@ -386,7 +380,7 @@
                 if (dateFilter && itemDateStr !== dateFilter) return false;
 
                 if (keyword) {
-                    const targetText = `${item.seller} ${item.referenceNumber} ${item.issueType} ${item.memo}`.toLowerCase();
+                    const targetText = `${item.referenceNumber} ${item.issueType} ${item.memo}`.toLowerCase();
                     if (!targetText.includes(keyword)) return false;
                 }
                 return true;
@@ -400,17 +394,17 @@
             historyList.innerHTML = filtered.map(item => `
                 <li class="p-2.5 bg-slate-50 rounded border border-slate-100 flex justify-between items-start">
                     <div>
-                        <strong class="text-amber-600 text-sm">${item.seller}</strong> <span class="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.5 rounded">${item.issueType}</span><br>
-                        <span class="text-slate-600">番号: ${item.referenceNumber} / メモ: ${item.memo || 'なし'}</span>
+                        <span class="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.5 rounded font-bold">${item.issueType}</span><br>
+                        <span class="text-slate-600 text-xs">番号: ${item.referenceNumber} / メモ: ${item.memo || 'なし'}</span>
                         <div class="text-[10px] text-slate-400 mt-1">${new Date(item.createdAt).toLocaleString()}</div>
                     </div>
-                    <button type="button" onclick="deleteHistoryItem('${item.id}', '${item.seller}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 bg-red-50 rounded border border-red-100 ml-2 whitespace-nowrap">🗑️ 削除</button>
+                    <button type="button" onclick="deleteHistoryItem('${item.id}', '${item.referenceNumber}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 bg-red-50 rounded border border-red-100 ml-2 whitespace-nowrap">🗑️ 削除</button>
                 </li>
             `).join('');
         };
 
-        window.deleteHistoryItem = async function(docId, sellerName) {
-            if (!confirm(`「${sellerName}」の報告履歴を削除してもよろしいですか？`)) {
+        window.deleteHistoryItem = async function(docId, refNum) {
+            if (!confirm(`該当番号「${refNum}」の報告履歴を削除してもよろしいですか？`)) {
                 return;
             }
 
