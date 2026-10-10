@@ -129,7 +129,8 @@
         });
 
         async function fetchChatRooms(isAuto = false) {
-            const token = document.getElementById('cwApiToken').value.trim();
+            // 入力欄が空ならlocalStorageからフォールバック
+            const token = document.getElementById('cwApiToken').value.trim() || localStorage.getItem('fumeihin_cw_token');
             const gasUrl = document.getElementById('gasUrl').value.trim();
             const statusMsg = document.getElementById('statusMsg');
             
@@ -141,10 +142,9 @@
             try {
                 statusMsg.innerText = "チャットグループ一覧を取得中...";
                 
-                // GAS経由でルーム一覧を取得（CORS回避）
                 const res = await fetch(gasUrl, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // GASとの通信安定用
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ action: 'getRooms', apiToken: token })
                 });
 
@@ -196,9 +196,10 @@
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
             const gasUrl = document.getElementById('gasUrl').value.trim();
-            const apiToken = localStorage.getItem('fumeihin_cw_token');
-            const roomId = localStorage.getItem('fumeihin_cw_room');
-            const accountId = localStorage.getItem('fumeihin_cw_account');
+            
+            const apiToken = document.getElementById('cwApiToken').value.trim() || localStorage.getItem('fumeihin_cw_token');
+            const roomId = document.getElementById('cwRoomId').value.trim() || localStorage.getItem('fumeihin_cw_room');
+            const accountId = document.getElementById('cwAccountId').value.trim() || localStorage.getItem('fumeihin_cw_account');
 
             if (!seller || !window.db) return;
 
