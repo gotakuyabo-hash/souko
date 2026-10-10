@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>処理済みラベル管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f4f6f8; font-family: sans-serif; padding: 15px; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 0 auto; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+
+        /* 100mm × 150mm サーマル・ラベル用紙専用の印刷設定 */
+        @page {
+            size: 100mm 150mm;
+            margin: 2mm;
+        }
+        @media print {
+            html, body {
+                width: 100mm;
+                height: 150mm;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: none;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .card {
+                box-shadow: none;
+                border: none;
+                padding: 5mm;
+                max-width: none;
+                width: 100%;
+                height: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div style="max-width: 600px; margin: 0 auto;">
+        <div class="no-print">
+            <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
+        </div>
+        <div class="card">
+            <h2 class="text-lg font-bold mb-4">🏷️ 処理済みラベル管理</h2>
+            <div class="mb-3"><label class="text-xs font-bold">処理日</label><input type="date" id="p-date" class="w-full p-2 border rounded mt-1 text-sm" onchange="saveData()"></div>
+            <div class="mb-3"><label class="text-xs font-bold">セラー名</label><input type="text" id="p-seller" class="w-full p-2 border rounded mt-1 text-sm" oninput="saveData()" placeholder="セラー名を入力"></div>
+            <div class="mb-4"><label class="text-xs font-bold">担当者</label><input type="text" id="p-staff" class="w-full p-2 border rounded mt-1 text-sm" oninput="saveData()" placeholder="担当者名を入力"></div>
+
+            <div class="text-xs font-bold text-slate-700 mb-1">処理内容（チェック項目）</div>
+            <div id="items-list" class="space-y-2 mb-4"></div>
+
+            <div class="no-print">
+                <button onclick="addItem()" class="w-full bg-emerald-50 text-emerald-700 p-2 border border-dashed rounded font-bold mb-3 text-xs">+ 項目を追加</button>
+                <button onclick="window.print()" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition shadow-sm">🖨️ 100×150サイズで印刷 / 保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'processed_label_local_data';
+
+        window.saveData = () => {
+            const items = [];
+            document.querySelectorAll('.item-row').forEach(r => {
+                items.push({
+                    text: r.querySelector('.t').value,
+                    checked: r.querySelector('.c').checked
+                });
+            });
+            const data = {
+                processDate: document.getElementById('p-date').value,
+                sellerName: document.getElementById('p-seller').value,
+                staffName: document.getElementById('p-staff').value,
+                items: items
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        };
+
+        window.addItem = () => {
+            const list = document.getElementById('items-list');
+            list.insertAdjacentHTML('beforeend', `
+                <div class="item-row flex items-center gap-2">
+                    <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveData()">
+                    <input type="text" class="t flex-1 p-1.5 border rounded text-sm" oninput="saveData()" placeholder="項目名">
+                    <button onclick="this.closest('.item-row').remove(); saveData();" class="no-print text-red-600 font-bold px-2">✕</button>
+                </div>
+            `);
+            saveData();
+        };
+
+        // ページ読み込み時にローカルストレージから復元
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedJson = localStorage.getItem(STORAGE_KEY);
+            if (!savedJson) return;
+
+            try {
+                const d = JSON.parse(savedJson);
+                document.getElementById('p-date').value = d.processDate || "";
+                document.getElementById('p-seller').value = d.sellerName || "";
+                document.getElementById('p-staff').value = d.staffName || "";
+
+                const list = document.getElementById('items-list');
+                list.innerHTML = "";
+                (d.items || []).forEach(i => {
+                    list.insertAdjacentHTML('beforeend', `
+                        <div class="item-row flex items-center gap-2">
+                            <input type="checkbox" class="c w-4 h-4 accent-green-600" ${i.checked ? 'checked' : ''} onchange="saveData()">
+                            <input type="text" class="t flex-1 p-1.5 border rounded text-sm" value="${i.value || i.text || ''}" oninput="saveData()">
+                            <button onclick="this.closest('.item-row').remove(); saveData();" class="no-print text-red-600 font-bold px-2">✕</button>
+                        </div>
+                    `);
+                });
+            } catch (e) {
+                console.error("データの読み込みに失敗しました", e);
+            }
+        });
+    </script>
+</body>
+</html>

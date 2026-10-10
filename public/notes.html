@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>チーム共有ノート</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f4f6f8; font-family: sans-serif; padding: 15px; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 0 auto 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .filter-bar { display: flex; flex-direction: column; gap: 10px; background: #edf2f7; padding: 12px; border-radius: 8px; margin-bottom: 15px; }
+        .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .filter-bar input, .filter-bar select { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: #fff; }
+
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+            z-index: 1000; display: none; padding: 16px;
+        }
+        .modal-content {
+            background: #fff; width: 100%; max-width: 320px; border-radius: 8px; padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-align: center;
+        }
+        .modal-header { font-size: 16px; font-weight: bold; color: #e74c3c; margin-bottom: 12px; justify-content: center; display: flex; align-items: center; }
+        .confirm-modal-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .confirm-modal-buttons button {
+            flex: 1;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            font-size: 15px;
+        }
+        .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
+        .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
+    </style>
+</head>
+<body>
+    <div style="max-width: 600px; margin: 0 auto;">
+        <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
+
+        <!-- 投稿・編集フォームカード -->
+        <div class="card">
+            <h2 id="form-title" class="text-lg font-bold mb-4">📢 チーム共有ノート</h2>
+            <form id="note-form" onsubmit="saveNote(event)">
+                <input type="hidden" id="edit-id">
+                <div class="mb-3">
+                    <label class="text-xs font-bold text-slate-700">日付</label>
+                    <input type="date" id="n-date" class="w-full p-2 border rounded mt-1 text-sm" required>
+                </div>
+                <div class="mb-3">
+                    <label class="text-xs font-bold text-slate-700">カテゴリ</label>
+                    <select id="n-cat" class="w-full p-2 border rounded mt-1 text-sm">
+                        <option value="決定事項">決定事項</option>
+                        <option value="重要・要確認">重要・要確認</option>
+                        <option value="一般連絡">一般連絡</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="text-xs font-bold text-slate-700">タイトル</label>
+                    <input type="text" id="n-title" class="w-full p-2 border rounded mt-1 text-sm" placeholder="例：〇〇の進め方について" required>
+                </div>
+                <div class="mb-4">
+                    <label class="text-xs font-bold text-slate-700">本文</label>
+                    <textarea id="n-content" class="w-full p-2 border rounded mt-1 text-sm" rows="3" placeholder="詳細を入力" required></textarea>
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" id="submit-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition">ノートを保存する</button>
+                    <button type="button" id="cancel-btn" class="hidden bg-gray-400 hover:bg-gray-500 text-white p-3 rounded font-bold text-sm transition" onclick="resetForm()">キャンセル</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 検索・絞り込みバー -->
+        <div class="card" style="padding: 15px; margin-bottom: 15px;">
+            <div class="filter-bar">
+                <input type="text" id="note-searchInput" placeholder="🔍 キーワードで検索..." oninput="filterNotes()">
+                <div class="filter-row">
+                    <select id="note-categoryFilter" onchange="filterNotes()">
+                        <option value="">すべてのカテゴリ</option>
+                        <option value="決定事項">決定事項</option>
+                        <option value="重要・要確認">重要・要確認</option>
+                        <option value="一般連絡">一般連絡</option>
+                    </select>
+                    <input type="date" id="note-dateFilter" onchange="filterNotes()" title="日付で絞り込み">
+                </div>
+                <div class="text-right">
+                    <button type="button" onclick="clearDateFilter()" class="text-xs text-blue-600 underline">日付フィルターをクリア</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ノート一覧表示エリア -->
+        <div id="notes-list" class="space-y-3"></div>
+    </div>
+
+    <!-- 削除確認モーダル -->
+    <div class="modal-overlay" id="confirm-modal">
+        <div class="modal-content">
+            <div class="modal-header">⚠️ 削除の確認</div>
+            <div style="font-size: 15px; color: #333; margin: 10px 0 20px 0;" id="confirm-msg">
+                本当にこのノートを削除しますか？
+            </div>
+            <div class="confirm-modal-buttons">
+                <button type="button" class="btn-confirm-no" id="confirm-no">キャンセル</button>
+                <button type="button" class="btn-confirm-yes" id="confirm-yes">削除する</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const db = getFirestore(initializeApp({
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57"
+        }));
+
+        // 削除確認モーダル関連の要素
+        const confirmModal = document.getElementById('confirm-modal');
+        const confirmMsg = document.getElementById('confirm-msg');
+        const confirmYes = document.getElementById('confirm-yes');
+        const confirmNo = document.getElementById('confirm-no');
+        let pendingDeleteCallback = null;
+
+        function showConfirmDialog(message, callback) {
+            confirmMsg.textContent = message;
+            pendingDeleteCallback = callback;
+            confirmModal.style.display = 'flex';
+        }
+
+        confirmYes.onclick = () => {
+            confirmModal.style.display = 'none';
+            if (pendingDeleteCallback) {
+                pendingDeleteCallback();
+                pendingDeleteCallback = null;
+            }
+        };
+
+        confirmNo.onclick = () => {
+            confirmModal.style.display = 'none';
+            pendingDeleteCallback = null;
+        };
+
+        document.getElementById('n-date').valueAsDate = new Date();
+        let allNotes = [];
+
+        window.saveNote = async (e) => {
+            e.preventDefault();
+            const editId = document.getElementById('edit-id').value;
+            const noteData = {
+                date: document.getElementById('n-date').value,
+                category: document.getElementById('n-cat').value,
+                title: document.getElementById('n-title').value.trim(),
+                content: document.getElementById('n-content').value.trim()
+            };
+
+            try {
+                if (editId) {
+                    await updateDoc(doc(db, "shared_notes", editId), noteData);
+                    alert("ノートを更新しました！");
+                } else {
+                    noteData.createdAt = serverTimestamp();
+                    await addDoc(collection(db, "shared_notes"), noteData);
+                    alert("ノートを保存しました！");
+                }
+                resetForm();
+            } catch(err) {
+                console.error(err);
+                alert("保存に失敗しました。");
+            }
+        };
+
+        window.editNote = (id) => {
+            const note = allNotes.find(n => n.id === id);
+            if (!note) return;
+            document.getElementById('edit-id').value = note.id;
+            document.getElementById('n-date').value = note.date || '';
+            document.getElementById('n-cat').value = note.category || '一般連絡';
+            document.getElementById('n-title').value = note.title || '';
+            document.getElementById('n-content').value = note.content || '';
+
+            document.getElementById('form-title').innerText = "✏️ ノートを編集中";
+            document.getElementById('submit-btn').innerText = "変更を保存する";
+            document.getElementById('submit-btn').className = "flex-1 bg-green-600 hover:bg-green-700 text-white p-3 rounded font-bold text-sm transition";
+            document.getElementById('cancel-btn').classList.remove('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        window.resetForm = () => {
+            document.getElementById('edit-id').value = '';
+            document.getElementById('note-form').reset();
+            document.getElementById('n-date').valueAsDate = new Date();
+            document.getElementById('form-title').innerText = "📢 チーム共有ノート";
+            document.getElementById('submit-btn').innerText = "ノートを保存する";
+            document.getElementById('submit-btn').className = "flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition";
+            document.getElementById('cancel-btn').classList.add('hidden');
+        };
+
+        window.deleteNote = (id) => {
+            showConfirmDialog("本当にこのノートを削除しますか？", async () => {
+                try {
+                    await deleteDoc(doc(db, "shared_notes", id));
+                } catch(err) {
+                    console.error(err);
+                    alert("削除に失敗しました。");
+                }
+            });
+        };
+
+        window.clearDateFilter = () => {
+            document.getElementById('note-dateFilter').value = '';
+            filterNotes();
+        };
+
+        onSnapshot(query(collection(db, "shared_notes"), orderBy("createdAt", "desc")), (snap) => {
+            allNotes = [];
+            snap.forEach(docSnap => {
+                allNotes.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            filterNotes();
+        });
+
+        window.filterNotes = () => {
+            const keyword = document.getElementById('note-searchInput').value.toLowerCase();
+            const cat = document.getElementById('note-categoryFilter').value;
+            const targetDate = document.getElementById('note-dateFilter').value;
+
+            const filtered = allNotes.filter(n => {
+                const matchKeyword = !keyword || (n.title && n.title.toLowerCase().includes(keyword)) || (n.content && n.content.toLowerCase().includes(keyword));
+                const matchCat = !cat || n.category === cat;
+                const matchDate = !targetDate || n.date === targetDate;
+                return matchKeyword && matchCat && matchDate;
+            });
+
+            const listEl = document.getElementById('notes-list');
+            if (filtered.length === 0) {
+                listEl.innerHTML = '<div class="card text-center text-gray-500 py-6">該当するノートはありません。</div>';
+                return;
+            }
+
+            listEl.innerHTML = '';
+            filtered.forEach(n => {
+                let badgeColor = "#3b82f6", cardBg = "#ffffff";
+                if (n.category === "重要・要確認") { badgeColor = "#ef4444"; cardBg = "#fffefb"; }
+                else if (n.category === "決定事項") { badgeColor = "#2563eb"; }
+                else { badgeColor = "#64748b"; }
+
+                listEl.innerHTML += `
+                    <div class="card" style="background: ${cardBg}; border-left: 4px solid ${badgeColor}; position: relative;">
+                        <div class="flex justify-between items-center mb-2">
+                            <span style="background: ${badgeColor}; color: white; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${n.category}</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500">${n.date}</span>
+                                <button onclick="editNote('${n.id}')" class="text-xs text-blue-600 hover:underline font-bold px-1 bg-blue-50 rounded">編集</button>
+                                <button onclick="deleteNote('${n.id}')" class="text-xs text-red-600 hover:underline font-bold px-1 bg-red-50 rounded">削除</button>
+                            </div>
+                        </div>
+                        <div class="font-bold text-base mb-1 text-slate-800">${n.title}</div>
+                        <div class="text-sm whitespace-pre-wrap text-slate-700">${n.content}</div>
+                    </div>`;
+            });
+        };
+    </script>
+</body>
+</html>
