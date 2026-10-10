@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>不明品・セラー報告ポスト 📦</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 p-4 max-w-lg mx-auto">
+
+    <header class="mb-4 text-center">
+        <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
+        <p class="text-xs text-slate-500">不明品や確認事項をセラーへChatwork報告 ＆ 履歴管理</p>
+    </header>
+
+    <!-- 設定カード -->
+    <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
+        <details class="text-xs">
+            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ Chatwork 設定（タップして展開）</summary>
+            <div class="mt-3 space-y-2 pt-2 border-t border-slate-100">
+                <div>
+                    <label class="block font-medium mb-1">APIトークン</label>
+                    <input type="password" id="cwApiToken" placeholder="Chatwork APIトークン" class="w-full border border-slate-300 rounded p-2 text-xs">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">送信先ルームID</label>
+                    <input type="text" id="cwRoomId" placeholder="例: 123456789" class="w-full border border-slate-300 rounded p-2 text-xs">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">担当者 宛先ID (メンション用)</label>
+                    <input type="text" id="cwAccountId" placeholder="例: 9876543 (任意)" class="w-full border border-slate-300 rounded p-2 text-xs">
+                </div>
+                <button type="button" onclick="saveSettings()" class="w-full bg-slate-700 text-white py-1.5 rounded font-bold">設定を保存</button>
+            </div>
+        </details>
+    </div>
+
+    <!-- 入力・報告フォーム -->
+    <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
+        <form id="reportForm" class="space-y-3">
+            <div>
+                <label class="block text-xs font-bold mb-1">セラー名 / 取引先名</label>
+                <input type="text" id="sellerName" placeholder="例: A社ショップ" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-bold mb-1">伝票番号 / 注文番号 (任意)</label>
+                <input type="text" id="referenceNumber" placeholder="バーコード読取または手入力" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-bold mb-1">ステータス・状態</label>
+                <select id="issueType" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white focus:outline-none focus:border-blue-500">
+                    <option value="宛名・注文者不明">宛名・注文者不明</option>
+                    <option value="商品破損・不備あり">商品破損・不備あり</option>
+                    <option value="納品数不足・過剰">納品数不足・過剰</option>
+                    <option value="その他確認事項">その他確認事項</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold mb-1">詳細メモ・保管場所など</label>
+                <textarea id="memo" rows="2" placeholder="例: 棚A-3に一時保管しています。確認お願いします。" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500"></textarea>
+            </div>
+            <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
+                🚀 セラーへChatwork報告 ＆ 記録
+            </button>
+        </form>
+        <p id="statusMsg" class="text-center text-xs text-slate-500 mt-2 min-h-[1.5rem]"></p>
+    </div>
+
+    <!-- 履歴カード -->
+    <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
+        <h3 class="font-bold text-sm mb-2 text-slate-700">📋 報告履歴（クラウド）</h3>
+        <ul id="historyList" class="space-y-2 text-xs">
+            <li class="text-center text-slate-400 py-2">読み込み中...</li>
+        </ul>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.query = query;
+        window.orderBy = orderBy;
+        window.limit = limit;
+
+        window.loadHistoryFromFirestore();
+    </script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('cwApiToken').value = localStorage.getItem('fumeihin_cw_token') || '';
+            document.getElementById('cwRoomId').value = localStorage.getItem('fumeihin_cw_room') || '';
+            document.getElementById('cwAccountId').value = localStorage.getItem('fumeihin_cw_account') || '';
+        });
+
+        function saveSettings() {
+            localStorage.setItem('fumeihin_cw_token', document.getElementById('cwApiToken').value.trim());
+            localStorage.setItem('fumeihin_cw_room', document.getElementById('cwRoomId').value.trim());
+            localStorage.setItem('fumeihin_cw_account', document.getElementById('cwAccountId').value.trim());
+            alert('設定を保存しました！');
+        }
+
+        const reportForm = document.getElementById('reportForm');
+        const statusMsg = document.getElementById('statusMsg');
+        const historyList = document.getElementById('historyList');
+
+        reportForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const seller = document.getElementById('sellerName').value.trim();
+            const refNum = document.getElementById('referenceNumber').value.trim();
+            const issueType = document.getElementById('issueType').value;
+            const memo = document.getElementById('memo').value.trim();
+
+            if (!seller || !window.db) return;
+
+            try {
+                statusMsg.innerText = "送信・保存中...";
+
+                // 1. Firebaseに保存
+                await window.addDoc(window.collection(window.db, "fumeihin_reports"), {
+                    seller: seller,
+                    referenceNumber: refNum || "なし",
+                    issueType: issueType,
+                    memo: memo || "",
+                    createdAt: new Date().toISOString()
+                });
+
+                // 2. Chatwork送信
+                const apiToken = localStorage.getItem('fumeihin_cw_token');
+                const roomId = localStorage.getItem('fumeihin_cw_room');
+                const accountId = localStorage.getItem('fumeihin_cw_account');
+
+                if (apiToken && roomId) {
+                    let mention = accountId ? `[To:${accountId}] ご担当者様\n\n` : '';
+                    let messageBody = `${mention}【不明品・確認のご連絡】\n` +
+                                      `----------------------------------\n` +
+                                      `■ セラー・取引先: ${seller}\n` +
+                                      `■ 該当番号: ${refNum || 'なし'}\n` +
+                                      `■ 状態: ${issueType}\n` +
+                                      `■ メモ: ${memo || 'なし'}\n` +
+                                      `----------------------------------\n` +
+                                      `ご確認とご対応よろしくお願いいたします。`;
+
+                    await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/messages`, {
+                        method: 'POST',
+                        headers: {
+                            'X-ChatWorkToken': apiToken,
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: new URLSearchParams({ body: messageBody })
+                    });
+                }
+
+                statusMsg.innerText = "報告＆Chatwork送信完了！";
+                reportForm.reset();
+                window.loadHistoryFromFirestore();
+            } catch (err) {
+                statusMsg.innerText = "エラー: " + err.message;
+            }
+        });
+
+        window.loadHistoryFromFirestore = async function() {
+            if (!window.db) return;
+            try {
+                const q = window.query(window.collection(window.db, "fumeihin_reports"), window.orderBy("createdAt", "desc"), window.limit(10));
+                const querySnapshot = await window.getDocs(q);
+                
+                let historyData = [];
+                querySnapshot.forEach((doc) => { historyData.push(doc.data()); });
+
+                if (historyData.length === 0) {
+                    historyList.innerHTML = '<li class="text-center text-slate-400 py-2">まだ報告履歴はありません</li>';
+                    return;
+                }
+
+                historyList.innerHTML = historyData.map(item => `
+                    <li class="p-2.5 bg-slate-50 rounded border border-slate-100">
+                        <strong class="text-amber-600 text-sm">${item.seller}</strong> [${item.issueType}]<br>
+                        <span class="text-slate-600">番号: ${item.referenceNumber} / メモ: ${item.memo || 'なし'}</span>
+                        <div class="text-[10px] text-slate-400 mt-1">${new Date(item.createdAt).toLocaleString()}</div>
+                    </li>
+                `).join('');
+            } catch (err) {
+                historyList.innerHTML = '<li class="text-center text-red-500 py-2">履歴の読み込み失敗</li>';
+            }
+        };
+    </script>
+</body>
+</html>
