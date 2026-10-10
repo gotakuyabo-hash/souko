@@ -2,37 +2,113 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chatwork AI返信アシスタント</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 p-4 max-w-2xl mx-auto">
-    <div class="bg-white p-4 rounded-lg shadow mb-4">
-        <h1 class="text-lg font-bold text-slate-800 mb-2">Chatwork AI返信アシスタント</h1>
-        <p class="text-xs text-slate-500 mb-4">セラー（ルーム）を選択してメッセージを読み込み、AI返信案を生成します。</p>
-        
-        <div class="flex gap-2 mb-4">
-            <select id="roomSelect" class="flex-1 border border-slate-300 rounded p-2 text-sm bg-white">
-                <option value="">セラー（ルーム）を読み込み中...</option>
-            </select>
-            <button onclick="loadRoomMessages()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold shrink-0">
-                メッセージ取得
-            </button>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
+    <!-- ヘッダー -->
+    <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-10">
+        <div class="max-w-md mx-auto">
+            <h1 class="text-base font-bold flex items-center justify-between">
+                <span>💬 Chatwork AI アシスタント</span>
+                <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">準備中...</span>
+            </h1>
         </div>
     </div>
 
-    <div id="messageLoading" class="text-center text-xs text-gray-500 py-4" style="display:none;">メッセージを取得中...</div>
-    <div id="messageListContainer" class="space-y-3"></div>
+    <!-- メインコンテンツ -->
+    <div class="max-w-md mx-auto p-3 space-y-3">
+        <!-- セラー選択カード -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <label class="block text-xs font-bold text-slate-600 mb-1.5">セラー（ルーム）を選択</label>
+            <div class="space-y-2">
+                <select id="roomSelect" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white shadow-inner focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    <option value="">セラー一覧を読み込み中...</option>
+                </select>
+                <div class="flex gap-2">
+                    <button onclick="loadRoomMessages()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-sm font-bold py-2.5 rounded-lg shadow">
+                        メッセージを見る
+                    </button>
+                    <button onclick="togglePinCurrentRoom()" id="pinBtn" class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg font-bold border border-amber-300 shrink-0" title="お気に入り登録">
+                        ⭐ ピン留め
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ローディング・メッセージ表示エリア -->
+        <div id="messageLoading" class="text-center text-xs text-slate-500 py-6" style="display:none;">
+            <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
+            <div>メッセージを取得中...</div>
+        </div>
+        
+        <div id="messageListContainer" class="space-y-3"></div>
+    </div>
 
     <script>
-        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxdeoof0DmHdQla40eeM71k3JdiQ-7BpTjDW8jUsHrLxmNozMdAgXAm9Y4R-49YcypI8w/exec;
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyIqdVCj9OtlqsUUqv33aUH4U2qes9DIUJyKwBE6piOcvmcKmozFqjkk2yxvSM0ZG-1Fg/exec";
+        
+        let allRoomsCache = [];
+        const FAVORITE_KEY = "chatwork_favorite_rooms_v1";
 
-        // ページ読み込み時にセラー一覧を取得
         window.addEventListener('DOMContentLoaded', () => {
             fetchRooms();
         });
 
-        async function fetchRooms() {
+        // お気に入りルームIDの取得（LocalStorage）
+        function getFavorites() {
+            try {
+                return JSON.parse(localStorage.getItem(FAVORITE_KEY)) || [];
+            } catch(e) {
+                return [];
+            }
+        }
+
+        // お気に入りの保存・解除
+        function togglePinCurrentRoom() {
             const selectEl = document.getElementById('roomSelect');
+            const roomId = selectEl.value;
+            if (!roomId) {
+                alert('ピン留めするセラーを選択してください。');
+                return;
+            }
+
+            let favorites = getFavorites();
+            const index = favorites.indexOf(roomId);
+            
+            if (index > -1) {
+                favorites.splice(index, 1);
+                alert('お気に入り（ピン留め）を解除しました');
+            } else {
+                favorites.push(roomId);
+                alert('このセラーをお気に入り（ピン留め）に登録しました！');
+            }
+            
+            localStorage.setItem(FAVORITE_KEY, JSON.stringify(favorites));
+            renderRoomOptions(allRoomsCache);
+            selectEl.value = roomId; // 選択状態を維持
+            updatePinButtonState();
+        }
+
+        function updatePinButtonState() {
+            const selectEl = document.getElementById('roomSelect');
+            const pinBtn = document.getElementById('pinBtn');
+            const roomId = selectEl.value;
+            const favorites = getFavorites();
+
+            if (favorites.includes(roomId)) {
+                pinBtn.className = "bg-amber-500 text-white text-xs px-3 py-2.5 rounded-lg font-bold shadow-sm shrink-0";
+                pinBtn.textContent = "⭐ 登録中";
+            } else {
+                pinBtn.className = "bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg font-bold border border-amber-300 shrink-0";
+                pinBtn.textContent = "⭐ ピン留め";
+            }
+        }
+
+        async function fetchRooms() {
+            const statusEl = document.getElementById('loadStatus');
+            statusEl.textContent = "読込中...";
             try {
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
@@ -42,17 +118,56 @@
                 const data = await response.json();
                 if (data.status !== "success") throw new Error(data.message);
 
-                const rooms = data.rooms;
-                let html = '<option value="">-- セラー（ルーム）を選択してください --</option>';
-                rooms.forEach(room => {
-                    const unreadBadge = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
-                    html += `<option value="${room.room_id}">${escapeHtml(room.name)}${unreadBadge}</option>`;
-                });
-                selectEl.innerHTML = html;
+                allRoomsCache = data.rooms;
+                renderRoomOptions(allRoomsCache);
+                statusEl.textContent = "準備完了";
+                statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
             } catch (e) {
-                selectEl.innerHTML = '<option value="">ルームの取得に失敗しました</option>';
-                alert('ルーム取得エラー: ' + e.message);
+                document.getElementById('roomSelect').innerHTML = '<option value="">ルームの取得に失敗しました</option>';
+                statusEl.textContent = "エラー";
+                statusEl.className = "text-xs bg-red-500 px-2 py-0.5 rounded-full text-white";
             }
+        }
+
+        // セラー一覧をプルダウンに反映（お気に入りを最上部にソート）
+        function renderRoomOptions(rooms) {
+            const selectEl = document.getElementById('roomSelect');
+            const favorites = getFavorites();
+
+            // お気に入りグループと通常グループに分離
+            let favList = [];
+            let normalList = [];
+
+            rooms.forEach(room => {
+                if (favorites.includes(String(room.room_id))) {
+                    favList.push(room);
+                } else {
+                    normalList.push(room);
+                }
+            });
+
+            let html = '<option value="">-- セラーを選択してください --</option>';
+
+            if (favList.length > 0) {
+                html += '<optgroup label="⭐ お気に入り（よく使うセラー）">';
+                favList.forEach(room => {
+                    const unreadText = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
+                    html += `<option value="${room.room_id}">⭐ ${escapeHtml(room.name)}${unreadText}</option>`;
+                });
+                html += '</optgroup>';
+            }
+
+            if (normalList.length > 0) {
+                html += '<optgroup label="📁 すべてのセラー">';
+                normalList.forEach(room => {
+                    const unreadText = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
+                    html += `<option value="${room.room_id}">${escapeHtml(room.name)}${unreadText}</option>`;
+                });
+                html += '</optgroup>';
+            }
+
+            selectEl.innerHTML = html;
+            selectEl.onchange = updatePinButtonState;
         }
 
         async function loadRoomMessages() {
@@ -78,7 +193,7 @@
 
                 const messages = data.messages;
                 if (messages.length === 0) {
-                    container.innerHTML = '<div class="text-xs text-gray-500 p-4 bg-white rounded shadow text-center">メッセージが見つかりませんでした。</div>';
+                    container.innerHTML = '<div class="text-xs text-slate-500 p-4 bg-white rounded-xl shadow-sm border border-slate-200 text-center">メッセージが見つかりませんでした。</div>';
                     return;
                 }
 
@@ -87,11 +202,15 @@
                     const safeMessage = encodeURIComponent(msg.body);
                     const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
                     html += `
-                        <div class="bg-white border border-slate-200 p-3 rounded shadow-sm">
-                            <div class="text-xs text-indigo-600 font-bold mb-1">👤 ${escapeHtml(senderName)}</div>
-                            <div class="text-sm mb-3 whitespace-pre-wrap text-slate-700">${escapeHtml(msg.body)}</div>
-                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded font-medium">この返信案を作る</button>
-                            <div class="ai-reply-area mt-2 text-sm bg-slate-50 p-2.5 rounded border border-slate-200" style="display:none;"></div>
+                        <div class="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm space-y-2">
+                            <div class="text-xs text-indigo-600 font-bold flex items-center justify-between">
+                                <span>👤 ${escapeHtml(senderName)}</span>
+                            </div>
+                            <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
+                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-slate-800 hover:bg-slate-900 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                                ✨ この返信案を作る
+                            </button>
+                            <div class="ai-reply-area mt-2 text-sm bg-indigo-50/50 p-3 rounded-lg border border-indigo-100" style="display:none;"></div>
                         </div>
                     `;
                 });
@@ -108,7 +227,7 @@
             const parentCard = btnEl.closest('div');
             const replyArea = parentCard.querySelector('.ai-reply-area');
             replyArea.style.display = 'block';
-            replyArea.innerHTML = '<span class="text-xs text-gray-400">AIが返信案を生成中...</span>';
+            replyArea.innerHTML = '<div class="flex items-center gap-2 text-xs text-indigo-600"><div class="animate-spin rounded-full h-3 w-3 border-2 border-indigo-600 border-t-transparent"></div>AIが返信案を生成中...</div>';
 
             try {
                 const response = await fetch(GAS_WEB_APP_URL, {
@@ -123,12 +242,14 @@
                 const safeOutput = encodeURIComponent(data.reply);
 
                 replyArea.innerHTML = `
-                    <div class="font-bold text-xs text-slate-500 mb-1">AI返信案:</div>
-                    <div class="whitespace-pre-wrap mb-2 text-slate-800">${escapeHtml(data.reply)}</div>
-                    <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
+                    <div class="font-bold text-xs text-slate-500 mb-1">🤖 AI返信案:</div>
+                    <div class="whitespace-pre-wrap mb-3 text-slate-800 text-sm bg-white p-2.5 rounded border border-slate-200">${escapeHtml(data.reply)}</div>
+                    <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                        💾 学習データに保存
+                    </button>
                 `;
             } catch (e) {
-                replyArea.innerHTML = '<span class="text-xs text-red-500">生成失敗</span>';
+                replyArea.innerHTML = '<span class="text-xs text-red-500">生成に失敗しました</span>';
             }
         }
 
@@ -136,12 +257,11 @@
             const input = decodeURIComponent(encodedInput);
             const output = decodeURIComponent(encodedOutput);
             await saveToFirestore(input, output);
-            btnEl.textContent = '保存完了！';
+            btnEl.textContent = '✅ 保存完了！';
             btnEl.disabled = true;
-            btnEl.className = 'bg-gray-300 text-white text-xs px-2.5 py-1 rounded cursor-default';
+            btnEl.className = 'w-full bg-slate-300 text-white text-xs py-2 rounded-lg cursor-default';
         }
 
-        // ダミー（必要に応じて既存のFirestore保存関数に繋ぎこんでください）
         async function saveToFirestore(input, output) {
             console.log("Firestore保存:", { input, output });
         }
