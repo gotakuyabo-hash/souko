@@ -4,103 +4,49 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学習型チャット返信アプリ（Chatwork × GAS × Firebase）</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        :root {
-            --primary: #4f46e5;
-            --primary-hover: #4338ca;
-            --bg: #f8fafc;
-            --card-bg: #ffffff;
-            --text: #1e293b;
-            --border: #e2e8f0;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 20px;
-        }
+        body { background: #f8fafc; font-family: sans-serif; padding: 20px; color: #1e293b; }
         .container { max-width: 900px; margin: 0 auto; }
-        h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-        .card {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        h2 { font-size: 1.1rem; margin-top: 0; margin-bottom: 1rem; color: #334155; }
-        textarea, input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            box-sizing: border-box;
-            margin-bottom: 10px;
-            font-size: 0.95rem;
-        }
-        textarea { height: 80px; resize: vertical; }
-        button {
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-        button:hover { background-color: var(--primary-hover); }
-        .result-box {
-            background: #f1f5f9;
-            border-left: 4px solid var(--primary);
-            padding: 15px;
-            border-radius: 4px;
-            margin-top: 15px;
-            white-space: pre-wrap;
-        }
-        .list-item {
-            padding: 10px;
-            border-bottom: 1px solid var(--border);
-            font-size: 0.9rem;
-        }
-        .list-item:last-child { border-bottom: none; }
+        .card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>学習型チャット返信ジェネレーター</h1>
+    <h1 class="text-xl sm:text-2xl font-bold text-slate-800 mb-6">🤖 AIチャット学習返信ジェネレーター</h1>
 
-    <!-- 返信生成エリア -->
+    <!-- ① Chatwork未読取得エリア -->
     <div class="card">
-        <h2>1. 返信案を作成する（GAS経由）</h2>
-        <label>相手からのメッセージ：</label>
-        <textarea id="incomingMessage" placeholder="例: 納品データの件で確認したいのですが..."></textarea>
-        <button onclick="generateReply()">返信案を生成する</button>
+        <h2 class="font-bold text-base text-slate-700 mb-3">💬 Chatwork 未読メッセージの確認</h2>
+        <div class="flex gap-2 mb-3">
+            <input type="text" id="roomIdInput" placeholder="Chatwork ルームID（例: 12345678）" class="flex-1 border border-slate-300 rounded p-2 text-sm">
+            <button onclick="loadUnreadMessages()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold">未読を読み込む</button>
+        </div>
+        <div id="unreadLoading" class="text-xs text-gray-500" style="display:none;">Chatworkから未読を取得中...</div>
+        <div id="unreadListContainer" class="space-y-3 mt-4"></div>
+    </div>
+
+    <!-- ② フリー入力＆返信生成エリア -->
+    <div class="card">
+        <h2 class="font-bold text-base text-slate-700 mb-3">✍️ メッセージを直接入力して返信作成</h2>
+        <textarea id="incomingMessage" placeholder="例: 納品データの件で確認したいのですが..." class="w-full border border-slate-300 rounded p-2 text-sm h-20 mb-3"></textarea>
+        <button onclick="generateReply()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold">返信案を生成する</button>
         
-        <div id="loading" style="display:none; margin-top: 10px; color: #64748b;">AIが学習データを読み込んで生成中...</div>
+        <div id="loading" class="text-xs text-gray-500 mt-2" style="display:none;">AIが学習データを読み込んで生成中...</div>
         
-        <div id="resultContainer" style="display:none;">
-            <h3>生成された返信案：</h3>
-            <div id="resultOutput" class="result-box"></div>
-            <button style="margin-top: 10px; background-color: #10b981;" onclick="saveAsTrainingData()">この返信を学習データとしてFirebaseに保存する</button>
+        <div id="resultContainer" class="mt-4" style="display:none;">
+            <h3 class="font-bold text-xs text-slate-600 mb-1">生成された返信案：</h3>
+            <div id="resultOutput" class="bg-slate-50 border-l-4 border-indigo-600 p-3 rounded text-sm whitespace-pre-wrap"></div>
+            <button onclick="saveAsTrainingData()" class="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold">この返信を学習データとして保存する</button>
         </div>
     </div>
 
-    <!-- 学習データ手動追加エリア -->
+    <!-- ③ 学習データ一覧エリア -->
     <div class="card">
-        <h2>2. 学習データの手動追加</h2>
-        <label>受信メッセージ：</label>
-        <input type="text" id="trainInput" placeholder="例: 納期について">
-        <label>模範解答（理想の返信）：</label>
-        <textarea id="trainOutput" placeholder="例: かしこまりました。確認いたします。"></textarea>
-        <button onclick="addTrainingDataDirectly()">学習データに追加</button>
-        
-        <h3 style="margin-top: 20px;">蓄積された学習データ一覧</h3>
-        <div id="trainingDataList" style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
-            <div style="padding: 15px; color: #64748b;">読み込み中...</div>
+        <h2 class="font-bold text-base text-slate-700 mb-3">📚 蓄積された学習データ一覧</h2>
+        <div id="trainingDataList" class="max-h-64 overflow-y-auto border border-slate-200 rounded divide-y divide-slate-100 text-sm">
+            <div class="p-3 text-gray-400 text-xs">読み込み中...</div>
         </div>
     </div>
 </div>
@@ -110,7 +56,6 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // ご提示いただいた設定値を適用
     const firebaseConfig = {
         apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
         authDomain: "souko-2de57.firebaseapp.com",
@@ -135,12 +80,9 @@
 </script>
 
 <script>
-    // デプロイしたGASのURL
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzR-TGTO6U94fGJNJa0us5oboHO53MF2S5pVkhO56zMVaCAIkI46ainOMiP5_H-DiCwRw/exec";
-    
     let lastGenerated = { input: '', output: '' };
 
-    // Firestoreから学習データ一覧を取得・表示
     async function loadTrainingData() {
         const listEl = document.getElementById('trainingDataList');
         try {
@@ -148,7 +90,7 @@
             const querySnapshot = await window.getDocs(q);
             
             if (querySnapshot.empty) {
-                listEl.innerHTML = '<div style="padding: 15px; color: #64748b;">学習データはまだありません。</div>';
+                listEl.innerHTML = '<div class="p-3 text-gray-400 text-xs">学習データはまだありません。</div>';
                 return;
             }
 
@@ -156,26 +98,90 @@
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
                 html += `
-                    <div class="list-item">
-                        <strong>受:</strong> ${escapeHtml(data.input || '')}<br>
-                        <strong>返:</strong> ${escapeHtml(data.output || '')}
+                    <div class="p-3">
+                        <div class="text-xs text-gray-500"><strong>受:</strong> ${escapeHtml(data.input || '')}</div>
+                        <div class="text-xs text-slate-700 mt-1"><strong>返:</strong> ${escapeHtml(data.output || '')}</div>
                     </div>
                 `;
             });
             listEl.innerHTML = html;
         } catch (e) {
-            console.error("データ取得エラー:", e);
-            listEl.innerHTML = '<div style="padding: 15px; color: #dc2626;">データの読み込みに失敗しました</div>';
+            listEl.innerHTML = '<div class="p-3 text-red-500 text-xs">データの読み込みに失敗しました</div>';
         }
     }
 
-    // GASを経由してAIに返信案を作成させる
+    async function loadUnreadMessages() {
+        const roomId = document.getElementById('roomIdInput').value.trim();
+        if (!roomId) { alert('ルームIDを入力してください。'); return; }
+
+        const container = document.getElementById('unreadListContainer');
+        document.getElementById('unreadLoading').style.display = 'block';
+        container.innerHTML = '';
+
+        try {
+            const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: "get_unread", roomId: roomId })
+            });
+
+            const data = await response.json();
+            if (data.status !== "success") throw new Error(data.message);
+
+            const messages = data.messages;
+            if (messages.length === 0) {
+                container.innerHTML = '<div class="text-xs text-gray-500">新しい未読メッセージはありません。</div>';
+                return;
+            }
+
+            let html = '';
+            messages.forEach(msg => {
+                const bodyEscaped = escapeHtml(msg.body).replace(/'/g, "\\'");
+                html += `
+                    <div class="bg-slate-50 border border-slate-200 p-3 rounded">
+                        <div class="text-xs text-indigo-600 font-bold mb-1">${escapeHtml(msg.account.name)}</div>
+                        <div class="text-sm mb-2 whitespace-pre-wrap">${escapeHtml(msg.body)}</div>
+                        <button onclick="generateReplyForUnread('${bodyEscaped}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded">この返信案を作る</button>
+                        <div class="ai-reply-area mt-2 text-sm bg-white p-2 rounded border border-slate-200" style="display:none;"></div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        } catch (e) {
+            alert('取得エラー: ' + e.message);
+        } finally {
+            document.getElementById('unreadLoading').style.display = 'none';
+        }
+    }
+
+    async function generateReplyForUnread(messageText, btnEl) {
+        const parentCard = btnEl.closest('div');
+        const replyArea = parentCard.querySelector('.ai-reply-area');
+        replyArea.style.display = 'block';
+        replyArea.innerHTML = '<span class="text-xs text-gray-400">生成中...</span>';
+
+        try {
+            const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: "generate_reply", message: messageText })
+            });
+            const data = await response.json();
+            if (data.status !== "success") throw new Error(data.message);
+
+            replyArea.innerHTML = `
+                <div class="font-bold text-xs text-slate-500 mb-1">AI返信案:</div>
+                <div class="whitespace-pre-wrap mb-2">${escapeHtml(data.reply)}</div>
+                <button onclick="saveSpecificTraining('${messageText.replace(/'/g, "\\'")}', '${data.reply.replace(/'/g, "\\'")}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
+            `;
+        } catch (e) {
+            replyArea.innerHTML = '<span class="text-xs text-red-500">生成失敗</span>';
+        }
+    }
+
     async function generateReply() {
         const message = document.getElementById('incomingMessage').value.trim();
-        if (!message) {
-            alert('相手からのメッセージを入力してください。');
-            return;
-        }
+        if (!message) { alert('メッセージを入力してください。'); return; }
 
         document.getElementById('loading').style.display = 'block';
         document.getElementById('resultContainer').style.display = 'none';
@@ -184,46 +190,32 @@
             const response = await fetch(GAS_WEB_APP_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    action: "generate_reply",
-                    message: message
-                })
+                body: JSON.stringify({ action: "generate_reply", message: message })
             });
-
             const data = await response.json();
-            if (data.status !== "success") {
-                throw new Error(data.message || "生成に失敗しました");
-            }
+            if (data.status !== "success") throw new Error(data.message);
 
+            document.getElementById('resultOutputinnerText' in document.getElementById('resultOutput') ? 'innerText' : 'textContent') = data.reply;
             document.getElementById('resultOutput').innerText = data.reply;
             document.getElementById('resultContainer').style.display = 'block';
             lastGenerated = { input: message, output: data.reply };
-
         } catch (e) {
-            console.error(e);
             alert('エラー: ' + e.message);
         } finally {
             document.getElementById('loading').style.display = 'none';
         }
     }
 
-    // 生成された返信案を学習データとしてFirebaseに保存
     async function saveAsTrainingData() {
         if (!lastGenerated.input || !lastGenerated.output) return;
         await saveToFirestore(lastGenerated.input, lastGenerated.output);
     }
 
-    // 手動入力の学習データをFirebaseに保存
-    async function addTrainingDataDirectly() {
-        const input = document.getElementById('trainInput').value.trim();
-        const output = document.getElementById('trainOutput').value.trim();
-        if (!input || !output) {
-            alert('両方のフィールドに入力してください。');
-            return;
-        }
+    async function saveSpecificTraining(input, output, btnEl) {
         await saveToFirestore(input, output);
-        document.getElementById('trainInput').value = '';
-        document.getElementById('trainOutput').value = '';
+        btnEl.textContent = '保存完了！';
+        btnEl.disabled = true;
+        btnEl.className = 'bg-gray-300 text-white text-xs px-2.5 py-1 rounded cursor-default';
     }
 
     async function saveToFirestore(input, output) {
@@ -236,7 +228,6 @@
             alert('学習データを保存しました！');
             loadTrainingData();
         } catch (e) {
-            console.error("保存エラー:", e);
             alert('保存に失敗しました。');
         }
     }
