@@ -79,7 +79,8 @@
 </script>
 
 <script>
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyAN8HF3GWdV0LdRSe6u5ZrT4W3arwEJi8jkGjcxvOU4nvnCG1az_b2eWsdUNcxk6XwcA/exec";
+    // 最新のGASデプロイURL
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyIqdVCj9OtlqsUUqv33aUH4U2qes9DIUJyKwBE6piOcvmcKmozFqjkk2yxvSM0ZG-1Fg/exec";
     let lastGenerated = { input: '', output: '' };
 
     async function loadTrainingData() {
@@ -132,12 +133,13 @@
 
             let html = '';
             messages.forEach(msg => {
-                const bodyEscaped = escapeHtml(msg.body).replace(/'/g, "\\'");
+                // 改行や記号でボタンが壊れないようにエンコード処理
+                const safeMessage = encodeURIComponent(msg.body);
                 html += `
                     <div class="bg-slate-50 border border-slate-200 p-3 rounded">
                         <div class="text-xs text-indigo-600 font-bold mb-1">📁 ${escapeHtml(msg.room_name)} / 👤 ${escapeHtml(msg.account.name)}</div>
                         <div class="text-sm mb-2 whitespace-pre-wrap">${escapeHtml(msg.body)}</div>
-                        <button onclick="generateReplyForUnread('${bodyEscaped}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded">この返信案を作る</button>
+                        <button onclick="generateReplyForUnread('${safeMessage}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded">この返信案を作る</button>
                         <div class="ai-reply-area mt-2 text-sm bg-white p-2 rounded border border-slate-200" style="display:none;"></div>
                     </div>
                 `;
@@ -150,7 +152,9 @@
         }
     }
 
-    async function generateReplyForUnread(messageText, btnEl) {
+    async function generateReplyForUnread(encodedMessageText, btnEl) {
+        // エンコードされたメッセージを元に戻す
+        const messageText = decodeURIComponent(encodedMessageText);
         const parentCard = btnEl.closest('div');
         const replyArea = parentCard.querySelector('.ai-reply-area');
         replyArea.style.display = 'block';
@@ -165,10 +169,14 @@
             const data = await response.json();
             if (data.status !== "success") throw new Error(data.message);
 
+            // 学習データ保存用に再度エンコード
+            const safeInput = encodeURIComponent(messageText);
+            const safeOutput = encodeURIComponent(data.reply);
+
             replyArea.innerHTML = `
                 <div class="font-bold text-xs text-slate-500 mb-1">AI返信案:</div>
                 <div class="whitespace-pre-wrap mb-2">${escapeHtml(data.reply)}</div>
-                <button onclick="saveSpecificTraining('${messageText.replace(/'/g, "\\'")}', '${data.reply.replace(/'/g, "\\'")}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
+                <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
             `;
         } catch (e) {
             replyArea.innerHTML = '<span class="text-xs text-red-500">生成失敗</span>';
@@ -206,8 +214,12 @@
         await saveToFirestore(lastGenerated.input, lastGenerated.output);
     }
 
-    async function saveSpecificTraining(input, output, btnEl) {
+    async function saveSpecificTraining(encodedInput, encodedOutput, btnEl) {
+        // エンコードされた入出力を元に戻す
+        const input = decodeURIComponent(encodedInput);
+        const output = decodeURIComponent(encodedOutput);
         await saveToFirestore(input, output);
+        
         btnEl.textContent = '保存完了！';
         btnEl.disabled = true;
         btnEl.className = 'bg-gray-300 text-white text-xs px-2.5 py-1 rounded cursor-default';
