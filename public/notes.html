@@ -38,6 +38,14 @@
   }
   .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
   .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
+
+  /* 画像拡大表示モーダル */
+  .image-modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;
+      z-index: 2000; display: none; padding: 16px; cursor: pointer;
+  }
+  .image-modal-content { max-width: 90%; max-height: 90%; border-radius: 8px; object-fit: contain; }
   </style>
 </head>
 <body>
@@ -64,10 +72,30 @@
   <label class="text-xs font-bold text-slate-700">タイトル</label>
   <input type="text" id="n-title" class="w-full p-2 border rounded mt-1 text-sm" placeholder="例：〇〇の進め方について" required>
   </div>
-  <div class="mb-4">
+  <div class="mb-3">
   <label class="text-xs font-bold text-slate-700">本文</label>
   <textarea id="n-content" class="w-full p-2 border rounded mt-1 text-sm" rows="3" placeholder="詳細を入力" required></textarea>
   </div>
+  
+  <!-- 画像添付エリア (カメラ起動 & ファイル選択) -->
+  <div class="mb-4">
+      <label class="block text-xs font-bold text-slate-700 mb-1">画像添付 (カメラ撮影 または ファイル選択)</label>
+      <div class="flex flex-wrap gap-2 mb-2">
+          <label class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1 shadow-sm">
+              📷 カメラで撮影
+              <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden">
+          </label>
+          <label class="bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1">
+              📁 ファイル選択
+              <input type="file" id="fileInput" accept="image/*" class="hidden">
+          </label>
+      </div>
+      <div id="imagePreviewContainer" class="mt-2 hidden relative inline-block">
+          <img id="imagePreview" src="" alt="プレビュー" class="h-24 rounded border border-gray-300 object-cover">
+          <button type="button" onclick="clearImageInput()" class="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold shadow">×</button>
+      </div>
+  </div>
+
   <div class="flex gap-2">
   <button type="submit" id="submit-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition">ノートを保存する</button>
   <button type="button" id="cancel-btn" class="hidden bg-gray-400 hover:bg-gray-500 text-white p-3 rounded font-bold text-sm transition" onclick="resetForm()">キャンセル</button>
@@ -103,6 +131,7 @@
   <div id="notes-list" class="space-y-3"></div>
   </div>
 
+  <!-- 削除確認モーダル -->
   <div class="modal-overlay" id="confirm-modal">
   <div class="modal-content">
   <div class="modal-header">⚠️ 削除の確認</div>
@@ -116,15 +145,26 @@
   </div>
   </div>
 
+  <!-- 画像拡大表示モーダル -->
+  <div class="image-modal-overlay" id="image-modal" onclick="closeImageModal()">
+      <img class="image-modal-content" id="modal-img" src="">
+  </div>
+
   <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
-  const db = getFirestore(initializeApp({
-  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-  authDomain: "souko-2de57.firebaseapp.com",
-  projectId: "souko-2de57"
-  }));
+  const firebaseConfig = {
+      apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+      authDomain: "souko-2de57.firebaseapp.com",
+      projectId: "souko-2de57",
+      storageBucket: "souko-2de57.firebasestorage.app"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const storage = getStorage(app);
 
   const confirmModal = document.getElementById('confirm-modal');
   const confirmMsg = document.getElementById('confirm-msg');
@@ -151,32 +191,94 @@
   pendingDeleteCallback = null;
   };
 
+  // 画像拡大モーダル
+  window.openImageModal = (url) => {
+      document.getElementById('modal-img').src = url;
+      document.getElementById('image-modal').style.display = 'flex';
+  };
+  window.closeImageModal = () => {
+      document.getElementById('image-modal').style.display = 'none';
+  };
+
   document.getElementById('n-date').valueAsDate = new Date();
   let allNotes = [];
+  let selectedFile = null;
+
+  const cameraInput = document.getElementById('cameraInput');
+  const fileInput = document.getElementById('fileInput');
+  const imagePreview = document.getElementById('imagePreview');
+  const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+
+  function handleFileSelection(file) {
+      if (file) {
+          selectedFile = file;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+              imagePreview.src = event.target.result;
+              imagePreviewContainer.classList.remove('hidden');
+          };
+          reader.readAsDataURL(file);
+      }
+  }
+
+  cameraInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFileSelection(e.target.files[0]);
+  });
+
+  fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFileSelection(e.target.files[0]);
+  });
+
+  window.clearImageInput = () => {
+      cameraInput.value = '';
+      fileInput.value = '';
+      selectedFile = null;
+      imagePreviewContainer.classList.add('hidden');
+      imagePreview.src = '';
+  };
 
   window.saveNote = async (e) => {
   e.preventDefault();
   const editId = document.getElementById('edit-id').value;
+  const submitBtn = document.getElementById('submit-btn');
+  
   const noteData = {
-  date: document.getElementById('n-date').value,
-  category: document.getElementById('n-cat').value,
-  title: document.getElementById('n-title').value.trim(),
-  content: document.getElementById('n-content').value.trim()
+      date: document.getElementById('n-date').value,
+      category: document.getElementById('n-cat').value,
+      title: document.getElementById('n-title').value.trim(),
+      content: document.getElementById('n-content').value.trim()
   };
 
+  submitBtn.disabled = true;
+  submitBtn.innerText = "保存中...";
+
   try {
-  if (editId) {
-  await updateDoc(doc(db, "shared_notes", editId), noteData);
-  alert("ノートを更新しました！");
-  } else {
-  noteData.createdAt = serverTimestamp();
-  await addDoc(collection(db, "shared_notes"), noteData);
-  alert("ノートを保存しました！");
-  }
-  resetForm();
+      let imageUrl = null;
+      if (selectedFile) {
+          const storageRef = ref(storage, `shared_notes_images/${Date.now()}_${selectedFile.name}`);
+          const snapshot = await uploadBytes(storageRef, selectedFile);
+          imageUrl = await getDownloadURL(snapshot.ref);
+      }
+
+      if (editId) {
+          if (imageUrl) {
+              noteData.imageUrl = imageUrl;
+          }
+          await updateDoc(doc(db, "shared_notes", editId), noteData);
+          alert("ノートを更新しました！");
+      } else {
+          noteData.imageUrl = imageUrl || null;
+          noteData.createdAt = serverTimestamp();
+          await addDoc(collection(db, "shared_notes"), noteData);
+          alert("ノートを保存しました！");
+      }
+      resetForm();
   } catch(err) {
-  console.error(err);
-  alert("保存に失敗しました。");
+      console.error(err);
+      alert("保存に失敗しました。");
+  } finally {
+      submitBtn.disabled = false;
+      submitBtn.innerText = editId ? "変更を保存する" : "ノートを保存する";
   }
   };
 
@@ -189,9 +291,18 @@
   document.getElementById('n-title').value = note.title || '';
   document.getElementById('n-content').value = note.content || '';
 
+  // 編集時に既存画像がある場合のプレビュー表示
+  if (note.imageUrl) {
+      imagePreview.src = note.imageUrl;
+      imagePreviewContainer.classList.remove('hidden');
+  } else {
+      clearImageInput();
+  }
+
   document.getElementById('form-title').innerText = "✏️ ノートを編集中";
-  document.getElementById('submit-btn').innerText = "変更を保存する";
-  document.getElementById('submit-btn').className = "flex-1 bg-green-600 hover:bg-green-700 text-white p-3 rounded font-bold text-sm transition";
+  const submitBtn = document.getElementById('submit-btn');
+  submitBtn.innerText = "変更を保存する";
+  submitBtn.className = "flex-1 bg-green-600 hover:bg-green-700 text-white p-3 rounded font-bold text-sm transition";
   document.getElementById('cancel-btn').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -200,20 +311,30 @@
   document.getElementById('edit-id').value = '';
   document.getElementById('note-form').reset();
   document.getElementById('n-date').valueAsDate = new Date();
+  clearImageInput();
   document.getElementById('form-title').innerText = "📢 テスト：チーム共有ノート";
-  document.getElementById('submit-btn').innerText = "ノートを保存する";
-  document.getElementById('submit-btn').className = "flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition";
+  const submitBtn = document.getElementById('submit-btn');
+  submitBtn.innerText = "ノートを保存する";
+  submitBtn.className = "flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition";
   document.getElementById('cancel-btn').classList.add('hidden');
   };
 
-  window.deleteNote = (id) => {
+  window.deleteNote = (id, imageUrl) => {
   showConfirmDialog("本当にこのノートを削除しますか？", async () => {
-  try {
-  await deleteDoc(doc(db, "shared_notes", id));
-  } catch(err) {
-  console.error(err);
-  alert("削除に失敗しました。");
-  }
+      try {
+          await deleteDoc(doc(db, "shared_notes", id));
+          if (imageUrl) {
+              try {
+                  const imageRef = ref(storage, imageUrl);
+                  await deleteObject(imageRef);
+              } catch (imgErr) {
+                  console.log("画像削除スキップ:", imgErr);
+              }
+          }
+      } catch(err) {
+          console.error(err);
+          alert("削除に失敗しました。");
+      }
   });
   };
 
@@ -266,25 +387,37 @@
   return;
   }
 
-  list.innerHTML = notes.map(n => `
-  <div class="card" style="margin-bottom: 10px;">
-  <div class="flex justify-between items-start mb-2">
-  <div class="flex items-center gap-2">
-  <span class="text-xs px-2 py-0.5 rounded font-bold ${
-  n.category === '決定事項' ? 'bg-purple-100 text-purple-700' :
-  n.category === '重要・要確認' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-  }">${n.category || '一般連絡'}</span>
-  <span class="text-xs text-gray-500">${n.date || ''}</span>
-  </div>
-  <div class="flex gap-2">
-  <button onclick="editNote('${n.id}')" class="text-xs text-blue-600 hover:underline">編集</button>
-  <button onclick="deleteNote('${n.id}')" class="text-xs text-red-600 hover:underline">削除</button>
-  </div>
-  </div>
-  <h3 class="font-bold text-base text-slate-800 mb-1">${escapeHtml(n.title)}</h3>
-  <p class="text-sm text-slate-600 whitespace-pre-wrap">${escapeHtml(n.content)}</p>
-  </div>
-  `).join('');
+  list.innerHTML = notes.map(n => {
+      let imageHtml = '';
+      if (n.imageUrl) {
+          imageHtml = `
+              <div class="mb-3">
+                  <img src="${n.imageUrl}" alt="添付画像" onclick="openImageModal('${n.imageUrl}')" class="h-24 w-auto rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition shadow-sm">
+              </div>
+          `;
+      }
+
+      return `
+      <div class="card" style="margin-bottom: 10px;">
+      <div class="flex justify-between items-start mb-2">
+      <div class="flex items-center gap-2">
+      <span class="text-xs px-2 py-0.5 rounded font-bold ${
+      n.category === '決定事項' ? 'bg-purple-100 text-purple-700' :
+      n.category === '重要・要確認' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+      }">${n.category || '一般連絡'}</span>
+      <span class="text-xs text-gray-500">${n.date || ''}</span>
+      </div>
+      <div class="flex gap-2">
+      <button onclick="editNote('${n.id}')" class="text-xs text-blue-600 hover:underline">編集</button>
+      <button onclick="deleteNote('${n.id}', '${n.imageUrl || ''}')" class="text-xs text-red-600 hover:underline">削除</button>
+      </div>
+      </div>
+      <h3 class="font-bold text-base text-slate-800 mb-1">${escapeHtml(n.title)}</h3>
+      <p class="text-sm text-slate-600 whitespace-pre-wrap mb-2">${escapeHtml(n.content)}</p>
+      ${imageHtml}
+      </div>
+      `;
+  }).join('');
   }
 
   function escapeHtml(str) {
