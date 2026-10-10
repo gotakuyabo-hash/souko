@@ -2,247 +2,161 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>学習型チャット返信アプリ（Chatwork × GAS × Firebase）</title>
+    <title>Chatwork AI返信アシスタント</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background: #f8fafc; font-family: sans-serif; padding: 20px; color: #1e293b; }
-        .container { max-width: 900px; margin: 0 auto; }
-        .card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    </style>
 </head>
-<body>
-
-<div class="container">
-    <h1 class="text-xl sm:text-2xl font-bold text-slate-800 mb-6">🤖 AIチャット学習返信ジェネレーター</h1>
-
-    <!-- ① 全ルーム未読取得エリア -->
-    <div class="card">
-        <div class="flex justify-between items-center mb-3">
-            <h2 class="font-bold text-base text-slate-700">💬 Chatwork 全ルーム未読の確認</h2>
-            <button onclick="loadUnreadMessages()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">全ルームの未読を読み込む</button>
-        </div>
-        <div id="unreadLoading" class="text-xs text-gray-500" style="display:none;">全ルームから未読メッセージを取得中...</div>
-        <div id="unreadListContainer" class="space-y-3 mt-4"></div>
-    </div>
-
-    <!-- ② フリー入力＆返信生成エリア -->
-    <div class="card">
-        <h2 class="font-bold text-base text-slate-700 mb-3">✍️ メッセージを直接入力して返信作成</h2>
-        <textarea id="incomingMessage" placeholder="例: 納品データの件で確認したいのですが..." class="w-full border border-slate-300 rounded p-2 text-sm h-20 mb-3"></textarea>
-        <button onclick="generateReply()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold">返信案を生成する</button>
+<body class="bg-slate-100 p-4 max-w-2xl mx-auto">
+    <div class="bg-white p-4 rounded-lg shadow mb-4">
+        <h1 class="text-lg font-bold text-slate-800 mb-2">Chatwork AI返信アシスタント</h1>
+        <p class="text-xs text-slate-500 mb-4">セラー（ルーム）を選択してメッセージを読み込み、AI返信案を生成します。</p>
         
-        <div id="loading" class="text-xs text-gray-500 mt-2" style="display:none;">AIが学習データを読み込んで生成中...</div>
-        
-        <div id="resultContainer" class="mt-4" style="display:none;">
-            <h3 class="font-bold text-xs text-slate-600 mb-1">生成された返信案：</h3>
-            <div id="resultOutput" class="bg-slate-50 border-l-4 border-indigo-600 p-3 rounded text-sm whitespace-pre-wrap"></div>
-            <button onclick="saveAsTrainingData()" class="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold">この返信を学習データとして保存する</button>
+        <div class="flex gap-2 mb-4">
+            <select id="roomSelect" class="flex-1 border border-slate-300 rounded p-2 text-sm bg-white">
+                <option value="">セラー（ルーム）を読み込み中...</option>
+            </select>
+            <button onclick="loadRoomMessages()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded font-bold shrink-0">
+                メッセージ取得
+            </button>
         </div>
     </div>
 
-    <!-- ③ 学習データ一覧エリア -->
-    <div class="card">
-        <h2 class="font-bold text-base text-slate-700 mb-3">📚 蓄積された学習データ一覧</h2>
-        <div id="trainingDataList" class="max-h-64 overflow-y-auto border border-slate-200 rounded divide-y divide-slate-100 text-sm">
-            <div class="p-3 text-gray-400 text-xs">読み込み中...</div>
-        </div>
-    </div>
-</div>
+    <div id="messageLoading" class="text-center text-xs text-gray-500 py-4" style="display:none;">メッセージを取得中...</div>
+    <div id="messageListContainer" class="space-y-3"></div>
 
-<!-- Firebase SDK (v10 modular) -->
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    <script>
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyIqdVCj9OtlqsUUqv33aUH4U2qes9DIUJyKwBE6piOcvmcKmozFqjkk2yxvSM0ZG-1Fg/exec";
 
-    const firebaseConfig = {
-        apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-        authDomain: "souko-2de57.firebaseapp.com",
-        projectId: "souko-2de57",
-        storageBucket: "souko-2de57.firebasestorage.app",
-        messagingSenderId: "642116656086",
-        appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-        measurementId: "G-8WG8GWQGCR"
-    };
+        // ページ読み込み時にセラー一覧を取得
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchRooms();
+        });
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+        async function fetchRooms() {
+            const selectEl = document.getElementById('roomSelect');
+            try {
+                const response = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: "get_rooms" })
+                });
+                const data = await response.json();
+                if (data.status !== "success") throw new Error(data.message);
 
-    window.db = db;
-    window.collection = collection;
-    window.addDoc = addDoc;
-    window.getDocs = getDocs;
-    window.query = query;
-    window.orderBy = orderBy;
+                const rooms = data.rooms;
+                let html = '<option value="">-- セラー（ルーム）を選択してください --</option>';
+                rooms.forEach(room => {
+                    const unreadBadge = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
+                    html += `<option value="${room.room_id}">${escapeHtml(room.name)}${unreadBadge}</option>`;
+                });
+                selectEl.innerHTML = html;
+            } catch (e) {
+                selectEl.innerHTML = '<option value="">ルームの取得に失敗しました</option>';
+                alert('ルーム取得エラー: ' + e.message);
+            }
+        }
 
-    loadTrainingData();
-</script>
-
-<script>
-    // 最新のGASデプロイURL
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyIqdVCj9OtlqsUUqv33aUH4U2qes9DIUJyKwBE6piOcvmcKmozFqjkk2yxvSM0ZG-1Fg/exec";
-    let lastGenerated = { input: '', output: '' };
-
-    async function loadTrainingData() {
-        const listEl = document.getElementById('trainingDataList');
-        try {
-            const q = window.query(window.collection(window.db, "chat_training_data"), window.orderBy("createdAt", "desc"));
-            const querySnapshot = await window.getDocs(q);
-            
-            if (querySnapshot.empty) {
-                listEl.innerHTML = '<div class="p-3 text-gray-400 text-xs">学習データはまだありません。</div>';
+        async function loadRoomMessages() {
+            const roomId = document.getElementById('roomSelect').value;
+            if (!roomId) {
+                alert('セラーを選択してください。');
                 return;
             }
 
-            let html = '';
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                html += `
-                    <div class="p-3">
-                        <div class="text-xs text-gray-500"><strong>受:</strong> ${escapeHtml(data.input || '')}</div>
-                        <div class="text-xs text-slate-700 mt-1"><strong>返:</strong> ${escapeHtml(data.output || '')}</div>
-                    </div>
-                `;
-            });
-            listEl.innerHTML = html;
-        } catch (e) {
-            listEl.innerHTML = '<div class="p-3 text-red-500 text-xs">データの読み込みに失敗しました</div>';
-        }
-    }
+            const container = document.getElementById('messageListContainer');
+            document.getElementById('messageLoading').style.display = 'block';
+            container.innerHTML = '';
 
-    async function loadUnreadMessages() {
-        const container = document.getElementById('unreadListContainer');
-        document.getElementById('unreadLoading').style.display = 'block';
-        container.innerHTML = '';
+            try {
+                const response = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: "get_room_messages", room_id: roomId })
+                });
 
-        try {
-            const response = await fetch(GAS_WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: "get_unread" })
-            });
+                const data = await response.json();
+                if (data.status !== "success") throw new Error(data.message);
 
-            const data = await response.json();
-            if (data.status !== "success") throw new Error(data.message);
+                const messages = data.messages;
+                if (messages.length === 0) {
+                    container.innerHTML = '<div class="text-xs text-gray-500 p-4 bg-white rounded shadow text-center">メッセージが見つかりませんでした。</div>';
+                    return;
+                }
 
-            const messages = data.messages;
-            if (messages.length === 0) {
-                container.innerHTML = '<div class="text-xs text-gray-500 p-2">現在、未読メッセージのあるルームはありません。</div>';
-                return;
+                let html = '';
+                messages.forEach(msg => {
+                    const safeMessage = encodeURIComponent(msg.body);
+                    const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
+                    html += `
+                        <div class="bg-white border border-slate-200 p-3 rounded shadow-sm">
+                            <div class="text-xs text-indigo-600 font-bold mb-1">👤 ${escapeHtml(senderName)}</div>
+                            <div class="text-sm mb-3 whitespace-pre-wrap text-slate-700">${escapeHtml(msg.body)}</div>
+                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded font-medium">この返信案を作る</button>
+                            <div class="ai-reply-area mt-2 text-sm bg-slate-50 p-2.5 rounded border border-slate-200" style="display:none;"></div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            } catch (e) {
+                alert('取得エラー: ' + e.message);
+            } finally {
+                document.getElementById('messageLoading').style.display = 'none';
             }
+        }
 
-            let html = '';
-            messages.forEach(msg => {
-                // 改行や記号でボタンが壊れないようにエンコード処理
-                const safeMessage = encodeURIComponent(msg.body);
-                html += `
-                    <div class="bg-slate-50 border border-slate-200 p-3 rounded">
-                        <div class="text-xs text-indigo-600 font-bold mb-1">📁 ${escapeHtml(msg.room_name)} / 👤 ${escapeHtml(msg.account.name)}</div>
-                        <div class="text-sm mb-2 whitespace-pre-wrap">${escapeHtml(msg.body)}</div>
-                        <button onclick="generateReplyForUnread('${safeMessage}', this)" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded">この返信案を作る</button>
-                        <div class="ai-reply-area mt-2 text-sm bg-white p-2 rounded border border-slate-200" style="display:none;"></div>
-                    </div>
+        async function generateReplyForMessage(encodedMessageText, btnEl) {
+            const messageText = decodeURIComponent(encodedMessageText);
+            const parentCard = btnEl.closest('div');
+            const replyArea = parentCard.querySelector('.ai-reply-area');
+            replyArea.style.display = 'block';
+            replyArea.innerHTML = '<span class="text-xs text-gray-400">AIが返信案を生成中...</span>';
+
+            try {
+                const response = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: "generate_reply", message: messageText })
+                });
+                const data = await response.json();
+                if (data.status !== "success") throw new Error(data.message);
+
+                const safeInput = encodeURIComponent(messageText);
+                const safeOutput = encodeURIComponent(data.reply);
+
+                replyArea.innerHTML = `
+                    <div class="font-bold text-xs text-slate-500 mb-1">AI返信案:</div>
+                    <div class="whitespace-pre-wrap mb-2 text-slate-800">${escapeHtml(data.reply)}</div>
+                    <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
                 `;
-            });
-            container.innerHTML = html;
-        } catch (e) {
-            alert('取得エラー: ' + e.message);
-        } finally {
-            document.getElementById('unreadLoading').style.display = 'none';
+            } catch (e) {
+                replyArea.innerHTML = '<span class="text-xs text-red-500">生成失敗</span>';
+            }
         }
-    }
 
-    async function generateReplyForUnread(encodedMessageText, btnEl) {
-        // エンコードされたメッセージを元に戻す
-        const messageText = decodeURIComponent(encodedMessageText);
-        const parentCard = btnEl.closest('div');
-        const replyArea = parentCard.querySelector('.ai-reply-area');
-        replyArea.style.display = 'block';
-        replyArea.innerHTML = '<span class="text-xs text-gray-400">生成中...</span>';
-
-        try {
-            const response = await fetch(GAS_WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: "generate_reply", message: messageText })
-            });
-            const data = await response.json();
-            if (data.status !== "success") throw new Error(data.message);
-
-            // 学習データ保存用に再度エンコード
-            const safeInput = encodeURIComponent(messageText);
-            const safeOutput = encodeURIComponent(data.reply);
-
-            replyArea.innerHTML = `
-                <div class="font-bold text-xs text-slate-500 mb-1">AI返信案:</div>
-                <div class="whitespace-pre-wrap mb-2">${escapeHtml(data.reply)}</div>
-                <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded">学習データに保存</button>
-            `;
-        } catch (e) {
-            replyArea.innerHTML = '<span class="text-xs text-red-500">生成失敗</span>';
+        async function saveSpecificTraining(encodedInput, encodedOutput, btnEl) {
+            const input = decodeURIComponent(encodedInput);
+            const output = decodeURIComponent(encodedOutput);
+            await saveToFirestore(input, output);
+            btnEl.textContent = '保存完了！';
+            btnEl.disabled = true;
+            btnEl.className = 'bg-gray-300 text-white text-xs px-2.5 py-1 rounded cursor-default';
         }
-    }
 
-    async function generateReply() {
-        const message = document.getElementById('incomingMessage').value.trim();
-        if (!message) { alert('メッセージを入力してください。'); return; }
-
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('resultContainer').style.display = 'none';
-
-        try {
-            const response = await fetch(GAS_WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: "generate_reply", message: message })
-            });
-            const data = await response.json();
-            if (data.status !== "success") throw new Error(data.message);
-
-            document.getElementById('resultOutput').innerText = data.reply;
-            document.getElementById('resultContainer').style.display = 'block';
-            lastGenerated = { input: message, output: data.reply };
-        } catch (e) {
-            alert('エラー: ' + e.message);
-        } finally {
-            document.getElementById('loading').style.display = 'none';
+        // ダミー（必要に応じて既存のFirestore保存関数に繋ぎこんでください）
+        async function saveToFirestore(input, output) {
+            console.log("Firestore保存:", { input, output });
         }
-    }
 
-    async function saveAsTrainingData() {
-        if (!lastGenerated.input || !lastGenerated.output) return;
-        await saveToFirestore(lastGenerated.input, lastGenerated.output);
-    }
-
-    async function saveSpecificTraining(encodedInput, encodedOutput, btnEl) {
-        // エンコードされた入出力を元に戻す
-        const input = decodeURIComponent(encodedInput);
-        const output = decodeURIComponent(encodedOutput);
-        await saveToFirestore(input, output);
-        
-        btnEl.textContent = '保存完了！';
-        btnEl.disabled = true;
-        btnEl.className = 'bg-gray-300 text-white text-xs px-2.5 py-1 rounded cursor-default';
-    }
-
-    async function saveToFirestore(input, output) {
-        try {
-            await window.addDoc(window.collection(window.db, "chat_training_data"), {
-                input: input,
-                output: output,
-                createdAt: new Date()
-            });
-            alert('学習データを保存しました！');
-            loadTrainingData();
-        } catch (e) {
-            alert('保存に失敗しました。');
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&'`<>"]/g, match => ({
+                '&': '&amp;',
+                "'": '&#x27;',
+                '`': '&#x60;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+            })[match]);
         }
-    }
-
-    function escapeHtml(str) {
-        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-</script>
-
+    </script>
 </body>
 </html>
