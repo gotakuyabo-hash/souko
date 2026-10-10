@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学習型チャット返信アプリ（Chatwork × GAS × Firebase）</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --border: #e2e8f0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        h2 { font-size: 1.1rem; margin-top: 0; margin-bottom: 1rem; color: #334155; }
+        textarea, input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+        }
+        textarea { height: 80px; resize: vertical; }
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        button:hover { background-color: var(--primary-hover); }
+        .result-box {
+            background: #f1f5f9;
+            border-left: 4px solid var(--primary);
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+        }
+        .list-item {
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+        .list-item:last-child { border-bottom: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>学習型チャット返信ジェネレーター</h1>
+
+    <!-- 返信生成エリア -->
+    <div class="card">
+        <h2>1. 返信案を作成する（GAS経由）</h2>
+        <label>相手からのメッセージ：</label>
+        <textarea id="incomingMessage" placeholder="例: 納品データの件で確認したいのですが..."></textarea>
+        <button onclick="generateReply()">返信案を生成する</button>
+        
+        <div id="loading" style="display:none; margin-top: 10px; color: #64748b;">AIが学習データを読み込んで生成中...</div>
+        
+        <div id="resultContainer" style="display:none;">
+            <h3>生成された返信案：</h3>
+            <div id="resultOutput" class="result-box"></div>
+            <button style="margin-top: 10px; background-color: #10b981;" onclick="saveAsTrainingData()">この返信を学習データとしてFirebaseに保存する</button>
+        </div>
+    </div>
+
+    <!-- 学習データ手動追加エリア -->
+    <div class="card">
+        <h2>2. 学習データの手動追加</h2>
+        <label>受信メッセージ：</label>
+        <input type="text" id="trainInput" placeholder="例: 納期について">
+        <label>模範解答（理想の返信）：</label>
+        <textarea id="trainOutput" placeholder="例: かしこまりました。確認いたします。"></textarea>
+        <button onclick="addTrainingDataDirectly()">学習データに追加</button>
+        
+        <h3 style="margin-top: 20px;">蓄積された学習データ一覧</h3>
+        <div id="trainingDataList" style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
+            <div style="padding: 15px; color: #64748b;">読み込み中...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Firebase SDK (v10 modular) -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // ご提示いただいた設定値を適用
+    const firebaseConfig = {
+        apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+        authDomain: "souko-2de57.firebaseapp.com",
+        projectId: "souko-2de57",
+        storageBucket: "souko-2de57.firebasestorage.app",
+        messagingSenderId: "642116656086",
+        appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+        measurementId: "G-8WG8GWQGCR"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    window.db = db;
+    window.collection = collection;
+    window.addDoc = addDoc;
+    window.getDocs = getDocs;
+    window.query = query;
+    window.orderBy = orderBy;
+
+    loadTrainingData();
+</script>
+
+<script>
+    // デプロイしたGASのURL
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzR-TGTO6U94fGJNJa0us5oboHO53MF2S5pVkhO56zMVaCAIkI46ainOMiP5_H-DiCwRw/exec";
+    
+    let lastGenerated = { input: '', output: '' };
+
+    // Firestoreから学習データ一覧を取得・表示
+    async function loadTrainingData() {
+        const listEl = document.getElementById('trainingDataList');
+        try {
+            const q = window.query(window.collection(window.db, "chat_training_data"), window.orderBy("createdAt", "desc"));
+            const querySnapshot = await window.getDocs(q);
+            
+            if (querySnapshot.empty) {
+                listEl.innerHTML = '<div style="padding: 15px; color: #64748b;">学習データはまだありません。</div>';
+                return;
+            }
+
+            let html = '';
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                html += `
+                    <div class="list-item">
+                        <strong>受:</strong> ${escapeHtml(data.input || '')}<br>
+                        <strong>返:</strong> ${escapeHtml(data.output || '')}
+                    </div>
+                `;
+            });
+            listEl.innerHTML = html;
+        } catch (e) {
+            console.error("データ取得エラー:", e);
+            listEl.innerHTML = '<div style="padding: 15px; color: #dc2626;">データの読み込みに失敗しました</div>';
+        }
+    }
+
+    // GASを経由してAIに返信案を作成させる
+    async function generateReply() {
+        const message = document.getElementById('incomingMessage').value.trim();
+        if (!message) {
+            alert('相手からのメッセージを入力してください。');
+            return;
+        }
+
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('resultContainer').style.display = 'none';
+
+        try {
+            const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    action: "generate_reply",
+                    message: message
+                })
+            });
+
+            const data = await response.json();
+            if (data.status !== "success") {
+                throw new Error(data.message || "生成に失敗しました");
+            }
+
+            document.getElementById('resultOutput').innerText = data.reply;
+            document.getElementById('resultContainer').style.display = 'block';
+            lastGenerated = { input: message, output: data.reply };
+
+        } catch (e) {
+            console.error(e);
+            alert('エラー: ' + e.message);
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+        }
+    }
+
+    // 生成された返信案を学習データとしてFirebaseに保存
+    async function saveAsTrainingData() {
+        if (!lastGenerated.input || !lastGenerated.output) return;
+        await saveToFirestore(lastGenerated.input, lastGenerated.output);
+    }
+
+    // 手動入力の学習データをFirebaseに保存
+    async function addTrainingDataDirectly() {
+        const input = document.getElementById('trainInput').value.trim();
+        const output = document.getElementById('trainOutput').value.trim();
+        if (!input || !output) {
+            alert('両方のフィールドに入力してください。');
+            return;
+        }
+        await saveToFirestore(input, output);
+        document.getElementById('trainInput').value = '';
+        document.getElementById('trainOutput').value = '';
+    }
+
+    async function saveToFirestore(input, output) {
+        try {
+            await window.addDoc(window.collection(window.db, "chat_training_data"), {
+                input: input,
+                output: output,
+                createdAt: new Date()
+            });
+            alert('学習データを保存しました！');
+            loadTrainingData();
+        } catch (e) {
+            console.error("保存エラー:", e);
+            alert('保存に失敗しました。');
+        }
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+</script>
+
+</body>
+</html>
