@@ -10,13 +10,13 @@
 
     <header class="mb-4 text-center">
         <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
-        <p class="text-xs text-slate-500">チャットグループ自動取得 ＆ 画像付きChatwork報告</p>
+        <p class="text-xs text-slate-500">GAS中継・Chatwork自動報告 ＆ 履歴保存</p>
     </header>
 
     <!-- 設定カード -->
     <div class="bg-white rounded-xl p-4 mb-4 shadow-sm border border-slate-200">
         <details class="text-xs" id="settingsDetails">
-            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ Chatwork 設定（タップして展開）</summary>
+            <summary class="font-bold text-slate-600 cursor-pointer">⚙️ Chatwork ＆ GAS 設定（タップして展開）</summary>
             <div class="mt-3 space-y-3 pt-2 border-t border-slate-100">
                 <div>
                     <label class="block font-medium mb-1">APIトークン</label>
@@ -38,6 +38,10 @@
                 <div>
                     <label class="block font-medium mb-1">担当者 宛先ID (メンション用・任意)</label>
                     <input type="text" id="cwAccountId" placeholder="例: 9876543" class="w-full border border-slate-300 rounded p-2 text-xs">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">GAS ウェブアプリURL</label>
+                    <input type="text" id="gasUrl" value="https://script.google.com/macros/s/AKfycbwgKjStq9vJe-eslIldR8aTHfNC5VX6RPszqdyJ6K2LeD2TaQPAabCckVQNWz44QSO39A/exec" class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-600">
                 </div>
                 <button type="button" onclick="saveSettings()" class="w-full bg-slate-700 text-white py-2 rounded font-bold">設定を保存する</button>
             </div>
@@ -73,7 +77,7 @@
                 <input type="file" id="reportImage" accept="image/*" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
             </div>
             <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-lg font-bold text-sm shadow transition">
-                🚀 画像付きでChatwork報告 ＆ 記録
+                🚀 Chatworkに報告 ＆ 記録
             </button>
         </form>
         <p id="statusMsg" class="text-center text-xs text-slate-500 mt-2 min-h-[1.5rem]"></p>
@@ -120,10 +124,12 @@
             const savedToken = localStorage.getItem('fumeihin_cw_token') || '';
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
             const savedAccount = localStorage.getItem('fumeihin_cw_account') || '';
+            const savedGas = localStorage.getItem('fumeihin_gas_url') || '';
 
             document.getElementById('cwApiToken').value = savedToken;
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
+            if (savedGas) document.getElementById('gasUrl').value = savedGas;
 
             if (savedToken) {
                 fetchChatRooms(true);
@@ -179,7 +185,8 @@
             localStorage.setItem('fumeihin_cw_token', document.getElementById('cwApiToken').value.trim());
             localStorage.setItem('fumeihin_cw_room', document.getElementById('cwRoomId').value.trim());
             localStorage.setItem('fumeihin_cw_account', document.getElementById('cwAccountId').value.trim());
-            alert('Chatwork設定を保存しました！');
+            localStorage.setItem('fumeihin_gas_url', document.getElementById('gasUrl').value.trim());
+            alert('設定を保存しました！');
         }
 
         const reportForm = document.getElementById('reportForm');
@@ -192,12 +199,15 @@
             const refNum = document.getElementById('referenceNumber').value.trim();
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
-            const imageInput = document.getElementById('reportImage');
+            const gasUrl = document.getElementById('gasUrl').value.trim();
+            const apiToken = localStorage.getItem('fumeihin_cw_token');
+            const roomId = localStorage.getItem('fumeihin_cw_room');
+            const accountId = localStorage.getItem('fumeihin_cw_account');
 
             if (!seller || !window.db) return;
 
             try {
-                statusMsg.innerText = "送信・保存中...";
+                statusMsg.innerText = "クラウドに保存中...";
 
                 // 1. Firebaseに保存
                 await window.addDoc(window.collection(window.db, "fumeihin_reports"), {
@@ -208,12 +218,10 @@
                     createdAt: new Date().toISOString()
                 });
 
-                // 2. Chatwork送信（画像がある場合はファイルをアップロード、なければテキストのみ）
-                const apiToken = localStorage.getItem('fumeihin_cw_token');
-                const roomId = localStorage.getItem('fumeihin_cw_room');
-                const accountId = localStorage.getItem('fumeihin_cw_account');
-
-                if (apiToken && roomId) {
+                // 2. Chatwork通知（GAS経由）
+                if (apiToken && roomId && gasUrl) {
+                    statusMsg.innerText = "Chatworkへ送信中...";
+                    
                     let mention = accountId ? `[To:${accountId}] ご担当者様\n\n` : '';
                     let messageBody = `${mention}【不明品・確認のご連絡】\n` +
                                       `----------------------------------\n` +
@@ -224,33 +232,19 @@
                                       `----------------------------------\n` +
                                       `ご確認とご対応よろしくお願いいたします。`;
 
-                    if (imageInput.files && imageInput.files[0]) {
-                        // 画像がある場合：ChatworkのファイルアップロードAPIを使用
-                        const formData = new FormData();
-                        formData.append('file', imageInput.files[0]);
-                        formData.append('message', messageBody);
-
-                        await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/files`, {
-                            method: 'POST',
-                            headers: {
-                                'X-ChatWorkToken': apiToken
-                            },
-                            body: formData
-                        });
-                    } else {
-                        // 画像がない場合：通常のメッセージ送信
-                        await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/messages`, {
-                            method: 'POST',
-                            headers: {
-                                'X-ChatWorkToken': apiToken,
-                                'Content-Type': 'application/x-www-form-urlencoded'
-                            },
-                            body: new URLSearchParams({ body: messageBody })
-                        });
-                    }
+                    await fetch(gasUrl, {
+                        method: 'POST',
+                        mode: 'no-cors', // GASへのPOST時のCORS対策
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            apiToken: apiToken,
+                            roomId: roomId,
+                            messageBody: messageBody
+                        })
+                    });
                 }
 
-                statusMsg.innerText = "報告＆Chatwork送信完了！";
+                statusMsg.innerText = "報告＆送信完了しました！";
                 reportForm.reset();
                 window.loadHistoryFromFirestore();
             } catch (err) {
