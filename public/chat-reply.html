@@ -1,282 +1,122 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatwork AI返信アシスタント</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
-    <!-- ヘッダー -->
-    <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-10">
-        <div class="max-w-md mx-auto">
-            <h1 class="text-base font-bold flex items-center justify-between">
-                <span>💬 Chatwork AI アシスタント</span>
-                <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">準備中...</span>
-            </h1>
-        </div>
-    </div>
+const CHATWORK_API_TOKEN = "5435a05ddd195c46ca688d021e45bbce";
+const GEMINI_API_KEY = "AIzaSyBvUD1UrYz0P_S2TuoywewAChswSc514WI";
+const FIREBASE_PROJECT_ID = "souko-2de57";
 
-    <!-- メインコンテンツ -->
-    <div class="max-w-md mx-auto p-3 space-y-3">
-        <!-- セラー選択カード -->
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <label class="block text-xs font-bold text-slate-600 mb-1.5">セラー（ルーム）を選択</label>
-            <div class="space-y-2">
-                <select id="roomSelect" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white shadow-inner focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                    <option value="">セラー一覧を読み込み中...</option>
-                </select>
-                <div class="flex gap-2">
-                    <button onclick="loadRoomMessages()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-sm font-bold py-2.5 rounded-lg shadow">
-                        メッセージを見る
-                    </button>
-                    <button onclick="togglePinCurrentRoom()" id="pinBtn" class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg font-bold border border-amber-300 shrink-0" title="お気に入り登録">
-                        ⭐ ピン留め
-                    </button>
-                </div>
-            </div>
-        </div>
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    let result = {};
 
-        <!-- ローディング・メッセージ表示エリア -->
-        <div id="messageLoading" class="text-center text-xs text-slate-500 py-6" style="display:none;">
-            <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
-            <div>メッセージを取得中...</div>
-        </div>
-        
-        <div id="messageListContainer" class="space-y-3"></div>
-    </div>
+    if (data.action === "get_rooms") {
+      result = { status: "success", rooms: fetchSafeRooms() };
+    } else if (data.action === "get_room_messages") {
+      result = { status: "success", messages: fetchRoomMessages(data.room_id) };
+    } else if (data.action === "generate_reply") {
+      result = { status: "success", reply: generateReplyWithAI(data.message) };
+    }
 
-    <script>
-        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxuO_lObsnGyfQjNjplXAKPBtTNyhNlOWfquFyTSW1G2jAApymUXlMSP8J63ZDlloH-xQ/exec";
-        
-        let allRoomsCache = [];
-        const FAVORITE_KEY = "chatwork_favorite_rooms_v1";
+    return ContentService
+      .createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
-        window.addEventListener('DOMContentLoaded', () => {
-            fetchRooms();
-        });
+function doGet(e) {
+  return ContentService
+    .createTextOutput(JSON.stringify({ status: "ok", message: "GAS Proxy is running." }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
-        // お気に入りルームIDの取得（LocalStorage）
-        function getFavorites() {
-            try {
-                return JSON.parse(localStorage.getItem(FAVORITE_KEY)) || [];
-            } catch(e) {
-                return [];
-            }
-        }
+function fetchSafeRooms() {
+  const options = { method: "get", headers: { "X-ChatWorkToken": CHATWORK_API_TOKEN }, muteHttpExceptions: true };
+  const res = UrlFetchApp.fetch("https://api.chatwork.com/v2/rooms", options);
+  
+  if (res.getResponseCode() !== 200) return [];
+  
+  let rooms = JSON.parse(res.getContentText());
+  if (!Array.isArray(rooms)) return [];
 
-        // お気に入りの保存・解除
-        function togglePinCurrentRoom() {
-            const selectEl = document.getElementById('roomSelect');
-            const roomId = selectEl.value;
-            if (!roomId) {
-                alert('ピン留めするセラーを選択してください。');
-                return;
-            }
+  rooms.sort((a, b) => b.unread_num - a.unread_num);
+  const safeRooms = rooms.slice(0, 80);
 
-            let favorites = getFavorites();
-            const index = favorites.indexOf(roomId);
-            
-            if (index > -1) {
-                favorites.splice(index, 1);
-                alert('お気に入り（ピン留め）を解除しました');
-            } else {
-                favorites.push(roomId);
-                alert('このセラーをお気に入り（ピン留め）に登録しました！');
-            }
-            
-            localStorage.setItem(FAVORITE_KEY, JSON.stringify(favorites));
-            renderRoomOptions(allRoomsCache);
-            selectEl.value = roomId; // 選択状態を維持
-            updatePinButtonState();
-        }
+  return safeRooms.map(r => ({
+    room_id: r.room_id,
+    name: r.name,
+    unread_num: r.unread_num
+  }));
+}
 
-        function updatePinButtonState() {
-            const selectEl = document.getElementById('roomSelect');
-            const pinBtn = document.getElementById('pinBtn');
-            const roomId = selectEl.value;
-            const favorites = getFavorites();
+function fetchRoomMessages(roomId) {
+  const options = { method: "get", headers: { "X-ChatWorkToken": CHATWORK_API_TOKEN }, muteHttpExceptions: true };
+  const url = `https://api.chatwork.com/v2/rooms/${roomId}/messages?force=1`;
+  const res = UrlFetchApp.fetch(url, options);
+  
+  if (res.getResponseCode() !== 200) return [];
+  
+  const messages = JSON.parse(res.getContentText());
+  if (!Array.isArray(messages)) return [];
 
-            if (favorites.includes(roomId)) {
-                pinBtn.className = "bg-amber-500 text-white text-xs px-3 py-2.5 rounded-lg font-bold shadow-sm shrink-0";
-                pinBtn.textContent = "⭐ 登録中";
-            } else {
-                pinBtn.className = "bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg font-bold border border-amber-300 shrink-0";
-                pinBtn.textContent = "⭐ ピン留め";
-            }
-        }
+  return messages.slice(-10);
+}
 
-        async function fetchRooms() {
-            const statusEl = document.getElementById('loadStatus');
-            statusEl.textContent = "読込中...";
-            try {
-                const response = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "get_rooms" })
-                });
-                const data = await response.json();
-                if (data.status !== "success") throw new Error(data.message);
+function generateReplyWithAI(incomingMessage) {
+  const trainingExamples = getTrainingDataFromFirestore();
+  const prompt = `あなたはChatwork上の優秀なサポートアシスタントです。
+以下の過去の返信例のトーンを模倣し、新しいメッセージに対する返信案を作成してください。余計な解説は含めず、返信文のみを出力してください。
 
-                allRoomsCache = data.rooms;
-                renderRoomOptions(allRoomsCache);
-                statusEl.textContent = "準備完了";
-                statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
-            } catch (e) {
-                document.getElementById('roomSelect').innerHTML = '<option value="">ルームの取得に失敗しました</option>';
-                statusEl.textContent = "エラー";
-                statusEl.className = "text-xs bg-red-500 px-2 py-0.5 rounded-full text-white";
-            }
-        }
+【過去の返信例】
+${trainingExamples || "（学習データなし。丁寧なビジネスチャット風に返信してください）"}
 
-        // セラー一覧をプルダウンに反映（お気に入りを最上部にソート）
-        function renderRoomOptions(rooms) {
-            const selectEl = document.getElementById('roomSelect');
-            const favorites = getFavorites();
+【新しい受信メッセージ】
+${incomingMessage}
 
-            // お気に入りグループと通常グループに分離
-            let favList = [];
-            let normalList = [];
+【返信案】`;
 
-            rooms.forEach(room => {
-                if (favorites.includes(String(room.room_id))) {
-                    favList.push(room);
-                } else {
-                    normalList.push(room);
-                }
-            });
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${GEMINI_API_KEY}`;
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      thinkingConfig: {
+        thinkingBudget: 0
+      }
+    }
+  };
 
-            let html = '<option value="">-- セラーを選択してください --</option>';
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
 
-            if (favList.length > 0) {
-                html += '<optgroup label="⭐ お気に入り（よく使うセラー）">';
-                favList.forEach(room => {
-                    const unreadText = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
-                    html += `<option value="${room.room_id}">⭐ ${escapeHtml(room.name)}${unreadText}</option>`;
-                });
-                html += '</optgroup>';
-            }
+  const json = JSON.parse(response.getContentText());
+  if (json.error) throw new Error("Gemini API Error: " + json.error.message);
 
-            if (normalList.length > 0) {
-                html += '<optgroup label="📁 すべてのセラー">';
-                normalList.forEach(room => {
-                    const unreadText = room.unread_num > 0 ? ` (🔴未読 ${room.unread_num})` : '';
-                    html += `<option value="${room.room_id}">${escapeHtml(room.name)}${unreadText}</option>`;
-                });
-                html += '</optgroup>';
-            }
+  return json.candidates[0].content.parts[0].text.trim();
+}
 
-            selectEl.innerHTML = html;
-            selectEl.onchange = updatePinButtonState;
-        }
+function getTrainingDataFromFirestore() {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/chat_training_data`;
+    const response = UrlFetchApp.fetch(url, { method: "get", muteHttpExceptions: true });
+    const json = JSON.parse(response.getContentText());
+    if (!json.documents) return "";
 
-        async function loadRoomMessages() {
-            const roomId = document.getElementById('roomSelect').value;
-            if (!roomId) {
-                alert('セラーを選択してください。');
-                return;
-            }
-
-            const container = document.getElementById('messageListContainer');
-            document.getElementById('messageLoading').style.display = 'block';
-            container.innerHTML = '';
-
-            try {
-                const response = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "get_room_messages", room_id: roomId })
-                });
-
-                const data = await response.json();
-                if (data.status !== "success") throw new Error(data.message);
-
-                const messages = data.messages;
-                if (messages.length === 0) {
-                    container.innerHTML = '<div class="text-xs text-slate-500 p-4 bg-white rounded-xl shadow-sm border border-slate-200 text-center">メッセージが見つかりませんでした。</div>';
-                    return;
-                }
-
-                let html = '';
-                messages.forEach(msg => {
-                    const safeMessage = encodeURIComponent(msg.body);
-                    const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
-                    html += `
-                        <div class="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm space-y-2">
-                            <div class="text-xs text-indigo-600 font-bold flex items-center justify-between">
-                                <span>👤 ${escapeHtml(senderName)}</span>
-                            </div>
-                            <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
-                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-slate-800 hover:bg-slate-900 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
-                                ✨ この返信案を作る
-                            </button>
-                            <div class="ai-reply-area mt-2 text-sm bg-indigo-50/50 p-3 rounded-lg border border-indigo-100" style="display:none;"></div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
-            } catch (e) {
-                alert('取得エラー: ' + e.message);
-            } finally {
-                document.getElementById('messageLoading').style.display = 'none';
-            }
-        }
-
-        async function generateReplyForMessage(encodedMessageText, btnEl) {
-            const messageText = decodeURIComponent(encodedMessageText);
-            const parentCard = btnEl.closest('div');
-            const replyArea = parentCard.querySelector('.ai-reply-area');
-            replyArea.style.display = 'block';
-            replyArea.innerHTML = '<div class="flex items-center gap-2 text-xs text-indigo-600"><div class="animate-spin rounded-full h-3 w-3 border-2 border-indigo-600 border-t-transparent"></div>AIが返信案を生成中...</div>';
-
-            try {
-                const response = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "generate_reply", message: messageText })
-                });
-                const data = await response.json();
-                if (data.status !== "success") throw new Error(data.message);
-
-                const safeInput = encodeURIComponent(messageText);
-                const safeOutput = encodeURIComponent(data.reply);
-
-                replyArea.innerHTML = `
-                    <div class="font-bold text-xs text-slate-500 mb-1">🤖 AI返信案:</div>
-                    <div class="whitespace-pre-wrap mb-3 text-slate-800 text-sm bg-white p-2.5 rounded border border-slate-200">${escapeHtml(data.reply)}</div>
-                    <button onclick="saveSpecificTraining('${safeInput}', '${safeOutput}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
-                        💾 学習データに保存
-                    </button>
-                `;
-            } catch (e) {
-                replyArea.innerHTML = '<span class="text-xs text-red-500">生成に失敗しました</span>';
-            }
-        }
-
-        async function saveSpecificTraining(encodedInput, encodedOutput, btnEl) {
-            const input = decodeURIComponent(encodedInput);
-            const output = decodeURIComponent(encodedOutput);
-            await saveToFirestore(input, output);
-            btnEl.textContent = '✅ 保存完了！';
-            btnEl.disabled = true;
-            btnEl.className = 'w-full bg-slate-300 text-white text-xs py-2 rounded-lg cursor-default';
-        }
-
-        async function saveToFirestore(input, output) {
-            console.log("Firestore保存:", { input, output });
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return str.replace(/[&'`<>"]/g, match => ({
-                '&': '&amp;',
-                "'": '&#x27;',
-                '`': '&#x60;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-            })[match]);
-        }
-    </script>
-</body>
-</html>
+    let examplesText = "";
+    json.documents.slice(0, 20).forEach(doc => {
+      const fields = doc.fields;
+      const input = fields.input && fields.input.stringValue ? fields.input.stringValue : "";
+      const output = fields.output && fields.output.stringValue ? fields.output.stringValue : "";
+      if (input && output) {
+        examplesText += `---\n受信: ${input}\n模範返信: ${output}\n`;
+      }
+    });
+    return examplesText;
+  } catch (e) {
+    return "";
+  }
+}
