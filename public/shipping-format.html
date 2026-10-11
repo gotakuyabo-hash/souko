@@ -290,6 +290,14 @@
             return `${y}/${m}/${day}`;
         }
 
+        // 電話番号の+81を0に置換するヘルパー関数
+        function sanitizePhoneNumber(val) {
+            if (!val) return "";
+            let str = String(val).trim();
+            str = str.replace(/^\+81[\-\s]?/, '0');
+            return str;
+        }
+
         function exportYamatoCsv() {
             let targetRows = null;
             for (let fname in loadedFiles) {
@@ -336,6 +344,14 @@
                     r[4] = todayStr;
                     r[39] = '09050540672';
                     r[26] = "";
+
+                    // ヤマトCSV出力時の全セルを走査し、+81から始まる電話番号（例: +81-90... や +8190...）を 0 から始まる形式に置換
+                    for (let i = 0; i < r.length; i++) {
+                        let cellVal = String(r[i] || '').trim();
+                        if (cellVal.startsWith('+81') || /^\+81[\-\s]?\d/.test(cellVal)) {
+                            r[i] = sanitizePhoneNumber(cellVal);
+                        }
+                    }
 
                     let nameVal = String(r[27] || '');
                     if (nameVal.length > 25) {
