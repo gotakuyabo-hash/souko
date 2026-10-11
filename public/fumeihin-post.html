@@ -19,7 +19,7 @@
             <summary class="font-bold text-slate-600 cursor-pointer">⚙️ 送信先グループ・メンション設定（タップして展開）</summary>
             <div class="mt-3 space-y-3 pt-2 border-t border-slate-100">
                 <div>
-                    <button type="button" onclick="fetchChatRooms()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-xs">🔄 チャットグループ一覧を取得する</button>
+                    <button type="button" onclick="fetchChatRooms()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-xs">🔄 チャットグループ一覧を再取得する</button>
                 </div>
                 <div>
                     <label class="block font-medium mb-1">🔍 グループ名で絞り込み</label>
@@ -28,7 +28,7 @@
                 <div>
                     <label class="block font-medium mb-1">送信先グループ（お気に入り・よく使う順）</label>
                     <select id="roomSelect" onchange="onRoomSelectChange()" class="w-full border border-slate-300 rounded p-2 text-xs bg-white">
-                        <option value="">-- 上のボタンを押してグループを取得してください --</option>
+                        <option value="">-- グループを読み込んでいます... --</option>
                     </select>
                 </div>
                 <div class="flex gap-2">
@@ -138,14 +138,14 @@
     </script>
 
     <script>
-        // 🔒 WEBアプリのURLをここに隠蔽（ソース上に直接露出させません）
+        // 🔒 WEBアプリのURLをここに隠蔽
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwgKjStq9vJe-eslIldR8aTHfNC5VX6RPszqdyJ6K2LeD2TaQPAabCckVQNWz44QSO39A/exec";
 
         let allRoomsData = [];
         let allHistoryData = [];
         const FAVORITE_ROOMS_KEY = "fumeihin_favorite_rooms_v1";
 
-        window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
             const savedAccount = localStorage.getItem('fumeihin_cw_account') || '';
             const savedAccountName = localStorage.getItem('fumeihin_cw_account_name') || '';
@@ -156,8 +156,11 @@
 
             updatePinButtonState();
 
+            // 🚀 アプリ起動時に自動でグループ一覧を取得する
+            await fetchChatRooms();
+
             if (savedRoom) {
-                fetchRoomMembers(savedRoom, savedAccount);
+                await fetchRoomMembers(savedRoom, savedAccount);
             }
         });
 
@@ -222,10 +225,10 @@
 
                 allRoomsData = data.rooms;
                 filterRooms();
-                statusMsg.innerText = `グループを ${allRoomsData.length}件 取得しました！`;
-                document.getElementById('settingsDetails').open = true;
+                statusMsg.innerText = "";
             } catch (err) {
-                alert('取得エラー: ' + err.message);
+                const select = document.getElementById('roomSelect');
+                select.innerHTML = '<option value="">-- グループの取得に失敗しました --</option>';
                 statusMsg.innerText = "";
             }
         }
@@ -281,7 +284,6 @@
             const roomId = select.value;
             document.getElementById('cwRoomId').value = roomId;
             
-            // 🚀 ルームが変更されたら自動保存
             localStorage.setItem('fumeihin_cw_room', roomId);
 
             updatePinButtonState();
@@ -316,7 +318,7 @@
                     if (String(m.account_id) === String(selectedAccountId)) opt.selected = true;
                     memberSelect.appendChild(opt);
                 });
-                statusMsg.innerText = "設定の準備が整いました！";
+                statusMsg.innerText = "";
             } catch (err) {
                 memberSelect.innerHTML = '<option value="">メンバー取得エラー</option>';
                 statusMsg.innerText = "";
@@ -331,7 +333,6 @@
             const accountName = accountId ? selectedOpt.textContent.split(' (')[0] : '';
             document.getElementById('cwAccountName').value = accountName;
 
-            // 🚀 メンバーが変更されたら自動保存
             localStorage.setItem('fumeihin_cw_account', accountId);
             localStorage.setItem('fumeihin_cw_account_name', accountName);
         }
@@ -427,7 +428,7 @@
 
         window.filterHistoryView = function() {
             const historyList = document.getElementById('historyList');
-            const keyword = document.getElementById('historySearchKeyword'].value.toLowerCase();
+            const keyword = document.getElementById('historySearchKeyword').value.toLowerCase();
             const dateFilter = document.getElementById('historyDateFilter').value;
 
             const filtered = allHistoryData.filter(item => {
@@ -478,7 +479,7 @@
             }
         };
 
-        function escapeHtml(str) {
+        window.escapeHtml = function(str) {
             if (!str) return '';
             return str.replace(/[&'`<>"]/g, match => ({
                 '&': '&amp;',
