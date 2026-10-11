@@ -23,7 +23,7 @@
             border-radius: 20px;
             padding: 14px 10px;
             text-align: center;
-            cursor: grab;
+            cursor: pointer;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
@@ -33,8 +33,9 @@
             position: relative;
             touch-action: none;
             transition: background 0.2s, box-shadow 0.2s;
+            text-decoration: none;
         }
-        .app-icon:active { cursor: grabbing; }
+        .app-icon:hover { background: rgba(255, 255, 255, 0.18); }
         .app-icon.dragging {
             opacity: 0.4;
             transform: scale(0.95);
@@ -70,7 +71,7 @@
         <header class="mb-6 px-2 flex justify-between items-center">
             <div>
                 <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
-                <p class="text-[11px] text-slate-400">アイコンをドラッグして並び替え（PC・スマホ対応）</p>
+                <p class="text-[11px] text-slate-400">タップで起動 / ドラッグで並び替え</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="openAddCategoryModal()" class="bg-emerald-600/85 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full transition shadow">
@@ -97,45 +98,8 @@
         </div>
     </div>
 
-    <!-- カテゴリ移動モーダル -->
-    <div id="moveModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
-        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl text-slate-100">
-            <h3 class="font-bold text-sm mb-3">移動先のカテゴリを選択</h3>
-            <input type="hidden" id="moveCardId">
-            <select id="targetCategorySelect" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs mb-4 text-slate-100 focus:outline-none focus:border-blue-500"></select>
-            <div class="flex justify-end gap-2">
-                <button onclick="closeMoveModal()" class="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg hover:bg-slate-700">キャンセル</button>
-                <button onclick="executeMoveCard()" class="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-500 font-bold">移動する</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ツール詳細・編集モーダル -->
-    <div id="detailModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
-        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl text-slate-100">
-            <input type="hidden" id="detailCardId">
-            <div class="text-center mb-4">
-                <div id="modalAppEmoji" class="text-4xl mb-2"></div>
-                <h3 id="modalAppTitle" class="font-bold text-base mb-1"></h3>
-                <p id="modalAppDesc" class="text-xs text-slate-400 leading-relaxed"></p>
-            </div>
-            <div class="space-y-2 mb-4">
-                <a id="modalAppLink" href="#" class="block w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-center rounded-xl font-bold text-xs shadow transition">
-                    アプリを開く 🚀
-                </a>
-                <button onclick="openMoveModalFromDetail()" class="block w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-center rounded-xl text-xs transition">
-                    📁 カテゴリを移動
-                </button>
-            </div>
-            <div class="flex justify-between items-center pt-3 border-t border-slate-800 text-xs text-slate-400">
-                <button onclick="deleteCardFromDetail()" class="text-rose-400 hover:text-rose-300">削除</button>
-                <button onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-200 text-xs">閉じる</button>
-            </div>
-        </div>
-    </div>
-
     <script>
-        const STORAGE_KEY = 'warehouse_portal_v3_data';
+        const STORAGE_KEY = 'warehouse_portal_v4_data';
 
         const defaultData = {
             categories: [
@@ -199,6 +163,7 @@
         }
 
         let draggedCardId = null;
+        let isDragging = false;
 
         function render() {
             const data = loadData();
@@ -249,27 +214,29 @@
                 } else {
                     catCards.forEach((card) => {
                         const parsed = parseTitle(card.title);
-                        const appEl = document.createElement('div');
+                        const appEl = document.createElement('a');
                         appEl.className = 'app-icon';
+                        appEl.href = card.href;
                         appEl.draggable = true;
                         appEl.dataset.cardId = card.id;
 
-                        let clickTime = 0;
-                        appEl.addEventListener('pointerdown', () => { clickTime = Date.now(); });
-                        appEl.addEventListener('click', () => {
-                            if (Date.now() - clickTime < 250) {
-                                openDetailModal(card.id);
+                        // ドラッグ中はリンクとしての遷移を無効化する制御
+                        appEl.addEventListener('click', (e) => {
+                            if (isDragging) {
+                                e.preventDefault();
                             }
                         });
 
                         appEl.addEventListener('dragstart', (e) => {
+                            isDragging = true;
                             draggedCardId = card.id;
                             appEl.classList.add('dragging');
                         });
                         appEl.addEventListener('dragend', () => {
-                            draggedCardId = null;
                             appEl.classList.remove('dragging');
                             document.querySelectorAll('.app-icon').forEach(el => el.classList.remove('drag-over'));
+                            setTimeout(() => { isDragging = false; }, 100);
+                            draggedCardId = null;
                         });
                         appEl.addEventListener('dragover', (e) => {
                             e.preventDefault();
@@ -364,60 +331,6 @@
                 data.cards.push(sourceCard);
             }
             saveData(data);
-        }
-
-        function openDetailModal(cardId) {
-            const data = loadData();
-            const card = data.cards.find(c => c.id === cardId);
-            if (!card) return;
-            const parsed = parseTitle(card.title);
-
-            document.getElementById('detailCardId').value = card.id;
-            document.getElementById('modalAppEmoji').textContent = parsed.emoji;
-            document.getElementById('modalAppTitle').textContent = parsed.name;
-            document.getElementById('modalAppDesc').textContent = card.desc;
-            document.getElementById('modalAppLink').href = card.href;
-
-            document.getElementById('detailModal').classList.remove('hidden');
-        }
-        function closeDetailModal() { document.getElementById('detailModal').classList.add('hidden'); }
-
-        function openMoveModalFromDetail() {
-            closeDetailModal();
-            const cardId = document.getElementById('detailCardId').value;
-            openMoveModal(cardId);
-        }
-
-        function openMoveModal(cardId) {
-            const data = loadData();
-            document.getElementById('moveCardId').value = cardId;
-            const select = document.getElementById('targetCategorySelect');
-            select.innerHTML = '';
-            data.categories.forEach(cat => {
-                const opt = document.createElement('option');
-                opt.value = cat.id; opt.textContent = cat.name;
-                select.appendChild(opt);
-            });
-            document.getElementById('moveModal').classList.remove('hidden');
-        }
-        function closeMoveModal() { document.getElementById('moveModal').classList.add('hidden'); }
-        function executeMoveCard() {
-            const cardId = document.getElementById('moveCardId').value;
-            const targetCatId = document.getElementById('targetCategorySelect').value;
-            const data = loadData();
-            const card = data.cards.find(c => c.id === cardId);
-            if (card) { card.category = targetCatId; saveData(data); }
-            closeMoveModal();
-        }
-
-        function deleteCardFromDetail() {
-            if (confirm('このアプリをポータルから削除しますか？')) {
-                const cardId = document.getElementById('detailCardId').value;
-                const data = loadData();
-                data.cards = data.cards.filter(c => c.id !== cardId);
-                saveData(data);
-                closeDetailModal();
-            }
         }
 
         function openAddCategoryModal() {
