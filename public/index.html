@@ -12,6 +12,8 @@
             padding: 20px 10px; 
             color: #f8fafc;
             min-height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
         }
         .app-icon {
             background: rgba(255, 255, 255, 0.1);
@@ -21,8 +23,7 @@
             border-radius: 20px;
             padding: 14px 10px;
             text-align: center;
-            transition: transform 0.1s ease, background 0.2s;
-            cursor: pointer;
+            cursor: grab;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
@@ -30,14 +31,24 @@
             justify-content: center;
             aspect-ratio: 1 / 1;
             position: relative;
+            touch-action: none;
+            transition: background 0.2s, box-shadow 0.2s;
         }
-        .app-icon:active { transform: scale(0.94); }
-        .app-icon:hover { background: rgba(255, 255, 255, 0.18); }
+        .app-icon:active { cursor: grabbing; }
+        .app-icon.dragging {
+            opacity: 0.4;
+            transform: scale(0.95);
+        }
+        .app-icon.drag-over {
+            border: 2px dashed #3b82f6;
+            background: rgba(59, 130, 246, 0.2);
+        }
         
         .app-emoji {
             font-size: 2.2rem;
             margin-bottom: 6px;
             filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+            pointer-events: none;
         }
         .app-title {
             font-size: 0.7rem;
@@ -50,6 +61,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             width: 100%;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -58,7 +70,7 @@
         <header class="mb-6 px-2 flex justify-between items-center">
             <div>
                 <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
-                <p class="text-[11px] text-slate-400">スマホホーム画面風レイアウト（ローカル保存）</p>
+                <p class="text-[11px] text-slate-400">アイコンをドラッグして並び替え（PC・スマホ対応）</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="openAddCategoryModal()" class="bg-emerald-600/80 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur transition shadow">
@@ -98,7 +110,7 @@
         </div>
     </div>
 
-    <!-- ツール詳細・編集モーダル -->
+    <!-- ツール詳細・編集モーダル（ダブルタップまたは長押し等、必要に応じて別導線） -->
     <div id="detailModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
         <div class="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl text-slate-100">
             <input type="hidden" id="detailCardId">
@@ -116,10 +128,7 @@
                 </button>
             </div>
             <div class="flex justify-between items-center pt-3 border-t border-slate-800 text-xs text-slate-400">
-                <div class="flex gap-1">
-                    <button onclick="moveCardOrderFromDetail(-1)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-300">◀️ 左へ</button>
-                    <button onclick="moveCardOrderFromDetail(1)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-300">右へ ▶️</button>
-                </div>
+                <button onclick="deleteCardFromDetail()" class="text-rose-400 hover:text-rose-300">削除</button>
                 <button onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-200 text-xs">閉じる</button>
             </div>
         </div>
@@ -156,7 +165,7 @@
         };
 
         function loadData() {
-            const saved = localStorage.getItem('warehouse_portal_phone_data');
+            const saved = localStorage.getItem('warehouse_portal_drag_data');
             if (saved) {
                 try { return JSON.parse(saved); } catch (e) { }
             }
@@ -164,11 +173,10 @@
         }
 
         function saveData(data) {
-            localStorage.setItem('warehouse_portal_phone_data', JSON.stringify(data));
+            localStorage.setItem('warehouse_portal_drag_data', JSON.stringify(data));
             render();
         }
 
-        // タイトルから絵文字を分離するヘルパー
         function parseTitle(title) {
             const match = title.match(/^([\p{Emoji}\u2600-\u27BF]+)\s*(.*)$/u);
             if (match) {
@@ -176,6 +184,8 @@
             }
             return { emoji: "📦", name: title };
         }
+
+        let draggedCardId = null;
 
         function render() {
             const data = loadData();
@@ -206,20 +216,68 @@
 
                 const gridDiv = document.createElement('div');
                 gridDiv.className = 'grid grid-cols-4 gap-2.5 sm:gap-3';
+                gridDiv.dataset.categoryId = cat.id;
+
+                // ドロップゾーンとしてのイベント
+                gridDiv.addEventListener('dragover', (e) => e.preventDefault());
+                gridDiv.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    if (draggedCardId) {
+                        moveCardToCategoryAndIndex(draggedCardId, cat.id, null);
+                    }
+                });
 
                 const catCards = data.cards.filter(card => card.category === cat.id);
 
                 if (catCards.length === 0) {
                     const emptyMsg = document.createElement('p');
-                    emptyMsg.className = 'text-[11px] text-slate-500 col-span-4 py-3 text-center';
-                    emptyMsg.textContent = 'アプリがありません';
+                    emptyMsg.className = 'text-[11px] text-slate-500 col-span-4 py-3 text-center pointer-events-none';
+                    emptyMsg.textContent = 'アイコンをここにドロップ';
                     gridDiv.appendChild(emptyMsg);
                 } else {
                     catCards.forEach((card) => {
                         const parsed = parseTitle(card.title);
                         const appEl = document.createElement('div');
                         appEl.className = 'app-icon';
-                        appEl.onclick = () => openDetailModal(card.id);
+                        appEl.draggable = true;
+                        appEl.dataset.cardId = card.id;
+
+                        // タップ（クリック）でアプリを開く、長押しまたはドラッグで並び替え
+                        let clickTime = 0;
+                        appEl.addEventListener('pointerdown', () => { clickTime = Date.now(); });
+                        appEl.addEventListener('click', (e) => {
+                            if (Date.now() - clickTime < 250) {
+                                // 短いタップなら詳細モーダル（または直接ジャンプ）
+                                openDetailModal(card.id);
+                            }
+                        });
+
+                        // ドラッグイベント
+                        appEl.addEventListener('dragstart', (e) => {
+                            draggedCardId = card.id;
+                            appEl.classList.add('dragging');
+                        });
+                        appEl.addEventListener('dragend', () => {
+                            draggedCardId = null;
+                            appEl.classList.remove('dragging');
+                            document.querySelectorAll('.app-icon').forEach(el => el.classList.remove('drag-over'));
+                        });
+                        appEl.addEventListener('dragover', (e) => {
+                            e.preventDefault();
+                            appEl.classList.add('drag-over');
+                        });
+                        appEl.addEventListener('dragleave', () => {
+                            appEl.classList.remove('drag-over');
+                        });
+                        appEl.addEventListener('drop', (e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            appEl.classList.remove('drag-over');
+                            if (draggedCardId && draggedCardId !== card.id) {
+                                reorderCards(draggedCardId, card.id);
+                            }
+                        });
+
                         appEl.innerHTML = `
                             <div class="app-emoji">${parsed.emoji}</div>
                             <div class="app-title">${parsed.name}</div>
@@ -263,7 +321,46 @@
             }
         }
 
-        // 詳細モーダル関連
+        // ドラッグ＆ドロップによる並び替え・カテゴリ移動処理
+        function reorderCards(sourceId, targetId) {
+            const data = loadData();
+            const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
+            const targetIdx = data.cards.findIndex(c => c.id === targetId);
+            if (sourceIdx === -1 || targetIdx === -1) return;
+
+            const sourceCard = data.cards[sourceIdx];
+            const targetCard = data.cards[targetIdx];
+
+            // カテゴリを合わせる
+            sourceCard.category = targetCard.category;
+
+            // 配列から一度抜いて、ターゲットの位置に挿入
+            data.cards.splice(sourceIdx, 1);
+            const newTargetIdx = data.cards.findIndex(c => c.id === targetId);
+            data.cards.splice(newTargetIdx, 0, sourceCard);
+
+            saveData(data);
+        }
+
+        function moveCardToCategoryAndIndex(sourceId, targetCatId, targetId) {
+            const data = loadData();
+            const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
+            if (sourceIdx === -1) return;
+
+            const sourceCard = data.cards[sourceIdx];
+            sourceCard.category = targetCatId;
+
+            data.cards.splice(sourceIdx, 1);
+            if (targetId) {
+                const targetIdx = data.cards.findIndex(c => c.id === targetId);
+                data.cards.splice(targetIdx, 0, sourceCard);
+            } else {
+                data.cards.push(sourceCard);
+            }
+            saveData(data);
+        }
+
+        // 詳細・管理モーダル
         function openDetailModal(cardId) {
             const data = loadData();
             const card = data.cards.find(c => c.id === cardId);
@@ -278,44 +375,7 @@
 
             document.getElementById('detailModal').classList.remove('hidden');
         }
-        function closeDetailModal() { document.getElementById('detailModal').classList.add('hidden'); }
-
-        function moveCardOrderFromDetail(direction) {
-            const cardId = document.getElementById('detailCardId').value;
-            const data = loadData();
-            const card = data.cards.find(c => c.id === cardId);
-            if (!card) return;
-            const catCards = data.cards.filter(c => c.category === card.category);
-            const indexInCat = catCards.findIndex(c => c.id === cardId);
-            const targetIndexInCat = indexInCat + direction;
-            if (targetIndexInCat < 0 || targetIndexInCat >= catCards.length) return;
-            const targetCard = catCards[targetIndexInCat];
-            const gIdx1 = data.cards.findIndex(c => c.id === cardId);
-            const gIdx2 = data.cards.findIndex(c => c.id === targetCard.id);
-            const temp = data.cards[gIdx1];
-            data.cards[gIdx1] = data.cards[gIdx2];
-            data.cards[gIdx2] / temp; // syntax fix
-            // proper swap:
-            data.cards[gIdx1] = data.cards[gIdx2];
-            data.cards[gIdx2] = temp;
-            saveData(data);
-            // keep modal open with updated state
-            openDetailModal(cardId);
-        }
-
-        function openAddCategoryModal() {
-            document.getElementById('newCategoryName').value = '';
-            document.getElementById('categoryModal').classList.remove('hidden');
-        }
-        function closeAddCategoryModal() { document.getElementById('categoryModal').classList.add('hidden'); }
-        function addCategory() {
-            const name = document.getElementById('newCategoryName').value.trim();
-            if (!name) return;
-            const data = loadData();
-            data.categories.push({ id: 'cat_' + Date.now(), name: name });
-            saveData(data);
-            closeAddCategoryModal();
-        }
+        function closeDetailModal() { document.getElementById('detailModal'].classList.add('hidden'); }
 
         function openMoveModalFromDetail() {
             closeDetailModal();
@@ -345,9 +405,33 @@
             closeMoveModal();
         }
 
+        function deleteCardFromDetail() {
+            if (confirm('このアプリをポータルから削除しますか？')) {
+                const cardId = document.getElementById('detailCardId').value;
+                const data = loadData();
+                data.cards = data.cards.filter(c => c.id !== cardId);
+                saveData(data);
+                closeDetailModal();
+            }
+        }
+
+        function openAddCategoryModal() {
+            document.getElementById('newCategoryName').value = '';
+            document.getElementById('categoryModal').classList.remove('hidden');
+        }
+        function closeAddCategoryModal() { document.getElementById('categoryModal').classList.add('hidden'); }
+        function addCategory() {
+            const name = document.getElementById('newCategoryName').value.trim();
+            if (!name) return;
+            const data = loadData();
+            data.categories.push({ id: 'cat_' + Date.now(), name: name });
+            saveData(data);
+            closeAddCategoryModal();
+        }
+
         function resetDefault() {
             if (confirm('初期状態に戻しますか？')) {
-                localStorage.removeItem('warehouse_portal_phone_data');
+                localStorage.removeItem('warehouse_portal_drag_data');
                 render();
             }
         }
