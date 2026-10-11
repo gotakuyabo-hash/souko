@@ -19,11 +19,19 @@
 
     <!-- メインコンテンツ -->
     <div class="max-w-md mx-auto p-3 space-y-3">
+        <!-- 👤 アカウント選択カード -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-1.5">
+            <label class="block text-xs font-bold text-slate-600">使用するChatworkアカウント</label>
+            <select id="accountSelect" onchange="changeAccount()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-indigo-50/50 font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                <option value="5435a05ddd195c46ca688d021e45bbce">メインアカウント (5435...)</option>
+                <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント (57d74ea2...)</option>
+            </select>
+        </div>
+
         <!-- セラー・ルーム選択＆検索カード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <label class="block text-xs font-bold text-slate-600">セラー（ルーム）を検索・選択</label>
             
-            <!-- ルーム検索入力ボックス -->
             <input type="text" id="roomSearchInput" oninput="filterRooms()" placeholder="🔍 ルーム名で絞り込み検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
             
             <div class="space-y-2">
@@ -41,7 +49,7 @@
             </div>
         </div>
 
-        <!-- 🆕 こっちから新規メッセージを発信するカード -->
+        <!-- こっちから新規メッセージを発信するカード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
             <label class="block text-xs font-bold text-slate-600">✍️ 選択中のルームへ新規発信</label>
             <textarea id="newDirectMessage" placeholder="ここに直接送信するメッセージを入力..." class="w-full h-20 text-sm p-2.5 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
@@ -60,16 +68,26 @@
     </div>
 
     <script>
-        // 最新のGASウェブアプリURL
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxuO_lObsnGyfQjNjplXAKPBtTNyhNlOWfquFyTSW1G2jAApymUXlMSP8J63ZDlloH-xQ/exec";
         
         let allRoomsCache = [];
         let currentRoomMembers = [];
-        const FAVORITE_KEY = "chatwork_favorite_rooms_v1";
+        const FAVORITE_KEY = "chatwork_favorite_rooms_v2"; // キーを新バージョンに
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchRooms();
         });
+
+        // 選択されているAPIトークンを取得
+        function getCurrentToken() {
+            return document.getElementById('accountSelect').value;
+        }
+
+        // アカウント切り替え時の処理
+        function changeAccount() {
+            document.getElementById('messageListContainer').innerHTML = '';
+            fetchRooms();
+        }
 
         function getFavorites() {
             try {
@@ -126,7 +144,7 @@
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "get_rooms" })
+                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
                 });
                 const data = await response.json();
                 if (data.status !== "success") throw new Error(data.message);
@@ -142,7 +160,6 @@
             }
         }
 
-        // 🔍 ルーム検索・絞り込み機能
         function filterRooms() {
             const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
             const filtered = allRoomsCache.filter(room => room.name.toLowerCase().includes(keyword));
@@ -203,7 +220,7 @@
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "get_room_data", room_id: roomId })
+                    body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: roomId })
                 });
 
                 const data = await response.json();
@@ -223,7 +240,6 @@
                     const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
                     const senderId = msg.account && msg.account.account_id ? msg.account.account_id : '';
                     
-                    // 📅 送信日時のフォーマット変換 (UNIXタイムスタンプ → 日付文字列)
                     let sendDateStr = '';
                     if (msg.send_time) {
                         const dateObj = new Date(msg.send_time * 1000);
@@ -238,7 +254,6 @@
                             </div>
                             <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
                             
-                            <!-- 💡 簡単なプロンプト入力欄 -->
                             <div class="space-y-1.5 pt-1">
                                 <input type="text" class="custom-prompt-input w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50/50 focus:ring-1 focus:ring-indigo-500 focus:outline-none" placeholder="例: 丁寧に、お詫び強めで、短めに返信して など (任意)">
                                 <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-slate-800 hover:bg-slate-900 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
@@ -261,8 +276,6 @@
         async function generateReplyForMessage(encodedMessageText, btnEl) {
             const messageText = decodeURIComponent(encodedMessageText);
             const parentCard = btnEl.closest('div');
-            
-            // 💡 入力されたカスタムプロンプトを取得
             const customPromptInput = parentCard.querySelector('.custom-prompt-input');
             const customInstruction = customPromptInput ? customPromptInput.value.trim() : '';
 
@@ -277,7 +290,7 @@
                     body: JSON.stringify({ 
                         action: "generate_reply", 
                         message: messageText,
-                        instruction: customInstruction // 追加の指示を送信
+                        instruction: customInstruction
                     })
                 });
                 
@@ -348,7 +361,6 @@
             selectEl.selectedIndex = 0;
         }
 
-        // 📤 返信案を送信
         async function sendReplyToChatwork(btnEl) {
             const roomId = document.getElementById('roomSelect').value;
             const card = btnEl.closest('.ai-reply-area');
@@ -368,7 +380,7 @@
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "send_message", room_id: roomId, body: bodyText })
+                    body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
                 });
 
                 const data = await response.json();
@@ -383,7 +395,6 @@
             }
         }
 
-        // 📤 こっちから新規メッセージを直接送信
         async function sendDirectMessage(btnEl) {
             const roomId = document.getElementById('roomSelect').value;
             const textarea = document.getElementById('newDirectMessage');
@@ -407,7 +418,7 @@
                 const response = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "send_message", room_id: roomId, body: bodyText })
+                    body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
                 });
 
                 const data = await response.json();
