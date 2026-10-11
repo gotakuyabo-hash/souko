@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork AI添削・返信アシスタント</title>
+    <title>Chatwork AIアシスタント</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
@@ -11,7 +11,7 @@
     <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-10">
         <div class="max-w-md mx-auto">
             <h1 class="text-base font-bold flex items-center justify-between">
-                <span>🤖 Chatwork AI添削アシスタント</span>
+                <span>💬 Chatwork 未読対応アシスタント</span>
                 <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">読込中...</span>
             </h1>
         </div>
@@ -30,7 +30,15 @@
 
         <!-- ルーム選択＆検索カード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
-            <label class="block text-xs font-bold text-slate-600">セラー（ルーム）を検索・選択</label>
+            <div class="flex justify-between items-center">
+                <label class="block text-xs font-bold text-slate-600">セラー（ルーム）を検索・選択</label>
+                <!-- 未読のみに絞り込むトグルスイッチ -->
+                <label class="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200">
+                    <input type="checkbox" id="unreadOnlyToggle" onchange="filterRooms()" class="rounded text-indigo-600 focus:ring-indigo-500">
+                    🔴 未読のみ表示
+                </label>
+            </div>
+            
             <input type="text" id="roomSearchInput" oninput="filterRooms()" placeholder="🔍 ルーム名で絞り込み検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
             
             <div class="space-y-2">
@@ -158,8 +166,15 @@
         }
 
         function filterRooms() {
-            const keyword = document.getElementById('roomSearchInput'].value.toLowerCase();
-            const filtered = allRoomsCache.filter(room => room.name.toLowerCase().includes(keyword));
+            const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
+            const unreadOnly = document.getElementById('unreadOnlyToggle').checked;
+
+            const filtered = allRoomsCache.filter(room => {
+                const matchesKeyword = room.name.toLowerCase().includes(keyword);
+                const matchesUnread = unreadOnly ? (room.unread_num > 0) : true;
+                return matchesKeyword && matchesUnread;
+            });
+
             renderRoomOptions(filtered);
         }
 
@@ -251,13 +266,9 @@
                             </div>
                             <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
                             
-                            <!-- 🤖 AI添削・返信案生成エリア -->
-                            <div class="space-y-1.5 pt-1">
-                                <input type="text" class="custom-prompt-input w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50/50 focus:ring-1 focus:ring-indigo-500 focus:outline-none" placeholder="例: 丁寧に、短めに、謝罪を含めて など (任意)">
-                                <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
-                                    ✨ AIに返信案を作ってもらう
-                                </button>
-                            </div>
+                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                                ✨ AIに返信案を作ってもらう
+                            </button>
                             
                             <div class="ai-reply-area mt-2 space-y-2" style="display:none;"></div>
                         </div>
@@ -274,12 +285,10 @@
         async function generateReplyForMessage(encodedMessageText, btnEl) {
             const messageText = decodeURIComponent(encodedMessageText);
             const parentCard = btnEl.closest('.message-card');
-            const customPromptInput = parentCard.querySelector('.custom-prompt-input');
-            const customInstruction = customPromptInput ? customPromptInput.value.trim() : '';
-
             const replyArea = parentCard.querySelector('.ai-reply-area');
+            
             replyArea.style.display = 'block';
-            replyArea.innerHTML = '<div class="flex items-center gap-2 text-xs text-indigo-600 p-2"><div class="animate-spin rounded-full h-3 w-3 border-2 border-indigo-600 border-t-transparent"></div>AIが返信案を添削・作成中...</div>';
+            replyArea.innerHTML = '<div class="flex items-center gap-2 text-xs text-indigo-600 p-2"><div class="animate-spin rounded-full h-3 w-3 border-2 border-indigo-600 border-t-transparent"></div>AIが返信案を作成中...</div>';
 
             try {
                 const response = await fetch(GAS_WEB_APP_URL, {
@@ -288,7 +297,7 @@
                     body: JSON.stringify({ 
                         action: "generate_reply", 
                         message: messageText,
-                        instruction: customInstruction
+                        instruction: ""
                     })
                 });
                 
@@ -326,7 +335,7 @@
             container.innerHTML = `
                 <div class="bg-indigo-50/60 p-3 rounded-lg border border-indigo-100 space-y-2">
                     <div class="flex justify-between items-center gap-2">
-                        <span class="font-bold text-xs text-indigo-800">🤖 AI添削・返信案:</span>
+                        <span class="font-bold text-xs text-indigo-800">🤖 AI返信案:</span>
                         <select onchange="insertMention(this)" class="text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none shadow-sm">
                             ${memberOptions}
                         </select>
