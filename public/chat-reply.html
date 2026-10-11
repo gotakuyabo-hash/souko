@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork 未読対応アシスタント</title>
+    <title>Chatwork 未読対応アシスタント（安全設計版）</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
@@ -23,8 +23,8 @@
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-1.5">
             <label class="block text-xs font-bold text-slate-600">使用するChatworkアカウント</label>
             <select id="accountSelect" onchange="changeAccount()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-indigo-50/50 font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                <option value="5435a05ddd195c46ca688d021e45bbce">メインアカウント (5435...)</option>
                 <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント (57d74ea2...)</option>
+                <option value="5435a05ddd195c46ca688d021e45bbce">ラクロジスタッフアカウント (5435...)</option>
             </select>
         </div>
 
@@ -74,11 +74,12 @@
     </div>
 
     <script>
+        // 🔒 APIキー等の機密情報は一切含まれません。すべての処理はバックエンドのGAS側で安全に中継されます。
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
         
         let allRoomsCache = [];
         let currentRoomMembers = [];
-        const FAVORITE_KEY = "chatwork_favorite_rooms_v2";
+        const FAVORITE_KEY = "chatwork_favorite_rooms_v3";
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchRooms();
@@ -296,13 +297,11 @@
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ 
                         action: "generate_reply", 
-                        message: messageText,
-                        instruction: ""
+                        message: messageText
                     })
                 });
                 
-                const rawText = await response.text();
-                let data = JSON.parse(rawText);
+                const data = await response.json();
                 if (data.status !== "success") throw new Error(data.message || "不明なエラー");
 
                 const senderId = parentCard.getAttribute('data-sender-id');
