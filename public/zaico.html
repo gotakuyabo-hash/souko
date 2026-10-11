@@ -14,7 +14,7 @@
         button:hover { background: #1d4ed8; }
         .btn-success { background: #28a745; }
         .btn-success:hover { background: #218838; }
-        .actions-bar { margin-top: 15px; display: flex; gap: 10px; }
+        .actions-bar { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
         .tab-btn { background: #e2e8f0; color: #475569; padding: 8px 16px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; }
@@ -28,13 +28,11 @@
     <div style="max-width: 1000px; margin: 0 auto;">
         <a href="index.html" class="back-link">← ポータルサイトに戻る</a>
 
-        <!-- タブ切り替えボタン -->
         <div class="tab-buttons">
             <button class="tab-btn active" onclick="switchTab('orderTab')">📦 受注CSV・出庫指示</button>
             <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（棚番・倍率）</button>
         </div>
 
-        <!-- タブ1: 受注CSV・出庫指示 -->
         <div id="orderTab" class="tab-content active">
             <div class="card">
                 <h2>受注CSV ピック数算出 & zaico連動ツール</h2>
@@ -50,7 +48,6 @@
             </div>
         </div>
 
-        <!-- タブ2: 商品マスタ管理 -->
         <div id="masterTab" class="tab-content">
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
@@ -60,6 +57,7 @@
                 </div>
                 <div class="actions-bar">
                     <button onclick="loadMasterItems()">マスタデータを再読み込み</button>
+                    <button onclick="saveAllMasters()" class="btn-success">変更したマスタを一括保存</button>
                 </div>
                 <div id="masterResultArea">
                     <p style="margin-top: 15px;">「マスタデータを再読み込み」ボタンを押してデータを取得してください。</p>
@@ -106,7 +104,6 @@
 
                 for (let i = 1; i < rows.length; i++) {
                     const cols = rows[i];
-                    // G列（インデックス6）が "1-0" の場合は親セットと判定してスキップ
                     const itemNo = cols[6] || '';
                     if (itemNo === '1-0') {
                         continue;
@@ -116,7 +113,6 @@
                         const productName = cols[31];
                         const quantity = cols[34] ? Number(cols[34]) : 1;
 
-                        // 同じ商品名（または同一行）ごとに注文数をまとめる
                         if (rawItemsMap.has(productName)) {
                             rawItemsMap.set(productName, rawItemsMap.get(productName) + quantity);
                         } else {
@@ -125,7 +121,6 @@
                     }
                 }
 
-                // Map から配列へ変換
                 const items = [];
                 rawItemsMap.forEach((quantity, productName) => {
                     items.push({ productName, quantity });
@@ -149,7 +144,6 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    // サーバーから返ってきた結果に対してもバーコード（SKU）単位で注文数を合算する処理
                     const aggregatedMap = new Map();
                     data.results.forEach(item => {
                         const key = item.barcode;
@@ -312,7 +306,6 @@
             }
         }
 
-        // --- 商品マスタ管理用関数 ---
         async function loadMasterItems() {
             const masterArea = document.getElementById('masterResultArea');
             masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
@@ -408,6 +401,66 @@
                 console.error(err);
                 alert('通信エラー');
             }
+        }
+
+        async function saveAllMasters() {
+            if (!confirm('現在画面に表示されているマスタの変更内容を一括保存しますか？')) return;
+
+            const rows = document.querySelectorAll('#masterResultArea tbody tr');
+            const updates = [];
+
+            rows.forEach(row => {
+                const nameInput = row.querySelector('input[id^="master_name_"]');
+                const multInput = row.querySelector('input[id^="master_mult_"]');
+                const shelfInput = row.querySelector('input[id^="master_shelf_"]');
+                const codeCell = row.querySelector('code');
+
+                if (nameInput && multInput && shelfInput && codeCell) {
+                    const barcode = codeCell.textContent.trim();
+                    updates.push({
+                        barcode: barcode,
+                        productName: nameInput.value.trim(),
+                        multiplier: Number(multInput.value) || 1,
+                        shelfNumber: shelfInput.value.trim()
+                    });
+                }
+            });
+
+            if (updates.length === 0) {
+                alert('保存するデータがありません。');
+                return;
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const item of updates) {
+                try {
+                    const res = await fetch(URL_SET_MULTIPLIER, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(item)
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        successCount++;
+                        const target = masterItemsCache.find(t => (t.barcode || t.code) === item.barcode);
+                        if (target) {
+                            target.product_name = item.productName;
+                            target.productName = item.productName;
+                            target.multiplier = item.multiplier;
+                            target.shelf_number = item.shelfNumber;
+                            target.shelfNumber = item.shelfNumber;
+                        }
+                    } else {
+                        failCount++;
+                    }
+                } catch (err) {
+                    failCount++;
+                }
+            }
+
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
         }
     </script>
 </body>
