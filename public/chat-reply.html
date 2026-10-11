@@ -67,7 +67,7 @@
         </div>
     </div>
 
-    <!-- ================= モーダル（定型文管理 ＆ セラーメモ編集） ================= -->
+    <!-- ================= モーダル（定型文管理・編集 ＆ セラーメモ） ================= -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
     <!-- セラーメモ・タグ編集モーダル -->
@@ -133,9 +133,9 @@
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
         
         let allRoomsCache = [];
-        let currentMode = 'burst'; // 'burst' or 'normal'
+        let currentMode = 'burst';
         const TEMPLATE_KEY = "chatwork_custom_templates_v2";
-        const MEMO_KEY = "chatwork_room_memos_v1"; // セラーメモ用キー
+        const MEMO_KEY = "chatwork_room_memos_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchAllUnreadRooms();
@@ -144,11 +144,8 @@
         function getCurrentToken() { return document.getElementById('accountSelect').value; }
         
         function changeAccount() {
-            if (currentMode === 'burst') {
-                fetchAllUnreadRooms();
-            } else {
-                fetchNormalRooms();
-            }
+            if (currentMode === 'burst') fetchAllUnreadRooms();
+            else fetchNormalRooms();
         }
 
         function switchMode(mode) {
@@ -196,21 +193,13 @@
             const content = document.getElementById('memoContentInput').value.trim();
 
             let memos = getRoomMemos();
-            if (!tag && !content) {
-                delete memos[roomId]; // 空なら削除
-            } else {
-                memos[roomId] = { tag, content };
-            }
+            if (!tag && !content) delete memos[roomId];
+            else memos[roomId] = { tag, content };
 
             localStorage.setItem(MEMO_KEY, JSON.stringify(memos));
             closeAllModals();
-            
-            // 画面をリフレッシュ
-            if (currentMode === 'burst') {
-                fetchAllUnreadRooms();
-            } else {
-                fetchNormalRooms();
-            }
+            if (currentMode === 'burst') fetchAllUnreadRooms();
+            else fetchNormalRooms();
         }
         /* =========================================== */
 
@@ -228,7 +217,6 @@
             `;
 
             try {
-                // 1. ルーム一覧取得
                 const res = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
@@ -251,7 +239,6 @@
                     return;
                 }
 
-                // 2. 未読ルームそれぞれの「最新メッセージとメンバー」を並行取得
                 burstCont.innerHTML = '';
                 const memos = getRoomMemos();
 
@@ -260,7 +247,6 @@
                     const memo = memos[roomId] || {};
                     const cardId = `burst_card_${roomId}`;
 
-                    // カードの枠組みを先に出す（ローディング表示）
                     let cardHtml = `
                         <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-2.5">
                             <div class="flex justify-between items-start gap-2">
@@ -282,7 +268,6 @@
                     burstCont.innerHTML += cardHtml;
                 }
 
-                // バックグラウンドで各ルームのメッセージを非同期取得して埋め込む
                 unreadRooms.forEach(async (room) => {
                     const roomId = room.room_id;
                     const cardEl = document.getElementById(`burst_card_${roomId}`);
@@ -298,14 +283,13 @@
                         if (roomData.status !== "success") throw new Error();
 
                         let messages = roomData.messages || [];
-                        messages.sort((a, b) => b.send_time - a.send_time); // 新着順
+                        messages.sort((a, b) => b.send_time - a.send_time);
 
                         if (messages.length === 0) {
                             msgArea.innerHTML = '<span class="text-slate-400">メッセージなし</span>';
                             return;
                         }
 
-                        // 一番新しいメッセージをプレビュー表示しつつ、返信エディタを直結
                         const latestMsg = messages[0];
                         const senderName = latestMsg.account && latestMsg.account.name ? latestMsg.account.name : '不明';
                         const senderId = latestMsg.account && latestMsg.account.account_id ? latestMsg.account.account_id : '';
@@ -331,7 +315,6 @@
                                     <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(latestMsg.body)}</div>
                                 </div>
 
-                                <!-- 返信ツールバー -->
                                 <div class="space-y-2 pt-1">
                                     <div class="flex gap-1.5">
                                         <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
@@ -389,8 +372,6 @@
 
                 btnEl.textContent = "✅ 送信完了！";
                 btnEl.className = "w-full bg-slate-300 text-white text-xs py-2 rounded cursor-default";
-                
-                // 送信完了したカードを少し薄くする
                 btnEl.closest('.bg-white').style.opacity = '0.6';
             } catch (e) {
                 alert('送信失敗: ' + e.message);
@@ -400,7 +381,7 @@
         }
         /* =========================================== */
 
-        /* ======== 📁 通常ルーム個別モードの処理 ======== */
+        /* ======== 📁 通常ルーム個別モード ======== */
         async function fetchNormalRooms() {
             try {
                 const res = await fetch(GAS_WEB_APP_URL, {
@@ -429,19 +410,11 @@
             document.getElementById('roomSelect').innerHTML = html;
         }
 
-        function onNormalRoomSelected() {
-            // 必要に応じて個別ルームの処理
-        }
-
-        async function loadSingleRoomMessages() {
-            const roomId = document.getElementById('roomSelect').value;
-            if (!roomId) { alert('セラーを選択してください。'); return; }
-            // 従来の個別メッセージ表示（省略せず動作するように実装）
-            // ... （必要であれば同様に展開可能ですが、基本は未読バーストがメインになります）
-        }
+        function onNormalRoomSelected() {}
+        function loadSingleRoomMessages() {}
         /* =========================================== */
 
-        /* ======== 定型文＆補助関数 ======== */
+        /* ======== 定型文管理機能（追加・編集・削除） ======== */
         function getTemplates() {
             try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY)) || []; } catch(e) { return []; }
         }
@@ -502,6 +475,7 @@
             document.getElementById('modalTemplateEditor').style.display = 'none';
         }
 
+        // 💾 新規保存モーダルを開く
         function openTemplateEditorForSave(textareaId) {
             const text = document.getElementById(textareaId).value.trim();
             if (!text) { alert('保存する文章が入力されていません。'); return; }
@@ -518,6 +492,30 @@
             document.getElementById('modalTemplateEditor').style.display = 'flex';
         }
 
+        // ✏️ 既存編集モーダルを開く（修正済み）
+        function openTemplateEditorForEdit(id) {
+            const templates = getTemplates();
+            const tmpl = templates.find(t => String(t.id) === String(id));
+            if (!tmpl) {
+                alert('対象の定型文が見つかりませんでした。');
+                return;
+            }
+
+            document.getElementById('editorModalTitle').textContent = '✏️ 定型文を編集';
+            document.getElementById('editTmplId').value = tmpl.id;
+            document.getElementById('editTmplCategory').value = tmpl.category || '未分類';
+            document.getElementById('editTmplTitle').value = tmpl.title;
+            document.getElementById('editTmplText').value = tmpl.text;
+            
+            const cats = [...new Set(templates.map(t => t.category || '未分類'))];
+            document.getElementById('categoryList').innerHTML = cats.map(c => `<option value="${escapeHtml(c)}">`).join('');
+            
+            // 一旦管理画面を隠し、編集モーダルだけを最前面に表示
+            document.getElementById('modalTemplateManager').style.display = 'none';
+            document.getElementById('modalTemplateEditor').style.display = 'flex';
+        }
+
+        // 💾 保存ボタン（新規・上書き共通）
         function saveTemplateSubmit() {
             const id = document.getElementById('editTmplId').value;
             const category = document.getElementById('editTmplCategory').value.trim() || '未分類';
@@ -528,17 +526,26 @@
 
             let templates = getTemplates();
             if (id) {
-                const idx = templates.findIndex(t => t.id === id);
-                if (idx > -1) templates[idx] = { id, category, title, text };
+                const idx = templates.findIndex(t => String(t.id) === String(id));
+                if (idx > -1) {
+                    templates[idx] = { id, category, title, text };
+                }
             } else {
                 templates.push({ id: Date.now().toString(), category, title, text });
             }
             localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
             renderTemplateSelects();
-            closeAllModals();
-            alert('保存しました！');
+            
+            if (id) {
+                // 編集だった場合は管理画面を再描画して開く
+                openTemplateManager();
+            } else {
+                closeAllModals();
+                alert('保存しました！');
+            }
         }
 
+        // ⚙️ 管理画面を開く
         function openTemplateManager() {
             const templates = getTemplates();
             const container = document.getElementById('templateManagerList');
@@ -554,10 +561,14 @@
             for (const [cat, tmpls] of Object.entries(grouped)) {
                 let html = `<div class="mb-4"><h3 class="text-xs font-bold text-slate-500 border-b border-slate-200 pb-1 mb-2">📂 ${escapeHtml(cat)}</h3><div class="space-y-2">`;
                 tmpls.forEach(t => {
-                    html += `<div class="bg-white border rounded p-2.5 flex justify-between items-center shadow-sm">
-                        <span class="font-bold text-sm text-slate-700 truncate pr-2">${escapeHtml(t.title)}</span>
-                        <button onclick="deleteTemplate('${t.id}')" class="bg-red-50 text-red-600 text-xs px-2 py-1 rounded border border-red-200 shrink-0">🗑️ 削除</button>
-                    </div>`;
+                    html += `
+                        <div class="bg-white border rounded p-2.5 flex justify-between items-center shadow-sm">
+                            <span class="font-bold text-sm text-slate-700 truncate pr-2">${escapeHtml(t.title)}</span>
+                            <div class="flex gap-1 shrink-0">
+                                <button onclick="openTemplateEditorForEdit('${t.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1.5 rounded border border-slate-300">✏️ 編集</button>
+                                <button onclick="deleteTemplate('${t.id}')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs px-2 py-1.5 rounded border border-red-200">🗑️ 削除</button>
+                            </div>
+                        </div>`;
                 });
                 html += `</div></div>`;
                 container.innerHTML += html;
@@ -566,11 +577,18 @@
             document.getElementById('modalTemplateManager').style.display = 'flex';
         }
 
+        // 🗑️ 削除（確認ダイアログ付き）
         function deleteTemplate(id) {
-            let templates = getTemplates().filter(t => t.id !== id);
-            localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
+            const templates = getTemplates();
+            const tmpl = templates.find(t => String(t.id) === String(id));
+            const titleName = tmpl ? tmpl.title : 'この定型文';
+
+            if (!confirm(`「${titleName}」を本当に削除しますか？`)) return;
+
+            const filtered = templates.filter(t => String(t.id) !== String(id));
+            localStorage.setItem(TEMPLATE_KEY, JSON.stringify(filtered));
             renderTemplateSelects();
-            openTemplateManager();
+            openTemplateManager(); // 管理画面をリフレッシュ
         }
 
         function escapeHtml(str) {
