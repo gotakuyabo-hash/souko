@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork 未読対応アシスタント</title>
+    <title>Chatwork クイック返信ツール</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
@@ -11,7 +11,7 @@
     <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-10">
         <div class="max-w-md mx-auto">
             <h1 class="text-base font-bold flex items-center justify-between">
-                <span>💬 Chatwork 未読対応アシスタント</span>
+                <span>💬 Chatwork クイック返信ツール</span>
                 <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">読込中...</span>
             </h1>
         </div>
@@ -32,7 +32,6 @@
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <div class="flex justify-between items-center">
                 <label class="block text-xs font-bold text-slate-600">セラー（ルーム）を検索・選択</label>
-                <!-- 未読のみに絞り込むトグルスイッチ -->
                 <label class="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200">
                     <input type="checkbox" id="unreadOnlyToggle" onchange="filterRooms()" class="rounded text-indigo-600 focus:ring-indigo-500">
                     🔴 未読のみ表示
@@ -75,12 +74,19 @@
     </div>
 
     <script>
-        // ※必ず最新のデプロイURL（/exec）に書き換えてください
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
         
         let allRoomsCache = [];
         let currentRoomMembers = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v2";
+
+        // よく使う定型文のリスト（ここを自由に追加・変更できます）
+        const TEMPLATES = [
+            { label: "📋 承知いたしました（基本）", text: "いつもお世話になっております。\n承知いたしました。ご対応ありがとうございます。\n宜しくお願い致します。" },
+            { label: "📦 発送完了・確認", text: "いつもお世話になっております。\n商品の発送手続きが完了いたしました。\nご確認のほど宜しくお願い致します。" },
+            { label: "⚠️ 不明点・確認中", text: "いつもお世話になっております。\n現在、内容について確認を進めております。\n判明次第改めてご連絡いたしますので、少々お待ちください。" },
+            { label: "📝 修正・再提出依頼", text: "いつもお世話になっております。\nお送りいただいた内容に一部相違がございました。\n大変お手数ですが、再度ご修正いただけますでしょうか。" }
+        ];
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchRooms();
@@ -156,14 +162,13 @@
                 if (data.status !== "success") throw new Error(data.message);
 
                 allRoomsCache = data.rooms;
-                filterRooms(); // フィルターを適用して描画
+                filterRooms();
                 statusEl.textContent = "準備完了";
                 statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
             } catch (e) {
                 document.getElementById('roomSelect').innerHTML = '<option value="">ルームの取得に失敗しました</option>';
                 statusEl.textContent = "エラー";
                 statusEl.className = "text-xs bg-red-500 px-2 py-0.5 rounded-full text-white";
-                console.error(e);
             }
         }
 
@@ -250,7 +255,6 @@
 
                 let html = '';
                 messages.forEach(msg => {
-                    const safeMessage = encodeURIComponent(msg.body);
                     const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
                     const senderId = msg.account && msg.account.account_id ? msg.account.account_id : '';
                     
@@ -268,11 +272,12 @@
                             </div>
                             <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
                             
-                            <button onclick="generateReplyForMessage('${safeMessage}', this)" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
-                                ✨ AIに返信案を作ってもらう
+                            <!-- 🚀 返信エディタ起動ボタン -->
+                            <button onclick="openReplyEditor(this, '${senderId}', '${escapeHtml(senderName)}')" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                                ✍️ このメッセージに返信する
                             </button>
                             
-                            <div class="ai-reply-area mt-2 space-y-2" style="display:none;"></div>
+                            <div class="reply-editor-area mt-2 space-y-2" style="display:none;"></div>
                         </div>
                     `;
                 });
@@ -284,39 +289,19 @@
             }
         }
 
-        async function generateReplyForMessage(encodedMessageText, btnEl) {
-            const messageText = decodeURIComponent(encodedMessageText);
+        function openReplyEditor(btnEl, senderId, senderName) {
             const parentCard = btnEl.closest('.message-card');
-            const replyArea = parentCard.querySelector('.ai-reply-area');
+            const editorArea = parentCard.querySelector('.reply-editor-area');
             
-            replyArea.style.display = 'block';
-            replyArea.innerHTML = '<div class="flex items-center gap-2 text-xs text-indigo-600 p-2"><div class="animate-spin rounded-full h-3 w-3 border-2 border-indigo-600 border-t-transparent"></div>AIが返信案を作成中...</div>';
-
-            try {
-                const response = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ 
-                        action: "generate_reply", 
-                        message: messageText,
-                        instruction: ""
-                    })
-                });
-                
-                const rawText = await response.text();
-                let data = JSON.parse(rawText);
-                if (data.status !== "success") throw new Error(data.message || "不明なエラー");
-
-                const senderId = parentCard.getAttribute('data-sender-id');
-                const senderName = parentCard.getAttribute('data-sender-name');
-                renderReplyEditor(replyArea, data.reply, senderId, senderName);
-            } catch (e) {
-                replyArea.innerHTML = `<span class="text-xs text-red-500 font-bold p-2">生成失敗: ${escapeHtml(e.message)}</span>`;
+            if (editorArea.style.display === 'block') {
+                editorArea.style.display = 'none';
+                return;
             }
-        }
 
-        function renderReplyEditor(container, replyText, senderId, senderName) {
-            let memberOptions = '<option value="">-- 👤 メンション（宛先）を選ぶ --</option>';
+            editorArea.style.display = 'block';
+
+            // メンション選択肢
+            let memberOptions = '<option value="">-- 👤 メンション（宛先）を追加 --</option>';
             let addedIds = new Set();
 
             if (senderId && senderName) {
@@ -334,15 +319,23 @@
                 });
             }
 
-            container.innerHTML = `
+            // 定型文セレクトボックスの選択肢
+            let templateOptions = '<option value="">-- ⚡ よく使う定型文を選ぶ --</option>';
+            TEMPLATES.forEach((tpl, idx) => {
+                templateOptions += `<option value="${idx}">${escapeHtml(tpl.label)}</option>`;
+            });
+
+            editorArea.innerHTML = `
                 <div class="bg-indigo-50/60 p-3 rounded-lg border border-indigo-100 space-y-2">
-                    <div class="flex justify-between items-center gap-2">
-                        <span class="font-bold text-xs text-indigo-800">🤖 AI返信案:</span>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <select onchange="insertMention(this)" class="text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none shadow-sm">
                             ${memberOptions}
                         </select>
+                        <select onchange="insertTemplate(this)" class="text-xs border border-emerald-300 rounded p-1.5 bg-white text-emerald-950 font-bold focus:outline-none shadow-sm">
+                            ${templateOptions}
+                        </select>
                     </div>
-                    <textarea class="reply-textarea w-full h-28 text-sm p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">${escapeHtml(replyText)}</textarea>
+                    <textarea class="reply-textarea w-full h-28 text-sm p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
                     
                     <button onclick="sendReplyToChatwork(this)" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2.5 rounded-lg font-bold shadow-sm">
                         📤 Chatworkに送信
@@ -357,7 +350,7 @@
             const name = selectedOpt.getAttribute('data-name');
             if (!accountId) return;
 
-            const card = selectEl.closest('.ai-reply-area');
+            const card = selectEl.closest('.reply-editor-area');
             const textarea = card.querySelector('.reply-textarea');
             const mentionTag = `[to:${accountId}] ${name}さん\n`;
 
@@ -365,9 +358,26 @@
             selectEl.selectedIndex = 0;
         }
 
+        function insertTemplate(selectEl) {
+            const index = selectEl.value;
+            if (index === "") return;
+
+            const tpl = TEMPLATES[index];
+            const card = selectEl.closest('.reply-editor-area');
+            const textarea = card.querySelector('.reply-textarea');
+
+            // 既存のテキストの末尾に追記、またはそのままセット
+            if (textarea.value) {
+                textarea.value += "\n" + tpl.text;
+            } else {
+                textarea.value = tpl.text;
+            }
+            selectEl.selectedIndex = 0;
+        }
+
         async function sendReplyToChatwork(btnEl) {
             const roomId = document.getElementById('roomSelect').value;
-            const card = btnEl.closest('.ai-reply-area');
+            const card = btnEl.closest('.reply-editor-area');
             const bodyText = card.querySelector('.reply-textarea').value.trim();
 
             if (!bodyText) {
@@ -426,7 +436,7 @@
                 });
 
                 const data = await response.json();
-                if (data.status !== "success") throw new Error(data.message);
+                if (data.status !== "success") throw new Error(data.number || data.status);
 
                 alert('✅ メッセージを送信しました！');
                 textarea.value = '';
