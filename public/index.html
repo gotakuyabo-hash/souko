@@ -23,7 +23,7 @@
             border-radius: 20px;
             padding: 14px 10px;
             text-align: center;
-            cursor: pointer;
+            cursor: grab;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
@@ -33,9 +33,8 @@
             position: relative;
             touch-action: none;
             transition: background 0.2s, box-shadow 0.2s;
-            text-decoration: none;
         }
-        .app-icon:hover { background: rgba(255, 255, 255, 0.18); }
+        .app-icon:active { cursor: grabbing; }
         .app-icon.dragging {
             opacity: 0.4;
             transform: scale(0.95);
@@ -71,7 +70,7 @@
         <header class="mb-6 px-2 flex justify-between items-center">
             <div>
                 <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
-                <p class="text-[11px] text-slate-400">タップで起動 / ドラッグで並び替え</p>
+                <p class="text-[11px] text-slate-400">タップで起動 ＆ ドラッグで並び替え（両立版）</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="openAddCategoryModal()" class="bg-emerald-600/85 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full transition shadow">
@@ -99,7 +98,7 @@
     </div>
 
     <script>
-        const STORAGE_KEY = 'warehouse_portal_v4_data';
+        const STORAGE_KEY = 'warehouse_portal_v5_data';
 
         const defaultData = {
             categories: [
@@ -163,7 +162,7 @@
         }
 
         let draggedCardId = null;
-        let isDragging = false;
+        let hasMoved = false;
 
         function render() {
             const data = loadData();
@@ -214,37 +213,41 @@
                 } else {
                     catCards.forEach((card) => {
                         const parsed = parseTitle(card.title);
-                        const appEl = document.createElement('a');
+                        const appEl = document.createElement('div');
                         appEl.className = 'app-icon';
-                        appEl.href = card.href;
                         appEl.draggable = true;
                         appEl.dataset.cardId = card.id;
 
-                        // ドラッグ中はリンクとしての遷移を無効化する制御
-                        appEl.addEventListener('click', (e) => {
-                            if (isDragging) {
-                                e.preventDefault();
+                        // タップ（クリック）されたときはリンク先へ飛ぶ（ドラッグ移動していない場合のみ）
+                        appEl.addEventListener('click', () => {
+                            if (!hasMoved) {
+                                window.location.href = card.href;
                             }
                         });
 
                         appEl.addEventListener('dragstart', (e) => {
-                            isDragging = true;
+                            hasMoved = true;
                             draggedCardId = card.id;
                             appEl.classList.add('dragging');
                         });
+
                         appEl.addEventListener('dragend', () => {
                             appEl.classList.remove('dragging');
                             document.querySelectorAll('.app-icon').forEach(el => el.classList.remove('drag-over'));
-                            setTimeout(() => { isDragging = false; }, 100);
                             draggedCardId = null;
+                            // わずかに遅れて移動フラグをリセットし、誤爆を防ぐ
+                            setTimeout(() => { hasMoved = false; }, 150);
                         });
+
                         appEl.addEventListener('dragover', (e) => {
                             e.preventDefault();
                             appEl.classList.add('drag-over');
                         });
+
                         appEl.addEventListener('dragleave', () => {
                             appEl.classList.remove('drag-over');
                         });
+
                         appEl.addEventListener('drop', (e) => {
                             e.stopPropagation();
                             e.preventDefault();
