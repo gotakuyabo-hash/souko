@@ -79,9 +79,8 @@
         let allRoomsCache = [];
         let currentRoomMembers = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v2";
-        const CUSTOM_TEMPLATES_KEY = "chatwork_custom_templates_v1";
+        const CUSTOM_TEMPLATES_KEY = "chatwork_custom_templates_v2";
 
-        // 初期デフォルト定型文
         const DEFAULT_TEMPLATES = [
             { label: "📋 承知いたしました（基本）", text: "いつもお世話になっております。\n承知いたしました。ご対応ありがとうございます。\n宜しくお願い致します。" },
             { label: "📦 発送完了・確認", text: "いつもお世話になっております。\n商品の発送手続きが完了いたしました。\nご確認のほど宜しくお願い致します。" },
@@ -92,9 +91,7 @@
         function getTemplates() {
             try {
                 const saved = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
-                if (saved) {
-                    return JSON.parse(saved);
-                }
+                if (saved) return JSON.parse(saved);
             } catch(e) {}
             return DEFAULT_TEMPLATES;
         }
@@ -266,6 +263,7 @@
 
                 let html = '';
                 messages.forEach(msg => {
+                    const safeMsgBody = encodeURIComponent(msg.body);
                     const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
                     const senderId = msg.account && msg.account.account_id ? msg.account.account_id : '';
                     
@@ -283,9 +281,16 @@
                             </div>
                             <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
                             
-                            <button onclick="openReplyEditor(this, '${senderId}', '${escapeHtml(senderName)}')" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
-                                ✍️ このメッセージに返信する
-                            </button>
+                            <div class="flex gap-2">
+                                <!-- 📥 受信メッセージをテンプレートに直接保存するボタン -->
+                                <button onclick="saveMessageAsTemplate('${safeMsgBody}')" class="bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs px-3 py-2 rounded-lg font-bold border border-amber-200 shrink-0" title="このメッセージを定型文に登録">
+                                    📥 テンプレートに保存
+                                </button>
+                                <!-- 返信エディタ起動 -->
+                                <button onclick="openReplyEditor(this, '${senderId}', '${escapeHtml(senderName)}')" class="flex-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                                    ✍️ このメッセージに返信する
+                                </button>
+                            </div>
                             
                             <div class="reply-editor-area mt-2 space-y-2" style="display:none;"></div>
                         </div>
@@ -297,6 +302,20 @@
             } finally {
                 document.getElementById('messageLoading').style.display = 'none';
             }
+        }
+
+        function saveMessageAsTemplate(encodedBody) {
+            const bodyText = decodeURIComponent(encodedBody).trim();
+            if (!bodyText) return;
+
+            const labelName = prompt('このメッセージにテンプレート名（タイトル）をつけてください:', '保存テンプレート ' + (getTemplates().length + 1));
+            if (!labelName) return;
+
+            let templates = getTemplates();
+            templates.push({ label: labelName, text: bodyText });
+            localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(templates));
+
+            alert(`✅ 「${labelName}」としてテンプレートに保存しました！`);
         }
 
         function openReplyEditor(btnEl, senderId, senderName) {
@@ -410,12 +429,6 @@
             localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(templates));
 
             alert(`✅ 「${labelName}」を定型文として保存しました！`);
-
-            // エディタのセレクトボックス等を再描画して反映
-            const messageCard = btnEl.closest('.message-card');
-            const senderId = messageCard.getAttribute('data-sender-id');
-            const senderName = messageCard.getAttribute('data-sender-name');
-            renderEditorContent(card, senderId, senderName, textToSave);
         }
 
         async function sendReplyToChatwork(btnEl) {
