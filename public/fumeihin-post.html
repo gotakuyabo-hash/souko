@@ -26,10 +26,15 @@
                     <input type="text" id="roomSearchInput" placeholder="例: 倉庫, 運営" oninput="filterRooms()" class="w-full border border-slate-300 rounded p-2 text-xs bg-slate-50">
                 </div>
                 <div>
-                    <label class="block font-medium mb-1">送信先グループ（よく使う順・ルーム選択）</label>
+                    <label class="block font-medium mb-1">送信先グループ（お気に入り・よく使う順）</label>
                     <select id="roomSelect" onchange="onRoomSelectChange()" class="w-full border border-slate-300 rounded p-2 text-xs bg-white">
                         <option value="">-- 上のボタンを押してグループを取得してください --</option>
                     </select>
+                </div>
+                <div class="flex gap-2">
+                    <button type="button" onclick="togglePinCurrentRoom()" id="pinBtn" class="w-full bg-amber-100 hover:bg-amber-200 text-amber-800 py-1.5 rounded font-bold border border-amber-300">
+                        ⭐ このグループをピン留め
+                    </button>
                 </div>
                 <div>
                     <label class="block font-medium mb-1">選択中のルームID</label>
@@ -141,6 +146,7 @@
     <script>
         let allRoomsData = [];
         let allHistoryData = [];
+        const FAVORITE_ROOMS_KEY = "fumeihin_favorite_rooms_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
@@ -153,10 +159,57 @@
             document.getElementById('cwAccountName').value = savedAccountName;
             if (savedGas) document.getElementById('gasUrl').value = savedGas;
 
+            updatePinButtonState();
+
             if (savedRoom) {
                 fetchRoomMembers(savedRoom, savedAccount);
             }
         });
+
+        function getFavorites() {
+            try {
+                return JSON.parse(localStorage.getItem(FAVORITE_ROOMS_KEY)) || [];
+            } catch(e) {
+                return [];
+            }
+        }
+
+        function togglePinCurrentRoom() {
+            const roomId = document.getElementById('cwRoomId').value;
+            if (!roomId) {
+                alert('ピン留めするグループを選択してください。');
+                return;
+            }
+
+            let favorites = getFavorites();
+            const index = favorites.indexOf(roomId);
+            
+            if (index > -1) {
+                favorites.splice(index, 1);
+                alert('お気に入り（ピン留め）を解除しました');
+            } else {
+                favorites.push(roomId);
+                alert('このグループをお気に入り（ピン留め）に登録しました！');
+            }
+            
+            localStorage.setItem(FAVORITE_ROOMS_KEY, JSON.stringify(favorites));
+            updatePinButtonState();
+            if (allRoomsData.length > 0) filterRooms();
+        }
+
+        function updatePinButtonState() {
+            const roomId = document.getElementById('cwRoomId').value;
+            const pinBtn = document.getElementById('pinBtn');
+            const favorites = getFavorites();
+
+            if (favorites.includes(roomId)) {
+                pinBtn.className = "w-full bg-amber-500 text-white py-1.5 rounded font-bold shadow-sm";
+                pinBtn.textContent = "⭐ ピン留め解除";
+            } else {
+                pinBtn.className = "w-full bg-amber-100 hover:bg-amber-200 text-amber-800 py-1.5 rounded font-bold border border-amber-300";
+                pinBtn.textContent = "⭐ このグループをピン留め";
+            }
+        }
 
         async function fetchChatRooms() {
             const gasUrl = document.getElementById('gasUrl').value.trim();
@@ -174,7 +227,7 @@
                 if (data.status !== 'success') throw new Error(data.message || '取得失敗');
 
                 allRoomsData = data.rooms;
-                renderRoomOptions(allRoomsData);
+                filterRooms();
                 statusMsg.innerText = `グループを ${allRoomsData.length}件 取得しました！`;
                 document.getElementById('settingsDetails').open = true;
             } catch (err) {
@@ -183,49 +236,60 @@
             }
         }
 
+        function filterRooms() {
+            const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
+            renderRoomOptions(allRoomsData, keyword);
+        }
+
         function renderRoomOptions(rooms, filterKeyword = '') {
             const select = document.getElementById('roomSelect');
             const currentRoomId = document.getElementById('cwRoomId').value;
-            const usageCounts = JSON.parse(localStorage.getItem('fumeihin_room_counts') || '{}');
-
-            const sortedRooms = [...rooms].sort((a, b) => {
-                return (usageCounts[b.room_id] || 0) - (usageCounts[a.room_id] || 0);
-            });
+            const favorites = getFavorites();
 
             const keyword = filterKeyword.toLowerCase();
-            const filtered = sortedRooms.filter(room => room.name.toLowerCase().includes(keyword));
+            const filtered = rooms.filter(room => room.name.toLowerCase().includes(keyword));
 
-            select.innerHTML = '<option value="">-- グループを選択してください --</option>';
+            let favList = [];
+            let normalList = [];
+
             filtered.forEach(room => {
-                const count = usageCounts[room.room_id] || 0;
-                const opt = document.createElement('option');
-                opt.value = room.room_id;
-                const pinBadge = count > 0 ? `🔥(${count}回) ` : '';
-                opt.textContent = `${pinBadge}[${room.type}] ${room.name} (${room.room_id})`;
-                if (String(room.room_id) === String(currentRoomId)) opt.selected = true;
-                select.appendChild(opt);
+                if (favorites.includes(String(room.room_id))) {
+                    favList.push(room);
+                } else {
+                    normalList.push(room);
+                }
             });
-        }
 
-        function filterRooms() {
-            const keyword = document.getElementById('roomSearchInput').value;
-            if (allRoomsData.length > 0) renderRoomOptions(allRoomsData, keyword);
+            let html = '<option value="">-- グループを選択してください --</option>';
+
+            if (favList.length > 0) {
+                html += '<optgroup label="⭐ お気に入り（ピン留め）">';
+                favList.forEach(room => {
+                    html += `<option value="${room.room_id}">⭐ [${room.type}] ${escapeHtml(room.name)} (${room.room_id})</option>`;
+                });
+                html += '</optgroup>';
+            }
+
+            if (normalList.length > 0) {
+                html += '<optgroup label="📁 その他のグループ">';
+                normalList.forEach(room => {
+                    html += `<option value="${room.room_id}">[${room.type}] ${escapeHtml(room.name)} (${room.room_id})</option>`;
+                });
+                html += '</optgroup>';
+            }
+
+            select.innerHTML = html;
+            select.value = currentRoomId;
         }
 
         async function onRoomSelectChange() {
             const select = document.getElementById('roomSelect');
             const roomId = select.value;
             document.getElementById('cwRoomId').value = roomId;
+            updatePinButtonState();
             if (roomId) {
-                incrementRoomUsage(roomId);
                 await fetchRoomMembers(roomId);
             }
-        }
-
-        function incrementRoomUsage(roomId) {
-            const usageCounts = JSON.parse(localStorage.getItem('fumeihin_room_counts') || '{}');
-            usageCounts[roomId] = (usageCounts[roomId] || 0) + 1;
-            localStorage.setItem('fumeihin_room_counts', JSON.stringify(usageCounts));
         }
 
         async function fetchRoomMembers(roomId, selectedAccountId = '') {
@@ -421,6 +485,18 @@
                 statusMsg.innerText = "";
             }
         };
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&'`<>"]/g, match => ({
+                '&': '&amp;',
+                "'": '&#x27;',
+                '`': '&#x60;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+            })[match]);
+        }
     </script>
 </body>
 </html>
