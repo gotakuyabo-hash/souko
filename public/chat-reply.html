@@ -19,7 +19,7 @@
 
     <!-- メインコンテンツ -->
     <div class="max-w-md mx-auto p-3 space-y-3">
-        <!-- 👤 アカウント選択カード -->
+        <!-- アカウント選択カード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-1.5">
             <label class="block text-xs font-bold text-slate-600">使用するChatworkアカウント</label>
             <select id="accountSelect" onchange="changeAccount()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-indigo-50/50 font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
@@ -28,10 +28,9 @@
             </select>
         </div>
 
-        <!-- セラー・ルーム選択＆検索カード -->
+        <!-- ルーム選択＆検索カード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <label class="block text-xs font-bold text-slate-600">セラー（ルーム）を検索・選択</label>
-            
             <input type="text" id="roomSearchInput" oninput="filterRooms()" placeholder="🔍 ルーム名で絞り込み検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
             
             <div class="space-y-2">
@@ -49,7 +48,7 @@
             </div>
         </div>
 
-        <!-- こっちから新規メッセージを発信するカード -->
+        <!-- 新規メッセージ発信カード -->
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
             <label class="block text-xs font-bold text-slate-600">✍️ 選択中のルームへ新規発信</label>
             <textarea id="newDirectMessage" placeholder="ここに直接送信するメッセージを入力..." class="w-full h-20 text-sm p-2.5 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
@@ -71,7 +70,7 @@
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxuO_lObsnGyfQjNjplXAKPBtTNyhNlOWfquFyTSW1G2jAApymUXlMSP8J63ZDlloH-xQ/exec";
         
         let allRoomsCache = [];
-        let currentRoomMembers = []; // ルームのメンバー一覧（メンション用）
+        let currentRoomMembers = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v2";
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -224,7 +223,7 @@
                 const data = await response.json();
                 if (data.status !== "success") throw new Error(data.message);
 
-                currentRoomMembers = data.members || []; // メンバー一覧を確実に保持
+                currentRoomMembers = data.members || [];
                 const messages = data.messages || [];
 
                 if (messages.length === 0) {
@@ -245,7 +244,7 @@
                     }
 
                     html += `
-                        <div class="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm space-y-2" data-sender-id="${senderId}" data-sender-name="${escapeHtml(senderName)}">
+                        <div class="message-card bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm space-y-2" data-sender-id="${senderId}" data-sender-name="${escapeHtml(senderName)}">
                             <div class="text-xs text-indigo-600 font-bold flex items-center justify-between">
                                 <span>👤 ${escapeHtml(senderName)}</span>
                                 <span class="text-slate-400 font-normal">📅 ${sendDateStr}</span>
@@ -273,7 +272,7 @@
 
         async function generateReplyForMessage(encodedMessageText, btnEl) {
             const messageText = decodeURIComponent(encodedMessageText);
-            const parentCard = btnEl.closest('div');
+            const parentCard = btnEl.closest('.message-card');
             const customPromptInput = parentCard.querySelector('.custom-prompt-input');
             const customInstruction = customPromptInput ? customPromptInput.value.trim() : '';
 
@@ -304,7 +303,6 @@
             }
         }
 
-        // メンション選択UIの描画（復活版）
         function renderReplyEditor(container, replyText, originalMessage, senderId, senderName) {
             let memberOptions = '<option value="">-- 👤 メンション（宛先）を選ぶ --</option>';
             let addedIds = new Set();
