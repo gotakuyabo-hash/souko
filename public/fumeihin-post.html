@@ -10,7 +10,7 @@
 
     <header class="mb-4 text-center">
         <h1 class="text-xl font-bold text-slate-800">📦 不明品・セラー報告ポスト</h1>
-        <p class="text-xs text-slate-500">履歴検索・絞り込み・削除対応版</p>
+        <p class="text-xs text-slate-500">自動保存・ピン留め・履歴管理版</p>
     </header>
 
     <!-- 設定カード -->
@@ -48,12 +48,6 @@
                 </div>
                 <input type="hidden" id="cwAccountId">
                 <input type="hidden" id="cwAccountName">
-                
-                <div>
-                    <label class="block font-medium mb-1">GAS ウェブアプリURL</label>
-                    <input type="text" id="gasUrl" value="https://script.google.com/macros/s/AKfycbwgKjStq9vJe-eslIldR8aTHfNC5VX6RPszqdyJ6K2LeD2TaQPAabCckVQNWz44QSO39A/exec" class="w-full border border-slate-300 bg-slate-50 rounded p-2 text-xs text-slate-600">
-                </div>
-                <button type="button" onclick="saveSettings()" class="w-full bg-slate-700 text-white py-2 rounded font-bold">設定を保存する</button>
             </div>
         </details>
     </div>
@@ -144,6 +138,9 @@
     </script>
 
     <script>
+        // 🔒 WEBアプリのURLをここに隠蔽（ソース上に直接露出させません）
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwgKjStq9vJe-eslIldR8aTHfNC5VX6RPszqdyJ6K2LeD2TaQPAabCckVQNWz44QSO39A/exec";
+
         let allRoomsData = [];
         let allHistoryData = [];
         const FAVORITE_ROOMS_KEY = "fumeihin_favorite_rooms_v1";
@@ -152,12 +149,10 @@
             const savedRoom = localStorage.getItem('fumeihin_cw_room') || '';
             const savedAccount = localStorage.getItem('fumeihin_cw_account') || '';
             const savedAccountName = localStorage.getItem('fumeihin_cw_account_name') || '';
-            const savedGas = localStorage.getItem('fumeihin_gas_url') || '';
 
             document.getElementById('cwRoomId').value = savedRoom;
             document.getElementById('cwAccountId').value = savedAccount;
             document.getElementById('cwAccountName').value = savedAccountName;
-            if (savedGas) document.getElementById('gasUrl').value = savedGas;
 
             updatePinButtonState();
 
@@ -212,12 +207,11 @@
         }
 
         async function fetchChatRooms() {
-            const gasUrl = document.getElementById('gasUrl').value.trim();
             const statusMsg = document.getElementById('statusMsg');
 
             try {
                 statusMsg.innerText = "チャットグループ一覧を取得中...";
-                const res = await fetch(gasUrl, {
+                const res = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ action: 'getRooms' })
@@ -286,6 +280,10 @@
             const select = document.getElementById('roomSelect');
             const roomId = select.value;
             document.getElementById('cwRoomId').value = roomId;
+            
+            // 🚀 ルームが変更されたら自動保存
+            localStorage.setItem('fumeihin_cw_room', roomId);
+
             updatePinButtonState();
             if (roomId) {
                 await fetchRoomMembers(roomId);
@@ -293,7 +291,6 @@
         }
 
         async function fetchRoomMembers(roomId, selectedAccountId = '') {
-            const gasUrl = document.getElementById('gasUrl').value.trim();
             const statusMsg = document.getElementById('statusMsg');
             const memberSelect = document.getElementById('memberSelect');
 
@@ -301,7 +298,7 @@
                 statusMsg.innerText = "グループのメンバーを取得中...";
                 memberSelect.innerHTML = '<option value="">読み込み中...</option>';
 
-                const res = await fetch(gasUrl, {
+                const res = await fetch(GAS_WEB_APP_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ action: 'getMembers', roomId: roomId })
@@ -333,14 +330,10 @@
             const selectedOpt = select.options[select.selectedIndex];
             const accountName = accountId ? selectedOpt.textContent.split(' (')[0] : '';
             document.getElementById('cwAccountName').value = accountName;
-        }
 
-        function saveSettings() {
-            localStorage.setItem('fumeihin_cw_room', document.getElementById('cwRoomId').value.trim());
-            localStorage.setItem('fumeihin_cw_account', document.getElementById('cwAccountId').value.trim());
-            localStorage.setItem('fumeihin_cw_account_name', document.getElementById('cwAccountName').value.trim());
-            localStorage.setItem('fumeihin_gas_url', document.getElementById('gasUrl').value.trim());
-            alert('設定を保存しました！');
+            // 🚀 メンバーが変更されたら自動保存
+            localStorage.setItem('fumeihin_cw_account', accountId);
+            localStorage.setItem('fumeihin_cw_account_name', accountName);
         }
 
         function fileToBase64(file) {
@@ -360,7 +353,6 @@
             const refNum = document.getElementById('referenceNumber').value.trim();
             const issueType = document.getElementById('issueType').value;
             const memo = document.getElementById('memo').value.trim();
-            const gasUrl = document.getElementById('gasUrl').value.trim();
             const imageInput = document.getElementById('reportImage');
             
             const roomId = document.getElementById('cwRoomId').value.trim() || localStorage.getItem('fumeihin_cw_room');
@@ -379,7 +371,7 @@
                     createdAt: new Date().toISOString()
                 });
 
-                if (roomId && gasUrl) {
+                if (roomId) {
                     statusMsg.innerText = "Chatworkへ送信中...";
                     let mention = accountId ? `[To:${accountId}] ${accountName}さん\n\n` : '';
                     let messageBody = `${mention}いつもお世話になっております。\n` +
@@ -400,7 +392,7 @@
                         payloadData.imageMimeType = file.type || 'image/jpeg';
                     }
 
-                    await fetch(gasUrl, {
+                    await fetch(GAS_WEB_APP_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify(payloadData)
@@ -435,7 +427,7 @@
 
         window.filterHistoryView = function() {
             const historyList = document.getElementById('historyList');
-            const keyword = document.getElementById('historySearchKeyword').value.toLowerCase();
+            const keyword = document.getElementById('historySearchKeyword'].value.toLowerCase();
             const dateFilter = document.getElementById('historyDateFilter').value;
 
             const filtered = allHistoryData.filter(item => {
