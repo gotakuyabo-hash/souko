@@ -79,14 +79,25 @@
         let allRoomsCache = [];
         let currentRoomMembers = [];
         const FAVORITE_KEY = "chatwork_favorite_rooms_v2";
+        const CUSTOM_TEMPLATES_KEY = "chatwork_custom_templates_v1";
 
-        // よく使う定型文のリスト（ここを自由に追加・変更できます）
-        const TEMPLATES = [
+        // 初期デフォルト定型文
+        const DEFAULT_TEMPLATES = [
             { label: "📋 承知いたしました（基本）", text: "いつもお世話になっております。\n承知いたしました。ご対応ありがとうございます。\n宜しくお願い致します。" },
             { label: "📦 発送完了・確認", text: "いつもお世話になっております。\n商品の発送手続きが完了いたしました。\nご確認のほど宜しくお願い致します。" },
             { label: "⚠️ 不明点・確認中", text: "いつもお世話になっております。\n現在、内容について確認を進めております。\n判明次第改めてご連絡いたしますので、少々お待ちください。" },
             { label: "📝 修正・再提出依頼", text: "いつもお世話になっております。\nお送りいただいた内容に一部相違がございました。\n大変お手数ですが、再度ご修正いただけますでしょうか。" }
         ];
+
+        function getTemplates() {
+            try {
+                const saved = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
+                if (saved) {
+                    return JSON.parse(saved);
+                }
+            } catch(e) {}
+            return DEFAULT_TEMPLATES;
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchRooms();
@@ -272,7 +283,6 @@
                             </div>
                             <div class="text-sm whitespace-pre-wrap text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">${escapeHtml(msg.body)}</div>
                             
-                            <!-- 🚀 返信エディタ起動ボタン -->
                             <button onclick="openReplyEditor(this, '${senderId}', '${escapeHtml(senderName)}')" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
                                 ✍️ このメッセージに返信する
                             </button>
@@ -299,8 +309,10 @@
             }
 
             editorArea.style.display = 'block';
+            renderEditorContent(editorArea, senderId, senderName, "");
+        }
 
-            // メンション選択肢
+        function renderEditorContent(editorArea, senderId, senderName, currentText) {
             let memberOptions = '<option value="">-- 👤 メンション（宛先）を追加 --</option>';
             let addedIds = new Set();
 
@@ -319,9 +331,9 @@
                 });
             }
 
-            // 定型文セレクトボックスの選択肢
+            const templates = getTemplates();
             let templateOptions = '<option value="">-- ⚡ よく使う定型文を選ぶ --</option>';
-            TEMPLATES.forEach((tpl, idx) => {
+            templates.forEach((tpl, idx) => {
                 templateOptions += `<option value="${idx}">${escapeHtml(tpl.label)}</option>`;
             });
 
@@ -335,11 +347,16 @@
                             ${templateOptions}
                         </select>
                     </div>
-                    <textarea class="reply-textarea w-full h-28 text-sm p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+                    <textarea class="reply-textarea w-full h-28 text-sm p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">${escapeHtml(currentText)}</textarea>
                     
-                    <button onclick="sendReplyToChatwork(this)" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2.5 rounded-lg font-bold shadow-sm">
-                        📤 Chatworkに送信
-                    </button>
+                    <div class="flex gap-2">
+                        <button onclick="saveCurrentAsTemplate(this)" class="bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs px-3 py-2 rounded-lg font-bold border border-amber-300 shrink-0" title="今の文章を定型文として保存">
+                            ⭐ この文章を定型文に登録
+                        </button>
+                        <button onclick="sendReplyToChatwork(this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white text-xs py-2 rounded-lg font-bold shadow-sm">
+                            📤 Chatworkに送信
+                        </button>
+                    </div>
                 </div>
             `;
         }
@@ -362,17 +379,43 @@
             const index = selectEl.value;
             if (index === "") return;
 
-            const tpl = TEMPLATES[index];
+            const templates = getTemplates();
+            const tpl = templates[index];
             const card = selectEl.closest('.reply-editor-area');
             const textarea = card.querySelector('.reply-textarea');
 
-            // 既存のテキストの末尾に追記、またはそのままセット
             if (textarea.value) {
                 textarea.value += "\n" + tpl.text;
             } else {
                 textarea.value = tpl.text;
             }
             selectEl.selectedIndex = 0;
+        }
+
+        function saveCurrentAsTemplate(btnEl) {
+            const card = btnEl.closest('.reply-editor-area');
+            const textarea = card.querySelector('.reply-textarea');
+            const textToSave = textarea.value.trim();
+
+            if (!textToSave) {
+                alert('保存する文章が空です。');
+                return;
+            }
+
+            const labelName = prompt('この定型文のタイトル（ラベル名）を入力してください:', '返信テンプレート ' + (getTemplates().length + 1));
+            if (!labelName) return;
+
+            let templates = getTemplates();
+            templates.push({ label: labelName, text: textToSave });
+            localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(templates));
+
+            alert(`✅ 「${labelName}」を定型文として保存しました！`);
+
+            // エディタのセレクトボックス等を再描画して反映
+            const messageCard = btnEl.closest('.message-card');
+            const senderId = messageCard.getAttribute('data-sender-id');
+            const senderName = messageCard.getAttribute('data-sender-name');
+            renderEditorContent(card, senderId, senderName, textToSave);
         }
 
         async function sendReplyToChatwork(btnEl) {
@@ -401,7 +444,7 @@
                 if (data.status !== "success") throw new Error(data.message);
 
                 btnEl.textContent = "✅ 送信完了！";
-                btnEl.className = "w-full bg-slate-300 text-white text-xs py-2.5 rounded-lg cursor-default";
+                btnEl.className = "flex-1 bg-slate-300 text-white text-xs py-2 rounded-lg cursor-default";
             } catch (e) {
                 alert('送信失敗: ' + e.message);
                 btnEl.disabled = false;
@@ -436,7 +479,7 @@
                 });
 
                 const data = await response.json();
-                if (data.status !== "success") throw new Error(data.number || data.status);
+                if (data.status !== "success") throw new Error(data.message);
 
                 alert('✅ メッセージを送信しました！');
                 textarea.value = '';
