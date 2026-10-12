@@ -107,15 +107,17 @@
         }
 
         // ファイル種別の自動判別
-        function getFileType(fileName, headerStr) {
+        function getFileType(fileName, sampleStr) {
             let lower = fileName.toLowerCase();
-            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
             if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
+            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
             if (lower.includes('yamato') || lower.includes('ヤマト') || lower.includes('b2') || lower.includes('クロネコ') || lower.includes('送り状')) return 'yamato';
             
-            if (headerStr.includes('お届け先コード') || headerStr.includes('お客様管理番号') || headerStr.includes('e飛伝')) return 'sagawa';
-            if (headerStr.includes('送り状種類') || headerStr.includes('出荷予定日')) return 'yamato';
-            return 'order'; // フォールバック
+            if (sampleStr.includes('お届け先コード') || sampleStr.includes('e飛伝') || sampleStr.includes('お客様管理番号')) return 'sagawa';
+            if (sampleStr.includes('受注番号') || sampleStr.includes('受注ID') || sampleStr.includes('店舗名') || sampleStr.includes('コントロールカラム')) return 'order';
+            
+            // ヘッダーがない場合はヤマトB2と判定
+            return 'yamato';
         }
 
         // 受注番号のゆらぎ吸収
@@ -139,19 +141,29 @@
                     const rows = parseRobustCSV(text);
 
                     if (rows.length > 0) {
+                        let sampleStr = rows.slice(0, 5).map(r => r.join(',')).join('\n');
+                        let type = getFileType(file.name, sampleStr);
+
                         let headerRow = [];
                         let dataStartIndex = 0;
-                        for (let i = 0; i < rows.length; i++) {
-                            if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('コントロールカラム') || String(c).includes('お届け先') || String(c).includes('受注ID')))) {
-                                headerRow = rows[i];
-                                dataStartIndex = i + 1;
-                                break;
+
+                        if (type === 'yamato') {
+                            // ヤマト（B2）はヘッダーなし。1行目からいきなりデータが始まる
+                            headerRow = [];
+                            dataStartIndex = 0;
+                        } else {
+                            // 受注・佐川はヘッダーあり。不要な1〜2行目をスキップしてヘッダーを探す
+                            for (let i = 0; i < Math.min(rows.length, 5); i++) {
+                                if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('コントロールカラム') || String(c).includes('お届け先') || String(c).includes('受注ID') || String(c).includes('e飛伝')))) {
+                                    headerRow = rows[i];
+                                    dataStartIndex = i + 1;
+                                    break;
+                                }
                             }
+                            if (headerRow.length === 0) { headerRow = rows[0]; dataStartIndex = 1; }
                         }
-                        if (headerRow.length === 0) { headerRow = rows[0]; dataStartIndex = 1; }
                         
                         let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
-                        let type = getFileType(file.name, headerRow.join(','));
                         
                         if (type === 'order') {
                             orderData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
@@ -174,7 +186,6 @@
         function rebuildData() {
             // 受注データの列マッピング特定
             if (orderData.rows.length > 0) {
-                // 受注IDに誤って紐付かないよう、確実に「受注番号」を優先するロジック
                 let orderNoIdx = orderData.header.findIndex(h => String(h).trim() === '受注番号');
                 if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注番号'));
                 if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注ID'));
@@ -186,7 +197,7 @@
                 colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名'));
                 colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
                 
-                if (colMap.orderNo === -1) colMap.orderNo = 5; // フォールバック
+                if (colMap.orderNo === -1) colMap.orderNo = 5;
                 orderData.orderNoColIdx = colMap.orderNo;
                 
                 originalOrderRows = [...orderData.rows];
@@ -202,7 +213,7 @@
                 });
             }
 
-            // 送り状側の「受注番号の列」を自動検知（総当りマッチング）
+            // 送り状側の「受注番号の列」を自動検知（総当りマッチング：ヘッダーなしでも完璧に検知します）
             function findBestOrderCol(rows) {
                 if (rows.length === 0 || validOrderSet.size === 0) return -1;
                 let bestIdx = 0, maxMatches = 0;
@@ -295,8 +306,9 @@
             });
         }
 
+        // ヤマトB2 CSV出力：ヘッダーなし ＋ 品名25文字制限 ＋ ソート順反映
         function exportYamatoCsv() {
-            let outputRows = [yamatoData.header];
+            let outputRows = []; // ヘッダー行なし
             let todayStr = getTodayString();
             
             sortedOrderRows.forEach(oRow => {
@@ -309,17 +321,29 @@
                     while (newRow.length < 42) newRow.push("");
                     newRow[4] = todayStr; // 出荷日
                     newRow[39] = '09050540672'; // 依頼主電話番号
-                    newRow[26] = ""; // 請求金額クリア
+                    newRow[26] = ""; // 請求金額クリアなど
+
+                    // B2の品名1, 品名2の列（一般的に24〜30列目付近）を確実に25文字以内にカット
+                    for (let c = 24; c <= 30; c++) {
+                        if (newRow[c] && newRow[c].length > 25) {
+                            newRow[c] = newRow[c].substring(0, 25);
+                        }
+                    }
+                    
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
+            if (outputRows.length === 0) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
 
+        // 佐川（e飛伝）CSV出力：ヘッダーあり ＋ 品名16文字制限 ＋ ソート順反映
         function exportEhidenCsv() {
-            let outputRows = [sagawaData.header];
-            let targetIdx = sagawaData.header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
+            let outputRows = sagawaData.header && sagawaData.header.length > 0 ? [sagawaData.header] : [];
+            let targetIdx = -1;
+            if (sagawaData.header.length > 0) {
+                targetIdx = sagawaData.header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
+            }
             if (targetIdx === -1) targetIdx = 24;
             
             sortedOrderRows.forEach(oRow => {
@@ -336,7 +360,7 @@
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
+            if (outputRows.length <= 1 && outputRows.length === (sagawaData.header.length > 0 ? 1 : 0)) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
 
