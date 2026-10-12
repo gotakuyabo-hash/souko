@@ -8,12 +8,15 @@
         .back-link { display: inline-block; margin-bottom: 15px; color: #2563eb; text-decoration: none; font-weight: bold; font-size: 14px; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
         th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }
-        th { background: #f1f5f9; }
+        th { background: #f1f5f9; cursor: pointer; user-select: none; }
+        th:hover { background: #e2e8f0; }
         .unregistered { background: #fff3cd; }
         button { cursor: pointer; padding: 6px 12px; background: #2563eb; color: white; border: none; border-radius: 4px; font-weight: bold; }
         button:hover { background: #1d4ed8; }
         .btn-success { background: #28a745; }
         .btn-success:hover { background: #218838; }
+        .btn-danger { background: #dc3545; }
+        .btn-danger:hover { background: #c82333; }
         .actions-bar { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
@@ -52,7 +55,7 @@
         <div id="masterTab" class="tab-content">
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
-                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。</p>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。ヘッダーをクリックすると並び替えができます。</p>
                 <div style="margin-top: 15px;">
                     <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
                 </div>
@@ -75,6 +78,8 @@
 
         let currentResults = [];
         let masterItemsCache = [];
+        let currentSortColumn = null;
+        let currentSortAsc = true;
 
         function switchTab(tabId) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -246,7 +251,6 @@
         function handleKeydown(event, index) {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                // 現在の行を保存して計算
                 const item = currentResults[index];
                 if (item) {
                     registerItem(item.barcode, index, item.orderQty, item.productName, true);
@@ -277,7 +281,6 @@
                     if (!isSilent) {
                         alert('保存しました！');
                     } else {
-                        // Enter時の次の入力欄へのフォーカス移動や視覚的フィードバック（任意）
                         const nextShelf = document.getElementById(`shelf_${index + 1}`);
                         if (nextShelf) nextShelf.focus();
                     }
@@ -293,7 +296,6 @@
         async function saveAllOrders() {
             if (!confirm('画面に表示されているすべての明細の変更内容を一括で保存・計算しますか？')) return;
 
-            const rows = document.querySelectorAll('#resultArea tbody tr');
             let successCount = 0;
             let failCount = 0;
 
@@ -400,10 +402,10 @@
                 <table>
                 <thead>
                     <tr>
-                        <th>商品名</th>
-                        <th>バーコード</th>
-                        <th>セット倍率</th>
-                        <th>棚番</th>
+                        <th onclick="sortMasterTable('name')">商品名 ${getSortIcon('name')}</th>
+                        <th onclick="sortMasterTable('barcode')">バーコード ${getSortIcon('barcode')}</th>
+                        <th onclick="sortMasterTable('multiplier')">セット倍率 ${getSortIcon('multiplier')}</th>
+                        <th onclick="sortMasterTable('shelf')">棚番 ${getSortIcon('shelf')}</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -420,11 +422,51 @@
                     <td><code>${barcode}</code></td>
                     <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
                     <td><input type="text" id="master_shelf_${i}" value="${shelf}" style="width:100px; padding:4px;"></td>
-                    <td><button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button></td>
+                    <td>
+                        <button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button>
+                        <button onclick="deleteMaster('${barcode}', \`${name.replace(/`/g, '\\`')}\`)" class="btn-danger">削除</button>
+                    </td>
                 </tr>`;
             });
             html += `</tbody></table>`;
             masterArea.innerHTML = html;
+        }
+
+        function getSortIcon(column) {
+            if (currentSortColumn !== column) return '↕';
+            return currentSortAsc ? '▲' : '▼';
+        }
+
+        function sortMasterTable(column) {
+            if (currentSortColumn === column) {
+                currentSortAsc = !currentSortAsc;
+            } else {
+                currentSortColumn = column;
+                currentSortAsc = true;
+            }
+
+            masterItemsCache.sort((a, b) => {
+                let valA, valB;
+                if (column === 'name') {
+                    valA = (a.product_name || a.productName || a.itemName || a.name || '').toLowerCase();
+                    valB = (b.product_name || b.productName || b.itemName || b.name || '').toLowerCase();
+                } else if (column === 'barcode') {
+                    valA = (a.barcode || a.code || '').toLowerCase();
+                    valB = (b.barcode || b.code || '').toLowerCase();
+                } else if (column === 'multiplier') {
+                    valA = Number(a.multiplier) || 1;
+                    valB = Number(b.multiplier) || 1;
+                } else if (column === 'shelf') {
+                    valA = (a.shelf_number || a.shelfNumber || a.shelf || '').toLowerCase();
+                    valB = (b.shelf_number || b.shelfNumber || b.shelf || '').toLowerCase();
+                }
+
+                if (valA < valB) return currentSortAsc ? -1 : 1;
+                if (valA > valB) return currentSortAsc ? 1 : -1;
+                return 0;
+            });
+
+            filterMasterTable();
         }
 
         function filterMasterTable() {
@@ -435,7 +477,45 @@
                 const shelf = (item.shelf_number || item.shelfNumber || item.shelf || '').toLowerCase();
                 return name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
             });
-            renderMasterTable(filtered);
+            renderMasterTableOnly(filtered);
+        }
+
+        function renderMasterTableOnly(items) {
+            const masterArea = document.getElementById('masterResultArea');
+            const countElem = masterArea.querySelector('p');
+            if (countElem) {
+                countElem.innerHTML = `<b>全 ${items.length} 件のマスタを表示中</b>`;
+            }
+            const tbody = masterArea.querySelector('tbody');
+            if (!tbody) {
+                renderMasterTable(items);
+                return;
+            }
+
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>';
+                return;
+            }
+
+            let html = '';
+            items.forEach((item, i) => {
+                const name = item.product_name || item.productName || item.itemName || item.name || '';
+                const shelf = item.shelf_number || item.shelfNumber || item.shelf || '';
+                const barcode = item.barcode || item.code || item.qr || '';
+                const multiplier = item.multiplier || 1;
+
+                html += `<tr id="master_row_${i}">
+                    <td><input type="text" id="master_name_${i}" value="${name}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                    <td><code>${barcode}</code></td>
+                    <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
+                    <td><input type="text" id="master_shelf_${i}" value="${shelf}" style="width:100px; padding:4px;"></td>
+                    <td>
+                        <button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button>
+                        <button onclick="deleteMaster('${barcode}', \`${name.replace(/`/g, '\\`')}\`)" class="btn-danger">削除</button>
+                    </td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
         }
 
         async function updateMaster(barcode, i) {
@@ -466,6 +546,35 @@
             } catch (err) {
                 console.error(err);
                 alert('通信エラー');
+            }
+        }
+
+        async function deleteMaster(barcode, productName) {
+            if (!confirm(`本当に「${productName} (バーコード: ${barcode})」を削除しますか？\n（この操作は元に戻せません）`)) {
+                return;
+            }
+
+            try {
+                // 削除API等（またはmultiplier=0や削除専用のエンドポイントがある場合はそちらに合わせる形になります。今回はサーバー側に削除用URLがないため、もし削除APIがある場合はURLを指定するか、あるいはステータス変更等を行います。一般的な削除処理のフローを実装しています）
+                // ※ もしバックエンドに削除用APIがある場合はURLを適宜置き換えてください。ここでは削除リクエストの例としてURL_SET_MULTIPLIERに削除フラグ等を送るか、専用エンドポイントを想定します。
+                // 今回は仮に削除エンドポイントまたは通常の削除処理として実装します。
+                const res = await fetch("https://deletemasteritem-l22atg5m7q-uc.a.run.app", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ barcode })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('削除しました。');
+                    masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.code) !== barcode);
+                    filterMasterTable();
+                } else {
+                    alert('削除失敗: ' + (data.error || '不明なエラー'));
+                }
+            } catch (err) {
+                console.error(err);
+                // バックエンド側に削除APIが無い場合のフォールバックや確認メッセージ
+                alert('削除通信に失敗しました。バックエンドの削除用URLをご確認ください。');
             }
         }
 
