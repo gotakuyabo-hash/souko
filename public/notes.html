@@ -77,12 +77,12 @@
   <textarea id="n-content" class="w-full p-2 border rounded mt-1 text-sm" rows="3" placeholder="詳細を入力" required></textarea>
   </div>
   
-  <!-- 画像添付エリア (複数枚対応) -->
+  <!-- 画像添付エリア (カメラ連続撮影 & ファイル複数選択対応) -->
   <div class="mb-4">
-      <label class="block text-xs font-bold text-slate-700 mb-1">画像添付 (複数選択・カメラ撮影可)</label>
+      <label class="block text-xs font-bold text-slate-700 mb-1">画像添付 (カメラ連続撮影 / ファイル複数選択)</label>
       <div class="flex flex-wrap gap-2 mb-2">
           <label class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1 shadow-sm">
-              📷 カメラで撮影
+              📷 カメラで撮影 (連続可)
               <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden">
           </label>
           <label class="bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1">
@@ -199,8 +199,8 @@
 
   document.getElementById('n-date').valueAsDate = new Date();
   let allNotes = [];
-  let selectedFiles = []; // 複数ファイルを保持する配列
-  let existingImageUrls = []; // 編集時に既存で保持している画像URL
+  let selectedFiles = []; // 選択されたファイルの配列
+  let existingImageUrls = []; // 編集時に保持している既存画像URL
 
   const cameraInput = document.getElementById('cameraInput');
   const fileInput = document.getElementById('fileInput');
@@ -209,7 +209,7 @@
   function renderPreviews() {
       imagePreviewContainer.innerHTML = '';
       
-      // 1. 既存の画像（編集時）のプレビュー表示
+      // 1. 既存画像のプレビュー
       existingImageUrls.forEach((url, index) => {
           const div = document.createElement('div');
           div.className = 'relative inline-block';
@@ -220,7 +220,7 @@
           imagePreviewContainer.appendChild(div);
       });
 
-      // 2. 新規選択されたファイルのプレビュー表示
+      // 2. 新規選択・撮影されたファイルのプレビュー
       selectedFiles.forEach((file, index) => {
           const reader = new FileReader();
           reader.onload = (e) => {
@@ -246,22 +246,24 @@
       renderPreviews();
   };
 
+  // カメラ撮影：撮影した画像を配列に追加し、inputをリセットすることで連続撮影に対応
   cameraInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) {
+      if (e.target.files && e.target.files[0]) {
           selectedFiles.push(e.target.files[0]);
           renderPreviews();
       }
-      cameraInput.value = '';
+      cameraInput.value = ''; // リセットして同じカメラボタンから再度撮影できるようにする
   });
 
+  // ファイル選択：複数選択されたファイルをすべて配列に追加
   fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
+      if (e.target.files && e.target.files.length > 0) {
           for (let i = 0; i < e.target.files.length; i++) {
               selectedFiles.push(e.target.files[i]);
           }
           renderPreviews();
       }
-      fileInput.value = '';
+      fileInput.value = ''; // リセット
   });
 
   window.clearImageInput = () => {
@@ -288,19 +290,17 @@
   submitBtn.innerText = "保存中...";
 
   try {
-      // 新規選択されたファイルをアップロードしてURLを取得
       let newImageUrls = [];
       for (const file of selectedFiles) {
-          const ext = file.name.split('.').pop();
+          const ext = file.name.split('.').pop() || 'jpg';
           const storageRef = ref(storage, `shared_notes_images/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`);
           const snapshot = await uploadBytes(storageRef, file);
           const url = await getDownloadURL(snapshot.ref);
           newImageUrls.push(url);
       }
 
-      // 既存画像と新しくアップロードした画像を統合
       const finalImageUrls = [...existingImageUrls, ...newImageUrls];
-      noteData.imageUrls = finalImageUrls; // 配列として保存
+      noteData.imageUrls = finalImageUrls;
 
       if (editId) {
           await updateDoc(doc(db, "shared_notes", editId), noteData);
@@ -330,7 +330,6 @@
   document.getElementById('n-content').value = note.content || '';
 
   selectedFiles = [];
-  // 従来の単数 imageUrl が保存されている場合の互換性考慮
   if (note.imageUrls && Array.isArray(note.imageUrls)) {
       existingImageUrls = [...note.imageUrls];
   } else if (note.imageUrl) {
@@ -364,7 +363,6 @@
   showConfirmDialog("本当にこのノートを削除しますか？", async () => {
       try {
           await deleteDoc(doc(db, "shared_notes", id));
-          // 紐づくStorage上の画像も削除
           if (imageUrlsStr) {
               const urls = JSON.parse(imageUrlsStr);
               for (const url of urls) {
