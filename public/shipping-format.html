@@ -19,11 +19,11 @@
                 <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動整形ツール</h2>
                 <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
             </div>
-            <p class="text-xs text-slate-500 mb-4">「受注データCSV」をドラッグ＆ドロップしてください（複数可）。</p>
+            <p class="text-xs text-slate-500 mb-4">ファイル名に <code class="bg-slate-100 px-1 py-0.5 rounded text-rose-600 font-bold">order</code> または <code class="bg-slate-100 px-1 py-0.5 rounded text-rose-600 font-bold">受注</code> を含むCSVファイルをドラッグ＆ドロップしてください（複数可）。</p>
 
             <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                 <div class="text-3xl mb-1">📂</div>
-                <div class="font-bold text-slate-700 text-sm">ここに受注CSVファイルをドラッグ＆ドロップ</div>
+                <div class="font-bold text-slate-700 text-sm">ここに受注CSVファイルをドラッグ＆ドロップ（複数可）</div>
                 <p class="text-xs text-slate-500 mt-1">またはクリックしてファイルを選択</p>
                 <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
             </div>
@@ -32,7 +32,7 @@
 
             <div id="status" class="text-sm font-bold text-sky-600 mb-3">ファイルを選択してください</div>
 
-            <!-- ソート機能エリア（商品コード・メモ１指定） -->
+            <!-- 受注データ基準のソート機能エリア -->
             <div id="sortControlArea" class="hidden bg-slate-50 p-3.5 rounded border border-slate-200 mb-4">
                 <div class="text-xs font-bold text-slate-700 mb-2">⚙️ 受注データ基準のソート設定（並び替え）</div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -98,8 +98,20 @@
             document.getElementById('ehidenBtn').disabled = true;
         }
 
+        function isOrderFile(fileName) {
+            const lower = fileName.toLowerCase();
+            return lower.indexOf('order') !== -1 || lower.indexOf('受注') !== -1;
+        }
+
         function handleFiles(files) {
+            let skippedFiles = [];
             Array.from(files).forEach(file => {
+                // 送り状データなどの非受注ファイルを厳格に弾く
+                if (!isOrderFile(file.name)) {
+                    skippedFiles.push(file.name);
+                    return;
+                }
+
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const buffer = e.target.result;
@@ -131,6 +143,10 @@
                 };
                 reader.readAsArrayBuffer(file);
             });
+
+            if (skippedFiles.length > 0) {
+                alert(`⚠️ 以下のファイルは「order」または「受注」が含まれていないためスキップされました:\n${skippedFiles.join(', ')}`);
+            }
         }
 
         function rebuildAllRows() {
@@ -142,8 +158,10 @@
             sortedRows = [...loadedRows];
 
             const list = Object.keys(loadedFiles);
-            document.getElementById('fileStatus').textContent = "📂 読み込み済み: " + list.join(" / ");
-            document.getElementById('sortControlArea').classList.remove('hidden');
+            document.getElementById('fileStatus').textContent = list.length > 0 ? "📂 読み込み済み: " + list.join(" / ") : "読み込まれたファイル: なし";
+            if (list.length > 0) {
+                document.getElementById('sortControlArea').classList.remove('hidden');
+            }
             renderTable();
         }
 
