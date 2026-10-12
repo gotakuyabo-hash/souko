@@ -110,9 +110,11 @@
   <option value="重要・要確認">重要・要確認</option>
   <option value="一般連絡">一般連絡</option>
   </select>
+  <!-- ▼ デフォルトを「当日のみ（value="0"）」に変更 -->
   <select id="note-periodFilter" onchange="filterNotes()">
-  <option value="30">過去30日以内</option>
+  <option value="0" selected>当日のみ</option>
   <option value="7">過去7日以内</option>
+  <option value="30">過去30日以内</option>
   <option value="all">すべての期間</option>
   </select>
   </div>
@@ -410,11 +412,17 @@
 
   let matchPeriod = true;
   if (period !== 'all' && n.date) {
-  const noteDate = new Date(n.date);
-  noteDate.setHours(0, 0, 0, 0);
-  const diffTime = now - noteDate;
-  const diffDays = diffTime / (1000 * 60 * 60 * 24);
-  matchPeriod = diffDays >= 0 && diffDays <= parseInt(period);
+      const noteDate = new Date(n.date);
+      noteDate.setHours(0, 0, 0, 0);
+      const diffTime = now - noteDate;
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+      
+      // ▼ 「当日のみ（period === '0'）」の判定を追加
+      if (period === '0') {
+          matchPeriod = (diffDays === 0);
+      } else {
+          matchPeriod = diffDays >= 0 && diffDays <= parseInt(period);
+      }
   }
 
   return matchKeyword && matchCategory && matchDate && matchPeriod;
