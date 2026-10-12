@@ -15,6 +15,7 @@
         .field-title-input { width: 100%; font-weight: bold; font-size: 0.9rem; padding: 6px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 6px; background: #fafafa; }
         .checkbox-card { border: 1px dashed #e74c3c; background: #fdf7f7; }
         .bullet-card { border: 1px dashed #3498db; background: #f7fbfe; }
+        .link-card { border: 1px dashed #27ae60; background: #f0fdf4; }
         .checkbox-label { display: flex; align-items: center; font-weight: 600; cursor: pointer; color: #c0392b; font-size: 0.95rem; width: 100%; }
         .checkbox-label input[type="checkbox"] { transform: scale(1.4); margin-right: 12px; cursor: pointer; }
         .sort-buttons { position: absolute; top: 10px; left: 8px; display: flex; flex-direction: column; gap: 3px; }
@@ -217,12 +218,11 @@
                 { title: "遅れ／詰まり", value: "", type: "text", placeholder: "現状の遅れや詰まり具合" },
                 { title: "実施フォロー", value: "", type: "text", placeholder: "打った対策やフォロー内容" }
             ],
-            Afternoon: [
-    { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
-    { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" },
-    { title: "RSショップ スプレッドシートを開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk", type: "link" }
-]
-,
+            afternoon: [
+                { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
+                { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" },
+                { title: "RSショップ スプレッドシートを開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk", type: "link" }
+            ],
             peak: [
                 { title: "当日出荷の山場・記入欄", value: "", type: "textarea", placeholder: "ピークタイムの状況" },
                 { title: "フジックス入庫確認", checked: false, type: "checkbox" },
@@ -266,6 +266,7 @@
             const titleVal = (itemData && itemData.title != null) ? itemData.title : '';
             const valueVal = (itemData && itemData.value != null) ? itemData.value : '';
             const checkedVal = (itemData && itemData.checked != null) ? itemData.checked : false;
+            const urlVal = (itemData && itemData.url != null) ? itemData.url : '';
             const placeholderVal = (itemData && itemData.placeholder != null) ? itemData.placeholder : '内容を入力';
 
             const sortBtns = `<div class="sort-buttons"><button type="button" class="btn-sort" onclick="moveItem(this, 'up')">▲</button><button type="button" class="btn-sort" onclick="moveItem(this, 'down')">▼</button></div>`;
@@ -276,6 +277,12 @@
             } else if (typeVal === 'bullet') {
                 div.className = 'form-group item-card bullet-card';
                 div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 1.2rem; font-weight: bold; color: #3498db;">・</span><input type="text" class="field-title-input" placeholder="箇条書き項目" value="${titleVal}" style="margin:0; flex:1;"></div>`;
+            } else if (typeVal === 'link') {
+                div.className = 'form-group item-card link-card';
+                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button>
+                    <input type="text" class="field-title-input" placeholder="リンク表示名" value="${titleVal}" style="margin-bottom:6px;">
+                    <input type="hidden" class="field-url-input" value="${urlVal}">
+                    <a href="${urlVal}" target="_blank" class="inline-block bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm hover:bg-emerald-700">🔗 ${titleVal || 'スプレッドシートを開く'}</a>`;
             } else {
                 div.className = 'form-group item-card';
                 div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><input type="text" class="field-title-input" placeholder="項目名" value="${titleVal}">` + (typeVal === 'textarea' ? `<textarea class="field-value-input" placeholder="${placeholderVal}">${valueVal}</textarea>` : `<input type="text" class="field-value-input" placeholder="${placeholderVal}" value="${valueVal}">`);
@@ -305,6 +312,9 @@
                         items.push({ title, checked: checkElem ? checkElem.checked : false, type: 'checkbox' });
                     } else if (card.classList.contains('bullet-card')) {
                         items.push({ title, type: 'bullet' });
+                    } else if (card.classList.contains('link-card')) {
+                        const urlElem = card.querySelector('.field-url-input');
+                        items.push({ title, url: urlElem ? urlElem.value : '', type: 'link' });
                     } else {
                         const valElem = card.querySelector('.field-value-input');
                         items.push({ title, value: valElem ? valElem.value.trim() : '', type: valElem && valElem.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text' });
