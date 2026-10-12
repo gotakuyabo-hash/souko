@@ -2,55 +2,21 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>52mm×29mm QRコードラベル</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>52mm×29mm QRコードラベル作成</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <!-- 外部のQRコード生成ライブラリ (QRCode.js) を読み込み -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
-        /* 画面表示用のスタイル */
-        body {
-            font-family: sans-serif;
-            background: #f0f0f0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+        body { 
+            background: #0f172a; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            padding: 20px 10px; 
+            color: #f8fafc;
             min-height: 100vh;
-            margin: 0;
         }
 
-        .no-print {
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            text-align: center;
-        }
-
-        .no-print input[type="text"] {
-            width: 250px;
-            padding: 8px;
-            font-size: 14px;
-            margin-right: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-
-        .no-print button {
-            padding: 8px 16px;
-            font-size: 14px;
-            background: #007bff;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .no-print button:hover {
-            background: #0056b3;
-        }
-
-        /* 52mm × 29mm のラベルコンテナ */
+        /* 52mm × 29mm のラベルコンテナ（画面プレビュー用） */
         .label-container {
             width: 52mm;
             height: 29mm;
@@ -60,9 +26,10 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border: 1px dashed #ccc; /* 画面確認用の枠線 */
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            border: 1px dashed #64748b;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             overflow: hidden;
+            color: #1e293b;
         }
 
         .qr-area {
@@ -71,6 +38,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            flex-shrink: 0;
         }
 
         .qr-area img {
@@ -80,29 +48,38 @@
 
         .text-area {
             flex: 1;
-            margin-left: 3mm;
-            font-size: 9pt;
-            line-height: 1.2;
+            margin-left: 2.5mm;
+            font-size: 8.5pt;
+            line-height: 1.25;
             word-break: break-all;
-            color: #333;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
         }
 
-        /* 印刷時の設定：余白を消し、ラベルサイズに強制 */
+        /* 印刷時の設定：余白を消し、52mm×29mmのラベルサイズに強制 */
         @media print {
             body {
                 background: none;
-                display: block;
+                padding: 0;
+                color: #000;
             }
 
             .no-print {
-                display: none;
+                display: none !important;
+            }
+
+            .print-area {
+                display: block !important;
             }
 
             .label-container {
-                border: none;
-                box-shadow: none;
+                border: none !important;
+                box-shadow: none !important;
                 margin: 0;
                 page-break-after: always;
+                break-after: page;
             }
 
             @page {
@@ -113,24 +90,61 @@
     </style>
 </head>
 <body>
+    <div style="max-width: 500px; margin: 0 auto;" class="no-print">
+        <!-- ヘッダー -->
+        <header class="mb-5 flex justify-between items-center px-1">
+            <div>
+                <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ 52mm×29mm QRラベル作成</h1>
+                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成し、指定枚数で連続印刷</p>
+            </div>
+            <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
+                ← ポータルへ
+            </a>
+        </header>
 
-    <div class="no-print">
-        <h3>ラベル設定</h3>
-        <p>QRコードにする文字列やURLを入力してください</p>
-        <input type="text" id="inputText" value="https://example.com" placeholder="テキストまたはURLを入力">
-        <button onclick="generateQR()">更新</button>
-        <button onclick="window.print()" style="background: #28a745; margin-left: 10px;">印刷する</button>
+        <!-- 入力フォームカード -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl mb-6 space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-slate-300 mb-1">QRコードにする文字列 / URL</label>
+                <textarea id="inputText" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500 resize-none" placeholder="https://example.com または商品名・コードなど">https://example.com</textarea>
+            </div>
+
+            <div class="flex gap-3">
+                <div class="flex-1">
+                    <label class="block text-xs font-bold text-slate-300 mb-1">印刷枚数</label>
+                    <input type="number" id="printCount" value="1" min="1" max="100" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 text-center font-bold">
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-1">
+                <button onclick="updatePreview()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 px-3 rounded-xl text-xs transition border border-slate-700">
+                    プレビュー更新
+                </button>
+                <button onclick="window.print()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg shadow-blue-600/20">
+                    🖨️ 印刷する
+                </button>
+            </div>
+        </div>
+
+        <!-- プレビュー表示エリア -->
+        <div class="mb-3 flex justify-between items-center px-1">
+            <span class="text-xs font-bold text-slate-400">リアルタイムプレビュー (1枚分)</span>
+            <span id="previewCountLabel" class="text-[11px] text-slate-500">印刷枚数: 1枚</span>
+        </div>
+        <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6">
+            <div class="label-container" id="previewLabel">
+                <div class="qr-area" id="previewQrcode"></div>
+                <div class="text-area" id="previewDisplayText">https://example.com</div>
+            </div>
+        </div>
     </div>
 
-    <!-- 52mm × 29mm ラベル本体 -->
-    <div class="label-container">
-        <div class="qr-area" id="qrcode"></div>
-        <div class="text-area" id="displayText">https://example.com</div>
-    </div>
+    <!-- 印刷用コンテナ（画面上は非表示、印刷時のみ全枚数展開される） -->
+    <div id="printArea" class="print-area" style="display: none;"></div>
 
     <script>
-        // 初回QRコード生成
-        var qrcode = new QRCode(document.getElementById("qrcode"), {
+        // 初期プレビュー描画用インスタンス
+        let previewQr = new QRCode(document.getElementById("previewQrcode"), {
             text: "https://example.com",
             width: 128,
             height: 128,
@@ -139,11 +153,13 @@
             correctLevel : QRCode.CorrectLevel.M
         });
 
-        function generateQR() {
-            var val = document.getElementById("inputText").value;
-            document.getElementById("qrcode").innerHTML = ""; // 既存のQRをクリア
-            
-            new QRCode(document.getElementById("qrcode"), {
+        function updatePreview() {
+            const val = document.getElementById("inputText").value.trim() || "https://example.com";
+            const count = parseInt(document.getElementById("printCount").value) || 1;
+
+            // プレビューの更新
+            document.getElementById("previewQrcode").innerHTML = "";
+            new QRCode(document.getElementById("previewQrcode"), {
                 text: val,
                 width: 128,
                 height: 128,
@@ -151,10 +167,46 @@
                 colorLight : "#ffffff",
                 correctLevel : QRCode.CorrectLevel.M
             });
+            document.getElementById("previewDisplayText").innerText = val;
+            document.getElementById("previewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
-            document.getElementById("displayText").innerText = val;
+            // 印刷用エリアの構築
+            const printArea = document.getElementById("printArea");
+            printArea.innerHTML = "";
+
+            for (let i = 0; i < count; i++) {
+                const labelDiv = document.createElement("div");
+                labelDiv.className = "label-container";
+
+                const qrArea = document.createElement("div");
+                qrArea.className = "qr-area";
+                labelDiv.appendChild(qrArea);
+
+                const textArea = document.createElement("div");
+                textArea.className = "text-area";
+                textArea.innerText = val;
+                labelDiv.appendChild(textArea);
+
+                printArea.appendChild(labelDiv);
+
+                // 各ラベルごとにQRコードを生成
+                new QRCode(qrArea, {
+                    text: val,
+                    width: 128,
+                    height: 128,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : QRCode.CorrectLevel.M
+                });
+            }
         }
-    </script>
 
+        // 入力値変更時に自動で印刷用コンテナも最新に保つ
+        document.getElementById("inputText").addEventListener("input", updatePreview);
+        document.getElementById("printCount").addEventListener("input", updatePreview);
+
+        // 初回実行
+        updatePreview();
+    </script>
 </body>
 </html>
