@@ -19,20 +19,20 @@
                 <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動整形ツール</h2>
                 <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
             </div>
-            <p class="text-xs text-slate-500 mb-4">「受注データCSV」をドラッグ＆ドロップしてください。</p>
+            <p class="text-xs text-slate-500 mb-4">「受注データCSV」をドラッグ＆ドロップしてください（複数可）。</p>
 
             <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                 <div class="text-3xl mb-1">📂</div>
                 <div class="font-bold text-slate-700 text-sm">ここに受注CSVファイルをドラッグ＆ドロップ</div>
                 <p class="text-xs text-slate-500 mt-1">またはクリックしてファイルを選択</p>
-                <input type="file" id="fileInput" class="hidden" accept=".csv">
+                <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
             </div>
 
             <div id="fileStatus" class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded mb-4 font-mono">読み込まれたファイル: なし</div>
 
             <div id="status" class="text-sm font-bold text-sky-600 mb-3">ファイルを選択してください</div>
 
-            <!-- 受注データ基準のソート機能エリア -->
+            <!-- ソート機能エリア（商品コード・メモ１指定） -->
             <div id="sortControlArea" class="hidden bg-slate-50 p-3.5 rounded border border-slate-200 mb-4">
                 <div class="text-xs font-bold text-slate-700 mb-2">⚙️ 受注データ基準のソート設定（並び替え）</div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -70,6 +70,7 @@
     </div>
 
     <script>
+        let loadedFiles = {};
         let loadedRows = [];
         let sortedRows = [];
         let originalRows = [];
@@ -78,10 +79,11 @@
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
         ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('bg-sky-100'); }));
-        dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
-        document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFile(e.target.files[0]); });
+        dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+        document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
 
         function resetData() {
+            loadedFiles = {};
             loadedRows = [];
             sortedRows = [];
             originalRows = [];
@@ -96,42 +98,53 @@
             document.getElementById('ehidenBtn').disabled = true;
         }
 
-        function handleFile(file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const buffer = e.target.result;
-                const codes = new Uint8Array(buffer);
-                const encoding = Encoding.detect(codes);
-                const text = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
-                const rows = parseRobustCSV(text);
+        function handleFiles(files) {
+            Array.from(files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const buffer = e.target.result;
+                    const codes = new Uint8Array(buffer);
+                    const encoding = Encoding.detect(codes);
+                    const text = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
+                    const rows = parseRobustCSV(text);
 
-                if (rows.length === 0) return;
+                    if (rows.length === 0) return;
 
-                // 受注データのヘッダー行を特定
-                let dataStartIndex = 0;
-                for (let i = 0; i < rows.length; i++) {
-                    if (rows[i].length > 5 && (rows[i].some(c => c.includes('受注番号') || c.includes('コントロールカラム') || c.includes('受注ID')))) {
-                        headerRow = rows[i];
-                        dataStartIndex = i + 1;
-                        break;
+                    let dataStartIndex = 0;
+                    for (let i = 0; i < rows.length; i++) {
+                        if (rows[i].length > 5 && (rows[i].some(c => c.includes('受注番号') || c.includes('コントロールカラム') || c.includes('受注ID')))) {
+                            if (headerRow.length === 0) headerRow = rows[i];
+                            dataStartIndex = i + 1;
+                            break;
+                        }
                     }
-                }
 
-                if (headerRow.length === 0) {
-                    headerRow = rows[0];
-                    dataStartIndex = 1;
-                }
+                    if (headerRow.length === 0) {
+                        headerRow = rows[0];
+                        dataStartIndex = 1;
+                    }
 
-                // 受注データの行を純粋に読み込み
-                loadedRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => c.trim() !== ''));
-                originalRows = [...loadedRows];
-                sortedRows = [...loadedRows];
+                    let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => c.trim() !== ''));
+                    loadedFiles[file.name] = fileRows;
 
-                document.getElementById('fileStatus').textContent = "📂 受注データ読み込み済み: " + file.name;
-                document.getElementById('sortControlArea').classList.remove('hidden');
-                renderTable();
-            };
-            reader.readAsArrayBuffer(file);
+                    rebuildAllRows();
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function rebuildAllRows() {
+            loadedRows = [];
+            for (let fname in loadedFiles) {
+                loadedRows = loadedRows.concat(loadedFiles[fname]);
+            }
+            originalRows = [...loadedRows];
+            sortedRows = [...loadedRows];
+
+            const list = Object.keys(loadedFiles);
+            document.getElementById('fileStatus').textContent = "📂 読み込み済み: " + list.join(" / ");
+            document.getElementById('sortControlArea').classList.remove('hidden');
+            renderTable();
         }
 
         function applyDynamicSort() {
@@ -157,7 +170,7 @@
         }
 
         function resetSort() {
-            document.getElementById('sortColumnSelect').value = "";
+            document.getElementById('sortColumnSelect').value = "30";
             document.getElementById('sortDirectionSelect').value = "asc";
             sortedRows = [...originalRows];
             renderTable();
@@ -191,7 +204,7 @@
             tbody.innerHTML = '';
 
             if (sortedRows.length > 0) {
-                statusEl.textContent = `✅ 受注データ読込成功: ${sortedRows.length}件`;
+                statusEl.textContent = `✅ 受注データ読込成功: 合計 ${sortedRows.length}件`;
                 document.getElementById('printBtn').disabled = false;
                 document.getElementById('yamatoBtn').disabled = false;
                 document.getElementById('ehidenBtn').disabled = false;
