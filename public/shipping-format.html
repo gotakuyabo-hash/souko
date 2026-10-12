@@ -19,7 +19,7 @@
                 <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動整形ツール</h2>
                 <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
             </div>
-            <p class="text-xs text-slate-500 mb-4">「受注CSV」および「運送会社CSV（ヤマト / 佐川）」をまとめてドラッグ＆ドロップしてください。</p>
+            <p class="text-xs text-slate-500 mb-4">「受注CSV」および「佐川テンプレート・運送会社CSV」をまとめてドラッグ＆ドロップしてください。</p>
 
             <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                 <div class="text-3xl mb-1">📂</div>
@@ -61,7 +61,7 @@
             <div class="flex gap-3 flex-wrap">
                 <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
                 <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトCSV出力</button>
-                <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川CSV出力</button>
+                <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川CSV出力（16文字制限）</button>
             </div>
         </div>
     </div>
@@ -290,7 +290,6 @@
             return `${y}/${m}/${day}`;
         }
 
-        // 電話番号の+81を0に置換するヘルパー関数
         function sanitizePhoneNumber(val) {
             if (!val) return "";
             let str = String(val).trim();
@@ -337,15 +336,11 @@
             extractedOrders.forEach(ord => {
                 let r = rowMap.get(ord.normOrderNo);
                 if (r) {
-                    while (r.length < 42) {
-                        r.push("");
-                    }
-
+                    while (r.length < 42) r.push("");
                     r[4] = todayStr;
                     r[39] = '09050540672';
                     r[26] = "";
 
-                    // ヤマトCSV出力時の全セルを走査し、+81から始まる電話番号（例: +81-90... や +8190...）を 0 から始まる形式に置換
                     for (let i = 0; i < r.length; i++) {
                         let cellVal = String(r[i] || '').trim();
                         if (cellVal.startsWith('+81') || /^\+81[\-\s]?\d/.test(cellVal)) {
@@ -354,9 +349,7 @@
                     }
 
                     let nameVal = String(r[27] || '');
-                    if (nameVal.length > 25) {
-                        r[27] = nameVal.substring(0, 25);
-                    }
+                    if (nameVal.length > 25) r[27] = nameVal.substring(0, 25);
 
                     let addr1 = String(r[11] || '');
                     if (addr1.length >= 36) {
@@ -373,58 +366,58 @@
             exportCsvGeneric(processedRows.length > 0 ? processedRows : targetRows, "yamato_processed_sorted.csv");
         }
 
+        // 佐川（e飛伝）テンプレートフォーマット変換出力（品名16文字制限対応）
         function exportEhidenCsv() {
-            let targetRows = null;
+            let templateRows = null;
             for (let fname in loadedFiles) {
-                if (fname.toLowerCase().includes('ehiden') || fname.toLowerCase().includes('sagawa') || fname.toLowerCase().includes('佐川')) {
-                    targetRows = loadedFiles[fname];
+                if (fname.toLowerCase().includes('okurijo') || fname.toLowerCase().includes('torikomi') || fname.toLowerCase().includes('format') || fname.toLowerCase().includes('佐川') || fname.toLowerCase().includes('ehiden')) {
+                    templateRows = loadedFiles[fname];
                     break;
                 }
             }
-            if (!targetRows) {
-                for (let fname in loadedFiles) {
-                    if (fname !== lastLoadedFilename && !fname.toLowerCase().includes('order') && !fname.toLowerCase().includes('受注')) {
-                        targetRows = loadedFiles[fname];
-                        break;
-                    }
-                }
+
+            // 佐川正式テンプレート（全74列のヘッダー）
+            let headerLine2 = templateRows && templateRows.length > 2 ? templateRows[2] : [
+                "お届け先コード取得区分","お届け先コード","お届け先電話番号","お届け先郵便番号","お届け先住所１","お届け先住所２","お届け先住所３","お届け先名称１","お届け先名称２","お客様管理番号","お客様コード","部署ご担当者コード取得区分","部署ご担当者コード","部署ご担当者名称","荷送人電話番号","ご依頼主コード取得区分","ご依頼主コード","ご依頼主電話番号","ご依頼主郵便番号","ご依頼主住所１","ご依頼主住所２","ご依頼主名称１","ご依頼主名称２","荷姿","品名１","品名２","品名３","品名４","品名５","荷札荷姿","荷札品名１","荷札品名２","荷札品名３","荷札品名４","荷札品名５","荷札品名６","荷札品名７","荷札品名８","荷札品名９","荷札品名１０","荷札品名１１","出荷個数","スピード指定","クール便指定","配達日","配達指定時間帯","配達指定時間（時分）","代引金額","消費税","決済種別","保険金額","指定シール１","指定シール２","指定シール３","営業所受取","SRC区分","営業所受取営業所コード","元着区分","メールアドレス","ご不在時連絡先","出荷日","お問い合せ送り状No.","出荷場印字区分","集約解除指定","編集０１","編集０２","編集０３","編集０４","編集０５","編集０６","編集０７","編集０８","編集０９","編集１０"
+            ];
+
+            let outputRows = [];
+            if (templateRows && templateRows.length > 2) {
+                outputRows.push(templateRows[0]);
+                outputRows.push(templateRows[1] || []);
+                outputRows.push(headerLine2);
+            } else {
+                outputRows.push(["以下のようなフォーマットで、データを設定してください。"]);
+                outputRows.push([]);
+                outputRows.push(headerLine2);
             }
-            if (!targetRows && Object.keys(loadedFiles).length > 0) {
-                targetRows = loadedFiles[lastLoadedFilename];
-            }
-            if (!targetRows) { alert('加工対象の佐川CSVファイルが見つかりません。'); return; }
 
-            let header = targetRows[0];
-            let dataRows = targetRows.slice(1);
-            let rowMap = new Map();
+            const todayStr = getTodayString();
 
-            dataRows.forEach(row => {
-                for (let cell of row) {
-                    let norm = cleanOrderNoNormalized(cell);
-                    if (norm && extractedOrders.some(o => o.normOrderNo === norm)) {
-                        rowMap.set(norm, [...row]);
-                        break;
-                    }
-                }
-            });
-
-            let sortedDataRows = [];
             extractedOrders.forEach(ord => {
-                if (rowMap.has(ord.normOrderNo)) {
-                    let r = rowMap.get(ord.normOrderNo);
+                let r = ord.rawRow;
+                let newRow = new Array(74).fill("");
 
-                    if (r.length > 24 && r[24]) {
-                        let p1 = String(r[24]);
-                        if (p1.length > 16) {
-                            r[24] = p1.substring(0, 16);
-                        }
-                    }
+                // 佐川フォーマットへのマッピング
+                newRow[3] = String(r[42] || '').trim(); // お届け先郵便番号
+                newRow[4] = String(r[43] || '').trim(); // お届け先住所１
+                newRow[7] = String(r[40] || '').trim(); // お届け先名称１（宛名）
+                newRow[9] = String(r[5] || '').trim();  // お客様管理番号（受注番号など）
 
-                    sortedDataRows.push(r);
+                // 品名１（index 31）：16文字制限を厳密に適用
+                let itemName = String(r[31] || '').trim();
+                if (itemName.length > 16) {
+                    itemName = itemName.substring(0, 16);
                 }
+                newRow[24] = itemName;
+
+                newRow[41] = String(r[34] || '1').trim(); // 出荷個数
+                newRow[60] = todayStr; // 出荷日
+
+                outputRows.push(newRow);
             });
 
-            exportCsvGeneric([header, ...sortedDataRows], "ehiden_processed_sorted.csv");
+            exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
 
         function openPrintPreview() {
