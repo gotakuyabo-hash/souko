@@ -22,7 +22,7 @@
             height: 29mm;
             background: #fff;
             box-sizing: border-box;
-            padding: 1mm 1.5mm; /* 余白をコンパクトに調整してはみ出しを防止 */
+            padding: 1.5mm 2mm; /* 上下左右の余白をタイトにしてはみ出しを完全防止 */
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -32,9 +32,24 @@
             color: #1e293b;
         }
 
+        /* 左側のテキストエリア（写真の配置に合わせる） */
+        .text-area {
+            flex: 1;
+            margin-right: 2mm;
+            font-size: 9pt;
+            font-weight: bold;
+            line-height: 1.2;
+            word-break: break-all;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+        }
+
+        /* 右側のQRコードエリア */
         .qr-area {
-            width: 25mm; /* QRコードが収まりやすいサイズに微調整 */
-            height: 25mm;
+            width: 24mm; /* ラベルの高さ(29mm)に収まる最大サイズ */
+            height: 24mm;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -46,19 +61,7 @@
             height: 100% !important;
         }
 
-        .text-area {
-            flex: 1;
-            margin-left: 2mm;
-            font-size: 7.5pt; /* フォントサイズを調整して確実に枠内に収める */
-            line-height: 1.15;
-            word-break: break-all;
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-line-clamp: 5;
-            -webkit-box-orient: vertical;
-        }
-
-        /* 印刷時の設定：余白を一切なくし、52mm×29mmのサイズに完全に合わせる */
+        /* 印刷時の設定：余白を一切なくし、52mm×29mmのサイズに完全に固定 */
         @media print {
             body {
                 background: none;
@@ -98,7 +101,7 @@
         <header class="mb-5 flex justify-between items-center px-1">
             <div>
                 <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ 52mm×29mm QRラベル作成</h1>
-                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成（サイズ最適化版）</p>
+                <p class="text-[11px] text-slate-400">テキスト（左）＆ QRコード（右）レイアウト調整版</p>
             </div>
             <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
                 ← ポータルへ
@@ -108,8 +111,8 @@
         <!-- 入力フォームカード -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl mb-6 space-y-4">
             <div>
-                <label class="block text-xs font-bold text-slate-300 mb-1">QRコードにする文字列 / URL</label>
-                <textarea id="inputText" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500 resize-none" placeholder="https://example.com または商品名・コードなど">https://example.com</textarea>
+                <label class="block text-xs font-bold text-slate-300 mb-1">ラベルに記載するテキスト / QRコードのデータ</label>
+                <textarea id="inputText" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500 resize-none" placeholder="rs0009 などのコードやURL">rs0009</textarea>
             </div>
 
             <div class="flex gap-3">
@@ -136,8 +139,8 @@
         </div>
         <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6 mb-6">
             <div class="label-container" id="previewLabel">
+                <div class="text-area" id="previewDisplayText">rs0009</div>
                 <div class="qr-area" id="previewQrcode"></div>
-                <div class="text-area" id="previewDisplayText">https://example.com</div>
             </div>
         </div>
 
@@ -175,7 +178,7 @@
         const db = getFirestore(app);
 
         let previewQr = new QRCode(document.getElementById("previewQrcode"), {
-            text: "https://example.com",
+            text: "rs0009",
             width: 100,
             height: 100,
             colorDark : "#000000",
@@ -184,7 +187,7 @@
         });
 
         window.updatePreview = function() {
-            const val = document.getElementById("inputText").value.trim() || "https://example.com";
+            const val = document.getElementById("inputText").value.trim() || "rs0009";
             const count = parseInt(document.getElementById("printCount").value) || 1;
 
             document.getElementById("previewQrcode").innerHTML = "";
@@ -206,14 +209,14 @@
                 const labelDiv = document.createElement("div");
                 labelDiv.className = "label-container";
 
-                const qrArea = document.createElement("div");
-                qrArea.className = "qr-area";
-                labelDiv.appendChild(qrArea);
-
                 const textArea = document.createElement("div");
                 textArea.className = "text-area";
                 textArea.innerText = val;
                 labelDiv.appendChild(textArea);
+
+                const qrArea = document.createElement("div");
+                qrArea.className = "qr-area";
+                labelDiv.appendChild(qrArea);
 
                 printArea.appendChild(labelDiv);
 
