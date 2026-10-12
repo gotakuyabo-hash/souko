@@ -23,34 +23,25 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // グローバルに登録関数を公開（コックピット自身のURL ＋ タグ・メモ紐づけ対応）
-        window.registerToStaffApp = async function(roomId, roomName, messageId, fromVal, toVal, memoVal, btnEl) {
-            // ローカルストレージからセラーのメモ・タグを取得して紐づける
+        // グローバルに登録関数を公開（メッセージ本文のテキスト連携）
+        window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
+            // ローカルストレージからセラーのメモ・タグを取得
             let memoData = {};
             try {
                 const memos = JSON.parse(localStorage.getItem("chatwork_room_memos_v1")) || {};
                 memoData = memos[roomId] || {};
             } catch(e) {}
 
-            // コックピットアプリ自身のURLに room_id を付与して「直接飛べるリンク」を生成
-            const baseUrl = window.location.href.split('?')[0];
-            const cockpitUrl = `${baseUrl}?room_id=${roomId}`;
-
-            // チャットワーク自体の個別リンク（参考用）
-            let chatworkUrl = `https://www.chatwork.com/#!rid${roomId}`;
-            if (messageId) {
-                chatworkUrl = `https://www.chatwork.com/#!rid${roomId}-${messageId}`;
-            }
-
-            // スタッフ間連絡アプリに登録するタスク文章を組み立て
-            let taskContent = `【Chatworkコックピット連携】\nルーム名: ${roomName}`;
+            // スタッフ間連絡アプリに登録するタスク文章を組み立て（本文をそのまま含める）
+            let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
             if (memoData.tag) {
                 taskContent += `\n🏷️ タグ: ${memoData.tag}`;
             }
             if (memoData.content) {
                 taskContent += `\n📌 セラーメモ: ${memoData.content}`;
             }
-            taskContent += `\n\n🚀 コックピットで開く:\n${cockpitUrl}\n\n💬 Chatwork直接リンク:\n${chatworkUrl}`;
+            
+            taskContent += `\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
             
             if (memoVal) {
                 taskContent += `\n\n📝 連絡メモ:\n${memoVal}`;
@@ -158,7 +149,8 @@
         <div class="p-4 space-y-3">
             <input type="hidden" id="linkRoomId">
             <input type="hidden" id="linkRoomName">
-            <input type="hidden" id="linkMessageId">
+            <input type="hidden" id="linkSenderName">
+            <input type="hidden" id="linkMessageBody">
             <div>
                 <label class="block text-xs font-bold text-slate-600 mb-1">👤 From (依頼者・担当者など)</label>
                 <input type="text" id="linkFromInput" placeholder="例：松下" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
@@ -245,21 +237,8 @@
         const MEMO_KEY = "chatwork_room_memos_v1";
         const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
 
-        window.addEventListener('DOMContentLoaded', async () => {
-            // URLパラメータから room_id が指定されているかチェック
-            const urlParams = new URLSearchParams(window.location.search);
-            const paramRoomId = urlParams.get('room_id');
-
-            if (paramRoomId) {
-                // 通常個別モードに切り替えて指定ルームのメッセージを自動読み込み
-                switchMode('normal');
-                document.getElementById('roomSelect').value = paramRoomId;
-                await fetchNormalRooms();
-                document.getElementById('roomSelect').value = paramRoomId; // ルームリスト取得後に再セット
-                loadSingleRoomMessages();
-            } else {
-                fetchAllUnreadRooms();
-            }
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchAllUnreadRooms();
         });
 
         function getCurrentToken() { return document.getElementById('accountSelect').value; }
@@ -300,10 +279,11 @@
         }
 
         /* ======== 🔗 スタッフ間連絡アプリ連携 ======== */
-        function openLinkCopyModal(roomId, roomName, messageId = '') {
+        function openLinkCopyModal(roomId, roomName, senderName, messageBody) {
             document.getElementById('linkRoomId').value = roomId;
             document.getElementById('linkRoomName').value = roomName;
-            document.getElementById('linkMessageId').value = messageId;
+            document.getElementById('linkSenderName').value = senderName;
+            document.getElementById('linkMessageBody').value = messageBody;
             
             const savedFrom = localStorage.getItem(FROM_NAME_KEY) || '';
             document.getElementById('linkFromInput').value = savedFrom;
@@ -317,7 +297,8 @@
         function submitToStaffApp(btnEl) {
             const roomId = document.getElementById('linkRoomId').value;
             const roomName = document.getElementById('linkRoomName').value;
-            const messageId = document.getElementById('linkMessageId').value;
+            const senderName = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
             const fromVal = document.getElementById('linkFromInput').value.trim();
             const toVal = document.getElementById('linkToInput').value.trim();
             const memoVal = document.getElementById('linkMemoInput').value.trim();
@@ -327,7 +308,7 @@
             }
 
             if (window.registerToStaffApp) {
-                window.registerToStaffApp(roomId, roomName, messageId, fromVal, toVal, memoVal, btnEl);
+                window.registerToStaffApp(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl);
             } else {
                 alert('Firebaseの初期化が完了していません。');
             }
@@ -479,6 +460,7 @@
                         let sendDateStr = latestMsg.send_time ? new Date(latestMsg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
                         const encodedBody = encodeURIComponent(latestMsg.body);
+                        const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
                         let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
                         if (senderId) membersOpts += `<option value="${senderId}" data-name="${senderName}">発言者: ${senderName}</option>`;
@@ -495,7 +477,7 @@
                                         <span>👤 ${escapeHtml(senderName)}</span>
                                         <div class="flex items-center gap-1.5">
                                             <span class="text-slate-400 font-normal">${sendDateStr}</span>
-                                            <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${messageId}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                            <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                                 🔗 連携
                                             </button>
                                         </div>
@@ -661,13 +643,15 @@
                         const messageId = m.message_id || '';
                         const sendDateStr = m.send_time ? new Date(m.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const encodedBody = encodeURIComponent(m.body);
+                        const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+
                         html += `
                             <div class="bg-white p-2.5 rounded border border-slate-200 space-y-1.5">
                                 <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
                                     <span>👤 ${escapeHtml(senderName)}</span>
                                     <div class="flex items-center gap-1.5">
                                         <span class="text-slate-400 font-normal">${sendDateStr}</span>
-                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${messageId}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             🔗 連携
                                         </button>
                                         <button onclick="insertReToTextarea('normal_txt_${roomId}', '${senderId}', '${messageId}', '${escapeHtml(senderName)}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
