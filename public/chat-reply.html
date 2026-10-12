@@ -5,6 +5,55 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chatwork 未読バーストコックピット</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK (スタッフ間連絡アプリ連携用) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // グローバルに登録関数を公開
+        window.registerToStaffApp = async function(roomId, roomName, fromVal, toVal, memoVal, btnEl) {
+            const chatworkUrl = `https://www.chatwork.com/#!rid${roomId}`;
+            let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}\nURL: ${chatworkUrl}`;
+            if (memoVal) {
+                taskContent += `\n\n📝 メモ:\n${memoVal}`;
+            }
+
+            btnEl.disabled = true;
+            btnEl.textContent = "登録中...";
+
+            try {
+                await addDoc(collection(db, "staff_requests"), {
+                    from: fromVal || '未設定',
+                    to: toVal || '未設定',
+                    task: taskContent,
+                    imageUrl: null,
+                    status: 'pending',
+                    createdAt: serverTimestamp()
+                });
+                alert('スタッフ間連絡アプリに直接登録しました！');
+                closeAllModals();
+            } catch (error) {
+                console.error("登録エラー: ", error);
+                alert("登録に失敗しました: " + error.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "🚀 スタッフ間連絡アプリに登録する";
+            }
+        };
+    </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16">
     <!-- ヘッダー -->
@@ -33,7 +82,7 @@
                 </select>
             </div>
             
-            <!-- タブ切り替え（未読バースト vs 通常ルーム個別選択） -->
+            <!-- タブ切り替え -->
             <div class="flex bg-slate-100 p-1 rounded-lg">
                 <button id="tabBurst" onclick="switchMode('burst')" class="flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition">
                     ⚡ 未読バースト（一括処理）
@@ -52,7 +101,7 @@
             </div>
         </div>
 
-        <!-- 【モードB】通常ルーム個別選択エリア（初期非表示） -->
+        <!-- 【モードB】通常ルーム個別選択エリア -->
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
                 <input type="text" id="roomSearchInput" oninput="filterNormalRooms()" placeholder="🔍 ルーム名検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:outline-none">
@@ -72,8 +121,35 @@
         </div>
     </div>
 
-    <!-- ================= モーダル（定型文管理・編集 ＆ セラーメモ） ================= -->
+    <!-- ================= モーダル ================= -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
+
+    <!-- スタッフ間連絡 直接登録モーダル -->
+    <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-indigo-50 rounded-t-xl">
+            <h2 class="font-bold text-indigo-900">🔗 スタッフ間連絡アプリに登録</h2>
+            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <input type="hidden" id="linkRoomId">
+            <input type="hidden" id="linkRoomName">
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">👤 From (依頼者・担当者など)</label>
+                <input type="text" id="linkFromInput" placeholder="例：松下" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">🎯 To (宛先スタッフなど)</label>
+                <input type="text" id="linkToInput" placeholder="例：スタッフ全員 / 〇〇さん" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">📝 軽いメモ (自由記述)</label>
+                <textarea id="linkMemoInput" placeholder="依頼内容や補足事項など..." class="w-full h-20 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
+            </div>
+            <button onclick="submitToStaffApp(this)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
+                🚀 スタッフ間連絡アプリに登録する
+            </button>
+        </div>
+    </div>
 
     <!-- セラーメモ・タグ編集モーダル -->
     <div id="modalRoomMemo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
@@ -84,12 +160,12 @@
         <div class="p-4 space-y-3">
             <input type="hidden" id="memoRoomId">
             <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">🏷️ ステータス・タグ（例：要確認、FBA、トラブル中）</label>
+                <label class="block text-xs font-bold text-slate-600 mb-1">🏷️ ステータス・タグ</label>
                 <input type="text" id="memoTagInput" placeholder="カンマ区切りなどで入力" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
             </div>
             <div>
                 <label class="block text-xs font-bold text-slate-600 mb-1">📝 一言メモ・注意点</label>
-                <textarea id="memoContentInput" placeholder="このセラーに関する特記事項やルールを記入..." class="w-full h-28 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
+                <textarea id="memoContentInput" placeholder="特記事項やルール..." class="w-full h-28 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
             </div>
             <button onclick="saveRoomMemoSubmit()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
                 メモを保存する
@@ -141,6 +217,7 @@
         let currentMode = 'burst';
         const TEMPLATE_KEY = "chatwork_custom_templates_v2";
         const MEMO_KEY = "chatwork_room_memos_v1";
+        const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchAllUnreadRooms();
@@ -182,6 +259,41 @@
                 fetchNormalRooms();
             }
         }
+
+        /* ======== 🔗 スタッフ間連絡アプリ連携 ======== */
+        function openLinkCopyModal(roomId, roomName) {
+            document.getElementById('linkRoomId').value = roomId;
+            document.getElementById('linkRoomName').value = roomName;
+            
+            // ローカルストレージから前回入力したFrom名があれば自動入力する
+            const savedFrom = localStorage.getItem(FROM_NAME_KEY) || '';
+            document.getElementById('linkFromInput').value = savedFrom;
+            document.getElementById('linkToInput').value = '';
+            document.getElementById('linkMemoInput').value = ''; // メモは初期化
+
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('modalLinkCopy').style.display = 'flex';
+        }
+
+        function submitToStaffApp(btnEl) {
+            const roomId = document.getElementById('linkRoomId').value;
+            const roomName = document.getElementById('linkRoomName').value;
+            const fromVal = document.getElementById('linkFromInput').value.trim();
+            const toVal = document.getElementById('linkToInput').value.trim();
+            const memoVal = document.getElementById('linkMemoInput').value.trim();
+
+            // Fromに入力された名前をローカルストレージに保存
+            if (fromVal) {
+                localStorage.setItem(FROM_NAME_KEY, fromVal);
+            }
+
+            if (window.registerToStaffApp) {
+                window.registerToStaffApp(roomId, roomName, fromVal, toVal, memoVal, btnEl);
+            } else {
+                alert('Firebaseの初期化が完了していません。');
+            }
+        }
+        /* =========================================== */
 
         /* ======== 📌 セラーメモ・タグ管理機能 ======== */
         function getRoomMemos() {
@@ -273,6 +385,7 @@
 
                 for (const room of unreadRooms) {
                     const roomId = room.room_id;
+                    const roomName = room.name;
                     const memo = memos[roomId] || {};
                     const cardId = `burst_card_${roomId}`;
 
@@ -287,9 +400,14 @@
                                     ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
                                     ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                                 </div>
-                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(room.name)}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 shrink-0 font-bold">
-                                    📝 メモ
-                                </button>
+                                <div class="flex gap-1 shrink-0">
+                                    <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
+                                        🔗 連携
+                                    </button>
+                                    <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold">
+                                        📝 メモ
+                                    </button>
+                                </div>
                             </div>
                             <div class="burst-msg-area text-xs text-slate-500 p-2 bg-slate-50 rounded">メッセージを読み込み中...</div>
                         </div>
@@ -485,6 +603,9 @@
                                 ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
                                 ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                             </div>
+                            <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded border border-indigo-200 font-bold shrink-0">
+                                🔗 連携
+                            </button>
                         </div>
 
                         <!-- 履歴表示エリア -->
@@ -588,7 +709,7 @@
         }
         /* =========================================== */
 
-        /* ======== 定型文管理機能（追加・編集・削除） ======== */
+        /* ======== 定型文管理機能 ======== */
         function getTemplates() {
             try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY)) || []; } catch(e) { return []; }
         }
@@ -650,6 +771,7 @@
 
         function closeAllModals() {
             document.getElementById('modalOverlay').style.display = 'none';
+            document.getElementById('modalLinkCopy').style.display = 'none';
             document.getElementById('modalRoomMemo').style.display = 'none';
             document.getElementById('modalTemplateManager').style.display = 'none';
             document.getElementById('modalTemplateEditor').style.display = 'none';
