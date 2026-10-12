@@ -242,6 +242,13 @@
         let allHistoryData = [];
         let targetDeleteId = null;
 
+        // 安定化のための変数
+        let lastScanTime = 0;
+        const scanInterval = 350; // 350ミリ秒に1回だけスキャンを実行
+        let lastDetectedValue = "";
+        let matchCount = 0;
+        const requiredMatches = 2; // 同じバーコードを2回連続で検出したら確定
+
         if ('BarcodeDetector' in window) {
             BarcodeDetector.getSupportedFormats().then(formats => {
                 barcodeDetector = new BarcodeDetector({ formats: formats.length ? formats : ['code_128', 'ean_13', 'qr_code'] });
@@ -257,6 +264,8 @@
                 video.srcObject = mediaStream;
                 await video.play();
                 scanning = true;
+                lastDetectedValue = "";
+                matchCount = 0;
                 startCameraBtn.innerText = "カメラを停止する";
                 statusMsg.innerText = "バーコードを枠内に合わせてください";
                 requestAnimationFrame(scanVideoFrame);
@@ -276,19 +285,44 @@
             statusMsg.innerText = "";
         }
 
-        async function scanVideoFrame() {
+        async function scanVideoFrame(timestamp) {
             if (!scanning) return;
-            if (video.readyState === video.HAVE_ENOUGH_DATA && barcodeDetector) {
-                try {
-                    const barcodes = await barcodeDetector.detect(video);
-                    if (barcodes.length > 0) {
-                        trackingInput.value = barcodes[0].rawValue;
-                        statusMsg.innerText = `検出成功: ${barcodes[0].rawValue}`;
-                        stopCamera();
-                        return;
-                    }
-                } catch (e) {}
+
+            // 前回のスキャンから一定時間経過している場合のみ処理を実行（速度・負荷調整）
+            if (timestamp - lastScanTime >= scanInterval) {
+                lastScanTime = timestamp;
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA && barcodeDetector) {
+                    try {
+                        const barcodes = await barcodeDetector.detect(video);
+                        if (barcodes.length > 0) {
+                            const val = barcodes[0].rawValue;
+                            statusMsg.innerText = `読み取り中... (${val})`;
+
+                            if (val === lastDetectedValue) {
+                                matchCount++;
+                            } else {
+                                lastDetectedValue = val;
+                                matchCount = 1;
+                            }
+
+                            // 指定回数連続で一致したら確定
+                            if (matchCount >= requiredMatches) {
+                                trackingInput.value = val;
+                                statusMsg.innerText = `検出成功: ${val}`;
+                                stopCamera();
+                                return;
+                            }
+                        } else {
+                            // 見つからなかった場合はカウンタをリセット
+                            matchCount = 0;
+                            lastDetectedValue = "";
+                            statusMsg.innerText = "バーコードを枠内に合わせてください";
+                        }
+                    } catch (e) {}
+                }
             }
+
             requestAnimationFrame(scanVideoFrame);
         }
 
