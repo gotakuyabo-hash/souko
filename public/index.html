@@ -121,6 +121,7 @@
                 { id: "zaico", category: "others", title: "📦 zaico連携・受注解析", desc: "zaico在庫同期、バーコード抽出、倍率・棚番設定、出庫指示送信", href: "zaico.html" },
                 { id: "timer", category: "others", title: "⏱️ 作業タイム計測", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html" },
                 { id: "label", category: "others", title: "🏷️ 処理済みラベル管理", desc: "サーマル用紙（100mm×150mm）印刷、セラー・担当者管理", href: "label.html" },
+                { id: "qr-label", category: "others", title: "🏷️ QRラベル作成", desc: "52mm×29mmのラベルサイズに合わせたQRコード作成・印刷ツール", href: "qr-label.html" },
                 { id: "material", category: "others", title: "📋 資材発注依頼", desc: "資材の発注希望依頼、日付検索・ステータス管理", href: "material.html" },
                 { id: "checklist", category: "others", title: "📋 日次報告チェックリスト", desc: "出勤時〜終業時までの管理者チェックリスト（Firestore同期）", href: "checklist.html" },
                 { id: "shukka", category: "others", title: "📊 出荷件数 日別集計", desc: "サービス別の出荷件数入力・総合計算出・サービス管理", href: "shukka.html" },
@@ -134,7 +135,14 @@
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) {
                     const parsed = JSON.parse(saved);
+                    // 新しく追加したカード（qr-label）が既存のローカルストレージデータに無い場合を考慮して統合または保持
                     if (parsed && parsed.categories && parsed.cards) {
+                        // 既存のカード一覧に 'qr-label' がなければ追加してあげる親切設計
+                        if (!parsed.cards.some(c => c.id === 'qr-label')) {
+                            const othersCat = parsed.categories.find(c => c.id === 'others');
+                            const targetCatId = othersCat ? othersCat.id : parsed.categories[0].id;
+                            parsed.cards.push({ id: "qr-label", category: targetCatId, title: "🏷️ QRラベル作成", desc: "52mm×29mmのラベルサイズに合わせたQRコード作成・印刷ツール", href: "qr-label.html" });
+                        }
                         return parsed;
                     }
                 }
@@ -218,7 +226,6 @@
                         appEl.draggable = true;
                         appEl.dataset.cardId = card.id;
 
-                        // タップ（クリック）されたときはリンク先へ飛ぶ（ドラッグ移動していない場合のみ）
                         appEl.addEventListener('click', () => {
                             if (!hasMoved) {
                                 window.location.href = card.href;
@@ -235,7 +242,6 @@
                             appEl.classList.remove('dragging');
                             document.querySelectorAll('.app-icon').forEach(el => el.classList.remove('drag-over'));
                             draggedCardId = null;
-                            // わずかに遅れて移動フラグをリセットし、誤爆を防ぐ
                             setTimeout(() => { hasMoved = false; }, 150);
                         });
 
