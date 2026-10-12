@@ -19,11 +19,11 @@
                 <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動整形ツール</h2>
                 <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
             </div>
-            <p class="text-xs text-slate-500 mb-4">システムからダウンロードした「受注データまたは送り状データCSV」をドラッグ＆ドロップしてください。</p>
+            <p class="text-xs text-slate-500 mb-4">「受注データCSV」をドラッグ＆ドロップしてください。</p>
 
             <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                 <div class="text-3xl mb-1">📂</div>
-                <div class="font-bold text-slate-700 text-sm">ここにCSVファイルをドラッグ＆ドロップ</div>
+                <div class="font-bold text-slate-700 text-sm">ここに受注CSVファイルをドラッグ＆ドロップ</div>
                 <p class="text-xs text-slate-500 mt-1">またはクリックしてファイルを選択</p>
                 <input type="file" id="fileInput" class="hidden" accept=".csv">
             </div>
@@ -32,12 +32,14 @@
 
             <div id="status" class="text-sm font-bold text-sky-600 mb-3">ファイルを選択してください</div>
 
-            <!-- ソート機能エリア（自動検出プルダウン） -->
+            <!-- 受注データ基準のソート機能エリア -->
             <div id="sortControlArea" class="hidden bg-slate-50 p-3.5 rounded border border-slate-200 mb-4">
-                <div class="text-xs font-bold text-slate-700 mb-2">⚙️ ソート設定（並び替え）</div>
+                <div class="text-xs font-bold text-slate-700 mb-2">⚙️ 受注データ基準のソート設定（並び替え）</div>
                 <div class="flex flex-wrap items-center gap-2">
                     <select id="sortColumnSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white flex-1 min-w-[180px] cursor-pointer">
                         <option value="">（ソートする列を選択）</option>
+                        <option value="30">商品コード (列 30)</option>
+                        <option value="27">メモ１ (列 27)</option>
                     </select>
                     <select id="sortDirectionSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white cursor-pointer">
                         <option value="asc">昇順 (古い順 / A→Z)</option>
@@ -105,9 +107,10 @@
 
                 if (rows.length === 0) return;
 
+                // 受注データのヘッダー行を特定
                 let dataStartIndex = 0;
                 for (let i = 0; i < rows.length; i++) {
-                    if (rows[i].length > 5 && (rows[i].some(c => c.includes('受注番号') || c.includes('コントロールカラム') || c.includes('お届け先')))) {
+                    if (rows[i].length > 5 && (rows[i].some(c => c.includes('受注番号') || c.includes('コントロールカラム') || c.includes('受注ID')))) {
                         headerRow = rows[i];
                         dataStartIndex = i + 1;
                         break;
@@ -119,48 +122,16 @@
                     dataStartIndex = 1;
                 }
 
+                // 受注データの行を純粋に読み込み
                 loadedRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => c.trim() !== ''));
                 originalRows = [...loadedRows];
                 sortedRows = [...loadedRows];
 
-                populateColumnSelect();
-                document.getElementById('fileStatus').textContent = "📂 読み込み済み: " + file.name;
+                document.getElementById('fileStatus').textContent = "📂 受注データ読み込み済み: " + file.name;
                 document.getElementById('sortControlArea').classList.remove('hidden');
                 renderTable();
             };
             reader.readAsArrayBuffer(file);
-        }
-
-        function populateColumnSelect() {
-            const select = document.getElementById('sortColumnSelect');
-            select.innerHTML = '<option value="">（ソートする列を選択）</option>';
-
-            if (!headerRow || headerRow.length === 0) return;
-
-            // ヘッダー行から「商品コード」や「メモ」に関連する列を自動検出してプルダウンに追加
-            headerRow.forEach((colName, idx) => {
-                if (colName && colName.trim() !== '') {
-                    let name = colName.trim();
-                    if (name.includes('商品コード') || name.includes('メモ') || name.includes('受注番号') || name.includes('商品名')) {
-                        let opt = document.createElement('option');
-                        opt.value = idx;
-                        opt.textContent = `${name} (列 ${idx})`;
-                        select.appendChild(opt);
-                    }
-                }
-            });
-
-            // もし上記で見つからなければ全列を表示
-            if (select.options.length <= 1) {
-                headerRow.forEach((colName, idx) => {
-                    if (colName && colName.trim() !== '') {
-                        let opt = document.createElement('option');
-                        opt.value = idx;
-                        opt.textContent = `${colName.trim()} (列 ${idx})`;
-                        select.appendChild(opt);
-                    }
-                });
-            }
         }
 
         function applyDynamicSort() {
@@ -220,7 +191,7 @@
             tbody.innerHTML = '';
 
             if (sortedRows.length > 0) {
-                statusEl.textContent = `✅ 読み込み成功: ${sortedRows.length}件のデータ`;
+                statusEl.textContent = `✅ 受注データ読込成功: ${sortedRows.length}件`;
                 document.getElementById('printBtn').disabled = false;
                 document.getElementById('yamatoBtn').disabled = false;
                 document.getElementById('ehidenBtn').disabled = false;
@@ -228,15 +199,15 @@
                 sortedRows.forEach(r => {
                     let tr = document.createElement('tr');
                     tr.className = "border-b border-slate-100 hover:bg-slate-50";
-                    let shop = r[3] || r[2] || '';
-                    let orderNo = r[5] || r[9] || '';
-                    let name = r[40] || r[7] || '';
-                    let item = r[31] || r[24] || '';
+                    let shop = r[3] || ''; // 店舗名
+                    let orderNo = r[5] || ''; // 受注番号
+                    let name = r[40] || ''; // 配送先氏名
+                    let item = r[31] || ''; // 商品名
                     tr.innerHTML = `<td class="p-2">${shop}</td><td class="p-2 font-bold">${orderNo}</td><td class="p-2">${name}</td><td class="p-2">${item}</td>`;
                     tbody.appendChild(tr);
                 });
             } else {
-                statusEl.textContent = `⚠ データが見つかりませんでした。`;
+                statusEl.textContent = `⚠ 受注データが見つかりませんでした。`;
             }
         }
 
@@ -269,7 +240,7 @@
             return `${y}/${m}/${day}`;
         }
 
-        // ヤマトB2 CSV出力：ソートされた順序をそのまま反映
+        // 受注データを基準にソート順を完全反映したヤマトB2 CSV出力
         function exportYamatoCsv() {
             if (sortedRows.length === 0) {
                 alert('出力するデータがありません。');
@@ -290,7 +261,7 @@
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
 
-        // 佐川（e飛伝）出力：ソートされた順序を反映 ＋ 品名の16文字制限適用
+        // 受注データを基準にソート順を完全反映した佐川（e飛伝）CSV出力（品名16文字制限）
         function exportEhidenCsv() {
             if (sortedRows.length === 0) {
                 alert('出力するデータがありません。');
@@ -299,8 +270,8 @@
 
             let processedRows = sortedRows.map(row => {
                 let r = [...row];
-                let targetIdx = r[31] !== undefined ? 31 : (r[24] !== undefined ? 24 : -1);
-                if (targetIdx !== -1 && r[targetIdx]) {
+                let targetIdx = 31; // 商品名列 (列31)
+                if (r[targetIdx]) {
                     let val = String(r[targetIdx]).trim();
                     if (val.length > 16) {
                         r[targetIdx] = val.substring(0, 16);
@@ -323,8 +294,8 @@
             sortedRows.forEach(r => {
                 let shop = r[3] || '';
                 let orderNo = r[5] || '';
-                let name = r[40] || r[7] || '';
-                let item = r[31] || r[24] || '';
+                let name = r[40] || '';
+                let item = r[31] || '';
                 htmlPages.push(`<div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;"><div style="font-size:14pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;">出荷検品シート</div><table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:12pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:11pt;color:#c0392b;">${shop}</td></tr></table><table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9.5pt;"><b>受注番号:</b> ${orderNo}</td><td style="padding:3px 5px;font-size:9.5pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#2c3e50;color:#fff;font-size:9.5pt;"><th style="width:15%;padding:4px;text-align:center;">確認</th><th style="width:70%;padding:4px;text-align:left;">商品名</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead><tbody><tr><td style="text-align:center;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td><td style="font-size:10.5pt;padding:4px;">${item}</td><td style="text-align:center;font-weight:bold;font-size:12pt;padding:4px;">1</td></tr></tbody></table></div>`);
             });
             const printWin = window.open('', '_blank');
