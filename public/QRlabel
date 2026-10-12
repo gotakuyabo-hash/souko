@@ -95,7 +95,7 @@
         <header class="mb-5 flex justify-between items-center px-1">
             <div>
                 <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ 52mm×29mm QRラベル作成</h1>
-                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成し、指定枚数で連続印刷</p>
+                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成（Firebase履歴連動）</p>
             </div>
             <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
                 ← ポータルへ
@@ -120,8 +120,8 @@
                 <button onclick="updatePreview()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 px-3 rounded-xl text-xs transition border border-slate-700">
                     プレビュー更新
                 </button>
-                <button onclick="window.print()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg shadow-blue-600/20">
-                    🖨️ 印刷する
+                <button onclick="printAndSave()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg shadow-blue-600/20">
+                    🖨️ 印刷 ＆ 履歴保存
                 </button>
             </div>
         </div>
@@ -131,10 +131,21 @@
             <span class="text-xs font-bold text-slate-400">リアルタイムプレビュー (1枚分)</span>
             <span id="previewCountLabel" class="text-[11px] text-slate-500">印刷枚数: 1枚</span>
         </div>
-        <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6">
+        <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6 mb-6">
             <div class="label-container" id="previewLabel">
                 <div class="qr-area" id="previewQrcode"></div>
                 <div class="text-area" id="previewDisplayText">https://example.com</div>
+            </div>
+        </div>
+
+        <!-- Firestore 履歴セクション -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-xs font-bold text-slate-300">☁️ 最近のラベル発行履歴</h3>
+                <button onclick="loadHistory()" class="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-800 px-2 py-1 rounded">更新</button>
+            </div>
+            <div id="historyList" class="space-y-2 max-h-48 overflow-y-auto text-xs text-slate-400">
+                <p class="text-center py-3 text-slate-500">履歴を読み込み中...</p>
             </div>
         </div>
     </div>
@@ -142,7 +153,24 @@
     <!-- 印刷用コンテナ（画面上は非表示、印刷時のみ全枚数展開される） -->
     <div id="printArea" class="print-area" style="display: none;"></div>
 
-    <script>
+    <!-- Firebase SDK (Modular v10) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
         // 初期プレビュー描画用インスタンス
         let previewQr = new QRCode(document.getElementById("previewQrcode"), {
             text: "https://example.com",
@@ -153,11 +181,10 @@
             correctLevel : QRCode.CorrectLevel.M
         });
 
-        function updatePreview() {
+        window.updatePreview = function() {
             const val = document.getElementById("inputText").value.trim() || "https://example.com";
             const count = parseInt(document.getElementById("printCount").value) || 1;
 
-            // プレビューの更新
             document.getElementById("previewQrcode").innerHTML = "";
             new QRCode(document.getElementById("previewQrcode"), {
                 text: val,
@@ -170,7 +197,6 @@
             document.getElementById("previewDisplayText").innerText = val;
             document.getElementById("previewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
-            // 印刷用エリアの構築
             const printArea = document.getElementById("printArea");
             printArea.innerHTML = "";
 
@@ -189,7 +215,6 @@
 
                 printArea.appendChild(labelDiv);
 
-                // 各ラベルごとにQRコードを生成
                 new QRCode(qrArea, {
                     text: val,
                     width: 128,
@@ -201,12 +226,88 @@
             }
         }
 
-        // 入力値変更時に自動で印刷用コンテナも最新に保つ
-        document.getElementById("inputText").addEventListener("input", updatePreview);
-        document.getElementById("printCount").addEventListener("input", updatePreview);
+        // 印刷ボタンを押した時：Firestoreに記録してウィンドウ印刷を呼び出す
+        window.printAndSave = async function() {
+            const val = document.getElementById("inputText").value.trim();
+            const count = parseInt(document.getElementById("printCount").value) || 1;
+
+            if (!val) {
+                alert("テキストまたはURLを入力してください。");
+                return;
+            }
+
+            // プレビュー＆印刷用エリアを最新化
+            window.updatePreview();
+
+            // Firestoreへ保存
+            try {
+                await addDoc(collection(db, "qr_label_history"), {
+                    text: val,
+                    count: count,
+                    createdAt: serverTimestamp()
+                });
+                loadHistory(); // 履歴リストを再取得
+            } catch (e) {
+                console.error("Firestore保存エラー: ", e);
+            }
+
+            // 印刷ダイアログの起動
+            window.print();
+        }
+
+        // 履歴を Firestore から取得して表示
+        window.loadHistory = async function() {
+            const historyListEl = document.getElementById("historyList");
+            historyListEl.innerHTML = '<p class="text-center py-2 text-slate-500">読み込み中...</p>';
+
+            try {
+                const q = query(collection(db, "qr_label_history"), orderBy("createdAt", "desc"), limit(10));
+                const querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    historyListEl.innerHTML = '<p class="text-center py-3 text-slate-500">履歴がありません</p>';
+                    return;
+                }
+
+                historyListEl.innerHTML = "";
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const dateStr = data.createdAt ? new Date(data.createdAt.toDate()).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : "日時不明";
+
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = "bg-slate-800/60 hover:bg-slate-800 p-2.5 rounded-xl flex justify-between items-center cursor-pointer transition border border-slate-700/50";
+                    itemDiv.onclick = () => {
+                        document.getElementById("inputText").value = data.text;
+                        document.getElementById("printCount").value = data.count || 1;
+                        window.updatePreview();
+                    };
+
+                    itemDiv.innerHTML = `
+                        <div class="truncate mr-2">
+                            <p class="font-bold text-slate-200 truncate">${escapeHtml(data.text)}</p>
+                            <p class="text-[10px] text-slate-400">${dateStr} / ${data.count}枚</p>
+                        </div>
+                        <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
+                    `;
+                    historyListEl.appendChild(itemDiv);
+                });
+            } catch (e) {
+                console.error("履歴取得エラー: ", e);
+                historyListEl.innerHTML = '<p class="text-center py-3 text-rose-400">履歴の取得に失敗しました</p>';
+            }
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // 入力値変更時に自動でプレビュー更新
+        document.getElementById("inputText").addEventListener("input", window.updatePreview);
+        document.getElementById("printCount").addEventListener("input", window.updatePreview);
 
         // 初回実行
-        updatePreview();
+        window.updatePreview();
+        window.loadHistory();
     </script>
 </body>
 </html>
