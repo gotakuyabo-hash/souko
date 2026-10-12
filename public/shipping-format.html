@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出荷・送り状 自動整形ツール</title>
+    <title>出荷・送り状 自動連携ツール</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.1.0/encoding.min.js"></script>
     <style>
@@ -70,7 +70,7 @@
     </div>
 
     <script>
-        // データホルダー（GASの仕組みを再現）
+        // データホルダー
         let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
@@ -106,7 +106,7 @@
             document.getElementById('ehidenBtn').disabled = true;
         }
 
-        // ファイル種別の自動判別（GASの getTargetSheetName_ に相当）
+        // ファイル種別の自動判別
         function getFileType(fileName, headerStr) {
             let lower = fileName.toLowerCase();
             if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
@@ -118,7 +118,7 @@
             return 'order'; // フォールバック
         }
 
-        // 受注番号のゆらぎ吸収（GASの cleanOrderNoNormalized_ に相当）
+        // 受注番号のゆらぎ吸収
         function cleanOrderNoNormalized(rawStr) {
             if (!rawStr) return "";
             return String(rawStr).replace(/^No:?[\.\s]*/i, "")
@@ -174,7 +174,12 @@
         function rebuildData() {
             // 受注データの列マッピング特定
             if (orderData.rows.length > 0) {
-                colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h) === '受注ID');
+                // 受注IDに誤って紐付かないよう、確実に「受注番号」を優先するロジック
+                let orderNoIdx = orderData.header.findIndex(h => String(h).trim() === '受注番号');
+                if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注番号'));
+                if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注ID'));
+                colMap.orderNo = orderNoIdx;
+
                 colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
                 colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('氏名'));
                 colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード'));
@@ -197,7 +202,7 @@
                 });
             }
 
-            // 送り状側の「受注番号の列」を自動検知（GASの findBestMatchingSheetAndCol_ に相当）
+            // 送り状側の「受注番号の列」を自動検知（総当りマッチング）
             function findBestOrderCol(rows) {
                 if (rows.length === 0 || validOrderSet.size === 0) return -1;
                 let bestIdx = 0, maxMatches = 0;
@@ -237,14 +242,13 @@
             select.innerHTML = '<option value="">（ソートする列を選択）</option>';
             if (orderData.header.length === 0) return;
             
-            // 商品コードとメモ１を優先
             let pCodeIdx = orderData.header.findIndex(h => String(h).includes('商品コード'));
             let memoIdx = orderData.header.findIndex(h => String(h).includes('メモ1') || String(h).includes('メモ１'));
             
             if (pCodeIdx !== -1) select.appendChild(new Option(`商品コード (列 ${pCodeIdx})`, pCodeIdx));
             if (memoIdx !== -1) select.appendChild(new Option(`メモ１ (列 ${memoIdx})`, memoIdx));
             
-            if (select.options.length <= 1) { // 見つからなければ代替追加
+            if (select.options.length <= 1) { 
                 select.appendChild(new Option(`列 30 (商品コード想定)`, 30));
                 select.appendChild(new Option(`列 27 (メモ１想定)`, 27));
             }
@@ -266,7 +270,7 @@
         }
 
         function resetSort() {
-            document.getElementById('sortColumnSelect').value = "";
+            document.getElementById('sortColumnSelect').value = "30";
             document.getElementById('sortDirectionSelect').value = "asc";
             sortedOrderRows = [...originalOrderRows];
             renderTable();
@@ -295,7 +299,6 @@
             let outputRows = [yamatoData.header];
             let todayStr = getTodayString();
             
-            // 受注データのソート順に従ってヤマトデータを出力
             sortedOrderRows.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
                 if (!oNum) return;
@@ -304,22 +307,21 @@
                 if (matchedYRow) {
                     let newRow = [...matchedYRow];
                     while (newRow.length < 42) newRow.push("");
-                    newRow[4] = todayStr; // 出荷予定日
-                    newRow[39] = '09050540672'; // 電話番号補正
+                    newRow[4] = todayStr; // 出荷日
+                    newRow[39] = '09050540672'; // 依頼主電話番号
                     newRow[26] = ""; // 請求金額クリア
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1) { alert("紐付くデータがありませんでした。"); return; }
+            if (outputRows.length <= 1) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
 
         function exportEhidenCsv() {
             let outputRows = [sagawaData.header];
             let targetIdx = sagawaData.header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
-            if (targetIdx === -1) targetIdx = 24; // 佐川フォーマット品名1の位置
+            if (targetIdx === -1) targetIdx = 24;
             
-            // 受注データのソート順に従って佐川データを出力
             sortedOrderRows.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
                 if (!oNum) return;
@@ -329,12 +331,12 @@
                     let newRow = [...matchedSRow];
                     if (newRow[targetIdx]) {
                         let val = String(newRow[targetIdx]).trim();
-                        if (val.length > 16) newRow[targetIdx] = val.substring(0, 16); // 16文字制限
+                        if (val.length > 16) newRow[targetIdx] = val.substring(0, 16);
                     }
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1) { alert("紐付くデータがありませんでした。"); return; }
+            if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
 
