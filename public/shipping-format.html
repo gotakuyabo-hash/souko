@@ -76,8 +76,8 @@
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
         ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('bg-sky-100'); }));
-        dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
-        document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
+        dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files, true); });
+        document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files, true); });
 
         function resetData() {
             loadedFiles = {};
@@ -93,10 +93,16 @@
             document.getElementById('printBtn').disabled = true;
             document.getElementById('yamatoBtn').disabled = true;
             document.getElementById('ehidenBtn').disabled = true;
-            alert('リセットしました');
         }
 
-        function handleFiles(files) {
+        function handleFiles(files, isNewBatch = false) {
+            // 新しいファイル群がドロップされたら自動で一度リセットして古いデータをクリア
+            if (isNewBatch) {
+                loadedFiles = {};
+                extractedOrders = [];
+                originalOrderList = [];
+            }
+
             Array.from(files).forEach(file => {
                 lastLoadedFilename = file.name;
                 const reader = new FileReader();
@@ -290,13 +296,6 @@
             return `${y}/${m}/${day}`;
         }
 
-        function sanitizePhoneNumber(val) {
-            if (!val) return "";
-            let str = String(val).trim();
-            str = str.replace(/^\+81[\-\s]?/, '0');
-            return str;
-        }
-
         function exportYamatoCsv() {
             let targetRows = null;
             for (let fname in loadedFiles) {
@@ -341,24 +340,6 @@
                     r[39] = '09050540672';
                     r[26] = "";
 
-                    for (let i = 0; i < r.length; i++) {
-                        let cellVal = String(r[i] || '').trim();
-                        if (cellVal.startsWith('+81') || /^\+81[\-\s]?\d/.test(cellVal)) {
-                            r[i] = sanitizePhoneNumber(cellVal);
-                        }
-                    }
-
-                    let nameVal = String(r[27] || '');
-                    if (nameVal.length > 25) r[27] = nameVal.substring(0, 25);
-
-                    let addr1 = String(r[11] || '');
-                    if (addr1.length >= 36) {
-                        let part1 = addr1.substring(0, 35);
-                        let part2 = addr1.substring(35);
-                        r[11] = part1;
-                        r[12] = part2 + (r[12] && r[12].trim() !== "" ? " " + r[12] : "");
-                    }
-
                     processedRows.push(r);
                 }
             });
@@ -366,7 +347,6 @@
             exportCsvGeneric(processedRows.length > 0 ? processedRows : targetRows, "yamato_processed_sorted.csv");
         }
 
-        // 佐川（e飛伝）テンプレートフォーマット変換出力（品名16文字制限対応）
         function exportEhidenCsv() {
             let templateRows = null;
             for (let fname in loadedFiles) {
@@ -376,7 +356,6 @@
                 }
             }
 
-            // 佐川正式テンプレート（全74列のヘッダー）
             let headerLine2 = templateRows && templateRows.length > 2 ? templateRows[2] : [
                 "お届け先コード取得区分","お届け先コード","お届け先電話番号","お届け先郵便番号","お届け先住所１","お届け先住所２","お届け先住所３","お届け先名称１","お届け先名称２","お客様管理番号","お客様コード","部署ご担当者コード取得区分","部署ご担当者コード","部署ご担当者名称","荷送人電話番号","ご依頼主コード取得区分","ご依頼主コード","ご依頼主電話番号","ご依頼主郵便番号","ご依頼主住所１","ご依頼主住所２","ご依頼主名称１","ご依頼主名称２","荷姿","品名１","品名２","品名３","品名４","品名５","荷札荷姿","荷札品名１","荷札品名２","荷札品名３","荷札品名４","荷札品名５","荷札品名６","荷札品名７","荷札品名８","荷札品名９","荷札品名１０","荷札品名１１","出荷個数","スピード指定","クール便指定","配達日","配達指定時間帯","配達指定時間（時分）","代引金額","消費税","決済種別","保険金額","指定シール１","指定シール２","指定シール３","営業所受取","SRC区分","営業所受取営業所コード","元着区分","メールアドレス","ご不在時連絡先","出荷日","お問い合せ送り状No.","出荷場印字区分","集約解除指定","編集０１","編集０２","編集０３","編集０４","編集０５","編集０６","編集０７","編集０８","編集０９","編集１０"
             ];
@@ -398,18 +377,16 @@
                 let r = ord.rawRow;
                 let newRow = new Array(74).fill("");
 
-                // 佐川フォーマットへのマッピング
                 newRow[3] = String(r[42] || '').trim(); // お届け先郵便番号
                 newRow[4] = String(r[43] || '').trim(); // お届け先住所１
-                newRow[7] = String(r[40] || '').trim(); // お届け先名称１（宛名）
-                newRow[9] = String(r[5] || '').trim();  // お客様管理番号（受注番号など）
+                newRow[7] = String(r[40] || '').trim(); // お届け先名称１
+                newRow[9] = String(r[5] || '').trim();  // お客様管理番号
 
-                // 品名１（index 31）：16文字制限を厳密に適用
                 let itemName = String(r[31] || '').trim();
                 if (itemName.length > 16) {
                     itemName = itemName.substring(0, 16);
                 }
-                newRow[24] = itemName;
+                newRow[24] = itemName; // 品名１ (16文字制限)
 
                 newRow[41] = String(r[34] || '1').trim(); // 出荷個数
                 newRow[60] = todayStr; // 出荷日
@@ -435,7 +412,7 @@
                 htmlPages.push(`<div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;"><div style="font-size:14pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;">出荷検品シート</div><table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:12pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${order.customerName || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:11pt;color:#c0392b;">${order.shopName || ''}</td></tr></table><table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9.5pt;"><b>受注番号:</b> ${order.orderNo}</td><td style="padding:3px 5px;font-size:9.5pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#2c3e50;color:#fff;font-size:9.5pt;"><th style="width:15%;padding:4px;text-align:center;">確認</th><th style="width:70%;padding:4px;text-align:left;">商品名</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead><tbody>${itemsHtml}</tbody></table></div>`);
             });
             const printWin = window.open('', '_blank');
-            printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
+            printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
             printWin.document.close();
         }
     </script>
