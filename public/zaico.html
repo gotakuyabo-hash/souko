@@ -42,6 +42,7 @@
                 </div>
                 <div class="actions-bar" id="actionsBar" style="display:none;">
                     <button onclick="sortByShelf()">棚番順でソート</button>
+                    <button onclick="saveAllOrders()" class="btn-success">変更した明細を一括保存して計算</button>
                     <button onclick="sendToZaico()" class="btn-success">zaicoに出庫指示を送信</button>
                 </div>
                 <div id="resultArea"></div>
@@ -231,8 +232,8 @@
                     <td>${item.productName}</td>
                     <td><code>${item.barcode}</code></td>
                     <td>${item.orderQty}</td>
-                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;"></td>
-                    <td><input type="text" id="shelf_${index}" value="${item.shelfNumber || ''}" style="width: 80px;" placeholder="例: A-1-2"></td>
+                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
+                    <td><input type="text" id="shelf_${index}" value="${item.shelfNumber || ''}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
                     <td><button onclick="registerItem('${item.barcode}', ${index}, ${item.orderQty}, \`${item.productName.replace(/`/g, '\\`')}\`)">保存して計算</button></td>
                 </tr>`;
@@ -242,7 +243,18 @@
             document.getElementById('resultArea').innerHTML = html;
         }
 
-        async function registerItem(barcode, index, orderQty, productName) {
+        function handleKeydown(event, index) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                // 現在の行を保存して計算
+                const item = currentResults[index];
+                if (item) {
+                    registerItem(item.barcode, index, item.orderQty, item.productName, true);
+                }
+            }
+        }
+
+        async function registerItem(barcode, index, orderQty, productName, isSilent = false) {
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
             const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
 
@@ -261,14 +273,68 @@
                     currentResults[index].shelfNumber = shelfNumber;
                     currentResults[index].pickCount = orderQty * multiplier;
                     document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                    alert('保存しました！');
+                    
+                    if (!isSilent) {
+                        alert('保存しました！');
+                    } else {
+                        // Enter時の次の入力欄へのフォーカス移動や視覚的フィードバック（任意）
+                        const nextShelf = document.getElementById(`shelf_${index + 1}`);
+                        if (nextShelf) nextShelf.focus();
+                    }
                 } else {
-                    alert('保存失敗: ' + data.error);
+                    if (!isSilent) alert('保存失敗: ' + data.error);
                 }
             } catch (err) {
                 console.error(err);
-                alert('通信エラーが発生しました。');
+                if (!isSilent) alert('通信エラーが発生しました。');
             }
+        }
+
+        async function saveAllOrders() {
+            if (!confirm('画面に表示されているすべての明細の変更内容を一括で保存・計算しますか？')) return;
+
+            const rows = document.querySelectorAll('#resultArea tbody tr');
+            let successCount = 0;
+            let failCount = 0;
+
+            for (let index = 0; index < currentResults.length; index++) {
+                const item = currentResults[index];
+                const multInput = document.getElementById(`mult_${index}`);
+                const shelfInput = document.getElementById(`shelf_${index}`);
+
+                if (multInput && shelfInput) {
+                    const multiplier = Number(multInput.value) || 1;
+                    const shelfNumber = shelfInput.value.trim();
+                    const barcode = item.barcode;
+                    const orderQty = item.orderQty;
+                    const productName = item.productName;
+
+                    try {
+                        const res = await fetch(URL_SET_MULTIPLIER, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
+                        });
+                        const data = await res.json();
+
+                        if (data.success) {
+                            successCount++;
+                            const row = document.getElementById(`row_${index}`);
+                            row.classList.remove('unregistered');
+                            currentResults[index].multiplier = multiplier;
+                            currentResults[index].shelfNumber = shelfNumber;
+                            currentResults[index].pickCount = orderQty * multiplier;
+                            document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
+                        } else {
+                            failCount++;
+                        }
+                    } catch (err) {
+                        failCount++;
+                    }
+                }
+            }
+
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
         }
 
         function sortByShelf() {
