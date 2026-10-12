@@ -16,21 +16,23 @@
         <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
         <div class="card">
             <div class="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
-                <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動整形ツール</h2>
+                <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動連携ツール</h2>
                 <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
             </div>
-            <p class="text-xs text-slate-500 mb-4">ファイル名に <code class="bg-slate-100 px-1 py-0.5 rounded text-rose-600 font-bold">order</code> または <code class="bg-slate-100 px-1 py-0.5 rounded text-rose-600 font-bold">受注</code> を含むCSVファイルをドラッグ＆ドロップしてください（複数可）。</p>
+            <p class="text-xs text-slate-500 mb-4">「受注データCSV」と「送り状データ（佐川/ヤマト）CSV」を<span class="font-bold text-sky-600">まとめて一緒にドラッグ＆ドロップ</span>してください。</p>
 
             <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                 <div class="text-3xl mb-1">📂</div>
-                <div class="font-bold text-slate-700 text-sm">ここに受注CSVファイルをドラッグ＆ドロップ（複数可）</div>
-                <p class="text-xs text-slate-500 mt-1">またはクリックしてファイルを選択</p>
+                <div class="font-bold text-slate-700 text-sm">ここにすべてのCSVをドラッグ＆ドロップ（複数可）</div>
+                <p class="text-xs text-slate-500 mt-1">中身を自動判別して紐付けます</p>
                 <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
             </div>
 
-            <div id="fileStatus" class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded mb-4 font-mono">読み込まれたファイル: なし</div>
-
-            <div id="status" class="text-sm font-bold text-sky-600 mb-3">ファイルを選択してください</div>
+            <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
+                <div id="statusOrder">📦 受注データ: <span class="text-slate-400">（未読み込み）</span></div>
+                <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
+                <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
+            </div>
 
             <!-- 受注データ基準のソート機能エリア -->
             <div id="sortControlArea" class="hidden bg-slate-50 p-3.5 rounded border border-slate-200 mb-4">
@@ -38,8 +40,6 @@
                 <div class="flex flex-wrap items-center gap-2">
                     <select id="sortColumnSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white flex-1 min-w-[180px] cursor-pointer">
                         <option value="">（ソートする列を選択）</option>
-                        <option value="30">商品コード (列 30)</option>
-                        <option value="27">メモ１ (列 27)</option>
                     </select>
                     <select id="sortDirectionSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white cursor-pointer">
                         <option value="asc">昇順 (古い順 / A→Z)</option>
@@ -63,18 +63,23 @@
 
             <div class="flex gap-3 flex-wrap">
                 <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
-                <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 CSV出力</button>
-                <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川CSV出力（16文字制限）</button>
+                <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
+                <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力</button>
             </div>
         </div>
     </div>
 
     <script>
-        let loadedFiles = {};
-        let loadedRows = [];
-        let sortedRows = [];
-        let originalRows = [];
-        let headerRow = [];
+        // データホルダー（GASの仕組みを再現）
+        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+        let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+        let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+        
+        let sortedOrderRows = [];
+        let originalOrderRows = [];
+
+        // 列マッピング用
+        let colMap = { shop: -1, orderNo: -1, name: -1, itemCode: -1, itemName: -1, qty: -1 };
 
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
@@ -83,14 +88,17 @@
         document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
 
         function resetData() {
-            loadedFiles = {};
-            loadedRows = [];
-            sortedRows = [];
-            originalRows = [];
-            headerRow = [];
+            orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+            sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+            yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+            sortedOrderRows = [];
+            originalOrderRows = [];
             document.getElementById('fileInput').value = '';
-            document.getElementById('fileStatus').textContent = "読み込まれたファイル: なし";
-            document.getElementById('status').textContent = "ファイルを選択してください";
+            
+            document.getElementById('statusOrder').innerHTML = `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+            
             document.getElementById('sortControlArea').classList.add('hidden');
             document.getElementById('orderTableBody').innerHTML = '<tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>';
             document.getElementById('printBtn').disabled = true;
@@ -98,20 +106,30 @@
             document.getElementById('ehidenBtn').disabled = true;
         }
 
-        function isOrderFile(fileName) {
-            const lower = fileName.toLowerCase();
-            return lower.indexOf('order') !== -1 || lower.indexOf('受注') !== -1;
+        // ファイル種別の自動判別（GASの getTargetSheetName_ に相当）
+        function getFileType(fileName, headerStr) {
+            let lower = fileName.toLowerCase();
+            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
+            if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
+            if (lower.includes('yamato') || lower.includes('ヤマト') || lower.includes('b2') || lower.includes('クロネコ') || lower.includes('送り状')) return 'yamato';
+            
+            if (headerStr.includes('お届け先コード') || headerStr.includes('お客様管理番号') || headerStr.includes('e飛伝')) return 'sagawa';
+            if (headerStr.includes('送り状種類') || headerStr.includes('出荷予定日')) return 'yamato';
+            return 'order'; // フォールバック
+        }
+
+        // 受注番号のゆらぎ吸収（GASの cleanOrderNoNormalized_ に相当）
+        function cleanOrderNoNormalized(rawStr) {
+            if (!rawStr) return "";
+            return String(rawStr).replace(/^No:?[\.\s]*/i, "")
+                                 .replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                 .replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "")
+                                 .trim().toLowerCase();
         }
 
         function handleFiles(files) {
-            let skippedFiles = [];
+            let processedCount = 0;
             Array.from(files).forEach(file => {
-                // 送り状データなどの非受注ファイルを厳格に弾く
-                if (!isOrderFile(file.name)) {
-                    skippedFiles.push(file.name);
-                    return;
-                }
-
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const buffer = e.target.result;
@@ -120,134 +138,245 @@
                     const text = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
                     const rows = parseRobustCSV(text);
 
-                    if (rows.length === 0) return;
-
-                    let dataStartIndex = 0;
-                    for (let i = 0; i < rows.length; i++) {
-                        if (rows[i].length > 5 && (rows[i].some(c => c.includes('受注番号') || c.includes('コントロールカラム') || c.includes('受注ID')))) {
-                            if (headerRow.length === 0) headerRow = rows[i];
-                            dataStartIndex = i + 1;
-                            break;
+                    if (rows.length > 0) {
+                        let headerRow = [];
+                        let dataStartIndex = 0;
+                        for (let i = 0; i < rows.length; i++) {
+                            if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('コントロールカラム') || String(c).includes('お届け先') || String(c).includes('受注ID')))) {
+                                headerRow = rows[i];
+                                dataStartIndex = i + 1;
+                                break;
+                            }
+                        }
+                        if (headerRow.length === 0) { headerRow = rows[0]; dataStartIndex = 1; }
+                        
+                        let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
+                        let type = getFileType(file.name, headerRow.join(','));
+                        
+                        if (type === 'order') {
+                            orderData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
+                        } else if (type === 'sagawa') {
+                            sagawaData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
+                        } else if (type === 'yamato') {
+                            yamatoData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
                         }
                     }
-
-                    if (headerRow.length === 0) {
-                        headerRow = rows[0];
-                        dataStartIndex = 1;
+                    
+                    processedCount++;
+                    if (processedCount === files.length) {
+                        rebuildData();
                     }
-
-                    let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => c.trim() !== ''));
-                    loadedFiles[file.name] = fileRows;
-
-                    rebuildAllRows();
                 };
                 reader.readAsArrayBuffer(file);
             });
-
-            if (skippedFiles.length > 0) {
-                alert(`⚠️ 以下のファイルは「order」または「受注」が含まれていないためスキップされました:\n${skippedFiles.join(', ')}`);
-            }
         }
 
-        function rebuildAllRows() {
-            loadedRows = [];
-            for (let fname in loadedFiles) {
-                loadedRows = loadedRows.concat(loadedFiles[fname]);
+        function rebuildData() {
+            // 受注データの列マッピング特定
+            if (orderData.rows.length > 0) {
+                colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h) === '受注ID');
+                colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
+                colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('氏名'));
+                colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード'));
+                colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名'));
+                colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
+                
+                if (colMap.orderNo === -1) colMap.orderNo = 5; // フォールバック
+                orderData.orderNoColIdx = colMap.orderNo;
+                
+                originalOrderRows = [...orderData.rows];
+                sortedOrderRows = [...orderData.rows];
             }
-            originalRows = [...loadedRows];
-            sortedRows = [...loadedRows];
 
-            const list = Object.keys(loadedFiles);
-            document.getElementById('fileStatus').textContent = list.length > 0 ? "📂 読み込み済み: " + list.join(" / ") : "読み込まれたファイル: なし";
-            if (list.length > 0) {
-                document.getElementById('sortControlArea').classList.remove('hidden');
+            // 受注番号リストをSet化
+            let validOrderSet = new Set();
+            if (orderData.rows.length > 0) {
+                orderData.rows.forEach(r => {
+                    let num = cleanOrderNoNormalized(r[orderData.orderNoColIdx]);
+                    if (num) validOrderSet.add(num);
+                });
             }
+
+            // 送り状側の「受注番号の列」を自動検知（GASの findBestMatchingSheetAndCol_ に相当）
+            function findBestOrderCol(rows) {
+                if (rows.length === 0 || validOrderSet.size === 0) return -1;
+                let bestIdx = 0, maxMatches = 0;
+                let scanRows = Math.min(rows.length, 50);
+                for (let c = 0; c < rows[0].length; c++) {
+                    let matches = 0;
+                    for (let r = 0; r < scanRows; r++) {
+                        if (validOrderSet.has(cleanOrderNoNormalized(rows[r][c]))) matches++;
+                    }
+                    if (matches > maxMatches) { maxMatches = matches; bestIdx = c; }
+                }
+                return maxMatches > 0 ? bestIdx : -1;
+            }
+
+            if (sagawaData.rows.length > 0) sagawaData.orderNoColIdx = findBestOrderCol(sagawaData.rows);
+            if (yamatoData.rows.length > 0) yamatoData.orderNoColIdx = findBestOrderCol(yamatoData.rows);
+
+            updateUIStatus();
+            setupSortDropdown();
             renderTable();
+        }
+
+        function updateUIStatus() {
+            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+
+            if (orderData.rows.length > 0) document.getElementById('sortControlArea').classList.remove('hidden');
+            
+            document.getElementById('printBtn').disabled = (orderData.rows.length === 0);
+            document.getElementById('yamatoBtn').disabled = (orderData.rows.length === 0 || yamatoData.rows.length === 0);
+            document.getElementById('ehidenBtn').disabled = (orderData.rows.length === 0 || sagawaData.rows.length === 0);
+        }
+
+        function setupSortDropdown() {
+            const select = document.getElementById('sortColumnSelect');
+            select.innerHTML = '<option value="">（ソートする列を選択）</option>';
+            if (orderData.header.length === 0) return;
+            
+            // 商品コードとメモ１を優先
+            let pCodeIdx = orderData.header.findIndex(h => String(h).includes('商品コード'));
+            let memoIdx = orderData.header.findIndex(h => String(h).includes('メモ1') || String(h).includes('メモ１'));
+            
+            if (pCodeIdx !== -1) select.appendChild(new Option(`商品コード (列 ${pCodeIdx})`, pCodeIdx));
+            if (memoIdx !== -1) select.appendChild(new Option(`メモ１ (列 ${memoIdx})`, memoIdx));
+            
+            if (select.options.length <= 1) { // 見つからなければ代替追加
+                select.appendChild(new Option(`列 30 (商品コード想定)`, 30));
+                select.appendChild(new Option(`列 27 (メモ１想定)`, 27));
+            }
         }
 
         function applyDynamicSort() {
             const colIndexVal = document.getElementById('sortColumnSelect').value;
             const direction = document.getElementById('sortDirectionSelect').value;
-
-            if (colIndexVal === "") {
-                alert('ソートする列を選択してください。');
-                return;
-            }
+            if (colIndexVal === "") { alert('ソートする列を選択してください。'); return; }
 
             const colIndex = parseInt(colIndexVal, 10);
-
-            sortedRows = [...originalRows].sort((a, b) => {
+            sortedOrderRows = [...originalOrderRows].sort((a, b) => {
                 let valA = a[colIndex] !== undefined ? String(a[colIndex]).trim() : '';
                 let valB = b[colIndex] !== undefined ? String(b[colIndex]).trim() : '';
-
                 let cmp = valA.localeCompare(valB, 'ja', { numeric: true, sensitivity: 'base' });
                 return direction === 'asc' ? cmp : -cmp;
             });
-
             renderTable();
         }
 
         function resetSort() {
-            document.getElementById('sortColumnSelect').value = "30";
+            document.getElementById('sortColumnSelect').value = "";
             document.getElementById('sortDirectionSelect').value = "asc";
-            sortedRows = [...originalRows];
+            sortedOrderRows = [...originalOrderRows];
             renderTable();
         }
 
+        function renderTable() {
+            const tbody = document.getElementById('orderTableBody');
+            tbody.innerHTML = '';
+            if (sortedOrderRows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>';
+                return;
+            }
+            sortedOrderRows.forEach(r => {
+                let tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 hover:bg-slate-50";
+                let shop = colMap.shop !== -1 ? r[colMap.shop] : '';
+                let orderNo = colMap.orderNo !== -1 ? r[colMap.orderNo] : '';
+                let name = colMap.name !== -1 ? r[colMap.name] : '';
+                let item = colMap.itemName !== -1 ? r[colMap.itemName] : '';
+                tr.innerHTML = `<td class="p-2">${shop}</td><td class="p-2 font-bold">${orderNo}</td><td class="p-2">${name}</td><td class="p-2">${item}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function exportYamatoCsv() {
+            let outputRows = [yamatoData.header];
+            let todayStr = getTodayString();
+            
+            // 受注データのソート順に従ってヤマトデータを出力
+            sortedOrderRows.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
+                if (!oNum) return;
+                
+                let matchedYRow = yamatoData.rows.find(r => cleanOrderNoNormalized(r[yamatoData.orderNoColIdx]) === oNum);
+                if (matchedYRow) {
+                    let newRow = [...matchedYRow];
+                    while (newRow.length < 42) newRow.push("");
+                    newRow[4] = todayStr; // 出荷予定日
+                    newRow[39] = '09050540672'; // 電話番号補正
+                    newRow[26] = ""; // 請求金額クリア
+                    outputRows.push(newRow);
+                }
+            });
+            if (outputRows.length <= 1) { alert("紐付くデータがありませんでした。"); return; }
+            exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
+        }
+
+        function exportEhidenCsv() {
+            let outputRows = [sagawaData.header];
+            let targetIdx = sagawaData.header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
+            if (targetIdx === -1) targetIdx = 24; // 佐川フォーマット品名1の位置
+            
+            // 受注データのソート順に従って佐川データを出力
+            sortedOrderRows.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
+                if (!oNum) return;
+                
+                let matchedSRow = sagawaData.rows.find(r => cleanOrderNoNormalized(r[sagawaData.orderNoColIdx]) === oNum);
+                if (matchedSRow) {
+                    let newRow = [...matchedSRow];
+                    if (newRow[targetIdx]) {
+                        let val = String(newRow[targetIdx]).trim();
+                        if (val.length > 16) newRow[targetIdx] = val.substring(0, 16); // 16文字制限
+                    }
+                    outputRows.push(newRow);
+                }
+            });
+            if (outputRows.length <= 1) { alert("紐付くデータがありませんでした。"); return; }
+            exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
+        }
+
+        function openPrintPreview() {
+            const todayStr = new Date().toLocaleDateString();
+            let htmlPages = [];
+            sortedOrderRows.forEach(r => {
+                let shop = colMap.shop !== -1 ? r[colMap.shop] : '';
+                let orderNo = colMap.orderNo !== -1 ? r[colMap.orderNo] : '';
+                let name = colMap.name !== -1 ? r[colMap.name] : '';
+                let itemCode = colMap.itemCode !== -1 ? r[colMap.itemCode] : '';
+                let itemName = colMap.itemName !== -1 ? r[colMap.itemName] : '';
+                let qty = colMap.qty !== -1 ? r[colMap.qty] : '1';
+                
+                htmlPages.push(`
+                <div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;">
+                    <div style="font-size:14pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;">出荷検品シート</div>
+                    <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:12pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:11pt;color:#c0392b;">${shop}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9.5pt;"><b>受注番号:</b> ${orderNo}</td><td style="padding:3px 5px;font-size:9.5pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#2c3e50;color:#fff;font-size:9.5pt;"><th style="width:15%;padding:4px;text-align:center;">確認</th><th style="width:70%;padding:4px;text-align:left;">商品名</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead><tbody><tr><td style="text-align:center;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td><td style="font-size:10.5pt;padding:4px;">${itemName}<br><span style="font-size:8pt;color:#666;">${itemCode}</span></td><td style="text-align:center;font-weight:bold;font-size:12pt;padding:4px;">${qty}</td></tr></tbody></table>
+                </div>`);
+            });
+            const printWin = window.open('', '_blank');
+            printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
+            printWin.document.close();
+        }
+
+        // CSV出力共通関数
         function parseRobustCSV(text) {
             let rows = [], currentRow = [], currentVal = '', inQuotes = false;
             for (let i = 0; i < text.length; i++) {
                 let c = text[i], nextC = text[i + 1];
-                if (inQuotes) {
-                    if (c === '"') {
-                        if (nextC === '"') { currentVal += '"'; i++; }
-                        else { inQuotes = false; }
-                    } else { currentVal += c; }
-                } else {
-                    if (c === '"') { inQuotes = true; }
-                    else if (c === ',') { currentRow.push(currentVal); currentVal = ''; }
-                    else if (c === '\r' || c === '\n') {
-                        if (c === '\r' && nextC === '\n') { i++; }
-                        currentRow.push(currentVal); rows.push(currentRow); currentRow = []; currentVal = '';
-                    } else { currentVal += c; }
-                }
+                if (inQuotes) { if (c === '"') { if (nextC === '"') { currentVal += '"'; i++; } else { inQuotes = false; } } else { currentVal += c; } } else { if (c === '"') { inQuotes = true; } else if (c === ',') { currentRow.push(currentVal); currentVal = ''; } else if (c === '\r' || c === '\n') { if (c === '\r' && nextC === '\n') { i++; } currentRow.push(currentVal); rows.push(currentRow); currentRow = []; currentVal = ''; } else { currentVal += c; } }
             }
             if (currentVal !== '' || currentRow.length > 0) { currentRow.push(currentVal); rows.push(currentRow); }
             return rows;
         }
-
-        function renderTable() {
-            const statusEl = document.getElementById('status');
-            const tbody = document.getElementById('orderTableBody');
-            tbody.innerHTML = '';
-
-            if (sortedRows.length > 0) {
-                statusEl.textContent = `✅ 受注データ読込成功: 合計 ${sortedRows.length}件`;
-                document.getElementById('printBtn').disabled = false;
-                document.getElementById('yamatoBtn').disabled = false;
-                document.getElementById('ehidenBtn').disabled = false;
-
-                sortedRows.forEach(r => {
-                    let tr = document.createElement('tr');
-                    tr.className = "border-b border-slate-100 hover:bg-slate-50";
-                    let shop = r[3] || ''; // 店舗名
-                    let orderNo = r[5] || ''; // 受注番号
-                    let name = r[40] || ''; // 配送先氏名
-                    let item = r[31] || ''; // 商品名
-                    tr.innerHTML = `<td class="p-2">${shop}</td><td class="p-2 font-bold">${orderNo}</td><td class="p-2">${name}</td><td class="p-2">${item}</td>`;
-                    tbody.appendChild(tr);
-                });
-            } else {
-                statusEl.textContent = `⚠ 受注データが見つかりませんでした。`;
-            }
-        }
-
         function parseCsvStringToUint8(csvString) {
             const unicodeList = Encoding.stringToCode(csvString);
             const sjisCodeList = Encoding.convert(unicodeList, { to: 'SJIS', from: 'UNICODE', type: 'array' });
             return new Uint8Array(sjisCodeList);
         }
-
         function exportCsvGeneric(dataOrUint8, filename) {
             let uint8Array = dataOrUint8;
             if (Array.isArray(dataOrUint8)) {
@@ -262,76 +391,9 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
-
         function getTodayString() {
             const d = new Date();
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${y}/${m}/${day}`;
-        }
-
-        // 受注データを基準にソート順を完全反映したヤマトB2 CSV出力
-        function exportYamatoCsv() {
-            if (sortedRows.length === 0) {
-                alert('出力するデータがありません。');
-                return;
-            }
-
-            const todayStr = getTodayString();
-            let processedRows = sortedRows.map(row => {
-                let r = [...row];
-                while (r.length < 42) r.push("");
-                r[4] = todayStr;       // 出荷日
-                r[39] = '09050540672'; // 依頼主電話番号
-                r[26] = "";            // 請求金額クリアなど
-                return r;
-            });
-
-            let outputRows = [headerRow, ...processedRows];
-            exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
-        }
-
-        // 受注データを基準にソート順を完全反映した佐川（e飛伝）CSV出力（品名16文字制限）
-        function exportEhidenCsv() {
-            if (sortedRows.length === 0) {
-                alert('出力するデータがありません。');
-                return;
-            }
-
-            let processedRows = sortedRows.map(row => {
-                let r = [...row];
-                let targetIdx = 31; // 商品名列 (列31)
-                if (r[targetIdx]) {
-                    let val = String(r[targetIdx]).trim();
-                    if (val.length > 16) {
-                        r[targetIdx] = val.substring(0, 16);
-                    }
-                }
-                return r;
-            });
-
-            let outputRows = [headerRow, ...processedRows];
-            exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
-        }
-
-        function openPrintPreview() {
-            if (sortedRows.length === 0) {
-                alert('印刷するデータがありません。');
-                return;
-            }
-            const todayStr = new Date().toLocaleDateString();
-            let htmlPages = [];
-            sortedRows.forEach(r => {
-                let shop = r[3] || '';
-                let orderNo = r[5] || '';
-                let name = r[40] || '';
-                let item = r[31] || '';
-                htmlPages.push(`<div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;"><div style="font-size:14pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;">出荷検品シート</div><table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:12pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:11pt;color:#c0392b;">${shop}</td></tr></table><table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9.5pt;"><b>受注番号:</b> ${orderNo}</td><td style="padding:3px 5px;font-size:9.5pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#2c3e50;color:#fff;font-size:9.5pt;"><th style="width:15%;padding:4px;text-align:center;">確認</th><th style="width:70%;padding:4px;text-align:left;">商品名</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead><tbody><tr><td style="text-align:center;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td><td style="font-size:10.5pt;padding:4px;">${item}</td><td style="text-align:center;font-weight:bold;font-size:12pt;padding:4px;">1</td></tr></tbody></table></div>`);
-            });
-            const printWin = window.open('', '_blank');
-            printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
-            printWin.document.close();
+            return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
         }
     </script>
 </body>
