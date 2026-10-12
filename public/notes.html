@@ -77,23 +77,20 @@
   <textarea id="n-content" class="w-full p-2 border rounded mt-1 text-sm" rows="3" placeholder="詳細を入力" required></textarea>
   </div>
   
-  <!-- 画像添付エリア (カメラ起動 & ファイル選択) -->
+  <!-- 画像添付エリア (複数枚対応) -->
   <div class="mb-4">
-      <label class="block text-xs font-bold text-slate-700 mb-1">画像添付 (カメラ撮影 または ファイル選択)</label>
+      <label class="block text-xs font-bold text-slate-700 mb-1">画像添付 (複数選択・カメラ撮影可)</label>
       <div class="flex flex-wrap gap-2 mb-2">
           <label class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1 shadow-sm">
               📷 カメラで撮影
               <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden">
           </label>
           <label class="bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-1">
-              📁 ファイル選択
-              <input type="file" id="fileInput" accept="image/*" class="hidden">
+              📁 ファイル選択 (複数可)
+              <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
           </label>
       </div>
-      <div id="imagePreviewContainer" class="mt-2 hidden relative inline-block">
-          <img id="imagePreview" src="" alt="プレビュー" class="h-24 rounded border border-gray-300 object-cover">
-          <button type="button" onclick="clearImageInput()" class="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold shadow">×</button>
-      </div>
+      <div id="imagePreviewContainer" class="mt-2 flex flex-wrap gap-2"></div>
   </div>
 
   <div class="flex gap-2">
@@ -202,39 +199,77 @@
 
   document.getElementById('n-date').valueAsDate = new Date();
   let allNotes = [];
-  let selectedFile = null;
+  let selectedFiles = []; // 複数ファイルを保持する配列
+  let existingImageUrls = []; // 編集時に既存で保持している画像URL
 
   const cameraInput = document.getElementById('cameraInput');
   const fileInput = document.getElementById('fileInput');
-  const imagePreview = document.getElementById('imagePreview');
   const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 
-  function handleFileSelection(file) {
-      if (file) {
-          selectedFile = file;
+  function renderPreviews() {
+      imagePreviewContainer.innerHTML = '';
+      
+      // 1. 既存の画像（編集時）のプレビュー表示
+      existingImageUrls.forEach((url, index) => {
+          const div = document.createElement('div');
+          div.className = 'relative inline-block';
+          div.innerHTML = `
+              <img src="${url}" class="h-24 rounded border border-gray-300 object-cover">
+              <button type="button" onclick="removeExistingImage(${index})" class="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold shadow">×</button>
+          `;
+          imagePreviewContainer.appendChild(div);
+      });
+
+      // 2. 新規選択されたファイルのプレビュー表示
+      selectedFiles.forEach((file, index) => {
           const reader = new FileReader();
-          reader.onload = (event) => {
-              imagePreview.src = event.target.result;
-              imagePreviewContainer.classList.remove('hidden');
+          reader.onload = (e) => {
+              const div = document.createElement('div');
+              div.className = 'relative inline-block';
+              div.innerHTML = `
+                  <img src="${e.target.result}" class="h-24 rounded border border-gray-300 object-cover">
+                  <button type="button" onclick="removeSelectedFile(${index})" class="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold shadow">×</button>
+              `;
+              imagePreviewContainer.appendChild(div);
           };
           reader.readAsDataURL(file);
-      }
+      });
   }
 
+  window.removeSelectedFile = (index) => {
+      selectedFiles.splice(index, 1);
+      renderPreviews();
+  };
+
+  window.removeExistingImage = (index) => {
+      existingImageUrls.splice(index, 1);
+      renderPreviews();
+  };
+
   cameraInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) handleFileSelection(e.target.files[0]);
+      if (e.target.files[0]) {
+          selectedFiles.push(e.target.files[0]);
+          renderPreviews();
+      }
+      cameraInput.value = '';
   });
 
   fileInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) handleFileSelection(e.target.files[0]);
+      if (e.target.files.length > 0) {
+          for (let i = 0; i < e.target.files.length; i++) {
+              selectedFiles.push(e.target.files[i]);
+          }
+          renderPreviews();
+      }
+      fileInput.value = '';
   });
 
   window.clearImageInput = () => {
       cameraInput.value = '';
       fileInput.value = '';
-      selectedFile = null;
-      imagePreviewContainer.classList.add('hidden');
-      imagePreview.src = '';
+      selectedFiles = [];
+      existingImageUrls = [];
+      imagePreviewContainer.innerHTML = '';
   };
 
   window.saveNote = async (e) => {
@@ -253,21 +288,24 @@
   submitBtn.innerText = "保存中...";
 
   try {
-      let imageUrl = null;
-      if (selectedFile) {
-          const storageRef = ref(storage, `shared_notes_images/${Date.now()}_${selectedFile.name}`);
-          const snapshot = await uploadBytes(storageRef, selectedFile);
-          imageUrl = await getDownloadURL(snapshot.ref);
+      // 新規選択されたファイルをアップロードしてURLを取得
+      let newImageUrls = [];
+      for (const file of selectedFiles) {
+          const ext = file.name.split('.').pop();
+          const storageRef = ref(storage, `shared_notes_images/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`);
+          const snapshot = await uploadBytes(storageRef, file);
+          const url = await getDownloadURL(snapshot.ref);
+          newImageUrls.push(url);
       }
 
+      // 既存画像と新しくアップロードした画像を統合
+      const finalImageUrls = [...existingImageUrls, ...newImageUrls];
+      noteData.imageUrls = finalImageUrls; // 配列として保存
+
       if (editId) {
-          if (imageUrl) {
-              noteData.imageUrl = imageUrl;
-          }
           await updateDoc(doc(db, "shared_notes", editId), noteData);
           alert("ノートを更新しました！");
       } else {
-          noteData.imageUrl = imageUrl || null;
           noteData.createdAt = serverTimestamp();
           await addDoc(collection(db, "shared_notes"), noteData);
           alert("ノートを保存しました！");
@@ -291,13 +329,16 @@
   document.getElementById('n-title').value = note.title || '';
   document.getElementById('n-content').value = note.content || '';
 
-  // 編集時に既存画像がある場合のプレビュー表示
-  if (note.imageUrl) {
-      imagePreview.src = note.imageUrl;
-      imagePreviewContainer.classList.remove('hidden');
+  selectedFiles = [];
+  // 従来の単数 imageUrl が保存されている場合の互換性考慮
+  if (note.imageUrls && Array.isArray(note.imageUrls)) {
+      existingImageUrls = [...note.imageUrls];
+  } else if (note.imageUrl) {
+      existingImageUrls = [note.imageUrl];
   } else {
-      clearImageInput();
+      existingImageUrls = [];
   }
+  renderPreviews();
 
   document.getElementById('form-title').innerText = "✏️ ノートを編集中";
   const submitBtn = document.getElementById('submit-btn');
@@ -319,16 +360,20 @@
   document.getElementById('cancel-btn').classList.add('hidden');
   };
 
-  window.deleteNote = (id, imageUrl) => {
+  window.deleteNote = (id, imageUrlsStr) => {
   showConfirmDialog("本当にこのノートを削除しますか？", async () => {
       try {
           await deleteDoc(doc(db, "shared_notes", id));
-          if (imageUrl) {
-              try {
-                  const imageRef = ref(storage, imageUrl);
-                  await deleteObject(imageRef);
-              } catch (imgErr) {
-                  console.log("画像削除スキップ:", imgErr);
+          // 紐づくStorage上の画像も削除
+          if (imageUrlsStr) {
+              const urls = JSON.parse(imageUrlsStr);
+              for (const url of urls) {
+                  try {
+                      const imageRef = ref(storage, url);
+                      await deleteObject(imageRef);
+                  } catch (imgErr) {
+                      console.log("画像削除スキップ:", imgErr);
+                  }
               }
           }
       } catch(err) {
@@ -388,14 +433,23 @@
   }
 
   list.innerHTML = notes.map(n => {
-      let imageHtml = '';
-      if (n.imageUrl) {
-          imageHtml = `
-              <div class="mb-3">
-                  <img src="${n.imageUrl}" alt="添付画像" onclick="openImageModal('${n.imageUrl}')" class="h-24 w-auto rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition shadow-sm">
-              </div>
-          `;
+      let urls = [];
+      if (n.imageUrls && Array.isArray(n.imageUrls)) {
+          urls = n.imageUrls;
+      } else if (n.imageUrl) {
+          urls = [n.imageUrl];
       }
+
+      let imageHtml = '';
+      if (urls.length > 0) {
+          imageHtml = `<div class="mb-3 flex flex-wrap gap-2">`;
+          urls.forEach(url => {
+              imageHtml += `<img src="${url}" alt="添付画像" onclick="openImageModal('${url}')" class="h-20 w-20 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition shadow-sm">`;
+          });
+          imageHtml += `</div>`;
+      }
+
+      const urlsParam = JSON.stringify(urls).replace(/"/g, '&quot;');
 
       return `
       <div class="card" style="margin-bottom: 10px;">
@@ -409,7 +463,7 @@
       </div>
       <div class="flex gap-2">
       <button onclick="editNote('${n.id}')" class="text-xs text-blue-600 hover:underline">編集</button>
-      <button onclick="deleteNote('${n.id}', '${n.imageUrl || ''}')" class="text-xs text-red-600 hover:underline">削除</button>
+      <button onclick="deleteNote('${n.id}', '${urlsParam}')" class="text-xs text-red-600 hover:underline">削除</button>
       </div>
       </div>
       <h3 class="font-bold text-base text-slate-800 mb-1">${escapeHtml(n.title)}</h3>
