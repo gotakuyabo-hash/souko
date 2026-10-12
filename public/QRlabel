@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>52mm×29mm QRコードラベル</title>
+    <!-- 外部のQRコード生成ライブラリ (QRCode.js) を読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        /* 画面表示用のスタイル */
+        body {
+            font-family: sans-serif;
+            background: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .no-print {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .no-print input[type="text"] {
+            width: 250px;
+            padding: 8px;
+            font-size: 14px;
+            margin-right: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .no-print button {
+            padding: 8px 16px;
+            font-size: 14px;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .no-print button:hover {
+            background: #0056b3;
+        }
+
+        /* 52mm × 29mm のラベルコンテナ */
+        .label-container {
+            width: 52mm;
+            height: 29mm;
+            background: #fff;
+            box-sizing: border-box;
+            padding: 2mm;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px dashed #ccc; /* 画面確認用の枠線 */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+
+        .qr-area {
+            width: 22mm;
+            height: 22mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .qr-area img {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .text-area {
+            flex: 1;
+            margin-left: 3mm;
+            font-size: 9pt;
+            line-height: 1.2;
+            word-break: break-all;
+            color: #333;
+        }
+
+        /* 印刷時の設定：余白を消し、ラベルサイズに強制 */
+        @media print {
+            body {
+                background: none;
+                display: block;
+            }
+
+            .no-print {
+                display: none;
+            }
+
+            .label-container {
+                border: none;
+                box-shadow: none;
+                margin: 0;
+                page-break-after: always;
+            }
+
+            @page {
+                size: 52mm 29mm;
+                margin: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="no-print">
+        <h3>ラベル設定</h3>
+        <p>QRコードにする文字列やURLを入力してください</p>
+        <input type="text" id="inputText" value="https://example.com" placeholder="テキストまたはURLを入力">
+        <button onclick="generateQR()">更新</button>
+        <button onclick="window.print()" style="background: #28a745; margin-left: 10px;">印刷する</button>
+    </div>
+
+    <!-- 52mm × 29mm ラベル本体 -->
+    <div class="label-container">
+        <div class="qr-area" id="qrcode"></div>
+        <div class="text-area" id="displayText">https://example.com</div>
+    </div>
+
+    <script>
+        // 初回QRコード生成
+        var qrcode = new QRCode(document.getElementById("qrcode"), {
+            text: "https://example.com",
+            width: 128,
+            height: 128,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.M
+        });
+
+        function generateQR() {
+            var val = document.getElementById("inputText").value;
+            document.getElementById("qrcode").innerHTML = ""; // 既存のQRをクリア
+            
+            new QRCode(document.getElementById("qrcode"), {
+                text: val,
+                width: 128,
+                height: 128,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+
+            document.getElementById("displayText").innerText = val;
+        }
+    </script>
+
+</body>
+</html>
