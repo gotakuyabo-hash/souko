@@ -22,7 +22,7 @@
             height: 29mm;
             background: #fff;
             box-sizing: border-box;
-            padding: 2mm;
+            padding: 1mm 1.5mm; /* 余白をコンパクトに調整してはみ出しを防止 */
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -33,8 +33,8 @@
         }
 
         .qr-area {
-            width: 22mm;
-            height: 22mm;
+            width: 25mm; /* QRコードが収まりやすいサイズに微調整 */
+            height: 25mm;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -48,21 +48,22 @@
 
         .text-area {
             flex: 1;
-            margin-left: 2.5mm;
-            font-size: 8.5pt;
-            line-height: 1.25;
+            margin-left: 2mm;
+            font-size: 7.5pt; /* フォントサイズを調整して確実に枠内に収める */
+            line-height: 1.15;
             word-break: break-all;
             overflow: hidden;
             display: -webkit-box;
-            -webkit-line-clamp: 4;
+            -webkit-line-clamp: 5;
             -webkit-box-orient: vertical;
         }
 
-        /* 印刷時の設定：余白を消し、52mm×29mmのラベルサイズに強制 */
+        /* 印刷時の設定：余白を一切なくし、52mm×29mmのサイズに完全に合わせる */
         @media print {
             body {
                 background: none;
                 padding: 0;
+                margin: 0;
                 color: #000;
             }
 
@@ -78,13 +79,15 @@
                 border: none !important;
                 box-shadow: none !important;
                 margin: 0;
+                width: 52mm;
+                height: 29mm;
                 page-break-after: always;
                 break-after: page;
             }
 
             @page {
                 size: 52mm 29mm;
-                margin: 0;
+                margin: 0mm;
             }
         }
     </style>
@@ -95,7 +98,7 @@
         <header class="mb-5 flex justify-between items-center px-1">
             <div>
                 <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ 52mm×29mm QRラベル作成</h1>
-                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成（Firebase履歴連動）</p>
+                <p class="text-[11px] text-slate-400">テキスト・URLからQRコードを生成（サイズ最適化版）</p>
             </div>
             <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
                 ← ポータルへ
@@ -150,10 +153,10 @@
         </div>
     </div>
 
-    <!-- 印刷用コンテナ（画面上は非表示、印刷時のみ全枚数展開される） -->
+    <!-- 印刷用コンテナ -->
     <div id="printArea" class="print-area" style="display: none;"></div>
 
-    <!-- Firebase SDK (Modular v10) -->
+    <!-- Firebase SDK & 制御スクリプト -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -171,11 +174,10 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 初期プレビュー描画用インスタンス
         let previewQr = new QRCode(document.getElementById("previewQrcode"), {
             text: "https://example.com",
-            width: 128,
-            height: 128,
+            width: 100,
+            height: 100,
             colorDark : "#000000",
             colorLight : "#ffffff",
             correctLevel : QRCode.CorrectLevel.M
@@ -188,8 +190,8 @@
             document.getElementById("previewQrcode").innerHTML = "";
             new QRCode(document.getElementById("previewQrcode"), {
                 text: val,
-                width: 128,
-                height: 128,
+                width: 100,
+                height: 100,
                 colorDark : "#000000",
                 colorLight : "#ffffff",
                 correctLevel : QRCode.CorrectLevel.M
@@ -217,8 +219,8 @@
 
                 new QRCode(qrArea, {
                     text: val,
-                    width: 128,
-                    height: 128,
+                    width: 100,
+                    height: 100,
                     colorDark : "#000000",
                     colorLight : "#ffffff",
                     correctLevel : QRCode.CorrectLevel.M
@@ -226,7 +228,6 @@
             }
         }
 
-        // 印刷ボタンを押した時：Firestoreに記録してウィンドウ印刷を呼び出す
         window.printAndSave = async function() {
             const val = document.getElementById("inputText").value.trim();
             const count = parseInt(document.getElementById("printCount").value) || 1;
@@ -236,26 +237,22 @@
                 return;
             }
 
-            // プレビュー＆印刷用エリアを最新化
             window.updatePreview();
 
-            // Firestoreへ保存
             try {
                 await addDoc(collection(db, "qr_label_history"), {
                     text: val,
                     count: count,
                     createdAt: serverTimestamp()
                 });
-                loadHistory(); // 履歴リストを再取得
+                loadHistory();
             } catch (e) {
                 console.error("Firestore保存エラー: ", e);
             }
 
-            // 印刷ダイアログの起動
             window.print();
         }
 
-        // 履歴を Firestore から取得して表示
         window.loadHistory = async function() {
             const historyListEl = document.getElementById("historyList");
             historyListEl.innerHTML = '<p class="text-center py-2 text-slate-500">読み込み中...</p>';
@@ -301,11 +298,9 @@
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        // 入力値変更時に自動でプレビュー更新
         document.getElementById("inputText").addEventListener("input", window.updatePreview);
         document.getElementById("printCount").addEventListener("input", window.updatePreview);
 
-        // 初回実行
         window.updatePreview();
         window.loadHistory();
     </script>
