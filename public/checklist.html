@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>倉庫管理ポータル</title>
+    <title>日次報告チェックリスト</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background: #f4f6f8; font-family: sans-serif; padding: 12px; color: #1e293b; }
@@ -87,7 +87,6 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* 💡 通知バッジ（赤丸カウンター）のスタイル */
         .tab-btn-wrapper {
             position: relative;
             flex: 1;
@@ -110,13 +109,14 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             border: 2px solid #f4f6f8;
             pointer-events: none;
-            display: none; /* 初期状態は非表示 */
+            display: none;
         }
     </style>
 </head>
 <body>
     <div style="max-width: 900px; margin: 0 auto;">
-        <!-- タブ切り替えボタン (通知バッジ対応) -->
+        <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
+        <!-- タブ切り替えボタン -->
         <div class="flex gap-2 mb-4">
             <div class="tab-btn-wrapper">
                 <button id="tabBtn-checklist" onclick="switchTab('checklist')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow">📋 日次報告チェックリスト</button>
@@ -218,7 +218,6 @@
                 <h1 class="text-lg font-bold text-slate-800 mb-1">📊 出荷件数 日別集計・サービス管理</h1>
                 <p class="text-xs text-gray-500 mb-3">Firestoreリアルタイム同期版</p>
 
-                <!-- 週次・月次集計表示エリア -->
                 <div class="grid grid-cols-2 gap-2 mb-4">
                     <div class="bg-slate-100 p-3 rounded-lg text-right">
                         <div class="text-xs text-gray-500 font-bold">週次合計 (<span id="weekRange">--</span>)</div>
@@ -276,7 +275,24 @@
 
         const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
 
-        // 💡 ポータルバッジの表示・更新ヘルパー
+        // 💡 ポータルのストレージへ未完了数を書き込む共通関数
+        function updatePortalBadge(cardId, count) {
+            const STORAGE_KEY = 'warehouse_portal_v7_data';
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try {
+                    const portalData = JSON.parse(saved);
+                    const card = portalData.cards.find(c => c.id === cardId);
+                    if (card) {
+                        card.badge = count;
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(portalData));
+                    }
+                } catch (e) {
+                    console.error("Portal badge update error:", e);
+                }
+            }
+        }
+
         function setBadgeCount(tabKey, count) {
             const badge = document.getElementById(`badge-${tabKey}`);
             if (!badge) return;
@@ -288,23 +304,22 @@
             }
         }
 
-        // 💡 外部アプリ（スタッフ間依頼など）の未完了件数をリアルタイム監視してバッジに反映
+        // 💡 スタッフ間依頼の未完了件数を監視し、チェックリストタブおよびポータル（checklist）へ連動
         function watchStaffRequestsBadge() {
             try {
                 onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), (snapshot) => {
                     const requests = snapshot.docs.map(doc => doc.data());
-                    // 未完了（statusがcompletedではないもの）の件数をカウント
                     const pendingCount = requests.filter(r => r.status !== 'completed').length;
                     
-                    // 例として「チェックリスト」タブのところに未完了依頼の件数を表示
                     setBadgeCount('checklist', pendingCount);
+                    // ポータルの「📋 日次チェックリスト」アイコンへバッジ数を反映
+                    updatePortalBadge('checklist', pendingCount);
                 });
             } catch (e) {
                 console.log("Badge watch error:", e);
             }
         }
 
-        // 共通モーダル関連
         const confirmModal = document.getElementById('confirm-modal');
         const confirmMsg = document.getElementById('confirm-msg');
         const confirmYes = document.getElementById('confirm-yes');
@@ -330,7 +345,6 @@
             pendingDeleteCallback = null;
         };
 
-        // タブ切り替え関数
         window.switchTab = (tabName) => {
             const btnChecklist = document.getElementById('tabBtn-checklist');
             const btnShukka = document.getElementById('tabBtn-shukka');
@@ -350,13 +364,11 @@
             }
         };
 
-        // 日付変更時の連動（両方のデータを読み込む）
         window.onDateChange = (date) => {
             loadChecklistByDate(date);
             loadShukkaByDate(date);
         };
 
-        /* ================= 1. 日次報告チェックリスト関連ロジック ================= */
         let autoSaveTimerChecklist = null;
         let lastSavedStateChecklist = null;
         const undoBtnChecklist = document.getElementById('btn-undo-checklist');
@@ -568,8 +580,6 @@
             setTimeout(() => msg.innerText = '', 2500);
         };
 
-
-        /* ================= 2. 出荷件数 日別集計関連ロジック ================= */
         const defaultServices = ['サービス1', 'サービス2', 'サービス3', 'サービス4', 'サービス5', 'サービス6', 'サービス7', 'サービス8'];
         let currentServices = [];
         let autoSaveTimerShukka = null;
@@ -826,12 +836,10 @@
             });
         });
 
-        // 初期化処理
         window.onload = async () => {
             const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
             document.getElementById('commonDate').value = today;
 
-            // チェックリスト側の初期名前ロード
             const savedName = localStorage.getItem('checklist_reporter_name');
             if (savedName) {
                 reporterNameInput.value = savedName;
@@ -839,12 +847,10 @@
             reporterNameInput.addEventListener('input', triggerAutoSaveChecklist);
             reporterNameInput.addEventListener('change', triggerAutoSaveChecklist);
 
-            // 両方の初期データロード
             await loadChecklistByDate(today);
             await initShukkaServices();
             await loadShukkaByDate(today);
 
-            // 💡 通知バッジの監視スタート
             watchStaffRequestsBadge();
         };
     </script>
