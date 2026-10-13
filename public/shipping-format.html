@@ -146,7 +146,8 @@
                             dataStartIndex = 0;
                         } else {
                             for (let i = 0; i < Math.min(rows.length, 5); i++) {
-                                if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('コントロールカラム') || String(c).includes('お届け先') || String(c).includes('受注ID') || String(c).includes('e飛伝')))) {
+                                // ヘッダー判定条件を緩和
+                                if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('受注ID') || String(c).includes('e飛伝') || String(c).includes('氏名') || String(c).includes('店舗')))) {
                                     headerRow = rows[i];
                                     dataStartIndex = i + 1;
                                     break;
@@ -177,18 +178,25 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                let orderNoIdx = orderData.header.findIndex(h => String(h).trim() === '受注番号');
-                if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注番号'));
-                if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注ID'));
-                colMap.orderNo = orderNoIdx;
+                // 列のマッピング（ヘッダー名で検索し、見つからなければ一般的な列番号をフォールバックとして指定）
+                colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
+                if (colMap.orderNo === -1) colMap.orderNo = 5; // 一般的な受注番号の列
 
                 colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
-                colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('氏名'));
-                colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード'));
-                colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名'));
-                colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
+                if (colMap.shop === -1) colMap.shop = 1;
+
+                colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('お名前') || String(h).includes('氏名'));
+                if (colMap.name === -1) colMap.name = 28; // お届け先氏名の一般的な列
+
+                colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
+                if (colMap.itemCode === -1) colMap.itemCode = 49;
+
+                colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
+                if (colMap.itemName === -1) colMap.itemName = 50;
+
+                colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数') || String(h).includes('個'));
+                if (colMap.qty === -1) colMap.qty = 53;
                 
-                if (colMap.orderNo === -1) colMap.orderNo = 5;
                 orderData.orderNoColIdx = colMap.orderNo;
                 
                 originalOrderRows = [...orderData.rows];
@@ -285,10 +293,13 @@
             sortedOrderRows.forEach(r => {
                 let tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 hover:bg-slate-50";
-                let shop = colMap.shop !== -1 ? r[colMap.shop] : '';
-                let orderNo = colMap.orderNo !== -1 ? r[colMap.orderNo] : '';
-                let name = colMap.name !== -1 ? r[colMap.name] : '';
-                let item = colMap.itemName !== -1 ? r[colMap.itemName] : '';
+                
+                // 列が見つからなくても空文字ではなくフォールバックの列から取得を試みる
+                let shop = r[colMap.shop] !== undefined ? r[colMap.shop] : '';
+                let orderNo = r[colMap.orderNo] !== undefined ? r[colMap.orderNo] : '';
+                let name = r[colMap.name] !== undefined ? r[colMap.name] : '';
+                let item = r[colMap.itemName] !== undefined ? r[colMap.itemName] : '';
+                
                 tr.innerHTML = `<td class="p-2">${shop}</td><td class="p-2 font-bold">${orderNo}</td><td class="p-2">${name}</td><td class="p-2">${item}</td>`;
                 tbody.appendChild(tr);
             });
@@ -359,7 +370,7 @@
             let orderGroupMap = new Map();
 
             sortedOrderRows.forEach(r => {
-                let orderNo = colMap.orderNo !== -1 ? r[colMap.orderNo] : '';
+                let orderNo = r[colMap.orderNo] !== undefined ? r[colMap.orderNo] : '';
                 let normalizedNo = cleanOrderNoNormalized(orderNo);
                 if (!normalizedNo) return;
 
@@ -368,8 +379,8 @@
                 if (!orderGroupMap.has(normalizedNo)) {
                     orderGroupMap.set(normalizedNo, {
                         orderNo: orderNo,
-                        shop: colMap.shop !== -1 ? r[colMap.shop] : '',
-                        name: colMap.name !== -1 ? r[colMap.name] : '',
+                        shop: r[colMap.shop] !== undefined ? r[colMap.shop] : '',
+                        name: r[colMap.name] !== undefined ? r[colMap.name] : '',
                         rows: []
                     });
                 }
@@ -378,8 +389,8 @@
 
                 // 項番が "-0"（親行）の行の情報を優先して宛名や店舗名に採用
                 if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
-                    if (colMap.shop !== -1 && r[colMap.shop]) group.shop = r[colMap.shop];
-                    if (colMap.name !== -1 && r[colMap.name]) group.name = r[colMap.name];
+                    if (r[colMap.shop]) group.shop = r[colMap.shop];
+                    if (r[colMap.name]) group.name = r[colMap.name];
                 }
 
                 group.rows.push(r);
@@ -397,9 +408,9 @@
 
                 group.rows.forEach(mRow => {
                     let koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
-                    let itemCode = colMap.itemCode !== -1 ? mRow[colMap.itemCode] : '';
-                    let itemName = colMap.itemName !== -1 ? mRow[colMap.itemName] : '';
-                    let qty = colMap.qty !== -1 ? mRow[colMap.qty] : '1';
+                    let itemCode = mRow[colMap.itemCode] !== undefined ? mRow[colMap.itemCode] : '';
+                    let itemName = mRow[colMap.itemName] !== undefined ? mRow[colMap.itemName] : '';
+                    let qty = mRow[colMap.qty] !== undefined ? mRow[colMap.qty] : '1';
 
                     totalQty += parseInt(qty, 10) || 1;
 
