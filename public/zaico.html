@@ -127,7 +127,7 @@
                         const productName = cols[31];
                         const quantity = cols[34] ? Number(cols[34]) : 1;
 
-                        // ★ AF列（商品名）の最後の単語をバーコードとして抽出
+                        // AF列（商品名）の最後の単語をバーコードとして抽出
                         const parts = productName.trim().split(/\s+/);
                         const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
 
@@ -194,6 +194,14 @@
                 }
 
                 currentResults = Array.from(aggregatedMap.values());
+
+                // ★ 自動で棚番順にソート（昇順）を適用してからレンダリング
+                currentResults.sort((a, b) => {
+                    const sA = a.shelfNumber || "";
+                    const sB = b.shelfNumber || "";
+                    return sA.localeCompare(sB);
+                });
+
                 renderTable(currentResults);
                 document.getElementById('actionsBar').style.display = 'flex';
             } catch (err) {
@@ -244,7 +252,7 @@
         }
 
         window.renderTable = (results) => {
-            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み）</b></p>
+            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み・棚番順自動ソート）</b></p>
                 <table>
                 <thead>
                     <tr>
@@ -335,7 +343,6 @@
             }
         };
 
-        // ★ 受注タブ：棚番が空欄のものは一括保存の対象外にする
         window.saveAllOrders = async () => {
             if (!confirm('画面に表示されている明細のうち、棚番が入力されているものだけ一括保存・計算しますか？')) return;
 
@@ -354,7 +361,6 @@
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
 
-                    // 棚番が空欄、またはバーコードが空欄のものはスキップ
                     if (!barcode || !shelfNumber) {
                         skippedCount++;
                         continue;
@@ -625,7 +631,6 @@
             }
         };
 
-        // ★ マスタ管理タブ：棚番が空欄のものは一括保存の対象外にする
         window.saveAllMasters = async () => {
             if (!confirm('現在画面に表示されているマスタのうち、棚番が入力されているものだけ一括保存しますか？')) return;
 
@@ -646,7 +651,6 @@
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
 
-                    // 棚番が空欄のものはスキップ
                     if (!shelfNumber) {
                         skippedCount++;
                         continue;
