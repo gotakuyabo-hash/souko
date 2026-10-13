@@ -229,7 +229,7 @@
                 <thead>
                     <tr>
                         <th>商品名 (AF列)</th>
-                        <th>バーコード (末尾抽出)</th>
+                        <th>バーコード</th>
                         <th>注文数</th>
                         <th>倍率</th>
                         <th>棚番</th>
@@ -241,14 +241,15 @@
 
             results.forEach((item, index) => {
                 const isUnreg = item.status === "UNREGISTERED";
+                // バーコード欄を入力可能なテキストボックスに変更し、抽出されたバーコードを初期値にセット
                 html += `<tr id="row_${index}" class="${isUnreg ? 'unregistered' : ''}">
                     <td>${item.productName}</td>
-                    <td><code>${item.barcode}</code></td>
+                    <td><input type="text" id="barcode_${index}" value="${item.barcode || ''}" style="width: 120px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td>${item.orderQty}</td>
                     <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td><input type="text" id="shelf_${index}" value="${item.shelfNumber || ''}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
-                    <td><button onclick="registerItem('${item.barcode}', ${index}, ${item.orderQty}, \`${item.productName.replace(/`/g, '\\`')}\`)">保存して計算</button></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${item.productName.replace(/`/g, '\\`')}\`)">保存して計算</button></td>
                 </tr>`;
             });
 
@@ -261,14 +262,20 @@
                 event.preventDefault();
                 const item = currentResults[index];
                 if (item) {
-                    registerItem(item.barcode, index, item.orderQty, item.productName, true);
+                    registerItem(index, item.orderQty, item.productName, true);
                 }
             }
         }
 
-        async function registerItem(barcode, index, orderQty, productName, isSilent = false) {
+        async function registerItem(index, orderQty, productName, isSilent = false) {
+            const barcode = document.getElementById(`barcode_${index}`).value.trim();
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
             const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
+
+            if (!barcode) {
+                if (!isSilent) alert('バーコードを入力してください。');
+                return;
+            }
 
             try {
                 const res = await fetch(URL_SET_MULTIPLIER, {
@@ -281,6 +288,7 @@
                 if (data.success) {
                     const row = document.getElementById(`row_${index}`);
                     row.classList.remove('unregistered');
+                    currentResults[index].barcode = barcode;
                     currentResults[index].multiplier = multiplier;
                     currentResults[index].shelfNumber = shelfNumber;
                     currentResults[index].pickCount = orderQty * multiplier;
@@ -310,37 +318,43 @@
 
             for (let index = 0; index < currentResults.length; index++) {
                 const item = currentResults[index];
+                const barcodeInput = document.getElementById(`barcode_${index}`);
                 const multInput = document.getElementById(`mult_${index}`);
                 const shelfInput = document.getElementById(`shelf_${index}`);
 
-                if (multInput && shelfInput) {
+                if (barcodeInput && multInput && shelfInput) {
+                    const barcode = barcodeInput.value.trim();
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
-                    const barcode = item.barcode;
                     const orderQty = item.orderQty;
                     const productName = item.productName;
 
-                    try {
-                        const res = await fetch(URL_SET_MULTIPLIER, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
-                        });
-                        const data = await res.json();
+                    if (barcode) {
+                        try {
+                            const res = await fetch(URL_SET_MULTIPLIER, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
+                            });
+                            const data = await res.json();
 
-                        if (data.success) {
-                            successCount++;
-                            const row = document.getElementById(`row_${index}`);
-                            row.classList.remove('unregistered');
-                            currentResults[index].multiplier = multiplier;
-                            currentResults[index].shelfNumber = shelfNumber;
-                            currentResults[index].pickCount = orderQty * multiplier;
-                            currentResults[index].status = "REGISTERED";
-                            document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                        } else {
+                            if (data.success) {
+                                successCount++;
+                                const row = document.getElementById(`row_${index}`);
+                                row.classList.remove('unregistered');
+                                currentResults[index].barcode = barcode;
+                                currentResults[index].multiplier = multiplier;
+                                currentResults[index].shelfNumber = shelfNumber;
+                                currentResults[index].pickCount = orderQty * multiplier;
+                                currentResults[index].status = "REGISTERED";
+                                document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
+                            } else {
+                                failCount++;
+                            }
+                        } catch (err) {
                             failCount++;
                         }
-                    } catch (err) {
+                    } else {
                         failCount++;
                     }
                 }
