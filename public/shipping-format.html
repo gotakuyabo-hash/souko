@@ -178,24 +178,31 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                // 列のマッピング（ヘッダー名で検索し、見つからなければ一般的な列番号をフォールバックとして指定）
-                colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
-                if (colMap.orderNo === -1) colMap.orderNo = 5; // 一般的な受注番号の列
+                // 列のマッピング（ヘッダー文字列の完全一致・部分一致で探す）
+                // 見つからなかった場合のフォールバックは、実際のCSVフォーマットに合わせた列番号を指定
+                colMap.orderNo = orderData.header.findIndex(h => String(h) === '受注番号');
+                if (colMap.orderNo === -1) colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
+                if (colMap.orderNo === -1) colMap.orderNo = 5;
 
-                colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
-                if (colMap.shop === -1) colMap.shop = 1;
+                colMap.shop = orderData.header.findIndex(h => String(h) === '店舗名' || String(h) === 'ショップ');
+                if (colMap.shop === -1) colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
+                if (colMap.shop === -1) colMap.shop = 3;
 
-                colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('お名前') || String(h).includes('氏名'));
-                if (colMap.name === -1) colMap.name = 28; // お届け先氏名の一般的な列
+                colMap.name = orderData.header.findIndex(h => String(h) === '配送先氏名' || String(h) === '注文者氏名');
+                if (colMap.name === -1) colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('お名前'));
+                if (colMap.name === -1) colMap.name = 40;
 
-                colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
-                if (colMap.itemCode === -1) colMap.itemCode = 49;
+                colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
+                if (colMap.itemCode === -1) colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
+                if (colMap.itemCode === -1) colMap.itemCode = 30; // お使いのCSVに合わせて修正
 
-                colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
-                if (colMap.itemName === -1) colMap.itemName = 50;
+                colMap.itemName = orderData.header.findIndex(h => String(h) === '商品名' || String(h) === '品名');
+                if (colMap.itemName === -1) colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
+                if (colMap.itemName === -1) colMap.itemName = 31; // お使いのCSVに合わせて修正（前回50で日付になっていた原因）
 
-                colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数') || String(h).includes('個'));
-                if (colMap.qty === -1) colMap.qty = 53;
+                colMap.qty = orderData.header.findIndex(h => String(h) === '数量' || String(h) === '個数');
+                if (colMap.qty === -1) colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
+                if (colMap.qty === -1) colMap.qty = 34; // お使いのCSVに合わせて修正
                 
                 orderData.orderNoColIdx = colMap.orderNo;
                 
@@ -294,7 +301,6 @@
                 let tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 hover:bg-slate-50";
                 
-                // 列が見つからなくても空文字ではなくフォールバックの列から取得を試みる
                 let shop = r[colMap.shop] !== undefined ? r[colMap.shop] : '';
                 let orderNo = r[colMap.orderNo] !== undefined ? r[colMap.orderNo] : '';
                 let name = r[colMap.name] !== undefined ? r[colMap.name] : '';
@@ -411,6 +417,9 @@
                     let itemCode = mRow[colMap.itemCode] !== undefined ? mRow[colMap.itemCode] : '';
                     let itemName = mRow[colMap.itemName] !== undefined ? mRow[colMap.itemName] : '';
                     let qty = mRow[colMap.qty] !== undefined ? mRow[colMap.qty] : '1';
+
+                    // もし親行（セット名）を印刷に含めたくない場合は、以下のコメントアウトを外してください
+                    // if (koBan.endsWith('-0')) return;
 
                     totalQty += parseInt(qty, 10) || 1;
 
