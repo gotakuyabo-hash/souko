@@ -201,7 +201,8 @@
 
             // 💡 タブを開いた瞬間に対応するアプリのバッジを消す（既読にする）
             if (tabId === 'notes') updatePortalBadge('notes', 0);
-            if (tabId === 'staff') updatePortalBadge('checklist', 0); // 必要に応じてIDを調整
+            if (tabId === 'staff') updatePortalBadge('notes', 0); // 必要に応じてIDを調整
+            if (tabId === 'mat') updatePortalBadge('zaico', 0); // 資材発注タブを開いたらzaicoバッジをクリア
         };
 
         window.openImage = (url) => {
@@ -448,7 +449,7 @@
             
             // 未完了（pending）の件数をカウント
             const pendingCount = allStaff.filter(s => s.status !== 'completed').length;
-            updatePortalBadge('notes', pendingCount); // 連絡くんなどのバッジIDと同期
+            updatePortalBadge('notes', pendingCount); // 連絡くん（notes）のバッジIDと同期
 
             renderStaff();
         });
@@ -574,8 +575,14 @@
             btn.disabled = false; btn.textContent = "💾 保存する";
         };
 
+        // 💡 資材発注の未発注件数をリアルタイム監視してポータルのバッジ（例: 'zaico'）に連動
         onSnapshot(query(collection(db, "material_orders"), orderBy("createdAt", "desc")), snap => {
             allMat = snap.docs.map(d => ({id: d.id, ...d.data()}));
+            
+            // 未発注（"未発注"）の件数をカウント
+            const pendingMatCount = allMat.filter(m => m.status === "未発注").length;
+            updatePortalBadge('zaico', pendingMatCount); // 必要に応じてポータルのアイコンIDを変更可能
+
             filterMat('all');
         });
 
