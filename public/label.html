@@ -2,66 +2,313 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>処理済みラベル管理</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ラベル管理＆QR作成ポータル</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QRコード生成ライブラリ (QRCode.js) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
-        body { background: #f4f6f8; font-family: sans-serif; padding: 15px; color: #333; }
-        .card { background: white; padding: 15px; border-radius: 8px; max-width: 600px; margin: 0 auto; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        body { 
+            background: #0f172a; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            padding: 15px 10px; 
+            color: #f8fafc;
+            min-height: 100vh;
+        }
 
+        /* タブのスタイル */
+        .tab-btn.active {
+            background-color: #2563eb;
+            color: #ffffff;
+            border-color: #3b82f6;
+        }
+
+        /* 52mm × 29mm のQRラベルコンテナ（画面プレビュー用） */
+        .label-container {
+            width: 52mm;
+            height: 29mm;
+            background: #fff;
+            box-sizing: border-box;
+            padding: 3mm 4mm;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px dashed #64748b;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+            color: #1e293b;
+        }
+
+        .text-area {
+            flex: 1;
+            margin-right: 2mm;
+            font-size: 8pt;
+            font-weight: bold;
+            line-height: 1.2;
+            word-break: break-all;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+        }
+
+        .qr-area {
+            width: 18mm; 
+            height: 18mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .qr-area img {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* 処理済みラベルのカードスタイル */
+        .card { background: white; padding: 15px; border-radius: 12px; color: #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+
+        /* 印刷時の設定 */
         @page {
             size: 100mm 150mm;
             margin: 0;
         }
         @media print {
-            html, body {
-                width: 100mm;
-                height: 150mm;
-                margin: 0 !important;
+            body {
+                background: none !important;
                 padding: 0 !important;
-                background: none;
-                overflow: hidden;
+                margin: 0 !important;
+                color: #000;
             }
             .no-print {
                 display: none !important;
             }
-            .card {
-                box-shadow: none;
-                border: none;
-                padding: 4mm 5mm;
-                max-width: none;
+            /* アクティブなタブに応じて印刷レイアウトを切り替え */
+            #qrTabContent.active-print {
+                /* QRタブ印刷時 (52mm×29mm) */
+            }
+        }
+
+        /* QRタブ印刷用の個別メディア設定 */
+        @media print {
+            body.print-qr-mode {
+                background: none;
+                padding: 0;
+                margin: 0;
+            }
+            body.print-qr-mode .no-print {
+                display: none !important;
+            }
+            body.print-qr-mode #qrTabContent {
+                display: block !important;
+            }
+            body.print-qr-mode #processedTabContent {
+                display: none !important;
+            }
+            body.print-qr-mode .print-area {
+                display: block !important;
+            }
+            body.print-qr-mode .label-container {
+                border: none !important;
+                box-shadow: none !important;
+                margin: 0;
+                width: 52mm;
+                height: 29mm;
+                page-break-after: always;
+                break-after: page;
+            }
+            @page {
+                size: 52mm 29mm;
+                margin: 0mm;
+            }
+        }
+
+        /* 処理済みラベルタブ印刷用の個別メディア設定 */
+        @media print {
+            body.print-processed-mode {
+                background: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            body.print-processed-mode .no-print {
+                display: none !important;
+            }
+            body.print-processed-mode #processedTabContent {
+                display: block !important;
+            }
+            body.print-processed-mode #qrTabContent {
+                display: none !important;
+            }
+            body.print-processed-mode html, body.print-processed-mode {
                 width: 100mm;
                 height: 150mm;
-                box-sizing: border-box;
+                overflow: hidden;
+            }
+            body.print-processed-mode .card {
+                box-shadow: none !important;
+                border: none !important;
+                padding: 4mm 5mm !important;
+                max-width: none !important;
+                width: 100mm !important;
+                height: 150mm !important;
+                box-sizing: border-box !important;
+                background: white !important;
+            }
+            @page {
+                size: 100mm 150mm;
+                margin: 0 !important;
             }
         }
     </style>
 </head>
 <body>
-    <div style="max-width: 600px; margin: 0 auto;">
-        <div class="no-print">
-            <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
+    <div style="max-width: 500px; margin: 0 auto;">
+        <!-- ヘッダー ＆ タブ切り替えボタン -->
+        <header class="mb-4 no-print">
+            <div class="flex justify-between items-center mb-3 px-1">
+                <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ ラベル管理ポータル</h1>
+                <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
+                    ← ポータルへ
+                </a>
+            </div>
+            <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800 gap-1">
+                <button id="btnProcessedTab" onclick="switchTab('processed')" class="tab-btn active flex-1 py-2 text-xs font-bold rounded-lg transition text-slate-400">
+                    📋 処理済みラベル管理
+                </button>
+                <button id="btnQrTab" onclick="switchTab('qr')" class="tab-btn flex-1 py-2 text-xs font-bold rounded-lg transition text-slate-400">
+                    🔲 QRコードラベル
+                </button>
+            </div>
+        </header>
+
+        <!-- ================= 1. 処理済みラベル管理タブのコンテンツ ================= -->
+        <div id="processedTabContent" class="tab-content">
+            <div class="card">
+                <h2 class="text-base font-bold mb-3 text-slate-800">🏷️ 処理済みラベル管理</h2>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-slate-700">処理日</label>
+                    <input type="date" id="p-date" class="w-full p-1.5 border rounded mt-0.5 text-sm text-slate-800" onchange="saveProcessedData()">
+                </div>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-slate-700">セラー名</label>
+                    <input type="text" id="p-seller" class="w-full p-1.5 border rounded mt-0.5 text-sm text-slate-800" oninput="saveProcessedData()" placeholder="セラー名を入力">
+                </div>
+                <div class="mb-3">
+                    <label class="text-xs font-bold text-slate-700">担当者</label>
+                    <input type="text" id="p-staff" class="w-full p-1.5 border rounded mt-0.5 text-sm text-slate-800" oninput="saveProcessedData()" placeholder="担当者名を入力">
+                </div>
+
+                <div class="text-xs font-bold text-slate-700 mb-1">処理内容（チェック項目）</div>
+                <div id="items-list" class="space-y-1.5 mb-3"></div>
+
+                <div class="no-print">
+                    <button onclick="addProcessedItem()" class="w-full bg-emerald-50 text-emerald-700 p-2 border border-dashed rounded font-bold mb-3 text-xs hover:bg-emerald-100 transition">+ 項目を追加</button>
+                    <button onclick="printProcessed()" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition shadow-sm">🖨️ 100×150サイズで印刷 / 保存</button>
+                </div>
+            </div>
         </div>
-        <div class="card">
-            <h2 class="text-base font-bold mb-3">🏷️ 処理済みラベル管理</h2>
-            <div class="mb-2"><label class="text-xs font-bold">処理日</label><input type="date" id="p-date" class="w-full p-1.5 border rounded mt-0.5 text-sm" onchange="saveData()"></div>
-            <div class="mb-2"><label class="text-xs font-bold">セラー名</label><input type="text" id="p-seller" class="w-full p-1.5 border rounded mt-0.5 text-sm" oninput="saveData()" placeholder="セラー名を入力"></div>
-            <div class="mb-3"><label class="text-xs font-bold">担当者</label><input type="text" id="p-staff" class="w-full p-1.5 border rounded mt-0.5 text-sm" oninput="saveData()" placeholder="担当者名を入力"></div>
 
-            <div class="text-xs font-bold text-slate-700 mb-1">処理内容（チェック項目）</div>
-            <div id="items-list" class="space-y-1.5 mb-3"></div>
+        <!-- ================= 2. QRコードラベル作成タブのコンテンツ ================= -->
+        <div id="qrTabContent" class="tab-content" style="display: none;">
+            <!-- 入力フォームカード -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl mb-6 space-y-4 no-print">
+                <div>
+                    <label class="block text-xs font-bold text-slate-300 mb-1">ラベルに記載するテキスト / QRコードのデータ</label>
+                    <textarea id="inputText" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500 resize-none" placeholder="rs0009 などのコードやURL">rs0009</textarea>
+                </div>
 
+                <div class="flex gap-3">
+                    <div class="flex-1">
+                        <label class="block text-xs font-bold text-slate-300 mb-1">印刷枚数</label>
+                        <input type="number" id="printCount" value="1" min="1" max="100" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 text-center font-bold">
+                    </div>
+                </div>
+
+                <div class="flex gap-2 pt-1">
+                    <button onclick="updatePreview()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 px-3 rounded-xl text-xs transition border border-slate-700">
+                        プレビュー更新
+                    </button>
+                    <button onclick="printAndSaveQr()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg shadow-blue-600/20">
+                        🖨️ 印刷 ＆ 履歴保存
+                    </button>
+                </div>
+            </div>
+
+            <!-- プレビュー表示エリア -->
             <div class="no-print">
-                <button onclick="addItem()" class="w-full bg-emerald-50 text-emerald-700 p-2 border border-dashed rounded font-bold mb-3 text-xs">+ 項目を追加</button>
-                <button onclick="window.print()" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition shadow-sm">🖨️ 100×150サイズで印刷 / 保存</button>
+                <div class="mb-3 flex justify-between items-center px-1">
+                    <span class="text-xs font-bold text-slate-400">リアルタイムプレビュー (1枚分)</span>
+                    <span id="previewCountLabel" class="text-[11px] text-slate-500">印刷枚数: 1枚</span>
+                </div>
+                <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6 mb-6">
+                    <div class="label-container" id="previewLabel">
+                        <div class="text-area" id="previewDisplayText">rs0009</div>
+                        <div class="qr-area" id="previewQrcode"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Firestore 履歴セクション -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl no-print">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-xs font-bold text-slate-300">☁️ 最近のラベル発行履歴</h3>
+                    <button onclick="loadHistory()" class="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-800 px-2 py-1 rounded">更新</button>
+                </div>
+                <div id="historyList" class="space-y-2 max-h-48 overflow-y-auto text-xs text-slate-400">
+                    <p class="text-center py-3 text-slate-500">履歴を読み込み中...</p>
+                </div>
             </div>
         </div>
     </div>
 
-    <script>
-        const STORAGE_KEY = 'processed_label_local_data';
+    <!-- QRコード印刷用コンテナ -->
+    <div id="printArea" class="print-area" style="display: none;"></div>
 
-        window.saveData = () => {
+    <!-- 統合制御スクリプト -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Firebase設定
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // --- タブ切り替え関数 ---
+        window.switchTab = function(tabName) {
+            const processedTab = document.getElementById('processedTabContent');
+            const qrTab = document.getElementById('qrTabContent');
+            const btnProcessed = document.getElementById('btnProcessedTab');
+            const btnQr = document.getElementById('btnQrTab');
+
+            if (tabName === 'processed') {
+                processedTab.style.display = 'block';
+                qrTab.style.display = 'none';
+                btnProcessed.classList.add('active');
+                btnQr.classList.remove('active');
+            } else {
+                processedTab.style.display = 'none';
+                qrTab.style.display = 'block';
+                btnQr.classList.add('active');
+                btnProcessed.classList.remove('active');
+                window.updatePreview(); // QRタブ表示時にプレビューを初期化
+            }
+        };
+
+        // --- 1. 処理済みラベル管理のロジック ---
+        const PROCESSED_STORAGE_KEY = 'processed_label_local_data';
+
+        window.saveProcessedData = () => {
             const items = [];
             document.querySelectorAll('.item-row').forEach(r => {
                 items.push({
@@ -75,45 +322,191 @@
                 staffName: document.getElementById('p-staff').value,
                 items: items
             };
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+            localStorage.setItem(PROCESSED_STORAGE_KEY, JSON.stringify(data));
         };
 
-        window.addItem = () => {
+        window.addProcessedItem = () => {
             const list = document.getElementById('items-list');
             list.insertAdjacentHTML('beforeend', `
                 <div class="item-row flex items-center gap-2">
-                    <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveData()">
-                    <input type="text" class="t flex-1 p-1.5 border rounded text-sm" oninput="saveData()" placeholder="項目名">
-                    <button onclick="this.closest('.item-row').remove(); saveData();" class="no-print text-red-600 font-bold px-2">✕</button>
+                    <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
+                    <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" oninput="saveProcessedData()" placeholder="項目名">
+                    <button onclick="this.closest('.item-row').remove(); saveProcessedData();" class="no-print text-red-600 font-bold px-2">✕</button>
                 </div>
             `);
-            saveData();
+            saveProcessedData();
         };
 
-        window.addEventListener('DOMContentLoaded', () => {
-            const savedJson = localStorage.getItem(STORAGE_KEY);
-            if (!savedJson) return;
+        window.printProcessed = () => {
+            document.body.classList.add('print-processed-mode');
+            window.print();
+            setTimeout(() => {
+                document.body.classList.remove('print-processed-mode');
+            }, 500);
+        };
+
+        // --- 2. QRコードラベル作成のロジック ---
+        let previewQr = new QRCode(document.getElementById("previewQrcode"), {
+            text: "rs0009",
+            width: 70,
+            height: 70,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.M
+        });
+
+        window.updatePreview = function() {
+            const val = document.getElementById("inputText").value.trim() || "rs0009";
+            const count = parseInt(document.getElementById("printCount").value) || 1;
+
+            document.getElementById("previewQrcode").innerHTML = "";
+            new QRCode(document.getElementById("previewQrcode"), {
+                text: val,
+                width: 70,
+                height: 70,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+            document.getElementById("previewDisplayText").innerText = val;
+            document.getElementById("previewCountLabel").innerText = `印刷枚数: ${count}枚`;
+
+            const printArea = document.getElementById("printArea");
+            printArea.innerHTML = "";
+
+            for (let i = 0; i < count; i++) {
+                const labelDiv = document.createElement("div");
+                labelDiv.className = "label-container";
+
+                const textArea = document.createElement("div");
+                textArea.className = "text-area";
+                textArea.innerText = val;
+                labelDiv.appendChild(textArea);
+
+                const qrArea = document.createElement("div");
+                qrArea.className = "qr-area";
+                labelDiv.appendChild(qrArea);
+
+                printArea.appendChild(labelDiv);
+
+                new QRCode(qrArea, {
+                    text: val,
+                    width: 70,
+                    height: 70,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : QRCode.CorrectLevel.M
+                });
+            }
+        };
+
+        window.printAndSaveQr = async function() {
+            const val = document.getElementById("inputText").value.trim();
+            const count = parseInt(document.getElementById("printCount").value) || 1;
+
+            if (!val) {
+                alert("テキストまたはURLを入力してください。");
+                return;
+            }
+
+            window.updatePreview();
 
             try {
-                const d = JSON.parse(savedJson);
-                document.getElementById('p-date').value = d.processDate || "";
-                document.getElementById('p-seller').value = d.sellerName || "";
-                document.getElementById('p-staff').value = d.staffName || "";
+                await addDoc(collection(db, "qr_label_history"), {
+                    text: val,
+                    count: count,
+                    createdAt: serverTimestamp()
+                });
+                loadHistory();
+            } catch (e) {
+                console.error("Firestore保存エラー: ", e);
+            }
 
-                const list = document.getElementById('items-list');
-                list.innerHTML = "";
-                (d.items || []).forEach(i => {
-                    list.insertAdjacentHTML('beforeend', `
-                        <div class="item-row flex items-center gap-2">
-                            <input type="checkbox" class="c w-4 h-4 accent-green-600" ${i.checked ? 'checked' : ''} onchange="saveData()">
-                            <input type="text" class="t flex-1 p-1.5 border rounded text-sm" value="${i.value || i.text || ''}" oninput="saveData()">
-                            <button onclick="this.closest('.item-row').remove(); saveData();" class="no-print text-red-600 font-bold px-2">✕</button>
+            document.body.classList.add('print-qr-mode');
+            window.print();
+            setTimeout(() => {
+                document.body.classList.remove('print-qr-mode');
+            }, 500);
+        };
+
+        window.loadHistory = async function() {
+            const historyListEl = document.getElementById("historyList");
+            if (!historyListEl) return;
+            historyListEl.innerHTML = '<p class="text-center py-2 text-slate-500">読み込み中...</p>';
+
+            try {
+                const q = query(collection(db, "qr_label_history"), orderBy("createdAt", "desc"), limit(10));
+                const querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    historyListEl.innerHTML = '<p class="text-center py-3 text-slate-500">履歴がありません</p>';
+                    return;
+                }
+
+                historyListEl.innerHTML = "";
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const dateStr = data.createdAt ? new Date(data.createdAt.toDate()).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : "日時不明";
+
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = "bg-slate-800/60 hover:bg-slate-800 p-2.5 rounded-xl flex justify-between items-center cursor-pointer transition border border-slate-700/50";
+                    itemDiv.onclick = () => {
+                        document.getElementById("inputText").value = data.text;
+                        document.getElementById("printCount").value = data.count || 1;
+                        window.updatePreview();
+                    };
+
+                    itemDiv.innerHTML = `
+                        <div class="truncate mr-2">
+                            <p class="font-bold text-slate-200 truncate">${escapeHtml(data.text)}</p>
+                            <p class="text-[10px] text-slate-400">${dateStr} / ${data.count}枚</p>
                         </div>
-                    `);
+                        <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
+                    `;
+                    historyListEl.appendChild(itemDiv);
                 });
             } catch (e) {
-                console.error("データの読み込みに失敗しました", e);
+                console.error("履歴取得エラー: ", e);
+                historyListEl.innerHTML = '<p class="text-center py-3 text-rose-400">履歴の取得に失敗しました</p>';
             }
+        };
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // --- 初期化処理 ---
+        document.getElementById("inputText").addEventListener("input", window.updatePreview);
+        document.getElementById("printCount").addEventListener("input", window.updatePreview);
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // 処理済みラベルのローカルストレージ復元
+            const savedJson = localStorage.getItem(PROCESSED_STORAGE_KEY);
+            if (savedJson) {
+                try {
+                    const d = JSON.parse(savedJson);
+                    document.getElementById('p-date').value = d.processDate || "";
+                    document.getElementById('p-seller').value = d.sellerName || "";
+                    document.getElementById('p-staff').value = d.staffName || "";
+
+                    const list = document.getElementById('items-list');
+                    list.innerHTML = "";
+                    (d.items || []).forEach(i => {
+                        list.insertAdjacentHTML('beforeend', `
+                            <div class="item-row flex items-center gap-2">
+                                <input type="checkbox" class="c w-4 h-4 accent-green-600" ${i.checked ? 'checked' : ''} onchange="saveProcessedData()">
+                                <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="${i.value || i.text || ''}" oninput="saveProcessedData()">
+                                <button onclick="this.closest('.item-row').remove(); saveProcessedData();" class="no-print text-red-600 font-bold px-2">✕</button>
+                            </div>
+                        `);
+                    });
+                } catch (e) {
+                    console.error("データ読み込みエラー", e);
+                }
+            }
+
+            // QR履歴読み込み
+            window.loadHistory();
         });
     </script>
 </body>
