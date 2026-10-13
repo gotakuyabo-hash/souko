@@ -455,19 +455,14 @@
 
                         const latestMsg = messages[0];
                         const senderName = latestMsg.account && latestMsg.account.name ? latestMsg.account.name : '不明';
-                        const senderId = latestMsg.account && latestMsg.account.account_id ? latestMsg.account.account_id : '';
-                        const messageId = latestMsg.message_id || '';
                         let sendDateStr = latestMsg.send_time ? new Date(latestMsg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
                         const encodedBody = encodeURIComponent(latestMsg.body);
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
                         let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
-                        if (senderId) membersOpts += `<option value="${senderId}" data-name="${senderName}">発言者: ${senderName}</option>`;
                         (roomData.members || []).forEach(m => {
-                            if (String(m.account_id) !== String(senderId)) {
-                                membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
-                            }
+                            membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
                         });
 
                         msgArea.outerHTML = `
@@ -490,9 +485,6 @@
                                         <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                             ${membersOpts}
                                         </select>
-                                        <button onclick="insertReToTextarea('${uniqueTextareaId}', '${senderId}', '${messageId}', '${escapeHtml(senderName)}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
-                                            ↩️ Re
-                                        </button>
                                         <button onclick="insertQuoteToTextarea('${uniqueTextareaId}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
                                             💬 引用
                                         </button>
@@ -639,8 +631,6 @@
                 } else {
                     messages.forEach(m => {
                         const senderName = m.account && m.account.name ? m.account.name : '不明';
-                        const senderId = m.account && m.account.account_id ? m.account.account_id : '';
-                        const messageId = m.message_id || '';
                         const sendDateStr = m.send_time ? new Date(m.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const encodedBody = encodeURIComponent(m.body);
                         const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
@@ -653,9 +643,6 @@
                                         <span class="text-slate-400 font-normal">${sendDateStr}</span>
                                         <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             🔗 連携
-                                        </button>
-                                        <button onclick="insertReToTextarea('normal_txt_${roomId}', '${senderId}', '${messageId}', '${escapeHtml(senderName)}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
-                                            ↩️ Re
                                         </button>
                                         <button onclick="insertQuoteToTextarea('normal_txt_${roomId}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             💬 引用
@@ -788,12 +775,6 @@
             const body = decodeURIComponent(encodedBody);
             const ta = document.getElementById(textareaId);
             ta.value = `[info][title]${senderName}さんのメッセージ[/title]${body}[/info]\n` + ta.value;
-        }
-
-        function insertReToTextarea(textareaId, senderId, messageId, senderName) {
-            const ta = document.getElementById(textareaId);
-            const rpTag = (senderId && messageId) ? `[rp aid=${senderId} to=${messageId}]${senderName}さん\n` : `[to:${senderId}] ${senderName}さん\n`;
-            ta.value = rpTag + ta.value;
         }
 
         function closeAllModals() {
