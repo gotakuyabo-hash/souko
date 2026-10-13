@@ -123,6 +123,15 @@
                                  .trim().toLowerCase();
         }
 
+        function cleanPhone(phoneStr) {
+            if (!phoneStr) return "";
+            let s = String(phoneStr).trim();
+            if (s.startsWith('+81')) {
+                s = '0' + s.substring(3).replace(/^\-+/, '');
+            }
+            return s;
+        }
+
         function handleFiles(files) {
             let processedCount = 0;
             Array.from(files).forEach(file => {
@@ -334,6 +343,15 @@
                     newRow[39] = '09050540672';
                     newRow[26] = "";
 
+                    // 電話番号フィールド（必要に応じて位置を想定、または全列スキャン・該当列置換）
+                    // ※ヤマトB2CSVの一般的な電話番号列（例: お届け先電話番号など）をクリーンアップ
+                    for (let c = 0; c < newRow.length; c++) {
+                        let valStr = String(newRow[c]);
+                        if (valStr.startsWith('+81')) {
+                            newRow[c] = cleanPhone(valStr);
+                        }
+                    }
+
                     for (let c = 24; c <= 30; c++) {
                         if (newRow[c] && newRow[c].length > 25) {
                             newRow[c] = newRow[c].substring(0, 25);
@@ -364,6 +382,15 @@
                 let matchedSRow = sagawaData.rows.find(r => cleanOrderNoNormalized(r[sagawaData.orderNoColIdx]) === oNum);
                 if (matchedSRow) {
                     let newRow = [...matchedSRow];
+                    
+                    // 電話番号の+81置換
+                    for (let c = 0; c < newRow.length; c++) {
+                        let valStr = String(newRow[c]);
+                        if (valStr.startsWith('+81')) {
+                            newRow[c] = cleanPhone(valStr);
+                        }
+                    }
+
                     if (newRow[targetIdx]) {
                         let val = String(newRow[targetIdx]).trim();
                         if (val.length > 16) newRow[targetIdx] = val.substring(0, 16);
@@ -414,6 +441,17 @@
             }
 
             orderGroupMap.forEach((group) => {
+                // 行を「親(-0 / 0)」が先頭に来るように並べ替え
+                group.rows.sort((a, b) => {
+                    let kA = a[koBanIdx] !== undefined ? String(a[koBanIdx]).trim() : '';
+                    let kB = b[koBanIdx] !== undefined ? String(b[koBanIdx]).trim() : '';
+                    let isAParent = (kA.endsWith('-0') || kA === '0');
+                    let isBParent = (kB.endsWith('-0') || kB === '0');
+                    if (isAParent && !isBParent) return -1;
+                    if (!isAParent && isBParent) return 1;
+                    return 0;
+                });
+
                 let itemRowsHtml = '';
                 let totalQty = 0;
 
@@ -425,11 +463,11 @@
 
                     totalQty += parseInt(qty, 10) || 1;
 
-                    // セット品の親(-0)か子(-1以降など)かを判定して見た目を分ける
                     let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
                     let rowBg = isChild ? '#fafbfc' : '#ffffff';
+                    // 子項目も薄字にせず、はっきりと表示するよう指定
                     let nameStyle = isChild 
-                        ? 'padding-left:12px; font-size:9.5pt; color:#444;' 
+                        ? 'padding-left:12px; font-size:9.5pt; color:#111;' 
                         : 'font-weight:bold; font-size:10pt; color:#111;';
                     let codePrefix = isChild ? '└ ' : '';
 
