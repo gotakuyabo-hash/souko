@@ -350,10 +350,10 @@
         }
 
         async function sendToZaico() {
-            if (!confirm('棚番順に並び替えられた状態で、zaicoに出庫指示を送信しますか？\n（未登録の商品も無視して送信します）')) return;
+            if (!confirm('未登録商品が含まれていてもスルーして、zaicoに出庫指示を送信しますか？')) return;
 
             try {
-                showStatus("zaicoに出庫指示を送信中...");
+                showStatus("zaicoに出庫指示を送信中（未登録商品は無視・スルー）...");
                 const res = await fetch(URL_CREATE_SHIPMENT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -555,9 +555,6 @@
             }
 
             try {
-                // 削除API等（またはmultiplier=0や削除専用のエンドポイントがある場合はそちらに合わせる形になります。今回はサーバー側に削除用URLがないため、もし削除APIがある場合はURLを指定するか、あるいはステータス変更等を行います。一般的な削除処理のフローを実装しています）
-                // ※ もしバックエンドに削除用APIがある場合はURLを適宜置き換えてください。ここでは削除リクエストの例としてURL_SET_MULTIPLIERに削除フラグ等を送るか、専用エンドポイントを想定します。
-                // 今回は仮に削除エンドポイントまたは通常の削除処理として実装します。
                 const res = await fetch("https://deletemasteritem-l22atg5m7q-uc.a.run.app", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -573,8 +570,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                // バックエンド側に削除APIが無い場合のフォールバックや確認メッセージ
-                alert('削除通信に失敗しました。バックエンドの削除用URLをご確認ください。');
+                alert('削除通信に失敗しました。');
             }
         }
 
