@@ -86,14 +86,46 @@
 
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+
+        /* 💡 通知バッジ（赤丸カウンター）のスタイル */
+        .tab-btn-wrapper {
+            position: relative;
+            flex: 1;
+        }
+        .notification-badge {
+            position: absolute;
+            top: -6px;
+            right: 4px;
+            background-color: #ef4444;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: bold;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            border: 2px solid #f4f6f8;
+            pointer-events: none;
+            display: none; /* 初期状態は非表示 */
+        }
     </style>
 </head>
 <body>
     <div style="max-width: 900px; margin: 0 auto;">
-        <!-- タブ切り替えボタン -->
+        <!-- タブ切り替えボタン (通知バッジ対応) -->
         <div class="flex gap-2 mb-4">
-            <button id="tabBtn-checklist" onclick="switchTab('checklist')" class="flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow">📋 日次報告チェックリスト</button>
-            <button id="tabBtn-shukka" onclick="switchTab('shukka')" class="flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm">📊 出荷件数 日別集計</button>
+            <div class="tab-btn-wrapper">
+                <button id="tabBtn-checklist" onclick="switchTab('checklist')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow">📋 日次報告チェックリスト</button>
+                <div id="badge-checklist" class="notification-badge">0</div>
+            </div>
+            <div class="tab-btn-wrapper">
+                <button id="tabBtn-shukka" onclick="switchTab('shukka')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm">📊 出荷件数 日別集計</button>
+                <div id="badge-shukka" class="notification-badge">0</div>
+            </div>
         </div>
 
         <!-- 1. 日次報告チェックリスト コンテンツ -->
@@ -240,9 +272,37 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
+
+        // 💡 ポータルバッジの表示・更新ヘルパー
+        function setBadgeCount(tabKey, count) {
+            const badge = document.getElementById(`badge-${tabKey}`);
+            if (!badge) return;
+            if (count > 0) {
+                badge.textContent = count > 99 ? '99+' : count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        // 💡 外部アプリ（スタッフ間依頼など）の未完了件数をリアルタイム監視してバッジに反映
+        function watchStaffRequestsBadge() {
+            try {
+                onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), (snapshot) => {
+                    const requests = snapshot.docs.map(doc => doc.data());
+                    // 未完了（statusがcompletedではないもの）の件数をカウント
+                    const pendingCount = requests.filter(r => r.status !== 'completed').length;
+                    
+                    // 例として「チェックリスト」タブのところに未完了依頼の件数を表示
+                    setBadgeCount('checklist', pendingCount);
+                });
+            } catch (e) {
+                console.log("Badge watch error:", e);
+            }
+        }
 
         // 共通モーダル関連
         const confirmModal = document.getElementById('confirm-modal');
@@ -278,13 +338,13 @@
             const contentShukka = document.getElementById('content-shukka');
 
             if (tabName === 'checklist') {
-                btnChecklist.className = "flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
-                btnShukka.className = "flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
+                btnChecklist.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
+                btnShukka.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
                 contentChecklist.classList.add('active');
                 contentShukka.classList.remove('active');
             } else {
-                btnShukka.className = "flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
-                btnChecklist.className = "flex-1 py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
+                btnShukka.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
+                btnChecklist.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
                 contentShukka.classList.add('active');
                 contentChecklist.classList.remove('active');
             }
@@ -783,6 +843,9 @@
             await loadChecklistByDate(today);
             await initShukkaServices();
             await loadShukkaByDate(today);
+
+            // 💡 通知バッジの監視スタート
+            watchStaffRequestsBadge();
         };
     </script>
 </body>
