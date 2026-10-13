@@ -276,6 +276,7 @@
                     currentResults[index].multiplier = multiplier;
                     currentResults[index].shelfNumber = shelfNumber;
                     currentResults[index].pickCount = orderQty * multiplier;
+                    currentResults[index].status = "REGISTERED"; // ステータスを登録済みに更新
                     document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
                     
                     if (!isSilent) {
@@ -326,6 +327,7 @@
                             currentResults[index].multiplier = multiplier;
                             currentResults[index].shelfNumber = shelfNumber;
                             currentResults[index].pickCount = orderQty * multiplier;
+                            currentResults[index].status = "REGISTERED"; // ステータスを登録済みに更新
                             document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
                         } else {
                             failCount++;
@@ -350,14 +352,30 @@
         }
 
         async function sendToZaico() {
-            if (!confirm('未登録商品が含まれていてもスルーして、zaicoに出庫指示を送信しますか？')) return;
+            // 未登録商品（status === "UNREGISTERED"）を自動で除外
+            const validItems = currentResults.filter(item => item.status !== "UNREGISTERED" && item.barcode);
+
+            if (validItems.length === 0) {
+                alert('zaicoに送信できる有効な商品（登録済みの明細）がありません。');
+                return;
+            }
+
+            const unregisteredCount = currentResults.length - validItems.length;
+            let confirmMsg = '';
+            if (unregisteredCount > 0) {
+                confirmMsg = `未登録の ${unregisteredCount} 件を除外し、登録済みの ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`;
+            } else {
+                confirmMsg = `表示されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`;
+            }
+
+            if (!confirm(confirmMsg)) return;
 
             try {
-                showStatus("zaicoに出庫指示を送信中（未登録商品は無視・スルー）...");
+                showStatus("zaicoに出庫指示を送信中...");
                 const res = await fetch(URL_CREATE_SHIPMENT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: currentResults })
+                    body: JSON.stringify({ items: validItems })
                 });
                 const data = await res.json();
 
@@ -564,7 +582,7 @@
                 if (data.success) {
                     alert('削除しました。');
                     masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.code) !== barcode);
-                    filterMasterTable();
+                    filterMasterTest();
                 } else {
                     alert('削除失敗: ' + (data.error || '不明なエラー'));
                 }
