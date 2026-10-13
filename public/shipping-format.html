@@ -245,7 +245,7 @@
         }
 
         function updateUIStatus() {
-            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}行)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
 
@@ -316,16 +316,15 @@
         }
 
         function exportYamatoCsv() {
-            let outputRows = [];
-            let todayStr = getTodayString();
-            
-            // 受注データ側にある有効な受注番号のセット（重複なし）を取得
             let uniqueOrderNos = new Set();
             sortedOrderRows.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
                 if (oNum) uniqueOrderNos.add(oNum);
             });
 
+            let outputRows = [];
+            let todayStr = getTodayString();
+            
             uniqueOrderNos.forEach(oNum => {
                 let matchedYRow = yamatoData.rows.find(r => cleanOrderNoNormalized(r[yamatoData.orderNoColIdx]) === oNum);
                 if (matchedYRow) {
@@ -343,12 +342,17 @@
                     outputRows.push(newRow);
                 }
             });
-
             if (outputRows.length === 0) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
 
         function exportEhidenCsv() {
+            let uniqueOrderNos = new Set();
+            sortedOrderRows.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
+                if (oNum) uniqueOrderNos.add(oNum);
+            });
+
             let outputRows = sagawaData.header && sagawaData.header.length > 0 ? [sagawaData.header] : [];
             let targetIdx = -1;
             if (sagawaData.header.length > 0) {
@@ -356,13 +360,6 @@
             }
             if (targetIdx === -1) targetIdx = 24;
             
-            // 受注データ側にある有効な受注番号のセット（重複なし）を取得
-            let uniqueOrderNos = new Set();
-            sortedOrderRows.forEach(oRow => {
-                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
-                if (oNum) uniqueOrderNos.add(oNum);
-            });
-
             uniqueOrderNos.forEach(oNum => {
                 let matchedSRow = sagawaData.rows.find(r => cleanOrderNoNormalized(r[sagawaData.orderNoColIdx]) === oNum);
                 if (matchedSRow) {
@@ -374,7 +371,6 @@
                     outputRows.push(newRow);
                 }
             });
-
             if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
@@ -429,10 +425,21 @@
 
                     totalQty += parseInt(qty, 10) || 1;
 
+                    // セット品の親(-0)か子(-1以降など)かを判定して見た目を分ける
+                    let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
+                    let rowBg = isChild ? '#fafbfc' : '#ffffff';
+                    let nameStyle = isChild 
+                        ? 'padding-left:12px; font-size:9.5pt; color:#444;' 
+                        : 'font-weight:bold; font-size:10pt; color:#111;';
+                    let codePrefix = isChild ? '└ ' : '';
+
                     itemRowsHtml += `
-                        <tr style="border-bottom: 1px solid #ddd;">
+                        <tr style="border-bottom: 1px solid #ddd; background:${rowBg};">
                             <td style="text-align:center; padding:4px;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td>
-                            <td style="font-size:10pt; padding:4px;">${itemName}<br><span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span></td>
+                            <td style="padding:4px; ${nameStyle}">
+                                ${codePrefix}${itemName}<br>
+                                <span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span>
+                            </td>
                             <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
                         </tr>
                     `;
