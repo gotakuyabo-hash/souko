@@ -63,6 +63,26 @@
             width: 100%;
             pointer-events: none;
         }
+        /* 通知バッジ（ドット・カウンター）のスタイル */
+        .notification-badge {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background-color: #ef4444;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: bold;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            pointer-events: none;
+            border: 1.5px solid #0f172a;
+        }
     </style>
 </head>
 <body>
@@ -70,7 +90,7 @@
         <header class="mb-6 px-2 flex justify-between items-center">
             <div>
                 <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
-                <p class="text-[11px] text-slate-400">タップで起動 ＆ ドラッグで並び替え（両立版）</p>
+                <p class="text-[11px] text-slate-400">タップで起動 ＆ ドラッグで並び替え</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="openAddCategoryModal()" class="bg-emerald-600/85 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full transition shadow">
@@ -98,28 +118,28 @@
     </div>
 
     <script>
-        const STORAGE_KEY = 'warehouse_portal_v5_data';
+        const STORAGE_KEY = 'warehouse_portal_v7_data';
 
         const defaultData = {
             categories: [
-                { id: "shipping", name: "🚚 送り状ツール" },
+                { id: "shipping", name: "🚚 送り状・報告ツール" },
                 { id: "communication", name: "💬 連絡アプリ" },
                 { id: "others", name: "🛠️ その他ツール" }
             ],
             cards: [
-                
-                { id: "shipping-format", category: "shipping", title: "🚚 送り状くん", desc: "受注CSV・ヤマト・佐川CSV整形、検品シート印刷", href: "shipping-format.html" },
-                  { id: "zaico", category: "shipping", title: "📦 zaicoくん", desc: "受注データで出庫指示", href: "zaico.html" },
-                { id: "shipping-link", category: "shipping", title: "🔗 紐づけくん", desc: "発行済みCSVと受注CSVの突合", href: "shipping-link.html" },
-                { id: "shipping-simulator", category: "shipping", title: "⚙️ 振り分けくん", desc: "ステータス変更（220更新）、タイムスタンプ自動入力", href: "shipping-simulator.html" },
-                { id: "notes", category: "communication", title: "💬 連絡くん", desc: "共有ノート・スタッフ間依頼・資材発注依頼", href: "notes.html" },
-                 { id: "checklist", category: "communication", title: "📋 チェックリストくん", desc: "出勤時〜終業時までのチェックリスト・出荷件数集計", href: "checklist.html" },
-                 { id: "chat-reply", category: "communication", title: "💬 バーストくん", desc: "未読ルーム一斉表示・スタッフ間連絡アプリ連携", href: "chat-reply.html" },
-                { id: "denpyo-post", category: "others", title: "📮 着払いくん", desc: "スマホカメラで着払いバーコードを読み取り、金額・メモと共に記録", href: "denpyo-post.html" },
-                { id: "timer", category: "others", title: "⏱️ ストップウォッチくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html" },
-                { id: "label", category: "others", title: "🏷️ ラベル作成くん", desc: "処理済みラベル・QRコード作成", href: "label.html" },
-                { id: "meeting", category: "others", title: "📝 議事録くん", desc: "定例会議の議事録・共有事項・議題管理および前週出荷実績（Firestore同期）", href: "meeting.html" },
-                { id: "skill", category: "others", title: "📊 スキル棚卸しくん", desc: "メンバー別の業務スキル評価・チェックリスト管理（印刷対応）", href: "skill.html" }
+                { id: "shipping-format", category: "shipping", title: "🚚 送り状自動整形", desc: "受注CSV・ヤマト・佐川CSV整形、検品シート印刷", href: "shipping-format.html", badge: 0 },
+                { id: "zaico", category: "others", title: "📦 zaicoくん", desc: "受注データで出庫指示", href: "zaico.html", badge: 0 },
+                { id: "shipping-link", category: "shipping", title: "🔗 紐づけくん", desc: "発行済みCSVと受注CSVの突合", href: "shipping-link.html", badge: 0 },
+                { id: "shipping-simulator", category: "shipping", title: "⚙️ 振り分けくん", desc: "ステータス変更（220更新）、タイムスタンプ自動入力", href: "shipping-simulator.html", badge: 0 },
+                { id: "notes", category: "communication", title: "💬 連絡くん", desc: "共有ノート・スタッフ間依頼・資材発注依頼", href: "notes.html", badge: 2 }, // 👈 連絡くん（バッジ対象）
+                { id: "checklist", category: "others", title: "📋 日次チェックリスト", desc: "出勤時〜終業時までのチェックリスト・出荷件数集計", href: "checklist.html", badge: 1 }, // 👈 チェックリストくん（バッジ対象）
+                { id: "chat-reply", category: "communication", title: "💬 Chatwork 未読バースト", desc: "未読ルーム一斉表示・スタッフ間連絡アプリ連携", href: "chat-reply.html", badge: 0 },
+                { id: "denpyo-post", category: "shipping", title: "📮 着払いスキャナー", desc: "スマホカメラで着払いバーコードを読み取り、金額・メモと共に記録", href: "denpyo-post.html", badge: 0 },
+                { id: "timer", category: "others", title: "⏱️ ストップウォッチくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html", badge: 0 },
+                { id: "label", category: "others", title: "🏷️ ラベル作成くん", desc: "処理済みラベル・QRコード作成", href: "label.html", badge: 0 },
+                { id: "meeting", category: "communication", title: "📝 議事録", desc: "定例会議の議事録・共有事項・議題管理および前週出荷実績（Firestore同期）", href: "meeting.html", badge: 1 }, // 👈 議事録くん（バッジ対象）
+                { id: "skill", category: "others", title: "📊 スキルチェックリスト", desc: "メンバー別の業務スキル評価・チェックリスト管理（印刷対応）", href: "skill.html", badge: 0 },
+                { id: "qr-label", category: "others", title: "🏷️ QRラベル作成", desc: "52mm×29mmのラベルサイズに合わせたQRコード作成・印刷ツール", href: "qr-label.html", badge: 0 }
             ]
         };
 
@@ -128,14 +148,12 @@
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    // 新しく追加したカード（qr-label）が既存のローカルストレージデータに無い場合を考慮して統合または保持
                     if (parsed && parsed.categories && parsed.cards) {
-                        // 既存のカード一覧に 'qr-label' がなければ追加してあげる親切設計
-                        if (!parsed.cards.some(c => c.id === 'qr-label')) {
-                            const othersCat = parsed.categories.find(c => c.id === 'others');
-                            const targetCatId = othersCat ? othersCat.id : parsed.categories[0].id;
-                            parsed.cards.push({ id: "qr-label", category: targetCatId, title: "🏷️ QRラベル作成", desc: "52mm×29mmのラベルサイズに合わせたQRコード作成・印刷ツール", href: "qr-label.html" });
-                        }
+                        defaultData.cards.forEach(defCard => {
+                            if (!parsed.cards.some(c => c.id === defCard.id)) {
+                                parsed.cards.push(defCard);
+                            }
+                        });
                         return parsed;
                     }
                 }
@@ -256,7 +274,13 @@
                             }
                         });
 
+                        let badgeHtml = '';
+                        if (card.badge && card.badge > 0) {
+                            badgeHtml = `<div class="notification-badge">${card.badge > 99 ? '99+' : card.badge}</div>`;
+                        }
+
                         appEl.innerHTML = `
+                            ${badgeHtml}
                             <div class="app-emoji">${parsed.emoji}</div>
                             <div class="app-title">${parsed.name}</div>
                         `;
