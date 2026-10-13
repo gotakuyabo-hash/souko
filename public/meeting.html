@@ -518,7 +518,7 @@
     pendingDeleteCallback = null;
   };
 
-  // 💡 未完了タスク数を集計してヘッダーのバッジとポータル側に連動させる関数
+  // 💡 確実かつ常に未完了タスク数を計算してバッジを更新する関数
   function updateUncompletedBadge() {
     let uncompletedCount = 0;
     document.querySelectorAll('.task-item').forEach(taskEl => {
@@ -528,7 +528,7 @@
       }
     });
 
-    // 1. このアプリのヘッダーにある赤丸バッジを更新
+    // ヘッダーのバッジ更新
     const badge = document.getElementById('header-badge');
     if (badge) {
       if (uncompletedCount > 0) {
@@ -539,13 +539,13 @@
       }
     }
 
-    // 2. ポータル側（index.html等）にもバッジ（未読・未完了数）を連動させる場合
+    // ポータル側との同期（localStorage）
     const STORAGE_KEY = 'warehouse_portal_v7_data';
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const portalData = JSON.parse(saved);
-        const card = portalData.cards.find(c => c.id === 'meeting'); // 議事録のID
+        const card = portalData.cards.find(c => c.id === 'meeting');
         if (card) {
           card.badge = uncompletedCount;
           localStorage.setItem(STORAGE_KEY, JSON.stringify(portalData));
@@ -577,7 +577,7 @@
   function triggerAutoSave() {
     clearTimeout(autoSaveTimer);
     saveStatusEl.textContent = "変更を検知しました...";
-    updateUncompletedBadge(); // 💡 変更時にバッジも即時更新
+    updateUncompletedBadge(); // 変更時にバッジを再計算
     autoSaveTimer = setTimeout(() => {
       saveDataToCloud(true);
     }, 1500);
@@ -642,7 +642,7 @@
     }
     updateTabs();
     initAutoResize();
-    updateUncompletedBadge(); // 💡 復元時にもバッジ更新
+    updateUncompletedBadge(); // 復元時にも更新
   }
 
   function calcErrorRate(triggerSave = true) {
@@ -797,6 +797,7 @@
     `;
 
     const checkbox = div.querySelector('.t-task-checkbox');
+    // 💡 チェックボックス変更時のイベント登録
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) {
         div.classList.add('completed');
@@ -804,7 +805,7 @@
         div.classList.remove('completed');
       }
       updateTopicStatusStyle(topicElement);
-      triggerAutoSave(); // 💡 チェック変更時にバッジも連動
+      triggerAutoSave(); // ここで必ずバッジ再計算とオートセーブを実行
     });
 
     div.querySelector('.btn-del-task').addEventListener('click', () => {
@@ -814,13 +815,15 @@
         triggerAutoSave();
       });
     });
+
     div.querySelectorAll('input, textarea').forEach(input => {
       input.addEventListener('input', triggerAutoSave);
     });
+
     taskList.appendChild(div);
     initAutoResize(div);
     updateTopicStatusStyle(topicElement);
-    updateUncompletedBadge(); // 💡 タスク追加時に更新
+    updateUncompletedBadge(); // タスク追加時にも更新
   }
 
   function addTopicItem(cardElement, topicData = {}) {
@@ -998,7 +1001,7 @@
 
       updateTabs();
       initAutoResize();
-      updateUncompletedBadge(); // 💡 読み込み時にバッジ更新
+      updateUncompletedBadge(); // 💡 読み込み完了後にバッジを確実に更新
       undoBtn.style.display = 'none';
     } catch (error) {
       console.error("読み込みエラー:", error);
