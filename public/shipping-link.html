@@ -104,16 +104,16 @@
             if (!orderData || orderData.length <= 1) { alert('受注データがありません。'); return; }
             const todayStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
 
-            // ヤマトマップ作成 (AA列(26番目): 注文番号 / D列(3番目): 伝票番号)[cite: 1]
+            // ヤマトマップ作成 (1列目(0番目): 注文番号 / D列(3番目): 伝票番号) ※ヘッダーなしのため全行対象
             const yamatoMap = new Map();
             if (yamatoData) {
-                yamatoData.slice(1).forEach(row => {
-                    let key = cleanOrderNoNormalized(row[26]), val = String(row[3] || '').trim();
+                yamatoData.forEach(row => {
+                    let key = cleanOrderNoNormalized(row[0]), val = String(row[3] || '').trim();
                     if (key) yamatoMap.set(key, val);
                 });
             }
 
-            // 佐川マップ作成 (AO列(40番目): 注文番号 / A列(0番目): お問い合わせ番号)[cite: 1]
+            // 佐川マップ作成 (AO列(40番目): 注文番号 / A列(0番目): お問い合わせ番号)
             const sagawaMap = new Map();
             if (sagawaData) {
                 sagawaData.slice(1).forEach(row => {
@@ -142,7 +142,7 @@
                     isUpdated = true;
                 }
 
-                // 紐づけられてステータスが120になった行（またはもともと120で更新対象になった行）のみ抽出
+                // 紐づけられてステータスが120になった行のみ抽出
                 if (isUpdated && row[7] === '120') {
                     filteredRows.push(row);
                     updatedCount++;
