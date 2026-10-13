@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>受注CSV ピック数算出 & zaico連動ツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; margin: 20px; background: #f8fafc; color: #1e293b; }
         .back-link { display: inline-block; margin-bottom: 15px; color: #2563eb; text-decoration: none; font-weight: bold; font-size: 14px; }
@@ -70,10 +72,20 @@
         </div>
     </div>
 
-    <script>
-        const URL_PROCESS_ORDER = "https://processorder-l22atg5m7q-uc.a.run.app";
-        const URL_SET_MULTIPLIER = "https://setmultiplier-l22atg5m7q-uc.a.run.app";
-        const URL_GET_MASTER = "https://getmasteritems-l22atg5m7q-uc.a.run.app";
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app"
+        };
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // zaico出庫指示のみ外部APIを使用（必要に応じて変更可）
         const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
 
         let currentResults = [];
@@ -81,7 +93,7 @@
         let currentSortColumn = null;
         let currentSortAsc = true;
 
-        function switchTab(tabId) {
+        window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             if (tabId === 'orderTab') {
@@ -94,7 +106,7 @@
                     loadMasterItems();
                 }
             }
-        }
+        };
 
         document.getElementById('csvFile').addEventListener('change', async (e) => {
             const file = e.target.files[0];
@@ -111,9 +123,7 @@
                 for (let i = 1; i < rows.length; i++) {
                     const cols = rows[i];
                     const itemNo = cols[6] || '';
-                    if (itemNo === '1-0') {
-                        continue;
-                    }
+                    if (itemNo === '1-0') continue;
 
                     if (cols.length > 31 && cols[31]) {
                         const productName = cols[31];
@@ -132,45 +142,75 @@
                     items.push({ productName, quantity });
                 });
 
-                await processAndRender(items);
+                await processOrderLocally(items);
             } catch (err) {
                 console.error(err);
                 alert('処理中にエラーが発生しました: ' + err.message);
             }
         });
 
-        async function processAndRender(items) {
+        // 受注CSVのアイテムとFirestoreのマスタを突合する処理
+        async function processOrderLocally(items) {
             showStatus("データを解析中...");
             try {
-                const res = await fetch(URL_PROCESS_ORDER, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items })
+                // Firestoreから全マスタを取得
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                const masterMap = new Map();
+                querySnapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    masterMap.set(docSnap.id, data); // doc.id = barcode
                 });
-                const data = await res.json();
 
-                if (data.success) {
-                    const aggregatedMap = new Map();
-                    data.results.forEach(item => {
-                        const key = item.barcode;
-                        if (aggregatedMap.has(key)) {
-                            const existing = aggregatedMap.get(key);
-                            existing.orderQty += item.orderQty;
-                            existing.pickCount = existing.orderQty * (existing.multiplier || 1);
-                        } else {
-                            aggregatedMap.set(key, { ...item });
+                const aggregatedMap = new Map();
+
+                // ここでは簡易的に商品名からバーコードを特定するか、マスタ側との突合を行います
+                // 既存のサーバー側ロジックに合わせてバーコードを判定
+                for (const item of items) {
+                    // マスタの中から商品名が一致するものを探す、あるいはバーコードベースで合算
+                    let matchedBarcode = "";
+                    let multiplier = 1;
+                    let shelfNumber = "";
+                    let status = "UNREGISTERED";
+
+                    // 商品名からマスタを逆引きするかどうかの判定
+                    for (const [barcode, mData] of masterMap.entries()) {
+                        if (mData.productName === item.productName || mData.product_name === item.productName) {
+                            matchedBarcode = barcode;
+                            multiplier = mData.multiplier || 1;
+                            shelfNumber = mData.shelfNumber || mData.shelf_number || "";
+                            status = "REGISTERED";
+                            break;
                         }
-                    });
+                    }
 
-                    currentResults = Array.from(aggregatedMap.values());
-                    renderTable(currentResults);
-                    document.getElementById('actionsBar').style.display = 'flex';
-                } else {
-                    alert('サーバーエラー: ' + data.error);
+                    if (!matchedBarcode) {
+                        matchedBarcode = "UNREG_" + item.productName; // 未登録用の仮キー
+                    }
+
+                    const key = matchedBarcode;
+                    if (aggregatedMap.has(key)) {
+                        const existing = aggregatedMap.get(key);
+                        existing.orderQty += item.quantity;
+                        existing.pickCount = existing.orderQty * (existing.multiplier || 1);
+                    } else {
+                        aggregatedMap.set(key, {
+                            barcode: matchedBarcode.startsWith("UNREG_") ? "" : matchedBarcode,
+                            productName: item.productName,
+                            orderQty: item.quantity,
+                            multiplier: multiplier,
+                            shelfNumber: shelfNumber,
+                            status: status,
+                            pickCount: item.quantity * multiplier
+                        });
+                    }
                 }
+
+                currentResults = Array.from(aggregatedMap.values());
+                renderTable(currentResults);
+                document.getElementById('actionsBar').style.display = 'flex';
             } catch (err) {
                 console.error(err);
-                alert('通信エラーが発生しました。');
+                alert('データ解析エラー: ' + err.message);
             }
         }
 
@@ -215,7 +255,7 @@
             document.getElementById('resultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
         }
 
-        function renderTable(results) {
+        window.renderTable = (results) => {
             let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み）</b></p>
                 <table>
                 <thead>
@@ -232,69 +272,65 @@
                 <tbody>`;
 
             results.forEach((item, index) => {
-                const isUnreg = item.status === "UNREGISTERED";
+                const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
                 html += `<tr id="row_${index}" class="${isUnreg ? 'unregistered' : ''}">
-                    <td>${item.productName}</td>
-                    <td><code>${item.barcode}</code></td>
+                    <td>${escapeHtml(item.productName)}</td>
+                    <td><input type="text" id="barcode_${index}" value="${escapeHtml(item.barcode || '')}" style="width: 100px;" placeholder="バーコード入力"></td>
                     <td>${item.orderQty}</td>
-                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
-                    <td><input type="text" id="shelf_${index}" value="${item.shelfNumber || ''}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
+                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;"></td>
+                    <td><input type="text" id="shelf_${index}" value="${escapeHtml(item.shelfNumber || '')}" style="width: 80px;" placeholder="例: A-1-2"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
-                    <td><button onclick="registerItem('${item.barcode}', ${index}, ${item.orderQty}, \`${item.productName.replace(/`/g, '\\`')}\`)">保存して計算</button></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)">保存して計算</button></td>
                 </tr>`;
             });
 
             html += `</tbody></table>`;
             document.getElementById('resultArea').innerHTML = html;
+        };
+
+        function escapeHtml(str) {
+            if(!str) return '';
+            return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
         }
 
-        function handleKeydown(event, index) {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                const item = currentResults[index];
-                if (item) {
-                    registerItem(item.barcode, index, item.orderQty, item.productName, true);
-                }
-            }
-        }
-
-        async function registerItem(barcode, index, orderQty, productName, isSilent = false) {
+        // Firestoreに直接保存・更新
+        window.registerItem = async (index, orderQty, productName) => {
+            const barcode = document.getElementById(`barcode_${index}`).value.trim();
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
             const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
 
-            try {
-                const res = await fetch(URL_SET_MULTIPLIER, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
-                });
-                const data = await res.json();
+            if (!barcode) {
+                alert('有効なバーコードを入力してください。');
+                return;
+            }
 
-                if (data.success) {
-                    const row = document.getElementById(`row_${index}`);
-                    row.classList.remove('unregistered');
-                    currentResults[index].multiplier = multiplier;
-                    currentResults[index].shelfNumber = shelfNumber;
-                    currentResults[index].pickCount = orderQty * multiplier;
-                    currentResults[index].status = "REGISTERED"; // ステータスを登録済みに更新
-                    document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                    
-                    if (!isSilent) {
-                        alert('保存しました！');
-                    } else {
-                        const nextShelf = document.getElementById(`shelf_${index + 1}`);
-                        if (nextShelf) nextShelf.focus();
-                    }
-                } else {
-                    if (!isSilent) alert('保存失敗: ' + data.error);
-                }
+            try {
+                // Firestoreの product_masters コレクションにバーコードをドキュメントIDとして保存
+                await setDoc(doc(db, "product_masters", barcode), {
+                    barcode: barcode,
+                    productName: productName,
+                    multiplier: multiplier,
+                    shelfNumber: shelfNumber,
+                    updatedAt: new Date()
+                }, { merge: true });
+
+                const row = document.getElementById(`row_${index}`);
+                row.classList.remove('unregistered');
+                currentResults[index].barcode = barcode;
+                currentResults[index].multiplier = multiplier;
+                currentResults[index].shelfNumber = shelfNumber;
+                currentResults[index].status = "REGISTERED";
+                currentResults[index].pickCount = orderQty * multiplier;
+                document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
+                
+                alert('保存しました！');
             } catch (err) {
                 console.error(err);
-                if (!isSilent) alert('通信エラーが発生しました。');
+                alert('保存エラー: ' + err.message);
             }
-        }
+        };
 
-        async function saveAllOrders() {
+        window.saveAllOrders = async () => {
             if (!confirm('画面に表示されているすべての明細の変更内容を一括で保存・計算しますか？')) return;
 
             let successCount = 0;
@@ -302,46 +338,47 @@
 
             for (let index = 0; index < currentResults.length; index++) {
                 const item = currentResults[index];
+                const barcodeInput = document.getElementById(`barcode_${index}`);
                 const multInput = document.getElementById(`mult_${index}`);
                 const shelfInput = document.getElementById(`shelf_${index}`);
 
-                if (multInput && shelfInput) {
+                if (barcodeInput && multInput && shelfInput) {
+                    const barcode = barcodeInput.value.trim();
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
-                    const barcode = item.barcode;
-                    const orderQty = item.orderQty;
-                    const productName = item.productName;
 
-                    try {
-                        const res = await fetch(URL_SET_MULTIPLIER, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
-                        });
-                        const data = await res.json();
+                    if (barcode) {
+                        try {
+                            await setDoc(doc(db, "product_masters", barcode), {
+                                barcode: barcode,
+                                productName: item.productName,
+                                multiplier: multiplier,
+                                shelfNumber: shelfNumber,
+                                updatedAt: new Date()
+                            }, { merge: true });
 
-                        if (data.success) {
                             successCount++;
                             const row = document.getElementById(`row_${index}`);
                             row.classList.remove('unregistered');
+                            currentResults[index].barcode = barcode;
                             currentResults[index].multiplier = multiplier;
                             currentResults[index].shelfNumber = shelfNumber;
-                            currentResults[index].pickCount = orderQty * multiplier;
-                            currentResults[index].status = "REGISTERED"; // ステータスを登録済みに更新
+                            currentResults[index].status = "REGISTERED";
+                            currentResults[index].pickCount = item.orderQty * multiplier;
                             document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                        } else {
+                        } catch (err) {
                             failCount++;
                         }
-                    } catch (err) {
+                    } else {
                         failCount++;
                     }
                 }
             }
 
             alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
-        }
+        };
 
-        function sortByShelf() {
+        window.sortByShelf = () => {
             currentResults.sort((a, b) => {
                 const sA = a.shelfNumber || "";
                 const sB = b.shelfNumber || "";
@@ -349,10 +386,9 @@
             });
             renderTable(currentResults);
             alert('棚番順にソートしました！');
-        }
+        };
 
-        async function sendToZaico() {
-            // 未登録商品（status === "UNREGISTERED"）を自動で除外
+        window.sendToZaico = async () => {
             const validItems = currentResults.filter(item => item.status !== "UNREGISTERED" && item.barcode);
 
             if (validItems.length === 0) {
@@ -361,12 +397,9 @@
             }
 
             const unregisteredCount = currentResults.length - validItems.length;
-            let confirmMsg = '';
-            if (unregisteredCount > 0) {
-                confirmMsg = `未登録の ${unregisteredCount} 件を除外し、登録済みの ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`;
-            } else {
-                confirmMsg = `表示されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`;
-            }
+            let confirmMsg = unregisteredCount > 0 
+                ? `未登録の ${unregisteredCount} 件を除外し、登録済みの ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`
+                : `表示されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`;
 
             if (!confirm(confirmMsg)) return;
 
@@ -390,25 +423,24 @@
                 console.error(err);
                 alert('通信エラーが発生しました。');
             }
-        }
+        };
 
-        async function loadMasterItems() {
+        // ==================== マスタ管理タブの機能（Firestore直接操作） ====================
+        window.loadMasterItems = async () => {
             const masterArea = document.getElementById('masterResultArea');
             masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
             try {
-                const res = await fetch(URL_GET_MASTER);
-                const data = await res.json();
-                if (data.success) {
-                    masterItemsCache = data.items || [];
-                    renderMasterTable(masterItemsCache);
-                } else {
-                    masterArea.innerHTML = `<p style="color:red; margin-top:15px;">取得失敗: ${data.error || '不明なエラー'}</p>`;
-                }
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                masterItemsCache = [];
+                querySnapshot.forEach(docSnap => {
+                    masterItemsCache.push({ id: docSnap.id, ...docSnap.data() });
+                });
+                renderMasterTable(masterItemsCache);
             } catch (err) {
                 console.error(err);
-                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">通信エラーが発生しました。</p>';
+                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
             }
-        }
+        };
 
         function renderMasterTable(items) {
             const masterArea = document.getElementById('masterResultArea');
@@ -430,19 +462,19 @@
                 <tbody>`;
 
             items.forEach((item, i) => {
-                const name = item.product_name || item.productName || item.itemName || item.name || '';
-                const shelf = item.shelf_number || item.shelfNumber || item.shelf || '';
-                const barcode = item.barcode || item.code || item.qr || '';
+                const name = item.productName || item.product_name || '';
+                const shelf = item.shelfNumber || item.shelf_number || '';
+                const barcode = item.barcode || item.id || '';
                 const multiplier = item.multiplier || 1;
 
                 html += `<tr id="master_row_${i}">
-                    <td><input type="text" id="master_name_${i}" value="${name}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
-                    <td><code>${barcode}</code></td>
+                    <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                    <td><code>${escapeHtml(barcode)}</code></td>
                     <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
-                    <td><input type="text" id="master_shelf_${i}" value="${shelf}" style="width:100px; padding:4px;"></td>
+                    <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
                     <td>
-                        <button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button>
-                        <button onclick="deleteMaster('${barcode}', \`${name.replace(/`/g, '\\`')}\`)" class="btn-danger">削除</button>
+                        <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
+                        <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
                     </td>
                 </tr>`;
             });
@@ -455,7 +487,7 @@
             return currentSortAsc ? '▲' : '▼';
         }
 
-        function sortMasterTable(column) {
+        window.sortMasterTable = (column) => {
             if (currentSortColumn === column) {
                 currentSortAsc = !currentSortAsc;
             } else {
@@ -466,17 +498,17 @@
             masterItemsCache.sort((a, b) => {
                 let valA, valB;
                 if (column === 'name') {
-                    valA = (a.product_name || a.productName || a.itemName || a.name || '').toLowerCase();
-                    valB = (b.product_name || b.productName || b.itemName || b.name || '').toLowerCase();
+                    valA = (a.productName || a.product_name || '').toLowerCase();
+                    valB = (b.productName || b.product_name || '').toLowerCase();
                 } else if (column === 'barcode') {
-                    valA = (a.barcode || a.code || '').toLowerCase();
-                    valB = (b.barcode || b.code || '').toLowerCase();
+                    valA = (a.barcode || a.id || '').toLowerCase();
+                    valB = (b.barcode || b.id || '').toLowerCase();
                 } else if (column === 'multiplier') {
                     valA = Number(a.multiplier) || 1;
                     valB = Number(b.multiplier) || 1;
                 } else if (column === 'shelf') {
-                    valA = (a.shelf_number || a.shelfNumber || a.shelf || '').toLowerCase();
-                    valB = (b.shelf_number || b.shelfNumber || b.shelf || '').toLowerCase();
+                    valA = (a.shelfNumber || a.shelf_number || '').toLowerCase();
+                    valB = (b.shelfNumber || b.shelf_number || '').toLowerCase();
                 }
 
                 if (valA < valB) return currentSortAsc ? -1 : 1;
@@ -484,19 +516,19 @@
                 return 0;
             });
 
-            filterMasterTable();
-        }
+            window.filterMasterTable();
+        };
 
-        function filterMasterTable() {
+        window.filterMasterTable = () => {
             const keyword = document.getElementById('masterSearch').value.toLowerCase();
             const filtered = masterItemsCache.filter(item => {
-                const name = (item.product_name || item.productName || item.itemName || item.name || '').toLowerCase();
-                const barcode = (item.barcode || item.code || '').toLowerCase();
-                const shelf = (item.shelf_number || item.shelfNumber || item.shelf || '').toLowerCase();
+                const name = (item.productName || item.product_name || '').toLowerCase();
+                const barcode = (item.barcode || item.id || '').toLowerCase();
+                const shelf = (item.shelfNumber || item.shelf_number || '').toLowerCase();
                 return name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
             });
             renderMasterTableOnly(filtered);
-        }
+        };
 
         function renderMasterTableOnly(items) {
             const masterArea = document.getElementById('masterResultArea');
@@ -517,88 +549,77 @@
 
             let html = '';
             items.forEach((item, i) => {
-                const name = item.product_name || item.productName || item.itemName || item.name || '';
-                const shelf = item.shelf_number || item.shelfNumber || item.shelf || '';
-                const barcode = item.barcode || item.code || item.qr || '';
+                const name = item.productName || item.product_name || '';
+                const shelf = item.shelfNumber || item.shelf_number || '';
+                const barcode = item.barcode || item.id || '';
                 const multiplier = item.multiplier || 1;
 
                 html += `<tr id="master_row_${i}">
-                    <td><input type="text" id="master_name_${i}" value="${name}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
-                    <td><code>${barcode}</code></td>
+                    <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                    <td><code>${escapeHtml(barcode)}</code></td>
                     <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
-                    <td><input type="text" id="master_shelf_${i}" value="${shelf}" style="width:100px; padding:4px;"></td>
+                    <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
                     <td>
-                        <button onclick="updateMaster('${barcode}', ${i})" class="btn-success">更新</button>
-                        <button onclick="deleteMaster('${barcode}', \`${name.replace(/`/g, '\\`')}\`)" class="btn-danger">削除</button>
+                        <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
+                        <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
                     </td>
                 </tr>`;
             });
             tbody.innerHTML = html;
         }
 
-        async function updateMaster(barcode, i) {
+        window.updateMaster = async (barcode, i) => {
             const productName = document.getElementById(`master_name_${i}`).value.trim();
             const multiplier = Number(document.getElementById(`master_mult_${i}`).value) || 1;
             const shelfNumber = document.getElementById(`master_shelf_${i}`).value.trim();
 
             try {
-                const res = await fetch(URL_SET_MULTIPLIER, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ barcode, multiplier, shelfNumber, productName })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    alert('マスタを更新しました！');
-                    const target = masterItemsCache.find(item => (item.barcode || item.code) === barcode);
-                    if (target) {
-                        target.product_name = productName;
-                        target.productName = productName;
-                        target.multiplier = multiplier;
-                        target.shelf_number = shelfNumber;
-                        target.shelfNumber = shelfNumber;
-                    }
-                } else {
-                    alert('更新失敗: ' + data.error);
+                await setDoc(doc(db, "product_masters", barcode), {
+                    barcode: barcode,
+                    productName: productName,
+                    multiplier: multiplier,
+                    shelfNumber: shelfNumber,
+                    updatedAt: new Date()
+                }, { merge: true });
+
+                alert('マスタを更新しました！');
+                const target = masterItemsCache.find(item => (item.barcode || item.id) === barcode);
+                if (target) {
+                    target.productName = productName;
+                    target.multiplier = multiplier;
+                    target.shelfNumber = shelfNumber;
                 }
             } catch (err) {
                 console.error(err);
-                alert('通信エラー');
+                alert('更新エラー: ' + err.message);
             }
-        }
+        };
 
-        async function deleteMaster(barcode, productName) {
+        window.deleteMaster = async (barcode, productName) => {
             if (!confirm(`本当に「${productName} (バーコード: ${barcode})」を削除しますか？\n（この操作は元に戻せません）`)) {
                 return;
             }
 
             try {
-                const res = await fetch("https://deletemasteritem-l22atg5m7q-uc.a.run.app", {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ barcode })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    alert('削除しました。');
-                    masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.code) !== barcode);
-                    filterMasterTest();
-                } else {
-                    alert('削除失敗: ' + (data.error || '不明なエラー'));
-                }
+                // Firestoreから直接削除
+                await deleteDoc(doc(db, "product_masters", barcode));
+                alert('削除しました。');
+                masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.id) !== barcode);
+                window.filterMasterTable();
             } catch (err) {
                 console.error(err);
-                alert('削除通信に失敗しました。');
+                alert('削除エラー: ' + err.message);
             }
-        }
+        };
 
-        async function saveAllMasters() {
+        window.saveAllMasters = async () => {
             if (!confirm('現在画面に表示されているマスタの変更内容を一括保存しますか？')) return;
 
             const rows = document.querySelectorAll('#masterResultArea tbody tr');
-            const updates = [];
+            let successCount = 0;
+            let failCount = 0;
 
-            rows.forEach(row => {
+            for (const row of rows) {
                 const nameInput = row.querySelector('input[id^="master_name_"]');
                 const multInput = row.querySelector('input[id^="master_mult_"]');
                 const shelfInput = row.querySelector('input[id^="master_shelf_"]');
@@ -606,51 +627,34 @@
 
                 if (nameInput && multInput && shelfInput && codeCell) {
                     const barcode = codeCell.textContent.trim();
-                    updates.push({
-                        barcode: barcode,
-                        productName: nameInput.value.trim(),
-                        multiplier: Number(multInput.value) || 1,
-                        shelfNumber: shelfInput.value.trim()
-                    });
-                }
-            });
+                    const productName = nameInput.value.trim();
+                    const multiplier = Number(multInput.value) || 1;
+                    const shelfNumber = shelfInput.value.trim();
 
-            if (updates.length === 0) {
-                alert('保存するデータがありません。');
-                return;
-            }
+                    try {
+                        await setDoc(doc(db, "product_masters", barcode), {
+                            barcode: barcode,
+                            productName: productName,
+                            multiplier: multiplier,
+                            shelfNumber: shelfNumber,
+                            updatedAt: new Date()
+                        }, { merge: true });
 
-            let successCount = 0;
-            let failCount = 0;
-
-            for (const item of updates) {
-                try {
-                    const res = await fetch(URL_SET_MULTIPLIER, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(item)
-                    });
-                    const data = await res.json();
-                    if (data.success) {
                         successCount++;
-                        const target = masterItemsCache.find(t => (t.barcode || t.code) === item.barcode);
+                        const target = masterItemsCache.find(t => (t.barcode || t.id) === barcode);
                         if (target) {
-                            target.product_name = item.productName;
-                            target.productName = item.productName;
-                            target.multiplier = item.multiplier;
-                            target.shelf_number = item.shelfNumber;
-                            target.shelfNumber = item.shelfNumber;
+                            target.productName = productName;
+                            target.multiplier = multiplier;
+                            target.shelfNumber = shelfNumber;
                         }
-                    } else {
+                    } catch (err) {
                         failCount++;
                     }
-                } catch (err) {
-                    failCount++;
                 }
             }
 
             alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
-        }
+        };
     </script>
 </body>
 </html>
