@@ -46,7 +46,7 @@
                         <option value="desc">降順 (新しい順 / Z→A)</option>
                     </select>
                     <button onclick="applyDynamicSort()" class="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3.5 py-1.5 rounded font-bold transition">ソート実行</button>
-                    <button onclick="resetSort()" class="bg-slate-300 hover:bg-slate-400 text-slate-700 text-xs px-3 py-1.5 rounded font-bold transition">解除</button>
+                    <button onclick="resetSort()" class="bg-slate-300 hover:bg-slate-400 text-slate-700 text-xs px-3 py-1.5 rounded font-bold transition">初期順に戻す</button>
                 </div>
             </div>
 
@@ -70,15 +70,12 @@
     </div>
 
     <script>
-        // データホルダー
         let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         
         let sortedOrderRows = [];
         let originalOrderRows = [];
-
-        // 列マッピング用
         let colMap = { shop: -1, orderNo: -1, name: -1, itemCode: -1, itemName: -1, qty: -1 };
 
         const dropZone = document.getElementById('dropZone');
@@ -106,7 +103,6 @@
             document.getElementById('ehidenBtn').disabled = true;
         }
 
-        // ファイル種別の自動判別
         function getFileType(fileName, sampleStr) {
             let lower = fileName.toLowerCase();
             if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
@@ -116,11 +112,9 @@
             if (sampleStr.includes('お届け先コード') || sampleStr.includes('e飛伝') || sampleStr.includes('お客様管理番号')) return 'sagawa';
             if (sampleStr.includes('受注番号') || sampleStr.includes('受注ID') || sampleStr.includes('店舗名') || sampleStr.includes('コントロールカラム')) return 'order';
             
-            // ヘッダーがない場合はヤマトB2と判定
             return 'yamato';
         }
 
-        // 受注番号のゆらぎ吸収
         function cleanOrderNoNormalized(rawStr) {
             if (!rawStr) return "";
             return String(rawStr).replace(/^No:?[\.\s]*/i, "")
@@ -148,11 +142,9 @@
                         let dataStartIndex = 0;
 
                         if (type === 'yamato') {
-                            // ヤマト（B2）はヘッダーなし。1行目からいきなりデータが始まる
                             headerRow = [];
                             dataStartIndex = 0;
                         } else {
-                            // 受注・佐川はヘッダーあり。不要な1〜2行目をスキップしてヘッダーを探す
                             for (let i = 0; i < Math.min(rows.length, 5); i++) {
                                 if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('コントロールカラム') || String(c).includes('お届け先') || String(c).includes('受注ID') || String(c).includes('e飛伝')))) {
                                     headerRow = rows[i];
@@ -184,7 +176,6 @@
         }
 
         function rebuildData() {
-            // 受注データの列マッピング特定
             if (orderData.rows.length > 0) {
                 let orderNoIdx = orderData.header.findIndex(h => String(h).trim() === '受注番号');
                 if (orderNoIdx === -1) orderNoIdx = orderData.header.findIndex(h => String(h).includes('受注番号'));
@@ -204,7 +195,6 @@
                 sortedOrderRows = [...orderData.rows];
             }
 
-            // 受注番号リストをSet化
             let validOrderSet = new Set();
             if (orderData.rows.length > 0) {
                 orderData.rows.forEach(r => {
@@ -213,7 +203,6 @@
                 });
             }
 
-            // 送り状側の「受注番号の列」を自動検知（総当りマッチング：ヘッダーなしでも完璧に検知します）
             function findBestOrderCol(rows) {
                 if (rows.length === 0 || validOrderSet.size === 0) return -1;
                 let bestIdx = 0, maxMatches = 0;
@@ -253,15 +242,14 @@
             select.innerHTML = '<option value="">（ソートする列を選択）</option>';
             if (orderData.header.length === 0) return;
             
-            let pCodeIdx = orderData.header.findIndex(h => String(h).includes('商品コード'));
-            let memoIdx = orderData.header.findIndex(h => String(h).includes('メモ1') || String(h).includes('メモ１'));
-            
-            if (pCodeIdx !== -1) select.appendChild(new Option(`商品コード (列 ${pCodeIdx})`, pCodeIdx));
-            if (memoIdx !== -1) select.appendChild(new Option(`メモ１ (列 ${memoIdx})`, memoIdx));
-            
-            if (select.options.length <= 1) { 
-                select.appendChild(new Option(`列 30 (商品コード想定)`, 30));
-                select.appendChild(new Option(`列 27 (メモ１想定)`, 27));
+            orderData.header.forEach((hName, idx) => {
+                let label = String(hName).trim() !== '' ? `${hName} (列 ${idx})` : `列 ${idx}`;
+                select.appendChild(new Option(label, idx));
+            });
+
+            let defaultIdx = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
+            if (defaultIdx !== -1) {
+                select.value = defaultIdx;
             }
         }
 
@@ -281,7 +269,7 @@
         }
 
         function resetSort() {
-            document.getElementById('sortColumnSelect').value = "30";
+            document.getElementById('sortColumnSelect').value = "";
             document.getElementById('sortDirectionSelect').value = "asc";
             sortedOrderRows = [...originalOrderRows];
             renderTable();
@@ -306,9 +294,8 @@
             });
         }
 
-        // ヤマトB2 CSV出力：ヘッダーなし ＋ 品名25文字制限 ＋ ソート順反映
         function exportYamatoCsv() {
-            let outputRows = []; // ヘッダー行なし
+            let outputRows = [];
             let todayStr = getTodayString();
             
             sortedOrderRows.forEach(oRow => {
@@ -319,17 +306,15 @@
                 if (matchedYRow) {
                     let newRow = [...matchedYRow];
                     while (newRow.length < 42) newRow.push("");
-                    newRow[4] = todayStr; // 出荷日
-                    newRow[39] = '09050540672'; // 依頼主電話番号
-                    newRow[26] = ""; // 請求金額クリアなど
+                    newRow[4] = todayStr;
+                    newRow[39] = '09050540672';
+                    newRow[26] = "";
 
-                    // B2の品名1, 品名2の列（一般的に24〜30列目付近）を確実に25文字以内にカット
                     for (let c = 24; c <= 30; c++) {
                         if (newRow[c] && newRow[c].length > 25) {
                             newRow[c] = newRow[c].substring(0, 25);
                         }
                     }
-                    
                     outputRows.push(newRow);
                 }
             });
@@ -337,7 +322,6 @@
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
 
-        // 佐川（e飛伝）CSV出力：ヘッダーあり ＋ 品名16文字制限 ＋ ソート順反映
         function exportEhidenCsv() {
             let outputRows = sagawaData.header && sagawaData.header.length > 0 ? [sagawaData.header] : [];
             let targetIdx = -1;
@@ -360,35 +344,102 @@
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1 && outputRows.length === (sagawaData.header.length > 0 ? 1 : 0)) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
+            if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
 
         function openPrintPreview() {
             const todayStr = new Date().toLocaleDateString();
             let htmlPages = [];
+
+            // G列（インデックス 6）を項番の列として固定参照
+            let koBanIdx = 6;
+            
+            // 受注番号ごとにグループ化
+            let orderGroupMap = new Map();
+
             sortedOrderRows.forEach(r => {
-                let shop = colMap.shop !== -1 ? r[colMap.shop] : '';
                 let orderNo = colMap.orderNo !== -1 ? r[colMap.orderNo] : '';
-                let name = colMap.name !== -1 ? r[colMap.name] : '';
-                let itemCode = colMap.itemCode !== -1 ? r[colMap.itemCode] : '';
-                let itemName = colMap.itemName !== -1 ? r[colMap.itemName] : '';
-                let qty = colMap.qty !== -1 ? r[colMap.qty] : '1';
+                let normalizedNo = cleanOrderNoNormalized(orderNo);
+                if (!normalizedNo) return;
+
+                let koBanVal = r[koBanIdx] !== undefined ? String(r[koBanIdx]).trim() : '';
+
+                if (!orderGroupMap.has(normalizedNo)) {
+                    orderGroupMap.set(normalizedNo, {
+                        orderNo: orderNo,
+                        shop: colMap.shop !== -1 ? r[colMap.shop] : '',
+                        name: colMap.name !== -1 ? r[colMap.name] : '',
+                        rows: []
+                    });
+                }
+
+                let group = orderGroupMap.get(normalizedNo);
+
+                // 項番が "-0"（親行）の行の情報を優先して宛名や店舗名に採用
+                if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
+                    if (colMap.shop !== -1 && r[colMap.shop]) group.shop = r[colMap.shop];
+                    if (colMap.name !== -1 && r[colMap.name]) group.name = r[colMap.name];
+                }
+
+                group.rows.push(r);
+            });
+
+            if (orderGroupMap.size === 0) {
+                alert("印刷対象の受注データがありません。");
+                return;
+            }
+
+            // 注文（親セット）ごとに検品シートを1枚ずつ生成
+            orderGroupMap.forEach((group) => {
+                let itemRowsHtml = '';
+                let totalQty = 0;
+
+                group.rows.forEach(mRow => {
+                    let koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
+                    let itemCode = colMap.itemCode !== -1 ? mRow[colMap.itemCode] : '';
+                    let itemName = colMap.itemName !== -1 ? mRow[colMap.itemName] : '';
+                    let qty = colMap.qty !== -1 ? mRow[colMap.qty] : '1';
+
+                    totalQty += parseInt(qty, 10) || 1;
+
+                    itemRowsHtml += `
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="text-align:center; padding:4px;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td>
+                            <td style="font-size:10pt; padding:4px;">${itemName}<br><span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span></td>
+                            <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
+                        </tr>
+                    `;
+                });
                 
                 htmlPages.push(`
                 <div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;">
-                    <div style="font-size:14pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;">出荷検品シート</div>
-                    <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:12pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:11pt;color:#c0392b;">${shop}</td></tr></table>
-                    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9.5pt;"><b>受注番号:</b> ${orderNo}</td><td style="padding:3px 5px;font-size:9.5pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
-                    <table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#2c3e50;color:#fff;font-size:9.5pt;"><th style="width:15%;padding:4px;text-align:center;">確認</th><th style="width:70%;padding:4px;text-align:left;">商品名</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead><tbody><tr><td style="text-align:center;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td><td style="font-size:10.5pt;padding:4px;">${itemName}<br><span style="font-size:8pt;color:#666;">${itemCode}</span></td><td style="text-align:center;font-weight:bold;font-size:12pt;padding:4px;">${qty}</td></tr></tbody></table>
+                    <div style="font-size:13pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;">
+                        <span>出荷検品シート</span>
+                        <span style="font-size:9pt;font-weight:normal;color:#555;">合計数量: ${totalQty}</span>
+                    </div>
+                    <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${group.name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${group.shop}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${group.orderNo}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:#2c3e50;color:#fff;font-size:9pt;">
+                                <th style="width:12%;padding:4px;text-align:center;">確認</th>
+                                <th style="width:73%;padding:4px;text-align:left;">商品名 / 商品コード</th>
+                                <th style="width:15%;padding:4px;text-align:center;">数量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${itemRowsHtml}
+                        </tbody>
+                    </table>
                 </div>`);
             });
+
             const printWin = window.open('', '_blank');
             printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
             printWin.document.close();
         }
 
-        // CSV出力共通関数
         function parseRobustCSV(text) {
             let rows = [], currentRow = [], currentVal = '', inQuotes = false;
             for (let i = 0; i < text.length; i++) {
