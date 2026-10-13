@@ -83,7 +83,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // zaico出庫指示のみ外部APIを使用（必要に応じて変更可）
+        // zaico出庫指示のみ外部APIを使用
         const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
 
         let currentResults = [];
@@ -154,7 +154,6 @@
             }
         });
 
-        // 受注CSVのアイテムとFirestoreのマスタを突合する処理
         async function processOrderLocally(items) {
             showStatus("データを解析中...");
             try {
@@ -292,7 +291,6 @@
             }
         };
 
-        // Firestoreに直接保存・更新
         window.registerItem = async (index, orderQty, productName, isSilent = false) => {
             const barcode = document.getElementById(`barcode_${index}`).value.trim();
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
@@ -300,6 +298,10 @@
 
             if (!barcode) {
                 if (!isSilent) alert('バーコードを入力してください。');
+                return;
+            }
+            if (!shelfNumber) {
+                if (!isSilent) alert('棚番を入力してください。');
                 return;
             }
 
@@ -333,10 +335,12 @@
             }
         };
 
+        // ★ 受注タブ：棚番が空欄のものは一括保存の対象外にする
         window.saveAllOrders = async () => {
-            if (!confirm('画面に表示されているすべての明細の変更内容を一括で保存・計算しますか？')) return;
+            if (!confirm('画面に表示されている明細のうち、棚番が入力されているものだけ一括保存・計算しますか？')) return;
 
             let successCount = 0;
+            let skippedCount = 0;
             let failCount = 0;
 
             for (let index = 0; index < currentResults.length; index++) {
@@ -350,35 +354,37 @@
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
 
-                    if (barcode) {
-                        try {
-                            await setDoc(doc(db, "product_masters", barcode), {
-                                barcode: barcode,
-                                productName: item.productName,
-                                multiplier: multiplier,
-                                shelfNumber: shelfNumber,
-                                updatedAt: new Date()
-                            }, { merge: true });
+                    // 棚番が空欄、またはバーコードが空欄のものはスキップ
+                    if (!barcode || !shelfNumber) {
+                        skippedCount++;
+                        continue;
+                    }
 
-                            successCount++;
-                            const row = document.getElementById(`row_${index}`);
-                            row.classList.remove('unregistered');
-                            currentResults[index].barcode = barcode;
-                            currentResults[index].multiplier = multiplier;
-                            currentResults[index].shelfNumber = shelfNumber;
-                            currentResults[index].status = "REGISTERED";
-                            currentResults[index].pickCount = item.orderQty * multiplier;
-                            document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                        } catch (err) {
-                            failCount++;
-                        }
-                    } else {
+                    try {
+                        await setDoc(doc(db, "product_masters", barcode), {
+                            barcode: barcode,
+                            productName: item.productName,
+                            multiplier: multiplier,
+                            shelfNumber: shelfNumber,
+                            updatedAt: new Date()
+                        }, { merge: true });
+
+                        successCount++;
+                        const row = document.getElementById(`row_${index}`);
+                        row.classList.remove('unregistered');
+                        currentResults[index].barcode = barcode;
+                        currentResults[index].multiplier = multiplier;
+                        currentResults[index].shelfNumber = shelfNumber;
+                        currentResults[index].status = "REGISTERED";
+                        currentResults[index].pickCount = item.orderQty * multiplier;
+                        document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
+                    } catch (err) {
                         failCount++;
                     }
                 }
             }
 
-            alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(棚番未入力など): ${skippedCount} 件\n失敗: ${failCount} 件`);
         };
 
         window.sortByShelf = () => {
@@ -392,16 +398,16 @@
         };
 
         window.sendToZaico = async () => {
-            const validItems = currentResults.filter(item => item.status !== "UNREGISTERED" && item.barcode);
+            const validItems = currentResults.filter(item => item.status !== "UNREGISTERED" && item.barcode && item.shelfNumber);
 
             if (validItems.length === 0) {
-                alert('zaicoに送信できる有効な商品（登録済みの明細）がありません。');
+                alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。');
                 return;
             }
 
             const unregisteredCount = currentResults.length - validItems.length;
             let confirmMsg = unregisteredCount > 0 
-                ? `未登録の ${unregisteredCount} 件を除外し、登録済みの ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`
+                ? `棚番未入力等の ${unregisteredCount} 件を除外し、条件を満たした ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`
                 : `表示されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`;
 
             if (!confirm(confirmMsg)) return;
@@ -428,7 +434,7 @@
             }
         };
 
-        // ==================== マスタ管理タブ（Firestore直接操作） ====================
+        // ==================== マスタ管理タブ ====================
         window.loadMasterItems = async () => {
             const masterArea = document.getElementById('masterResultArea');
             masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
@@ -576,6 +582,11 @@
             const multiplier = Number(document.getElementById(`master_mult_${i}`).value) || 1;
             const shelfNumber = document.getElementById(`master_shelf_${i}`).value.trim();
 
+            if (!shelfNumber) {
+                alert('棚番を入力してください。');
+                return;
+            }
+
             try {
                 await setDoc(doc(db, "product_masters", barcode), {
                     barcode: barcode,
@@ -598,7 +609,6 @@
             }
         };
 
-        // Firestoreから直接削除（CORSエラーなし）
         window.deleteMaster = async (barcode, productName) => {
             if (!confirm(`本当に「${productName} (バーコード: ${barcode})」を削除しますか？\n（この操作は元に戻せません）`)) {
                 return;
@@ -615,11 +625,13 @@
             }
         };
 
+        // ★ マスタ管理タブ：棚番が空欄のものは一括保存の対象外にする
         window.saveAllMasters = async () => {
-            if (!confirm('現在画面に表示されているマスタの変更内容を一括保存しますか？')) return;
+            if (!confirm('現在画面に表示されているマスタのうち、棚番が入力されているものだけ一括保存しますか？')) return;
 
             const rows = document.querySelectorAll('#masterResultArea tbody tr');
             let successCount = 0;
+            let skippedCount = 0;
             let failCount = 0;
 
             for (const row of rows) {
@@ -633,6 +645,12 @@
                     const productName = nameInput.value.trim();
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
+
+                    // 棚番が空欄のものはスキップ
+                    if (!shelfNumber) {
+                        skippedCount++;
+                        continue;
+                    }
 
                     try {
                         await setDoc(doc(db, "product_masters", barcode), {
@@ -656,7 +674,7 @@
                 }
             }
 
-            alert(`一括保存が完了しました。\n成功: ${successCount} 件\n失敗: ${failCount} 件`);
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(棚番未入力): ${skippedCount} 件\n失敗: ${failCount} 件`);
         };
     </script>
 </body>
