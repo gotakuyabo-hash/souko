@@ -482,10 +482,23 @@
         window.addEventListener('DOMContentLoaded', () => {
             // 処理済みラベルのローカルストレージ復元
             const savedJson = localStorage.getItem(PROCESSED_STORAGE_KEY);
+            
+            // --- ① 当日の日付を取得する関数 (YYYY-MM-DD形式) ---
+            const getTodayStr = () => {
+                const now = new Date();
+                const yyyy = now.getFullYear();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            };
+
             if (savedJson) {
                 try {
                     const d = JSON.parse(savedJson);
-                    document.getElementById('p-date').value = d.processDate || "";
+                    
+                    // ② 保存されたデータに日付があればそれを使用、なければ今日の日付を設定
+                    document.getElementById('p-date').value = d.processDate || getTodayStr();
+                    
                     document.getElementById('p-seller').value = d.sellerName || "";
                     document.getElementById('p-staff').value = d.staffName || "";
 
@@ -503,7 +516,13 @@
                 } catch (e) {
                     console.error("データ読み込みエラー", e);
                 }
+            } else {
+                // ③ まったくローカルストレージにデータがない初回開いたときなども今日の日付をセット
+                document.getElementById('p-date').value = getTodayStr();
             }
+
+            // 初回読み込み時に日付が入った状態を保存しておく
+            window.saveProcessedData();
 
             // QR履歴読み込み
             window.loadHistory();
