@@ -132,11 +132,9 @@
                     let text = '';
                     
                     try {
-                        // まず標準のUTF-8として読み込みテスト（不正なバイトがあればエラーを吐いてcatchへ飛ぶ）
                         const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
                         text = utf8Decoder.decode(buffer);
                     } catch (err) {
-                        // エラーが出た場合は、日本のECや配送システムで標準の Shift_JIS (cp932) として読み込む
                         const sjisDecoder = new TextDecoder('shift_jis');
                         text = sjisDecoder.decode(buffer);
                     }
@@ -186,7 +184,6 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                // 列のマッピング
                 colMap.orderNo = orderData.header.findIndex(h => String(h) === '受注番号');
                 if (colMap.orderNo === -1) colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
                 if (colMap.orderNo === -1) colMap.orderNo = 5;
@@ -201,15 +198,15 @@
 
                 colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
                 if (colMap.itemCode === -1) colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
-                if (colMap.itemCode === -1) colMap.itemCode = 30; // 確実な列番号
+                if (colMap.itemCode === -1) colMap.itemCode = 30;
 
                 colMap.itemName = orderData.header.findIndex(h => String(h) === '商品名' || String(h) === '品名');
                 if (colMap.itemName === -1) colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
-                if (colMap.itemName === -1) colMap.itemName = 31; // 確実な列番号
+                if (colMap.itemName === -1) colMap.itemName = 31;
 
                 colMap.qty = orderData.header.findIndex(h => String(h) === '数量' || String(h) === '個数');
                 if (colMap.qty === -1) colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
-                if (colMap.qty === -1) colMap.qty = 34; // 確実な列番号
+                if (colMap.qty === -1) colMap.qty = 34;
                 
                 orderData.orderNoColIdx = colMap.orderNo;
                 
@@ -248,7 +245,7 @@
         }
 
         function updateUIStatus() {
-            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}行)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
 
@@ -322,10 +319,14 @@
             let outputRows = [];
             let todayStr = getTodayString();
             
+            // 受注データ側にある有効な受注番号のセット（重複なし）を取得
+            let uniqueOrderNos = new Set();
             sortedOrderRows.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
-                if (!oNum) return;
-                
+                if (oNum) uniqueOrderNos.add(oNum);
+            });
+
+            uniqueOrderNos.forEach(oNum => {
                 let matchedYRow = yamatoData.rows.find(r => cleanOrderNoNormalized(r[yamatoData.orderNoColIdx]) === oNum);
                 if (matchedYRow) {
                     let newRow = [...matchedYRow];
@@ -342,6 +343,7 @@
                     outputRows.push(newRow);
                 }
             });
+
             if (outputRows.length === 0) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
         }
@@ -354,10 +356,14 @@
             }
             if (targetIdx === -1) targetIdx = 24;
             
+            // 受注データ側にある有効な受注番号のセット（重複なし）を取得
+            let uniqueOrderNos = new Set();
             sortedOrderRows.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
-                if (!oNum) return;
-                
+                if (oNum) uniqueOrderNos.add(oNum);
+            });
+
+            uniqueOrderNos.forEach(oNum => {
                 let matchedSRow = sagawaData.rows.find(r => cleanOrderNoNormalized(r[sagawaData.orderNoColIdx]) === oNum);
                 if (matchedSRow) {
                     let newRow = [...matchedSRow];
@@ -368,6 +374,7 @@
                     outputRows.push(newRow);
                 }
             });
+
             if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
         }
@@ -376,10 +383,7 @@
             const todayStr = new Date().toLocaleDateString();
             let htmlPages = [];
 
-            // G列（インデックス 6）を項番の列として固定参照
             let koBanIdx = 6;
-            
-            // 受注番号ごとにグループ化
             let orderGroupMap = new Map();
 
             sortedOrderRows.forEach(r => {
@@ -400,7 +404,6 @@
 
                 let group = orderGroupMap.get(normalizedNo);
 
-                // 項番が "-0"（親行）の行の情報を優先して宛名や店舗名に採用
                 if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
                     if (r[colMap.shop]) group.shop = r[colMap.shop];
                     if (r[colMap.name]) group.name = r[colMap.name];
@@ -414,7 +417,6 @@
                 return;
             }
 
-            // 注文（親セット）ごとに検品シートを1枚ずつ生成
             orderGroupMap.forEach((group) => {
                 let itemRowsHtml = '';
                 let totalQty = 0;
