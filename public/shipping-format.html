@@ -129,9 +129,18 @@
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const buffer = e.target.result;
-                    const codes = new Uint8Array(buffer);
-                    const encoding = Encoding.detect(codes);
-                    const text = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
+                    let text = '';
+                    
+                    try {
+                        // まず標準のUTF-8として読み込みテスト（不正なバイトがあればエラーを吐いてcatchへ飛ぶ）
+                        const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+                        text = utf8Decoder.decode(buffer);
+                    } catch (err) {
+                        // エラーが出た場合は、日本のECや配送システムで標準の Shift_JIS (cp932) として読み込む
+                        const sjisDecoder = new TextDecoder('shift_jis');
+                        text = sjisDecoder.decode(buffer);
+                    }
+
                     const rows = parseRobustCSV(text);
 
                     if (rows.length > 0) {
@@ -146,7 +155,6 @@
                             dataStartIndex = 0;
                         } else {
                             for (let i = 0; i < Math.min(rows.length, 5); i++) {
-                                // ヘッダー判定条件を緩和
                                 if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('受注ID') || String(c).includes('e飛伝') || String(c).includes('氏名') || String(c).includes('店舗')))) {
                                     headerRow = rows[i];
                                     dataStartIndex = i + 1;
@@ -178,8 +186,7 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                // 列のマッピング（ヘッダー文字列の完全一致・部分一致で探す）
-                // 見つからなかった場合のフォールバックは、実際のCSVフォーマットに合わせた列番号を指定
+                // 列のマッピング
                 colMap.orderNo = orderData.header.findIndex(h => String(h) === '受注番号');
                 if (colMap.orderNo === -1) colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
                 if (colMap.orderNo === -1) colMap.orderNo = 5;
@@ -194,15 +201,15 @@
 
                 colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
                 if (colMap.itemCode === -1) colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
-                if (colMap.itemCode === -1) colMap.itemCode = 30; // お使いのCSVに合わせて修正
+                if (colMap.itemCode === -1) colMap.itemCode = 30; // 確実な列番号
 
                 colMap.itemName = orderData.header.findIndex(h => String(h) === '商品名' || String(h) === '品名');
                 if (colMap.itemName === -1) colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
-                if (colMap.itemName === -1) colMap.itemName = 31; // お使いのCSVに合わせて修正（前回50で日付になっていた原因）
+                if (colMap.itemName === -1) colMap.itemName = 31; // 確実な列番号
 
                 colMap.qty = orderData.header.findIndex(h => String(h) === '数量' || String(h) === '個数');
                 if (colMap.qty === -1) colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
-                if (colMap.qty === -1) colMap.qty = 34; // お使いのCSVに合わせて修正
+                if (colMap.qty === -1) colMap.qty = 34; // 確実な列番号
                 
                 orderData.orderNoColIdx = colMap.orderNo;
                 
@@ -417,9 +424,6 @@
                     let itemCode = mRow[colMap.itemCode] !== undefined ? mRow[colMap.itemCode] : '';
                     let itemName = mRow[colMap.itemName] !== undefined ? mRow[colMap.itemName] : '';
                     let qty = mRow[colMap.qty] !== undefined ? mRow[colMap.qty] : '1';
-
-                    // もし親行（セット名）を印刷に含めたくない場合は、以下のコメントアウトを外してください
-                    // if (koBan.endsWith('-0')) return;
 
                     totalQty += parseInt(qty, 10) || 1;
 
