@@ -353,13 +353,42 @@
   }
   .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
   .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
+
+  /* 💡 通知バッジ（赤丸カウンター）のスタイル */
+  .badge-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .notification-badge {
+    position: absolute;
+    top: -6px;
+    right: -10px;
+    background-color: #ef4444;
+    color: white;
+    font-size: 0.65rem;
+    font-weight: bold;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    border: 2px solid #1a252f;
+    display: none; /* 初期状態は非表示 */
+  }
 </style>
 </head>
 <body>
 
 <div class="card">
   <div class="header">
-    <span>📊 出荷実績 ＆ 議事録メモ</span>
+    <div class="badge-wrapper">
+      <span>📊 出荷実績 ＆ 議事録メモ</span>
+      <div id="header-badge" class="notification-badge">0</div>
+    </div>
     <a href="index.html">🏠 ポータルへ戻る</a>
   </div>
 
@@ -489,6 +518,44 @@
     pendingDeleteCallback = null;
   };
 
+  // 💡 未完了タスク数を集計してヘッダーのバッジとポータル側に連動させる関数
+  function updateUncompletedBadge() {
+    let uncompletedCount = 0;
+    document.querySelectorAll('.task-item').forEach(taskEl => {
+      const checkbox = taskEl.querySelector('.t-task-checkbox');
+      if (checkbox && !checkbox.checked) {
+        uncompletedCount++;
+      }
+    });
+
+    // 1. このアプリのヘッダーにある赤丸バッジを更新
+    const badge = document.getElementById('header-badge');
+    if (badge) {
+      if (uncompletedCount > 0) {
+        badge.textContent = uncompletedCount > 99 ? '99+' : uncompletedCount;
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // 2. ポータル側（index.html等）にもバッジ（未読・未完了数）を連動させる場合
+    const STORAGE_KEY = 'warehouse_portal_v7_data';
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const portalData = JSON.parse(saved);
+        const card = portalData.cards.find(c => c.id === 'meeting'); // 議事録のID
+        if (card) {
+          card.badge = uncompletedCount;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(portalData));
+        }
+      } catch (e) {
+        console.error("Portal badge sync error:", e);
+      }
+    }
+  }
+
   function autoResize(textarea) {
     textarea.style.height = 'auto';
     textarea.style.height = textarea.scrollHeight + 'px';
@@ -510,6 +577,7 @@
   function triggerAutoSave() {
     clearTimeout(autoSaveTimer);
     saveStatusEl.textContent = "変更を検知しました...";
+    updateUncompletedBadge(); // 💡 変更時にバッジも即時更新
     autoSaveTimer = setTimeout(() => {
       saveDataToCloud(true);
     }, 1500);
@@ -574,6 +642,7 @@
     }
     updateTabs();
     initAutoResize();
+    updateUncompletedBadge(); // 💡 復元時にもバッジ更新
   }
 
   function calcErrorRate(triggerSave = true) {
@@ -735,7 +804,7 @@
         div.classList.remove('completed');
       }
       updateTopicStatusStyle(topicElement);
-      triggerAutoSave();
+      triggerAutoSave(); // 💡 チェック変更時にバッジも連動
     });
 
     div.querySelector('.btn-del-task').addEventListener('click', () => {
@@ -751,6 +820,7 @@
     taskList.appendChild(div);
     initAutoResize(div);
     updateTopicStatusStyle(topicElement);
+    updateUncompletedBadge(); // 💡 タスク追加時に更新
   }
 
   function addTopicItem(cardElement, topicData = {}) {
@@ -928,6 +998,7 @@
 
       updateTabs();
       initAutoResize();
+      updateUncompletedBadge(); // 💡 読み込み時にバッジ更新
       undoBtn.style.display = 'none';
     } catch (error) {
       console.error("読み込みエラー:", error);
