@@ -25,14 +25,12 @@
 
         // グローバルに登録関数を公開（メッセージ本文のテキスト連携）
         window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
-            // ローカルストレージからセラーのメモ・タグを取得
             let memoData = {};
             try {
                 const memos = JSON.parse(localStorage.getItem("chatwork_room_memos_v1")) || {};
                 memoData = memos[roomId] || {};
             } catch(e) {}
 
-            // スタッフ間連絡アプリに登録するタスク文章を組み立て（本文をそのまま含める）
             let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
             if (memoData.tag) {
                 taskContent += `\n🏷️ タグ: ${memoData.tag}`;
@@ -99,12 +97,15 @@
             </div>
             
             <!-- タブ切り替え -->
-            <div class="flex bg-slate-100 p-1 rounded-lg">
-                <button id="tabBurst" onclick="switchMode('burst')" class="flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition">
-                    ⚡ 未読バースト（一括処理）
+            <div class="flex bg-slate-100 p-1 rounded-lg gap-1">
+                <button id="tabBurst" onclick="switchMode('burst')" class="flex-1 py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm transition">
+                    ⚡ 未読バースト
                 </button>
-                <button id="tabNormal" onclick="switchMode('normal')" class="flex-1 py-1.5 text-xs font-bold rounded-md text-slate-600 transition">
-                    📁 通常ルーム個別
+                <button id="tabLater" onclick="switchMode('later')" class="flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition">
+                    ⏳ 後で対応 (<span id="laterCountBadge">0</span>)
+                </button>
+                <button id="tabNormal" onclick="switchMode('normal')" class="flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition">
+                    📁 通常個別
                 </button>
             </div>
         </div>
@@ -116,6 +117,9 @@
                 <div>未読ルームをスキャン中...</div>
             </div>
         </div>
+
+        <!-- 【モードC】後で対応タブ表示エリア -->
+        <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
 
         <!-- 【モードB】通常ルーム個別選択エリア -->
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
@@ -236,8 +240,10 @@
         const TEMPLATE_KEY = "chatwork_custom_templates_v2";
         const MEMO_KEY = "chatwork_room_memos_v1";
         const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
+        const LATER_KEY = "chatwork_later_rooms_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
+            updateLaterBadge();
             fetchAllUnreadRooms();
         });
 
@@ -245,12 +251,15 @@
         
         function changeAccount() {
             if (currentMode === 'burst') fetchAllUnreadRooms();
+            else if (currentMode === 'later') renderLaterRooms();
             else fetchNormalRooms();
         }
 
         function refreshCurrentView() {
             if (currentMode === 'burst') {
                 fetchAllUnreadRooms();
+            } else if (currentMode === 'later') {
+                renderLaterRooms();
             } else {
                 fetchNormalRooms();
             }
@@ -259,24 +268,170 @@
         function switchMode(mode) {
             currentMode = mode;
             const btnBurst = document.getElementById('tabBurst');
+            const btnLater = document.getElementById('tabLater');
             const btnNormal = document.getElementById('tabNormal');
             const burstCont = document.getElementById('burstModeContainer');
+            const laterCont = document.getElementById('laterModeContainer');
             const normalCont = document.getElementById('normalModeContainer');
 
+            // リセット
+            btnBurst.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
+            btnLater.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
+            btnNormal.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
+            burstCont.style.display = 'none';
+            laterCont.style.display = 'none';
+            normalCont.style.display = 'none';
+
             if (mode === 'burst') {
-                btnBurst.className = "flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
-                btnNormal.className = "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-600 transition";
+                btnBurst.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
                 burstCont.style.display = 'block';
-                normalCont.style.display = 'none';
                 fetchAllUnreadRooms();
+            } else if (mode === 'later') {
+                btnLater.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
+                laterCont.style.display = 'block';
+                renderLaterRooms();
             } else {
-                btnNormal.className = "flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
-                btnBurst.className = "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-600 transition";
+                btnNormal.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
                 normalCont.style.display = 'block';
-                burstCont.style.display = 'none';
                 fetchNormalRooms();
             }
         }
+
+        /* ======== ⏳ 後で対応する機能 ======== */
+        function getLaterRooms() {
+            try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; }
+        }
+
+        function updateLaterBadge() {
+            const later = getLaterRooms();
+            const token = getCurrentToken();
+            const list = later[token] || [];
+            document.getElementById('laterCountBadge').textContent = list.length;
+        }
+
+        function toggleLaterRoom(roomId, roomName, senderName, messageBody, sendDateStr) {
+            let later = getLaterRooms();
+            const token = getCurrentToken();
+            if (!later[token]) later[token] = [];
+
+            const index = later[token].findIndex(item => String(item.roomId) === String(roomId));
+            if (index > -1) {
+                // すでに保存されている場合は解除
+                later[token].splice(index, 1);
+                alert('「後で対応」リストから外しました。');
+            } else {
+                // 新規保存
+                later[token].unshift({
+                    roomId,
+                    roomName,
+                    senderName,
+                    messageBody,
+                    sendDateStr,
+                    savedAt: Date.now()
+                });
+                alert('「後で対応」タブに保存しました！');
+            }
+
+            localStorage.setItem(LATER_KEY, JSON.stringify(later));
+            updateLaterBadge();
+            if (currentMode === 'later') renderLaterRooms();
+            else if (currentMode === 'burst') fetchAllUnreadRooms();
+        }
+
+        async function renderLaterRooms() {
+            const laterCont = document.getElementById('laterModeContainer');
+            const later = getLaterRooms();
+            const token = getCurrentToken();
+            const list = later[token] || [];
+
+            updateLaterBadge();
+
+            if (list.length === 0) {
+                laterCont.innerHTML = `
+                    <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
+                        <div class="text-2xl">☕</div>
+                        <div class="text-sm font-bold text-slate-700">「後で対応」に保存されたルームはありません。</div>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            const memos = getRoomMemos();
+
+            for (const item of list) {
+                const memo = memos[item.roomId] || {};
+                const uniqueTextareaId = `later_txt_${item.roomId}`;
+
+                html += `
+                    <div class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
+                        <div class="flex justify-between items-start gap-2">
+                            <div>
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">⏳ 後で対応</span>
+                                    <h3 class="font-bold text-sm text-slate-800">${escapeHtml(item.roomName)}</h3>
+                                </div>
+                                ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
+                                ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
+                            </div>
+                            <button onclick="toggleLaterRoom('${item.roomId}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
+                                ❌ 解除
+                            </button>
+                        </div>
+                        
+                        <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
+                            <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                <span>👤 ${escapeHtml(item.senderName)}</span>
+                                <span class="text-slate-400 font-normal">${item.sendDateStr}</span>
+                            </div>
+                            <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(item.messageBody)}</div>
+                        </div>
+
+                        <div class="space-y-2 pt-1">
+                            <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <button onclick="sendLaterReply('${item.roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                📤 このルームに返信する（対応完了）
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            laterCont.innerHTML = html;
+        }
+
+        async function sendLaterReply(roomId, textareaId, btnEl) {
+            const bodyText = document.getElementById(textareaId).value.trim();
+            if (!bodyText) { alert('メッセージが空です。'); return; }
+            if (!confirm('返信して「後で対応」リストから削除しますか？')) return;
+
+            btnEl.disabled = true;
+            btnEl.textContent = "送信中...";
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message);
+
+                // リストから削除
+                let later = getLaterRooms();
+                const token = getCurrentToken();
+                if (later[token]) {
+                    later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                    localStorage.setItem(LATER_KEY, JSON.stringify(later));
+                }
+
+                btnEl.textContent = "✅ 送信完了＆リストから解除！";
+                setTimeout(() => { renderLaterRooms(); updateLaterBadge(); }, 1000);
+            } catch (e) {
+                alert('送信失敗: ' + e.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📤 このルームに返信する（対応完了）";
+            }
+        }
+        /* =========================================== */
 
         /* ======== 🔗 スタッフ間連絡アプリ連携 ======== */
         function openLinkCopyModal(roomId, roomName, senderName, messageBody) {
@@ -355,6 +510,7 @@
             localStorage.setItem(MEMO_KEY, JSON.stringify(memos));
             closeAllModals();
             if (currentMode === 'burst') fetchAllUnreadRooms();
+            else if (currentMode === 'later') renderLaterRooms();
             else {
                 fetchNormalRooms();
                 if (document.getElementById('roomSelect').value === roomId) {
@@ -388,6 +544,8 @@
                 allRoomsCache = data.rooms || [];
                 const unreadRooms = allRoomsCache.filter(r => r.unread_num > 0);
 
+                updateLaterBadge();
+
                 if (unreadRooms.length === 0) {
                     burstCont.innerHTML = `
                         <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
@@ -402,12 +560,16 @@
 
                 burstCont.innerHTML = '';
                 const memos = getRoomMemos();
+                const later = getLaterRooms();
+                const currentTokenKey = getCurrentToken();
+                const laterList = later[currentTokenKey] || [];
 
                 for (const room of unreadRooms) {
                     const roomId = room.room_id;
                     const roomName = room.name;
                     const memo = memos[roomId] || {};
                     const cardId = `burst_card_${roomId}`;
+                    const isLater = laterList.some(item => String(item.roomId) === String(roomId));
 
                     let cardHtml = `
                         <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-2.5">
@@ -420,7 +582,7 @@
                                     ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
                                     ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                                 </div>
-                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
+                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'م")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
                                     📝 メモ
                                 </button>
                             </div>
@@ -459,6 +621,10 @@
                         const uniqueTextareaId = `burst_txt_${roomId}`;
                         const encodedBody = encodeURIComponent(latestMsg.body);
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+
+                        const later = getLaterRooms();
+                        const isLater = (later[getCurrentToken()] || []).some(item => String(item.roomId) === String(roomId));
 
                         let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
                         (roomData.members || []).forEach(m => {
@@ -498,9 +664,15 @@
                                         </button>
                                     </div>
                                     <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
-                                    <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
-                                        📤 このルームに返信する
-                                    </button>
+                                    
+                                    <div class="flex gap-2">
+                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}')" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                            ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
+                                        </button>
+                                        <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                            📤 このルームに返信する
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         `;
@@ -534,6 +706,15 @@
                 });
                 const data = await res.json();
                 if (data.status !== "success") throw new Error(data.message);
+
+                // もし後で対応リストに登録されていたら自動で解除する
+                let later = getLaterRooms();
+                const token = getCurrentToken();
+                if (later[token]) {
+                    later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                    localStorage.setItem(LATER_KEY, JSON.stringify(later));
+                    updateLaterBadge();
+                }
 
                 btnEl.textContent = "✅ 送信完了！";
                 btnEl.className = "w-full bg-slate-300 text-white text-xs py-2 rounded cursor-default";
