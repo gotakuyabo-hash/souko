@@ -2,184 +2,55 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork タスク管理コックピット</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatwork タスクデバッグ画面</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800 pb-20">
-    <!-- ヘッダー -->
-    <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-20">
-        <div class="max-w-md mx-auto flex items-center justify-between">
-            <h1 class="text-base font-bold flex items-center gap-2">
-                <span>📋 Chatwork タスク管理</span>
-            </h1>
-            <div class="flex items-center gap-2">
-                <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">待機中</span>
-                <button onclick="fetchTasks()" class="bg-indigo-700 hover:bg-indigo-800 text-xs px-2.5 py-1.5 rounded font-bold shadow active:scale-95 transition">
-                    🔄 更新
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- メインコンテンツ -->
-    <div class="max-w-md mx-auto p-3 space-y-3">
-        <!-- アカウント切替カード -->
-        <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
-            <select id="accountSelect" onchange="fetchTasks()" class="w-full border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50/50 font-bold text-indigo-950 focus:outline-none">
+<body class="bg-slate-100 min-h-screen text-slate-800 p-4">
+    <div class="max-w-xl mx-auto space-y-4">
+        <h1 class="text-lg font-bold">🔍 Chatwork タスク取得デバッグ</h1>
+        
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+            <select id="accountSelect" class="w-full border rounded p-2 text-sm font-bold">
                 <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント</option>
                 <option value="5435a05ddd195c46ca688d021e45bbce">ラクロジスタッフアカウント</option>
             </select>
-            <div class="flex gap-2">
-                <button onclick="selectAll(true)" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-1.5 rounded font-bold border border-slate-300">
-                    ☑️ すべて選択
-                </button>
-                <button onclick="selectAll(false)" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-1.5 rounded font-bold border border-slate-300">
-                    ☐ 選択解除
-                </button>
-            </div>
+            <button onclick="fetchDebugTasks()" class="w-full bg-indigo-600 text-white font-bold py-2 rounded shadow">
+                🔄 タスクを強制取得して中身を確認する
+            </button>
         </div>
 
-        <!-- タスク一覧表示エリア -->
-        <div id="taskContainer" class="space-y-2.5">
-            <div class="text-center text-xs text-slate-500 py-12 bg-white rounded-xl shadow-sm border border-slate-200">
-                「更新」またはアカウント選択でタスクを読み込みます。
-            </div>
-        </div>
-    </div>
-
-    <!-- フッター一括操作バー -->
-    <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 shadow-lg z-20">
-        <div class="max-w-md mx-auto flex gap-2">
-            <button onclick="processSelected('done')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-lg shadow active:scale-95 transition">
-                ✅ 選択したタスクを完了
-            </button>
-            <button onclick="processSelected('delete')" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 rounded-lg shadow active:scale-95 transition">
-                🗑️ 選択したタスクを削除
-            </button>
+        <div class="bg-white p-4 rounded-xl shadow space-y-2">
+            <h2 class="text-sm font-bold text-slate-700">📋 取得結果（生データ）:</h2>
+            <pre id="debugOutput" class="bg-slate-900 text-green-400 p-3 rounded text-xs overflow-auto h-96">ここに取得したJSONが表示されます...</pre>
         </div>
     </div>
 
     <script>
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxeD41KZUj5DOumg5Zmnb7GQM1UNeayFHsVSJLs-xVVvDCAx96VxYPL89wl9NF0d_zb/exec";
 
-        window.addEventListener('DOMContentLoaded', () => {
-            fetchTasks();
-        });
-
-        function getCurrentToken() {
-            return document.getElementById('accountSelect').value;
-        }
-
-        async function callGas(payload) {
-            const res = await fetch(GAS_WEB_APP_URL, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-            const text = await res.text();
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                throw new Error("サーバー応答の解析に失敗しました: " + text);
-            }
-        }
-
-        async function fetchTasks() {
-            const statusEl = document.getElementById('loadStatus');
-            const container = document.getElementById('taskContainer');
-            statusEl.textContent = "取得中...";
-            
-            container.innerHTML = `
-                <div class="text-center text-xs text-slate-500 py-12 bg-white rounded-xl shadow-sm border border-slate-200">
-                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
-                    <div>タスクを取得中...</div>
-                </div>
-            `;
+        async function fetchDebugTasks() {
+            const token = document.getElementById('accountSelect').value;
+            const output = document.getElementById('debugOutput');
+            output.textContent = "通信中...";
 
             try {
-                const data = await callGas({ action: "get_tasks", token: getCurrentToken() });
-                if (data.status !== "success") throw new Error(data.message || "データ取得に失敗しました");
-
-                const tasks = data.tasks || [];
-                if (tasks.length === 0) {
-                    container.innerHTML = `
-                        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
-                            <div class="text-2xl">🎉</div>
-                            <div class="text-sm font-bold text-slate-700">未完了のタスクはありません！</div>
-                        </div>
-                    `;
-                    statusEl.textContent = "未読ゼロ";
-                    statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
-                    return;
-                }
-
-                let html = '';
-                tasks.forEach(task => {
-                    const limitTime = task.limit ? new Date(task.limit * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '期限なし';
-                    const assigner = task.assigned_by_account && task.assigned_by_account.name ? task.assigned_by_account.name : '不明';
-                    const roomName = task.room && task.room.name ? task.room.name : 'ルーム';
-                    const roomId = task.room ? task.room.room_id : '';
-
-                    html += `
-                        <div class="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex items-start gap-3">
-                            <input type="checkbox" class="task-checkbox mt-1 h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0" data-room-id="${roomId}" data-task-id="${task.task_id}">
-                            <div class="flex-1 min-w-0 space-y-1">
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 truncate">${escapeHtml(roomName)}</span>
-                                    <span class="text-[11px] text-slate-400">⏰ ${limitTime}</span>
-                                </div>
-                                <div class="text-xs text-slate-800 whitespace-pre-wrap font-medium">${escapeHtml(task.body)}</div>
-                                <div class="text-[10px] text-slate-500">👤 担当: ${escapeHtml(assigner)}</div>
-                            </div>
-                        </div>
-                    `;
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_tasks", token: token })
                 });
-
-                container.innerHTML = html;
-                statusEl.textContent = `タスク ${tasks.length}件`;
-                statusEl.className = "text-xs bg-amber-500 px-2 py-0.5 rounded-full text-white";
-
-            } catch (e) {
-                container.innerHTML = `<div class="text-xs text-red-500 text-center p-4 bg-white rounded-xl">エラー: ${e.message}</div>`;
-                statusEl.textContent = "エラー";
-            }
-        }
-
-        function selectAll(checked) {
-            document.querySelectorAll('.task-checkbox').forEach(cb => cb.checked = checked);
-        }
-
-        async function processSelected(statusAction) {
-            const checkboxes = document.querySelectorAll('.task-checkbox:checked');
-            if (checkboxes.length === 0) {
-                alert('タスクが選択されていません。');
-                return;
-            }
-
-            const actionName = statusAction === 'delete' ? '削除' : '完了';
-            if (!confirm(`選択した ${checkboxes.length}件のタスクを${actionName}しますか？`)) return;
-
-            const token = getCurrentToken();
-            let successCount = 0;
-
-            for (const cb of checkboxes) {
-                const roomId = cb.getAttribute('data-room-id');
-                const taskId = cb.getAttribute('data-task-id');
-
+                const text = await res.text();
+                
+                // そのまま綺麗に整形して画面に表示
                 try {
-                    const data = await callGas({ action: "update_task", token: token, room_id: roomId, task_id: taskId, status_action: statusAction });
-                    if (data.status === "success") {
-                        successCount++;
-                    }
-                } catch(e) {}
+                    const json = JSON.parse(text);
+                    output.textContent = JSON.stringify(json, null, 2);
+                } catch (e) {
+                    output.textContent = "JSONパース失敗 (テキストレスポンス):\n" + text;
+                }
+            } catch (e) {
+                output.textContent = "通信エラー: " + e.message;
             }
-
-            alert(`${successCount}件のタスクを${actionName}しました！`);
-            fetchTasks();
-        }
-
-        function escapeHtml(str) {
-            return (str || '').replace(/[&'`<>"]/g, m => ({'&':'&amp;',"'":'&#x27;','`':'&#x60;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
         }
     </script>
 </body>
