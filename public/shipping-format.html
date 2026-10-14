@@ -29,7 +29,7 @@
             </div>
 
             <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
-                <div id="statusOrder">📦 受注データ: <span class="text-slate-400">（未読み込み）</span></div>
+                <div id="statusOrder">📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span></div>
                 <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
                 <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
             </div>
@@ -53,7 +53,7 @@
             <div class="max-h-48 overflow-y-auto border border-slate-200 rounded mb-4">
                 <table class="w-full text-left text-xs border-collapse">
                     <thead class="bg-slate-800 text-white sticky top-0">
-                        <tr><th class="p-2">ショップ</th><th class="p-2">受注番号</th><th class="p-2">宛名</th><th class="p-2">商品名</th></tr>
+                        <tr><th class="p-2">ショップ</th><th class="p-2">受注番号 (F列)</th><th class="p-2">宛名</th><th class="p-2">商品名</th></tr>
                     </thead>
                     <tbody id="orderTableBody">
                         <tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>
@@ -70,13 +70,13 @@
     </div>
 
     <script>
-        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 }; // F列 = インデックス5に固定
         let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         
         let sortedOrderRows = [];
         let originalOrderRows = [];
-        let colMap = { shop: -1, orderNo: -1, name: -1, itemCode: -1, itemName: -1, qty: -1 };
+        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 };
 
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
@@ -85,14 +85,14 @@
         document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
 
         function resetData() {
-            orderData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
+            orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 };
             sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
             yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
             sortedOrderRows = [];
             originalOrderRows = [];
             document.getElementById('fileInput').value = '';
             
-            document.getElementById('statusOrder').innerHTML = `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = `📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusYamato').innerHTML = `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusSagawa').innerHTML = `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
             
@@ -174,7 +174,7 @@
                         let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
                         
                         if (type === 'order') {
-                            orderData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
+                            orderData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: 5 };
                         } else if (type === 'sagawa') {
                             sagawaData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
                         } else if (type === 'yamato') {
@@ -193,31 +193,22 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                colMap.orderNo = orderData.header.findIndex(h => String(h) === '受注番号');
-                if (colMap.orderNo === -1) colMap.orderNo = orderData.header.findIndex(h => String(h).includes('受注番号') || String(h).includes('受注ID'));
-                if (colMap.orderNo === -1) colMap.orderNo = 5;
+                orderData.orderNoColIdx = 5; // F列に固定
 
                 colMap.shop = orderData.header.findIndex(h => String(h) === '店舗名' || String(h) === 'ショップ');
-                if (colMap.shop === -1) colMap.shop = orderData.header.findIndex(h => String(h).includes('店舗名') || String(h).includes('ショップ'));
                 if (colMap.shop === -1) colMap.shop = 3;
 
-                colMap.name = orderData.header.findIndex(h => String(h) === '配送先氏名' || String(h) === '注文者氏名');
-                if (colMap.name === -1) colMap.name = orderData.header.findIndex(h => String(h).includes('配送先氏名') || String(h).includes('注文者氏名') || String(h).includes('お名前'));
+                colMap.name = orderData.header.findIndex(h => String(h) === '配送先氏名' || String(h) === '注文者氏名' || String(h).includes('氏名'));
                 if (colMap.name === -1) colMap.name = 40;
 
                 colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
-                if (colMap.itemCode === -1) colMap.itemCode = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
                 if (colMap.itemCode === -1) colMap.itemCode = 30;
 
                 colMap.itemName = orderData.header.findIndex(h => String(h) === '商品名' || String(h) === '品名');
-                if (colMap.itemName === -1) colMap.itemName = orderData.header.findIndex(h => String(h).includes('商品名') || String(h).includes('品名'));
                 if (colMap.itemName === -1) colMap.itemName = 31;
 
                 colMap.qty = orderData.header.findIndex(h => String(h) === '数量' || String(h) === '個数');
-                if (colMap.qty === -1) colMap.qty = orderData.header.findIndex(h => String(h).includes('数量') || String(h).includes('個数'));
                 if (colMap.qty === -1) colMap.qty = 34;
-                
-                orderData.orderNoColIdx = colMap.orderNo;
                 
                 originalOrderRows = [...orderData.rows];
                 sortedOrderRows = [...orderData.rows];
@@ -254,9 +245,9 @@
         }
 
         function updateUIStatus() {
-            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ: <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ (F列=受注番号): <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ (自動検出列=${yamatoData.orderNoColIdx}): <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ (自動検出列=${sagawaData.orderNoColIdx}): <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
 
             if (orderData.rows.length > 0) document.getElementById('sortControlArea').classList.remove('hidden');
             
@@ -315,7 +306,7 @@
                 tr.className = "border-b border-slate-100 hover:bg-slate-50";
                 
                 let shop = r[colMap.shop] !== undefined ? r[colMap.shop] : '';
-                let orderNo = r[colMap.orderNo] !== undefined ? r[colMap.orderNo] : '';
+                let orderNo = r[orderData.orderNoColIdx] !== undefined ? r[orderData.orderNoColIdx] : '';
                 let name = r[colMap.name] !== undefined ? r[colMap.name] : '';
                 let item = r[colMap.itemName] !== undefined ? r[colMap.itemName] : '';
                 
@@ -343,8 +334,6 @@
                     newRow[39] = '09050540672';
                     newRow[26] = "";
 
-                    // 電話番号フィールド（必要に応じて位置を想定、または全列スキャン・該当列置換）
-                    // ※ヤマトB2CSVの一般的な電話番号列（例: お届け先電話番号など）をクリーンアップ
                     for (let c = 0; c < newRow.length; c++) {
                         let valStr = String(newRow[c]);
                         if (valStr.startsWith('+81')) {
@@ -383,7 +372,6 @@
                 if (matchedSRow) {
                     let newRow = [...matchedSRow];
                     
-                    // 電話番号の+81置換
                     for (let c = 0; c < newRow.length; c++) {
                         let valStr = String(newRow[c]);
                         if (valStr.startsWith('+81')) {
@@ -410,7 +398,7 @@
             let orderGroupMap = new Map();
 
             sortedOrderRows.forEach(r => {
-                let orderNo = r[colMap.orderNo] !== undefined ? r[colMap.orderNo] : '';
+                let orderNo = r[orderData.orderNoColIdx] !== undefined ? r[orderData.orderNoColIdx] : '';
                 let normalizedNo = cleanOrderNoNormalized(orderNo);
                 if (!normalizedNo) return;
 
@@ -441,7 +429,6 @@
             }
 
             orderGroupMap.forEach((group) => {
-                // 行を「親(-0 / 0)」が先頭に来るように並べ替え
                 group.rows.sort((a, b) => {
                     let kA = a[koBanIdx] !== undefined ? String(a[koBanIdx]).trim() : '';
                     let kB = b[koBanIdx] !== undefined ? String(b[koBanIdx]).trim() : '';
@@ -465,7 +452,6 @@
 
                     let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
                     let rowBg = isChild ? '#fafbfc' : '#ffffff';
-                    // 子項目も薄字にせず、はっきりと表示するよう指定
                     let nameStyle = isChild 
                         ? 'padding-left:12px; font-size:9.5pt; color:#111;' 
                         : 'font-weight:bold; font-size:10pt; color:#111;';
