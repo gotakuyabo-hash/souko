@@ -25,13 +25,13 @@
             border-color: #3b82f6;
         }
 
-        /* 52mm × 29mm のラベルコンテナ（画面プレビュー用） */
+        /* 52mm × 29mm のラベルコンテナ（FBA推奨範囲内・画面プレビュー用） */
         .label-container {
             width: 52mm;
             height: 29mm;
             background: #fff;
             box-sizing: border-box;
-            padding: 2mm 3mm;
+            padding: 1.5mm 2.5mm;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -43,7 +43,7 @@
 
         /* 商品名エリア（上部） */
         .product-name-area {
-            font-size: 8pt;
+            font-size: 7.5pt;
             font-weight: bold;
             line-height: 1.1;
             white-space: nowrap;
@@ -51,8 +51,8 @@
             text-overflow: ellipsis;
             width: 100%;
             border-bottom: 1px solid #cbd5e1;
-            padding-bottom: 0.5mm;
-            margin-bottom: 0.5mm;
+            padding-bottom: 0.3mm;
+            margin-bottom: 0.3mm;
         }
 
         /* 下部コンテナ（テキスト ＋ コード） */
@@ -66,10 +66,10 @@
 
         .text-area {
             flex: 1;
-            margin-right: 1.5mm;
-            font-size: 7pt;
+            margin-right: 1mm;
+            font-size: 6.5pt;
             font-weight: bold;
-            line-height: 1.2;
+            line-height: 1.1;
             word-break: break-all;
             overflow: hidden;
             display: -webkit-box;
@@ -78,8 +78,8 @@
         }
 
         .qr-area {
-            width: 15mm; 
-            height: 15mm;
+            width: 14mm; 
+            height: 14mm;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -92,8 +92,8 @@
         }
 
         .barcode-area {
-            width: 25mm;
-            height: 15mm;
+            width: 27mm;
+            height: 14mm;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -318,7 +318,7 @@
         </div>
     </div>
 
-    <!-- 印刷用コンテナ（画面上では常に非表示、印刷時のみ出現・適用） -->
+    <!-- 印刷用コンテナ -->
     <div id="printArea" style="display: none;"></div>
 
     <style id="dynamicPrintStyle"></style>
@@ -403,13 +403,11 @@
             localStorage.setItem(PROCESSED_STORAGE_KEY, JSON.stringify(data));
         };
 
-        // 共通：印刷処理の安全な実行ラッパー（サイト全体が印刷されるのを強制防止）
         function executePrint(mode, pageWidth, pageHeight) {
             const appContainer = document.getElementById('appContainer');
             const printArea = document.getElementById('printArea');
             const dynamicStyle = document.getElementById('dynamicPrintStyle');
 
-            // 1. 動的に用紙サイズと印刷用スタイルを設定
             dynamicStyle.innerHTML = `
                 @media print {
                     @page { size: ${pageWidth} ${pageHeight}; margin: 0 !important; }
@@ -417,25 +415,20 @@
                 }
             `;
 
-            // 2. 画面用UIを完全に隠し、印刷エリアのみを表示
             appContainer.style.display = 'none';
             printArea.style.display = 'block';
 
             if (mode === 'processed') {
-                // 処理済みタブの内容をprintAreaに複製して印刷
                 const processedContent = document.getElementById('processedTabContent').cloneNode(true);
-                // 印刷不要なボタン類を削除
                 processedContent.querySelectorAll('.no-print').forEach(el => el.remove());
                 printArea.innerHTML = '';
                 printArea.appendChild(processedContent);
-                // 専用のカードスタイルを付与
                 const card = printArea.querySelector('.card');
                 if (card) {
                     card.style.cssText = "box-shadow: none !important; border: none !important; padding: 4mm 5mm !important; width: 100mm !important; height: 150mm !important; box-sizing: border-box !important; background: white !important; margin: 0 !important;";
                 }
             }
 
-            // 3. 印刷ダイアログを呼び出し、完了後に画面を元に戻す
             setTimeout(() => {
                 window.print();
                 setTimeout(() => {
@@ -558,11 +551,11 @@
             for (let i = 0; i < count; i++) {
                 const labelDiv = document.createElement("div");
                 labelDiv.className = "label-container";
-                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 2mm 3mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
+                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 1.5mm 2.5mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
 
                 const pNameDiv = document.createElement("div");
                 pNameDiv.className = "product-name-area";
-                pNameDiv.style.cssText = "font-size: 8pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.5mm; margin-bottom: 0.5mm;";
+                pNameDiv.style.cssText = "font-size: 7.5pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.3mm; margin-bottom: 0.3mm;";
                 pNameDiv.innerText = productName;
                 labelDiv.appendChild(pNameDiv);
 
@@ -572,13 +565,13 @@
 
                 const textArea = document.createElement("div");
                 textArea.className = "text-area";
-                textArea.style.cssText = "flex: 1; margin-right: 1.5mm; font-size: 7pt; font-weight: bold; line-height: 1.2; word-break: break-all;";
+                textArea.style.cssText = "flex: 1; margin-right: 1mm; font-size: 6.5pt; font-weight: bold; line-height: 1.1; word-break: break-all;";
                 textArea.innerText = val;
                 bottomRow.appendChild(textArea);
 
                 const qrArea = document.createElement("div");
                 qrArea.className = "qr-area";
-                qrArea.style.cssText = "width: 15mm; height: 15mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0;";
+                qrArea.style.cssText = "width: 14mm; height: 14mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0;";
                 bottomRow.appendChild(qrArea);
 
                 labelDiv.appendChild(bottomRow);
@@ -680,10 +673,10 @@
                 JsBarcode("#previewBarcodeSvg", val, {
                     format: format,
                     lineColor: "#000",
-                    width: 1.2,
-                    height: 32,
+                    width: 1.1,
+                    height: 28,
                     displayValue: true,
-                    fontSize: 9,
+                    fontSize: 8.5,
                     margin: 0
                 });
             } catch (e) {
@@ -696,11 +689,11 @@
             for (let i = 0; i < count; i++) {
                 const labelDiv = document.createElement("div");
                 labelDiv.className = "label-container";
-                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 2mm 3mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
+                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 1.5mm 2.5mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
 
                 const pNameDiv = document.createElement("div");
                 pNameDiv.className = "product-name-area";
-                pNameDiv.style.cssText = "font-size: 8pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.5mm; margin-bottom: 0.5mm;";
+                pNameDiv.style.cssText = "font-size: 7.5pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.3mm; margin-bottom: 0.3mm;";
                 pNameDiv.innerText = productName;
                 labelDiv.appendChild(pNameDiv);
 
@@ -710,13 +703,13 @@
 
                 const textArea = document.createElement("div");
                 textArea.className = "text-area";
-                textArea.style.cssText = "flex: 1; margin-right: 1.5mm; font-size: 7pt; font-weight: bold; line-height: 1.2; word-break: break-all;";
+                textArea.style.cssText = "flex: 1; margin-right: 1mm; font-size: 6.5pt; font-weight: bold; line-height: 1.1; word-break: break-all;";
                 textArea.innerText = val;
                 bottomRow.appendChild(textArea);
 
                 const bcArea = document.createElement("div");
                 bcArea.className = "barcode-area";
-                bcArea.style.cssText = "width: 25mm; height: 15mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;";
+                bcArea.style.cssText = "width: 27mm; height: 14mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;";
                 const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
                 bcArea.appendChild(svgEl);
                 bottomRow.appendChild(bcArea);
@@ -728,10 +721,10 @@
                     JsBarcode(svgEl, val, {
                         format: format,
                         lineColor: "#000",
-                        width: 1.2,
-                        height: 32,
+                        width: 1.1,
+                        height: 28,
                         displayValue: true,
-                        fontSize: 9,
+                        fontSize: 8.5,
                         margin: 0
                     });
                 } catch (e) {
