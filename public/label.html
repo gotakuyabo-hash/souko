@@ -111,11 +111,8 @@
         /* 処理済みラベルのカードスタイル */
         .card { background: white; padding: 15px; border-radius: 12px; color: #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
 
-        /* ================= 印刷時の強力な全体制御 ================= -->
+        /* ================= 印刷設定 ================= */
         @media print {
-            body > *:not(.print-area) {
-                display: none !important;
-            }
             body {
                 background: none !important;
                 padding: 0 !important;
@@ -124,77 +121,15 @@
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
-            .no-print {
-                display: none !important;
-            }
-            .print-area {
-                display: block !important;
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-            }
-        }
-
-        /* ① QRコード・バーコード印刷モード (52mm × 29mm) */
-        @media print {
-            body.print-qr-mode,
-            body.print-barcode-mode {
-                width: 52mm !important;
-                height: 29mm !important;
-                overflow: hidden !important;
-            }
-            @page {
-                size: 52mm 29mm;
-                margin: 0;
-            }
-            body.print-qr-mode .label-container,
-            body.print-barcode-mode .label-container {
-                border: none !important;
-                box-shadow: none !important;
-                margin: 0 !important;
-                width: 52mm !important;
-                height: 29mm !important;
-                page-break-after: always;
-                break-after: page;
-                display: flex !important;
-            }
-        }
-
-        /* ② 処理済みラベル印刷モード (100mm × 150mm) */
-        @media print {
-            body.print-processed-mode {
-                width: 100mm !important;
-                height: 150mm !important;
-                overflow: hidden !important;
-            }
-            @page {
-                size: 100mm 150mm;
-                margin: 0 !important;
-            }
-            body.print-processed-mode #processedTabContent {
-                display: block !important;
-            }
-            body.print-processed-mode .card {
-                box-shadow: none !important;
-                border: none !important;
-                padding: 4mm 5mm !important;
-                max-width: none !important;
-                width: 100mm !important;
-                height: 150mm !important;
-                box-sizing: border-box !important;
-                background: white !important;
-                display: block !important;
-            }
         }
     </style>
 </head>
 <body>
-    <div style="max-width: 500px; margin: 0 auto;">
+    <div id="appContainer" style="max-width: 500px; margin: 0 auto;">
         <!-- ヘッダー ＆ タブ切り替え -->
         <header class="mb-4 no-print">
             <div class="flex justify-between items-center mb-3 px-1">
-                <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ ラベル管理ポータル</h1>
+                <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">🏷️ ラベル管理＆コード作成ポータル</h1>
                 <a href="index.html" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition">
                     ← ポータルへ
                 </a>
@@ -383,8 +318,10 @@
         </div>
     </div>
 
-    <!-- 印刷用コンテナ -->
-    <div id="printArea" class="print-area" style="display: none;"></div>
+    <!-- 印刷用コンテナ（画面上では常に非表示、印刷時のみ出現・適用） -->
+    <div id="printArea" style="display: none;"></div>
+
+    <style id="dynamicPrintStyle"></style>
 
     <!-- 統合制御スクリプト -->
     <script type="module">
@@ -466,6 +403,50 @@
             localStorage.setItem(PROCESSED_STORAGE_KEY, JSON.stringify(data));
         };
 
+        // 共通：印刷処理の安全な実行ラッパー（サイト全体が印刷されるのを強制防止）
+        function executePrint(mode, pageWidth, pageHeight) {
+            const appContainer = document.getElementById('appContainer');
+            const printArea = document.getElementById('printArea');
+            const dynamicStyle = document.getElementById('dynamicPrintStyle');
+
+            // 1. 動的に用紙サイズと印刷用スタイルを設定
+            dynamicStyle.innerHTML = `
+                @media print {
+                    @page { size: ${pageWidth} ${pageHeight}; margin: 0 !important; }
+                    body { background: none !important; padding: 0 !important; margin: 0 !important; }
+                }
+            `;
+
+            // 2. 画面用UIを完全に隠し、印刷エリアのみを表示
+            appContainer.style.display = 'none';
+            printArea.style.display = 'block';
+
+            if (mode === 'processed') {
+                // 処理済みタブの内容をprintAreaに複製して印刷
+                const processedContent = document.getElementById('processedTabContent').cloneNode(true);
+                // 印刷不要なボタン類を削除
+                processedContent.querySelectorAll('.no-print').forEach(el => el.remove());
+                printArea.innerHTML = '';
+                printArea.appendChild(processedContent);
+                // 専用のカードスタイルを付与
+                const card = printArea.querySelector('.card');
+                if (card) {
+                    card.style.cssText = "box-shadow: none !important; border: none !important; padding: 4mm 5mm !important; width: 100mm !important; height: 150mm !important; box-sizing: border-box !important; background: white !important; margin: 0 !important;";
+                }
+            }
+
+            // 3. 印刷ダイアログを呼び出し、完了後に画面を元に戻す
+            setTimeout(() => {
+                window.print();
+                setTimeout(() => {
+                    appContainer.style.display = 'block';
+                    printArea.style.display = 'none';
+                    printArea.innerHTML = '';
+                    dynamicStyle.innerHTML = '';
+                }, 500);
+            }, 100);
+        }
+
         window.printAndSaveProcessed = async function() {
             window.saveProcessedData();
             const seller = document.getElementById('p-seller').value.trim();
@@ -493,11 +474,7 @@
                 console.error("処理済みラベル保存エラー: ", e);
             }
 
-            document.body.classList.add('print-processed-mode');
-            window.print();
-            setTimeout(() => {
-                document.body.classList.remove('print-processed-mode');
-            }, 500);
+            executePrint('processed', '100mm', '150mm');
         };
 
         window.loadProcessedHistory = async function() {
@@ -564,7 +541,6 @@
             document.getElementById("previewDisplayText").innerText = val;
             document.getElementById("previewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
-            // プレビュー用のQRコード描画
             const qrContainer = document.getElementById("previewQrcode");
             qrContainer.innerHTML = "";
             new QRCode(qrContainer, {
@@ -576,29 +552,33 @@
                 correctLevel : QRCode.CorrectLevel.M
             });
 
-            // 印刷用コンテナの構築
             const printArea = document.getElementById("printArea");
             printArea.innerHTML = "";
 
             for (let i = 0; i < count; i++) {
                 const labelDiv = document.createElement("div");
                 labelDiv.className = "label-container";
+                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 2mm 3mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
 
                 const pNameDiv = document.createElement("div");
                 pNameDiv.className = "product-name-area";
+                pNameDiv.style.cssText = "font-size: 8pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.5mm; margin-bottom: 0.5mm;";
                 pNameDiv.innerText = productName;
                 labelDiv.appendChild(pNameDiv);
 
                 const bottomRow = document.createElement("div");
                 bottomRow.className = "label-bottom-row";
+                bottomRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; flex: 1; overflow: hidden;";
 
                 const textArea = document.createElement("div");
                 textArea.className = "text-area";
+                textArea.style.cssText = "flex: 1; margin-right: 1.5mm; font-size: 7pt; font-weight: bold; line-height: 1.2; word-break: break-all;";
                 textArea.innerText = val;
                 bottomRow.appendChild(textArea);
 
                 const qrArea = document.createElement("div");
                 qrArea.className = "qr-area";
+                qrArea.style.cssText = "width: 15mm; height: 15mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0;";
                 bottomRow.appendChild(qrArea);
 
                 labelDiv.appendChild(bottomRow);
@@ -639,13 +619,7 @@
                 console.error("Firestore保存エラー: ", e);
             }
 
-            document.body.classList.add('print-qr-mode');
-            setTimeout(() => {
-                window.print();
-                setTimeout(() => {
-                    document.body.classList.remove('print-qr-mode');
-                }, 500);
-            }, 100);
+            executePrint('qr', '52mm', '29mm');
         };
 
         window.loadHistory = async function() {
@@ -702,7 +676,6 @@
             document.getElementById("bcPreviewDisplayText").innerText = val;
             document.getElementById("bcPreviewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
-            // プレビュー用のバーコード描画
             try {
                 JsBarcode("#previewBarcodeSvg", val, {
                     format: format,
@@ -717,29 +690,33 @@
                 console.error("プレビューバーコード生成エラー:", e);
             }
 
-            // 印刷用コンテナの構築
             const printArea = document.getElementById("printArea");
             printArea.innerHTML = "";
 
             for (let i = 0; i < count; i++) {
                 const labelDiv = document.createElement("div");
                 labelDiv.className = "label-container";
+                labelDiv.style.cssText = "width: 52mm; height: 29mm; background: #fff; box-sizing: border-box; padding: 2mm 3mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; color: #1e293b;";
 
                 const pNameDiv = document.createElement("div");
                 pNameDiv.className = "product-name-area";
+                pNameDiv.style.cssText = "font-size: 8pt; font-weight: bold; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; border-bottom: 1px solid #cbd5e1; padding-bottom: 0.5mm; margin-bottom: 0.5mm;";
                 pNameDiv.innerText = productName;
                 labelDiv.appendChild(pNameDiv);
 
                 const bottomRow = document.createElement("div");
                 bottomRow.className = "label-bottom-row";
+                bottomRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; flex: 1; overflow: hidden;";
 
                 const textArea = document.createElement("div");
                 textArea.className = "text-area";
+                textArea.style.cssText = "flex: 1; margin-right: 1.5mm; font-size: 7pt; font-weight: bold; line-height: 1.2; word-break: break-all;";
                 textArea.innerText = val;
                 bottomRow.appendChild(textArea);
 
                 const bcArea = document.createElement("div");
                 bcArea.className = "barcode-area";
+                bcArea.style.cssText = "width: 25mm; height: 15mm; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;";
                 const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
                 bcArea.appendChild(svgEl);
                 bottomRow.appendChild(bcArea);
@@ -789,13 +766,7 @@
                 console.error("Firestoreバーコード保存エラー: ", e);
             }
 
-            document.body.classList.add('print-barcode-mode');
-            setTimeout(() => {
-                window.print();
-                setTimeout(() => {
-                    document.body.classList.remove('print-barcode-mode');
-                }, 500);
-            }, 100);
+            executePrint('barcode', '52mm', '29mm');
         };
 
         window.loadBarcodeHistory = async function() {
