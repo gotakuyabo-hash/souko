@@ -5,24 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chatwork タスク管理コックピット</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK (モジュール方式) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-            authDomain: "souko-2de57.firebaseapp.com",
-            projectId: "souko-2de57",
-            storageBucket: "souko-2de57.firebasestorage.app",
-            messagingSenderId: "642116656086",
-            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-            measurementId: "G-8WG8GWQGCR"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const analytics = getAnalytics(app);
-    </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-20">
     <!-- ヘッダー -->
@@ -116,7 +98,7 @@
 
             try {
                 const data = await callGas({ action: "get_tasks", token: getCurrentToken() });
-                if (data.status !== "success") throw new Error(data.message);
+                if (data.status !== "success") throw new Error(data.message || "データ取得に失敗しました");
 
                 const tasks = data.tasks || [];
                 if (tasks.length === 0) {
@@ -135,13 +117,15 @@
                 tasks.forEach(task => {
                     const limitTime = task.limit ? new Date(task.limit * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '期限なし';
                     const assigner = task.assigned_by_account && task.assigned_by_account.name ? task.assigned_by_account.name : '不明';
+                    const roomName = task.room && task.room.name ? task.room.name : 'ルーム';
+                    const roomId = task.room ? task.room.room_id : '';
 
                     html += `
                         <div class="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex items-start gap-3">
-                            <input type="checkbox" class="task-checkbox mt-1 h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0" data-room-id="${task.room.room_id}" data-task-id="${task.task_id}">
+                            <input type="checkbox" class="task-checkbox mt-1 h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0" data-room-id="${roomId}" data-task-id="${task.task_id}">
                             <div class="flex-1 min-w-0 space-y-1">
                                 <div class="flex justify-between items-center">
-                                    <span class="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 truncate">${escapeHtml(task.room.name || 'ルーム')}</span>
+                                    <span class="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 truncate">${escapeHtml(roomName)}</span>
                                     <span class="text-[11px] text-slate-400">⏰ ${limitTime}</span>
                                 </div>
                                 <div class="text-xs text-slate-800 whitespace-pre-wrap font-medium">${escapeHtml(task.body)}</div>
