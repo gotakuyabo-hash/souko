@@ -309,7 +309,7 @@
             document.getElementById('laterCountBadge').textContent = list.length;
         }
 
-        function toggleLaterRoom(roomId, roomName, senderName, messageBody, sendDateStr) {
+        function toggleLaterRoom(roomId, roomName, senderName, messageBody, sendDateStr, btnEl) {
             let later = getLaterRooms();
             const token = getCurrentToken();
             if (!later[token]) later[token] = [];
@@ -317,7 +317,9 @@
             const index = later[token].findIndex(item => String(item.roomId) === String(roomId));
             if (index > -1) {
                 later[token].splice(index, 1);
-                alert('「後で対応」リストから外しました。');
+                // ボタンの見た目を即座に戻す
+                btnEl.className = "bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 text-xs px-3 py-2 rounded font-bold shrink-0 transition";
+                btnEl.textContent = "⏳ 後で対応する";
             } else {
                 later[token].unshift({
                     roomId,
@@ -327,13 +329,13 @@
                     sendDateStr,
                     savedAt: Date.now()
                 });
-                alert('「後で対応」タブに保存しました！');
+                // ボタンの見た目を即座に変更する（再読み込みなし）
+                btnEl.className = "bg-amber-600 text-white text-xs px-3 py-2 rounded font-bold shrink-0 transition";
+                btnEl.textContent = "⏳ 後で対応中";
             }
 
             localStorage.setItem(LATER_KEY, JSON.stringify(later));
             updateLaterBadge();
-            if (currentMode === 'later') renderLaterRooms();
-            else if (currentMode === 'burst') fetchAllUnreadRooms();
         }
 
         function completeLaterRoom(roomId) {
@@ -675,7 +677,7 @@
                                     <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                                     
                                     <div class="flex gap-2">
-                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}')" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
                                             ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
                                         </button>
                                         <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
