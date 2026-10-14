@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>受注・出荷・zaico 統合管理ポータル</title>
+    <title>受注・出荷・zaico 統合管理システム</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.1.0/encoding.min.js"></script>
     <style>
@@ -40,7 +40,7 @@
         <div id="allInOneTab" class="tab-content active">
             <div class="card">
                 <h2 class="text-lg font-bold text-slate-800 mb-2">📥 CSVファイル ドロップ＆蓄積エリア</h2>
-                <p class="text-xs text-slate-500 mb-4">「受注CSV」「ヤマトCSV」「佐川CSV」をまとめて、または何度かに分けてドラッグ＆ドロップしてください。中身を自動判別して蓄積します。</p>
+                <p class="text-xs text-slate-500 mb-4">「受注CSV」「ヤマトCSV」「佐川CSV」をまとめて、または何度かに分けてドラッグ＆ドロップしてください。</p>
 
                 <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
                     <div class="text-3xl mb-1">📂</div>
@@ -48,9 +48,9 @@
                     <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
                 </div>
 
-                <!-- 読み込み済みファイル一覧（個別削除用） -->
+                <!-- 読み込み済みファイル一覧 -->
                 <div id="fileListSection" class="hidden mb-4 p-3 bg-slate-50 border border-slate-200 rounded">
-                    <div class="text-xs font-bold text-slate-700 mb-2">📋 読み込み済みファイル一覧（間違えたファイルは削除できます）</div>
+                    <div class="text-xs font-bold text-slate-700 mb-2">📋 読み込み済みファイル一覧</div>
                     <div id="fileListContainer" class="space-y-1.5 text-xs"></div>
                 </div>
 
@@ -74,8 +74,8 @@
                     <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては自動で佐川からヤマトへ振り分けられます）</div>
                     <div class="flex gap-3 flex-wrap">
                         <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
-                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力（沖縄振替分含む）</button>
-                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄除外）</button>
+                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
+                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力</button>
                     </div>
                 </div>
             </div>
@@ -85,7 +85,7 @@
         <div id="masterTab" class="tab-content">
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
-                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。</p>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報を直接変更・保存できます。</p>
                 
                 <div style="margin-top: 15px;">
                     <div class="filter-row">
@@ -105,7 +105,7 @@
                 </div>
 
                 <div id="masterResultArea">
-                    <p style="margin-top: 15px;">「マスタ再読み込み」ボタンを押してデータを取得してください。</p>
+                    <p style="margin-top: 15px;">マスタデータを読み込んでいます...</p>
                 </div>
             </div>
         </div>
@@ -126,12 +126,13 @@
 
         const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
 
-        // 蓄積データ管理
-        let uploadedFiles = []; // { id, name, type, rows, header }
+        let uploadedFiles = [];
         let currentPickResults = [];
         let masterItemsCache = [];
-        let currentSortColumn = null;
-        let currentSortAsc = true;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadMasterItems();
+        });
 
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -146,7 +147,6 @@
             }
         };
 
-        // ドラッグ＆ドロップ・ファイル選択
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
         ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('bg-sky-100'); }));
@@ -193,7 +193,7 @@
                         uploadedFiles.push({
                             id: Date.now() + Math.random().toString(36.2),
                             name: file.name,
-                            type: type, // 'order', 'yamato', 'sagawa'
+                            type: type,
                             header: headerRow,
                             rows: fileRows
                         });
@@ -239,12 +239,10 @@
             let yamatoRowsCount = yamatos.reduce((sum, f) => sum + f.rows.length, 0);
             let sagawaRowsCount = sagawas.reduce((sum, f) => sum + f.rows.length, 0);
 
-            // ステータス更新
             document.getElementById('statusOrder').innerHTML = orders.length > 0 ? `📦 受注データ: <span class="text-blue-600 font-bold">${orders.map(f=>f.name).join(', ')}</span> (${orderRowsCount}行)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusYamato').innerHTML = yamatos.length > 0 ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatos.map(f=>f.name).join(', ')}</span> (${yamatoRowsCount}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusSagawa').innerHTML = sagawas.length > 0 ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawas.map(f=>f.name).join(', ')}</span> (${sagawaRowsCount}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
 
-            // ファイルリスト表示
             const listSec = document.getElementById('fileListSection');
             const listCont = document.getElementById('fileListContainer');
             if (uploadedFiles.length > 0) {
@@ -263,7 +261,6 @@
                 listCont.innerHTML = '';
             }
 
-            // ボタン活性制御
             const hasOrder = orderRowsCount > 0;
             document.getElementById('calcPickBtn').disabled = !hasOrder;
             document.getElementById('printBtn').disabled = !hasOrder;
@@ -288,7 +285,6 @@
             return rows;
         }
 
-        // ==================== ピック数算出 & zaico連動 ====================
         window.processOrderPickCalculation = async () => {
             const allOrders = getAllOrderRows();
             if (allOrders.length === 0) { alert('受注データが読み込まれていません。'); return; }
@@ -367,20 +363,14 @@
         }
 
         function renderPickTable(results) {
-            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み・棚番順ソート）</b></p>
-                <table>
-                <thead>
-                    <tr>
-                        <th>商品名</th>
-                        <th>バーコード</th>
-                        <th>注文数</th>
-                        <th>倍率</th>
-                        <th>棚番</th>
-                        <th>ピック数</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>`;
+            let html = `
+                <div class="flex justify-between items-center mt-4 mb-2">
+                    <p><b>全 ${results.length} 件の明細を検出しました</b></p>
+                    <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更した明細を一括保存して計算</button>
+                </div>
+                <table><thead><tr>
+                <th>商品名</th><th>バーコード</th><th>注文数</th><th>倍率</th><th>棚番</th><th>ピック数</th><th>操作</th>
+                </tr></thead><tbody>`;
 
             results.forEach((item, index) => {
                 const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
@@ -391,7 +381,7 @@
                     <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td><input type="text" id="shelf_${index}" value="${escapeHtml(item.shelfNumber || '')}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
-                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存して計算</button></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存</button></td>
                 </tr>`;
             });
             html += `</tbody></table>`;
@@ -410,6 +400,12 @@
                 if (item) registerItem(index, item.orderQty, item.productName, true);
             }
         };
+
+        // 保存後に自動で棚番ソート＆再描画するヘルパー
+        function sortAndRe-renderPickTable() {
+            currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
+            renderPickTable(currentPickResults);
+        }
 
         window.registerItem = async (index, orderQty, productName, isSilent = false) => {
             const barcode = document.getElementById(`barcode_${index}`).value.trim();
@@ -430,20 +426,70 @@
                     updatedAt: new Date()
                 }, { merge: true });
 
-                const row = document.getElementById(`row_${index}`);
-                if (row) row.classList.remove('unregistered');
                 currentPickResults[index].barcode = barcode;
                 currentPickResults[index].multiplier = multiplier;
                 currentPickResults[index].shelfNumber = shelfNumber;
                 currentPickResults[index].status = "REGISTERED";
                 currentPickResults[index].pickCount = orderQty * multiplier;
-                document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentPickResults[index].pickCount}</b>`;
+
+                // 保存後、自動で棚番ソートして再描画
+                sortAndRe-renderPickTable();
                 
-                if (!isSilent) alert('保存しました！');
+                if (!isSilent) alert('保存しました！棚番順に並び替えました。');
             } catch (err) {
                 console.error(err);
                 if (!isSilent) alert('保存エラー: ' + err.message);
             }
+        };
+
+        // ピック数一覧の一括保存
+        window.saveAllOrderPickItems = async () => {
+            if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
+
+            let successCount = 0;
+            let skippedCount = 0;
+
+            for (let index = 0; index < currentPickResults.length; index++) {
+                const item = currentPickResults[index];
+                const bcInput = document.getElementById(`barcode_${index}`);
+                const multInput = document.getElementById(`mult_${index}`);
+                const shelfInput = document.getElementById(`shelf_${index}`);
+
+                if (bcInput && multInput && shelfInput) {
+                    const barcode = bcInput.value.trim();
+                    const multiplier = Number(multInput.value) || 1;
+                    const shelfNumber = shelfInput.value.trim();
+
+                    if (!barcode || !shelfNumber) {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    try {
+                        await setDoc(doc(db, "product_masters", barcode), {
+                            barcode: barcode,
+                            productName: item.productName,
+                            multiplier: multiplier,
+                            shelfNumber: shelfNumber,
+                            updatedAt: new Date()
+                        }, { merge: true });
+
+                        successCount++;
+                        currentPickResults[index].barcode = barcode;
+                        currentPickResults[index].multiplier = multiplier;
+                        currentPickResults[index].shelfNumber = shelfNumber;
+                        currentPickResults[index].status = "REGISTERED";
+                        currentPickResults[index].pickCount = item.orderQty * multiplier;
+                    } catch (err) {
+                        console.error(err);
+                    }
+                }
+            }
+
+            // 一括保存完了後、自動で棚番順にソートして再描画
+            sortAndRe-renderPickTable();
+
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件\n\n※棚番順に並び替えました。`);
         };
 
         window.sendToZaico = async () => {
@@ -537,7 +583,7 @@
         function getOrderUniqueIds() {
             let set = new Set();
             getAllOrderRows().forEach(r => {
-                let n = cleanOrderNoNormalized(r[5]); // F列
+                let n = cleanOrderNoNormalized(r[5]);
                 if (n) set.add(n);
             });
             return set;
@@ -546,8 +592,6 @@
         window.exportYamatoCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let yamatoRows = getAllYamatoRows();
-            let allOrders = getAllOrderRows();
-
             if (yamatoRows.length === 0) { alert("ヤマトデータが読み込まれていません。"); return; }
 
             let outputRows = [];
@@ -578,7 +622,7 @@
             });
 
             if (outputRows.length === 0) { alert("ヤマトデータと紐付く受注番号が見つかりませんでした。"); return; }
-            exportCsvGeneric(outputRows, "yamato_processed_okinawa_included.csv");
+            exportCsvGeneric(outputRows, "yamato_processed.csv");
             alert("ヤマトCSVを出力しました。");
         };
 
@@ -586,7 +630,6 @@
             let uniqueOrderNos = getOrderUniqueIds();
             let sagawaRows = getAllSagawaRows();
             let allOrders = getAllOrderRows();
-
             if (sagawaRows.length === 0) { alert("佐川データが読み込まれていません。"); return; }
 
             let okinawaOrderNos = new Set();
@@ -602,7 +645,7 @@
             if (targetIdx === -1) targetIdx = 24;
 
             uniqueOrderNos.forEach(oNum => {
-                if (okinawaOrderNos.has(oNum)) return; // 沖縄宛ては除外
+                if (okinawaOrderNos.has(oNum)) return;
 
                 let matchedSRow = sagawaRows.find(r => {
                     for(let c=0; c<r.length; c++) {
@@ -624,8 +667,8 @@
             });
 
             if (outputRows.length <= 1) { alert("佐川データと紐付く有効なデータがありません。"); return; }
-            exportCsvGeneric(outputRows, "ehiden_processed_okinawa_excluded.csv");
-            alert("佐川CSVを出力しました（沖縄宛ては自動除外済み）。");
+            exportCsvGeneric(outputRows, "ehiden_processed.csv");
+            alert("佐川CSVを出力しました（沖縄宛て自動除外）。");
         };
 
         function sagawaDataHeader() {
@@ -713,7 +756,10 @@
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 masterItemsCache = [];
-                querySnapshot.forEach(docSnap => masterItemsCache.push({ id: docSnap.id, ...docSnap.data() }));
+                querySnapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    masterItemsCache.push({ id: docSnap.id, ...data });
+                });
                 filterMasterTable();
             } catch (err) {
                 console.error(err);
@@ -725,10 +771,10 @@
             const masterArea = document.getElementById('masterResultArea');
             let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
                 <table><thead><tr>
-                <th onclick="sortMasterTable('name')">商品名</th>
-                <th onclick="sortMasterTable('barcode')">バーコード</th>
-                <th onclick="sortMasterTable('multiplier')">倍率</th>
-                <th onclick="sortMasterTable('shelf')">棚番</th>
+                <th>商品名</th>
+                <th>バーコード</th>
+                <th>倍率</th>
+                <th>棚番</th>
                 <th>操作</th>
                 </tr></thead><tbody>`;
 
@@ -757,8 +803,8 @@
         }
 
         window.filterMasterTable = () => {
-            const kw = document.getElementById('masterSearch').value.toLowerCase();
-            const skw = document.getElementById('shelfFilter').value.toLowerCase();
+            const kw = document.getElementById('masterSearch') ? document.getElementById('masterSearch').value.toLowerCase() : '';
+            const skw = document.getElementById('shelfFilter') ? document.getElementById('shelfFilter').value.toLowerCase() : '';
             const filtered = masterItemsCache.filter(item => {
                 let name = (item.productName || item.product_name || '').toLowerCase();
                 let bc = (item.barcode || item.id || '').toLowerCase();
