@@ -316,11 +316,9 @@
 
             const index = later[token].findIndex(item => String(item.roomId) === String(roomId));
             if (index > -1) {
-                // すでに保存されている場合は解除
                 later[token].splice(index, 1);
                 alert('「後で対応」リストから外しました。');
             } else {
-                // 新規保存
                 later[token].unshift({
                     roomId,
                     roomName,
@@ -336,6 +334,19 @@
             updateLaterBadge();
             if (currentMode === 'later') renderLaterRooms();
             else if (currentMode === 'burst') fetchAllUnreadRooms();
+        }
+
+        function completeLaterRoom(roomId) {
+            if (!confirm('このルームの対応を完了し、「後で対応」リストから削除しますか？')) return;
+
+            let later = getLaterRooms();
+            const token = getCurrentToken();
+            if (later[token]) {
+                later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                localStorage.setItem(LATER_KEY, JSON.stringify(later));
+            }
+            renderLaterRooms();
+            updateLaterBadge();
         }
 
         async function renderLaterRooms() {
@@ -374,8 +385,8 @@
                                 ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
                                 ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                             </div>
-                            <button onclick="toggleLaterRoom('${item.roomId}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
-                                ❌ 解除
+                            <button onclick="completeLaterRoom('${item.roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2.5 py-1.5 rounded border border-emerald-300 font-bold shrink-0">
+                                ✅ 対応完了
                             </button>
                         </div>
                         
@@ -390,7 +401,7 @@
                         <div class="space-y-2 pt-1">
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             <button onclick="sendLaterReply('${item.roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
-                                📤 このルームに返信する（対応完了）
+                                📤 返信して対応完了にする
                             </button>
                         </div>
                     </div>
@@ -415,7 +426,6 @@
                 const data = await res.json();
                 if (data.status !== "success") throw new Error(data.message);
 
-                // リストから削除
                 let later = getLaterRooms();
                 const token = getCurrentToken();
                 if (later[token]) {
@@ -428,7 +438,7 @@
             } catch (e) {
                 alert('送信失敗: ' + e.message);
                 btnEl.disabled = false;
-                btnEl.textContent = "📤 このルームに返信する（対応完了）";
+                btnEl.textContent = "📤 返信して対応完了にする";
             }
         }
         /* =========================================== */
@@ -569,7 +579,6 @@
                     const roomName = room.name;
                     const memo = memos[roomId] || {};
                     const cardId = `burst_card_${roomId}`;
-                    const isLater = laterList.some(item => String(item.roomId) === String(roomId));
 
                     let cardHtml = `
                         <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-2.5">
@@ -582,7 +591,7 @@
                                     ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
                                     ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                                 </div>
-                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'م")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
+                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold shrink-0">
                                     📝 メモ
                                 </button>
                             </div>
@@ -707,7 +716,6 @@
                 const data = await res.json();
                 if (data.status !== "success") throw new Error(data.message);
 
-                // もし後で対応リストに登録されていたら自動で解除する
                 let later = getLaterRooms();
                 const token = getCurrentToken();
                 if (later[token]) {
