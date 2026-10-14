@@ -72,11 +72,11 @@
 
                 <!-- 送り状・検品アクション -->
                 <div class="mt-6 pt-4 border-t border-slate-200">
-                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては佐川E列で判定され、ヤマトへ自動振り分けされます）</div>
+                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては佐川出力時に自動除外されます）</div>
                     <div class="flex gap-3 flex-wrap">
                         <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
-                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力（沖縄自動追加）</button>
-                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄E列除外）</button>
+                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
+                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄自動除外）</button>
                     </div>
                 </div>
             </div>
@@ -282,8 +282,8 @@
             document.getElementById('calcPickBtn').disabled = !hasOrder;
             document.getElementById('printBtn').disabled = !hasOrder;
             document.getElementById('zaicoBtn').disabled = !hasOrder;
-            document.getElementById('yamatoBtn').disabled = !hasOrder;
-            document.getElementById('ehidenBtn').disabled = !hasOrder; 
+            document.getElementById('yamatoBtn').disabled = !(hasOrder && yamatoRowsCount > 0);
+            document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
         }
 
         function getAllOrderRows() {
@@ -537,35 +537,18 @@
             return set;
         }
 
-        // ヤマトCSV出力（ヤマトB2フォーマットに完全準拠）
+        // ヤマトCSV出力（読み込まれたヤマトデータを処理するのみ）
         window.exportYamatoCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let yamatoRows = getAllYamatoRows();
-            let sagawaRows = getAllSagawaRows();
             let allOrders = getAllOrderRows();
 
             if (allOrders.length === 0) { alert("受注データが読み込まれていません。"); return; }
-
-            // 1. 沖縄宛ての受注番号を特定
-            let okinawaOrderNos = new Set();
-            sagawaRows.forEach(sRow => {
-                if (isOkinawaFromSagawaRow(sRow)) {
-                    // 佐川の行に含まれる管理番号等から特定
-                    for (let c = 0; c < sRow.length; c++) {
-                        let valNorm = cleanOrderNoNormalized(sRow[c]);
-                        if (uniqueOrderNos.has(valNorm)) okinawaOrderNos.add(valNorm);
-                    }
-                }
-            });
-            allOrders.forEach(oRow => {
-                let oNum = cleanOrderNoNormalized(oRow[5]);
-                if (isOkinawaFromOrderRow(oRow) && oNum) okinawaOrderNos.add(oNum);
-            });
+            if (yamatoRows.length === 0) { alert("ヤマトデータが読み込まれていません。"); return; }
 
             let outputRows = [];
             let todayStr = getTodayString();
 
-            // 2. 既存ヤマトデータの処理
             uniqueOrderNos.forEach(oNum => {
                 let matchedYRow = yamatoRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
                 if (matchedYRow) {
@@ -584,44 +567,9 @@
                 }
             });
 
-            // 3. 沖縄宛てで、ヤマト側に存在しないものを自動生成して追加
-            okinawaOrderNos.forEach(oNum => {
-                let alreadyAdded = outputRows.some(r => r.some(cell => cleanOrderNoNormalized(cell) === oNum));
-                if (!alreadyAdded) {
-                    let sRow = sagawaRows.find(r => r.some(cell => cleanOrderNoNormalized(cell) === oNum));
-                    let oRow = allOrders.find(r => cleanOrderNoNormalized(r[5]) === oNum);
-
-                    let dummyRow = new Array(42).fill("");
-                    dummyRow[0] = oNum; // 0: お客様管理番号
-                    dummyRow[1] = "0";  // 1: 送り状種類(発払)
-                    dummyRow[4] = todayStr; // 4: 出荷予定日
-                    dummyRow[39] = '09050540672'; // 39: ご依頼主電話番号(等)
-                    dummyRow[26] = ""; 
-
-                    if (sRow) {
-                        dummyRow[8] = cleanPhone(sRow[2] || ""); // 8: お届け先電話番号
-                        dummyRow[9] = sRow[3] || "";             // 9: お届け先郵便番号
-                        dummyRow[10] = sRow[4] || "";            // 10: お届け先住所
-                        dummyRow[11] = sRow[5] || "";            // 11: お届け先アパート等
-                        dummyRow[14] = sRow[7] || "";            // 14: お届け先名
-                        dummyRow[24] = sRow[24] || "";           // 24: 品名１
-                    } else if (oRow) {
-                        dummyRow[10] = oRow[10] || ""; 
-                        dummyRow[14] = oRow[40] || ""; 
-                    }
-
-                    // ヤマト文字数制限対応 (25文字以内)
-                    for (let c = 0; c < dummyRow.length; c++) {
-                        let valStr = String(dummyRow[c]);
-                        if (c >= 24 && c <= 30 && valStr.length > 25) dummyRow[c] = valStr.substring(0, 25);
-                    }
-                    outputRows.push(dummyRow);
-                }
-            });
-
-            if (outputRows.length === 0) { alert("ヤマト対象となるデータが見つかりませんでした。"); return; }
+            if (outputRows.length === 0) { alert("ヤマトデータと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed.csv");
-            alert(`ヤマトCSVを出力しました。（対象件数: ${outputRows.length}件、うち沖縄自動追加分含む）`);
+            alert(`ヤマトCSVを出力しました。（対象件数: ${outputRows.length}件）`);
         };
 
         // 佐川CSV出力（E列判断による完全除外）
