@@ -264,7 +264,7 @@
         }
 
         /* ======== ✅ 既読にする機能 ======== */
-        async function markRoomAsRead(roomId, cardOrContainerEl) {
+        async function markRoomAsRead(roomId) {
             if (!confirm('このルームの未読をすべて既読にしますか？')) return;
 
             try {
@@ -275,12 +275,65 @@
                 const data = await res.json();
                 if (data.status !== "success") throw new Error(data.message || '既読化失敗');
 
-                // 完了時の見た目変更または再読み込み
                 alert('既読にしました！');
                 refreshCurrentView();
             } catch (e) {
                 alert('既読化失敗: ' + e.message);
             }
+        }
+
+        /* ======== 📷 カメラ撮影機能 ======== */
+        function triggerCameraUpload(roomId) {
+            const fileInput = document.getElementById(`camera_input_${roomId}`);
+            if (fileInput) fileInput.click();
+        }
+
+        // ======== 📁 一般ファイル選択機能 ======== */
+        function triggerFileUpload(roomId) {
+            const fileInput = document.getElementById(`file_input_${roomId}`);
+            if (fileInput) fileInput.click();
+        }
+
+        async function handleFileSelected(roomId, fileInputEl) {
+            const file = fileInputEl.files[0];
+            if (!file) return;
+
+            if (!confirm(`選択したファイル（${file.name}）をChatworkに送信しますか？`)) {
+                fileInputEl.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result.split(',')[1];
+                const fileName = file.name || `file_${Date.now()}`;
+                const mimeType = file.type || 'application/octet-stream';
+
+                alert('ファイルをアップロード中...');
+
+                try {
+                    const res = await fetch(GAS_WEB_APP_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            action: "upload_file",
+                            token: getCurrentToken(),
+                            room_id: roomId,
+                            file_data: base64Data,
+                            file_name: fileName,
+                            mime_type: mimeType
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.status !== "success") throw new Error(data.message || 'アップロード失敗');
+
+                    alert('📁 ファイルの送信が完了しました！');
+                } catch (err) {
+                    alert('送信失敗: ' + err.message);
+                } finally {
+                    fileInputEl.value = '';
+                }
+            };
+            reader.readAsDataURL(file);
         }
 
         /* ======== ⏳ 後で対応する機能 ======== */
@@ -368,6 +421,14 @@
                                 </div>
                             </div>
                             <div class="flex gap-1 shrink-0">
+                                <input type="file" id="camera_input_${item.roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                                <input type="file" id="file_input_${item.roomId}" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                                <button onclick="triggerCameraUpload('${item.roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                    📷 写真
+                                </button>
+                                <button onclick="triggerFileUpload('${item.roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                    📁 ファイル
+                                </button>
                                 <button onclick="markRoomAsRead('${item.roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded border border-indigo-300 font-bold">
                                     📖 既読
                                 </button>
@@ -553,6 +614,14 @@
                                     </div>
                                 </div>
                                 <div class="flex gap-1 shrink-0">
+                                    <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                    <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                    <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                        📷 写真
+                                    </button>
+                                    <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                        📁 ファイル
+                                    </button>
                                     <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
                                         📖 既読
                                     </button>
@@ -763,6 +832,14 @@
                                 <h3 class="font-bold text-sm text-slate-800">📁 ${escapeHtml(roomName)}</h3>
                             </div>
                             <div class="flex gap-1 shrink-0">
+                                <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                    📷 写真
+                                </button>
+                                <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                    📁 ファイル
+                                </button>
                                 <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
                                     📖 既読
                                 </button>
