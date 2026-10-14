@@ -111,7 +111,7 @@
         /* 処理済みラベルのカードスタイル */
         .card { background: white; padding: 15px; border-radius: 12px; color: #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
 
-        /* ================= 印刷設定 ================= */
+        /* ================= 印刷設定 ================= -->
         @media print {
             body {
                 background: none !important;
@@ -410,6 +410,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // タイムゾーンによるズレを防ぎ、確実に現在地のローカル日付(YYYY-MM-DD)を取得する関数
         const getTodayStr = () => {
             const now = new Date();
             const yyyy = now.getFullYear();
@@ -438,6 +439,7 @@
                 processedTab.style.display = 'block';
                 btnProcessed.classList.add('active');
                 const dateInput = document.getElementById('p-date');
+                // 日付が空か、あるいはローカルストレージのデータが古い場合は今日の日付を強制セット
                 if (!dateInput.value) {
                     dateInput.value = getTodayStr();
                     saveProcessedData();
@@ -829,11 +831,16 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             const savedJson = localStorage.getItem(PROCESSED_STORAGE_KEY);
+            const todayStr = getTodayStr();
 
             if (savedJson) {
                 try {
                     const d = JSON.parse(savedJson);
-                    document.getElementById('p-date').value = d.processDate || getTodayStr();
+                    
+                    // 保存されている日付が空、あるいは過去の日付のままであれば今日の日付に上書き
+                    const targetDate = (d.processDate && d.processDate >= todayStr) ? d.processDate : todayStr;
+                    document.getElementById('p-date').value = targetDate;
+                    
                     document.getElementById('p-seller').value = d.sellerName || "";
                     document.getElementById('p-staff').value = d.staffName || "";
 
@@ -846,10 +853,10 @@
                     });
                 } catch (e) {
                     console.error("データ読み込みエラー", e);
-                    document.getElementById('p-date').value = getTodayStr();
+                    document.getElementById('p-date').value = todayStr;
                 }
             } else {
-                document.getElementById('p-date').value = getTodayStr();
+                document.getElementById('p-date').value = todayStr;
             }
 
             window.saveProcessedData();
