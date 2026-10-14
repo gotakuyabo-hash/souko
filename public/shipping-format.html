@@ -145,7 +145,8 @@
             } else {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('masterTab').classList.add('active');
-                if (masterItemsCache.length === 0) loadMasterItems();
+                // タブを開いた時に確実に最新のマスタを読み込む
+                loadMasterItems();
             }
         };
 
@@ -784,7 +785,7 @@
         // ==================== マスタ管理タブ関連 ====================
         window.loadMasterItems = async () => {
             const masterArea = document.getElementById('masterResultArea');
-            masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
+            if (masterArea) masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 masterItemsCache = [];
@@ -795,12 +796,14 @@
                 filterMasterTable();
             } catch (err) {
                 console.error(err);
-                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
+                if (masterArea) masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
             }
         };
 
         function renderMasterTable(items) {
             const masterArea = document.getElementById('masterResultArea');
+            if (!masterArea) return;
+            
             let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
                 <table><thead><tr>
                 <th>商品名</th>
@@ -872,6 +875,7 @@
             try {
                 await setDoc(doc(db, "product_masters", barcode), { barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
                 alert('マスタを更新しました！');
+                loadMasterItems(); // 再読み込みして同期
             } catch(e) { alert('エラー: ' + e.message); }
         };
 
@@ -907,6 +911,7 @@
                 }
             }
             alert(`${count}件のマスタを保存しました！`);
+            loadMasterItems(); // 再読み込み
         };
 
         function parseRobustCSV(text) {
