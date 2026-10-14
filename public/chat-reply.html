@@ -378,9 +378,12 @@
             for (const item of list) {
                 const memo = memos[item.roomId] || {};
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
+                const encodedBody = encodeURIComponent(item.messageBody);
 
+                // メンバー一覧を取得するため、必要に応じてAPIまたはキャッシュから取得できるようにする
+                // ここでは各カードごとに非同期でメンバー一覧を取得してセレクトボックスを更新する
                 html += `
-                    <div class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
+                    <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
                         <div class="flex justify-between items-start gap-2">
                             <div>
                                 <div class="flex items-center gap-1.5 flex-wrap">
@@ -409,6 +412,14 @@
                         </div>
 
                         <div class="space-y-2 pt-1">
+                            <div class="flex gap-1.5">
+                                <select id="later_members_${item.roomId}" onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                                    <option value="">👤 宛先(To)を追加</option>
+                                </select>
+                                <button onclick="insertQuoteToTextarea('${uniqueTextareaId}', '${escapeHtml(item.senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
+                                    💬 引用
+                                </button>
+                            </div>
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             <button onclick="sendLaterReply('${item.roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
                                 📤 返信して対応完了にする
@@ -418,6 +429,27 @@
                 `;
             }
             laterCont.innerHTML = html;
+
+            // 各カードのルームメンバー情報を非同期で取得してセレクトボックスに反映
+            list.forEach(async (item) => {
+                try {
+                    const roomRes = await fetch(GAS_WEB_APP_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: item.roomId })
+                    });
+                    const roomData = await roomRes.json();
+                    if (roomData.status === "success" && roomData.members) {
+                        const selectEl = document.getElementById(`later_members_${item.roomId}`);
+                        if (selectEl) {
+                            let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
+                            roomData.members.forEach(m => {
+                                membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
+                            });
+                            selectEl.innerHTML = membersOpts;
+                        }
+                    }
+                } catch(e) {}
+            });
         }
 
         async function sendLaterReply(roomId, textareaId, btnEl) {
@@ -1074,7 +1106,7 @@
                             <span class="font-bold text-sm text-slate-700 truncate pr-2">${escapeHtml(t.title)}</span>
                             <div class="flex gap-1 shrink-0">
                                 <button onclick="openTemplateEditorForEdit('${t.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1.5 rounded border border-slate-300">✏️ 編集</button>
-                                button onclick="deleteTemplate('${t.id}')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs px-2 py-1.5 rounded border border-red-200">🗑️ 削除</button>
+                                <button onclick="deleteTemplate('${t.id}')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs px-2 py-1.5 rounded border border-red-200">🗑️ 削除</button>
                             </div>
                         </div>`;
                 });
