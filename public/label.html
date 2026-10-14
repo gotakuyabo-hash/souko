@@ -84,10 +84,6 @@
             .no-print {
                 display: none !important;
             }
-            /* アクティブなタブに応じて印刷レイアウトを切り替え */
-            #qrTabContent.active-print {
-                /* QRタブ印刷時 (52mm×29mm) */
-            }
         }
 
         /* QRタブ印刷用の個別メディア設定 */
@@ -184,7 +180,7 @@
 
         <!-- ================= 1. 処理済みラベル管理タブのコンテンツ ================= -->
         <div id="processedTabContent" class="tab-content">
-            <div class="card">
+            <div class="card mb-6">
                 <h2 class="text-base font-bold mb-3 text-slate-800">🏷️ 処理済みラベル管理</h2>
                 <div class="mb-2">
                     <label class="text-xs font-bold text-slate-700">処理日</label>
@@ -200,11 +196,35 @@
                 </div>
 
                 <div class="text-xs font-bold text-slate-700 mb-1">処理内容（チェック項目）</div>
-                <div id="items-list" class="space-y-1.5 mb-3"></div>
+                <div id="items-list" class="space-y-1.5 mb-4">
+                    <!-- 固定チェック項目 -->
+                    <div class="item-row flex items-center gap-2">
+                        <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
+                        <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="検品完了" oninput="saveProcessedData()">
+                    </div>
+                    <div class="item-row flex items-center gap-2">
+                        <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
+                        <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="バーコード読取確認" oninput="saveProcessedData()">
+                    </div>
+                    <div class="item-row flex items-center gap-2">
+                        <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
+                        <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="梱包・資材確認" oninput="saveProcessedData()">
+                    </div>
+                </div>
 
                 <div class="no-print">
-                    <button onclick="addProcessedItem()" class="w-full bg-emerald-50 text-emerald-700 p-2 border border-dashed rounded font-bold mb-3 text-xs hover:bg-emerald-100 transition">+ 項目を追加</button>
-                    <button onclick="printProcessed()" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition shadow-sm">🖨️ 100×150サイズで印刷 / 保存</button>
+                    <button onclick="printAndSaveProcessed()" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold text-sm transition shadow-sm">🖨️ 印刷 ＆ 履歴保存 (100×150)</button>
+                </div>
+            </div>
+
+            <!-- Firestore 処理済みラベル履歴セクション -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl no-print">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-xs font-bold text-slate-300">☁️ 最近の処理済みラベル履歴</h3>
+                    <button onclick="loadProcessedHistory()" class="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-800 px-2 py-1 rounded">更新</button>
+                </div>
+                <div id="processedHistoryList" class="space-y-2 max-h-48 overflow-y-auto text-xs text-slate-400">
+                    <p class="text-center py-3 text-slate-500">履歴を読み込み中...</p>
                 </div>
             </div>
         </div>
@@ -284,6 +304,15 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // --- 当日の日付を取得する関数 (YYYY-MM-DD形式) ---
+        const getTodayStr = () => {
+            const now = new Date();
+            const yyyy = now.getFullYear();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const dd = String(now.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        };
+
         // --- タブ切り替え関数 ---
         window.switchTab = function(tabName) {
             const processedTab = document.getElementById('processedTabContent');
@@ -296,12 +325,18 @@
                 qrTab.style.display = 'none';
                 btnProcessed.classList.add('active');
                 btnQr.classList.remove('active');
+                
+                const dateInput = document.getElementById('p-date');
+                if (!dateInput.value) {
+                    dateInput.value = getTodayStr();
+                    saveProcessedData();
+                }
             } else {
                 processedTab.style.display = 'none';
                 qrTab.style.display = 'block';
                 btnQr.classList.add('active');
                 btnProcessed.classList.remove('active');
-                window.updatePreview(); // QRタブ表示時にプレビューを初期化
+                window.updatePreview();
             }
         };
 
@@ -325,24 +360,95 @@
             localStorage.setItem(PROCESSED_STORAGE_KEY, JSON.stringify(data));
         };
 
-        window.addProcessedItem = () => {
-            const list = document.getElementById('items-list');
-            list.insertAdjacentHTML('beforeend', `
-                <div class="item-row flex items-center gap-2">
-                    <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
-                    <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" oninput="saveProcessedData()" placeholder="項目名">
-                    <button onclick="this.closest('.item-row').remove(); saveProcessedData();" class="no-print text-red-600 font-bold px-2">✕</button>
-                </div>
-            `);
-            saveProcessedData();
-        };
+        window.printAndSaveProcessed = async function() {
+            window.saveProcessedData();
+            
+            const seller = document.getElementById('p-seller').value.trim();
+            const staff = document.getElementById('p-staff').value.trim();
+            const processDate = document.getElementById('p-date').value;
+            
+            // 履歴としてFirestoreに保存
+            try {
+                const items = [];
+                document.querySelectorAll('.item-row').forEach(r => {
+                    items.push({
+                        text: r.querySelector('.t').value,
+                        checked: r.querySelector('.c').checked
+                    });
+                });
 
-        window.printProcessed = () => {
+                await addDoc(collection(db, "processed_label_history"), {
+                    processDate: processDate,
+                    sellerName: seller,
+                    staffName: staff,
+                    items: items,
+                    createdAt: serverTimestamp()
+                });
+                loadProcessedHistory();
+            } catch (e) {
+                console.error("処理済みラベル保存エラー: ", e);
+            }
+
             document.body.classList.add('print-processed-mode');
             window.print();
             setTimeout(() => {
                 document.body.classList.remove('print-processed-mode');
             }, 500);
+        };
+
+        window.loadProcessedHistory = async function() {
+            const historyListEl = document.getElementById("processedHistoryList");
+            if (!historyListEl) return;
+            historyListEl.innerHTML = '<p class="text-center py-2 text-slate-500">読み込み中...</p>';
+
+            try {
+                const q = query(collection(db, "processed_label_history"), orderBy("createdAt", "desc"), limit(10));
+                const querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    historyListEl.innerHTML = '<p class="text-center py-3 text-slate-500">履歴がありません</p>';
+                    return;
+                }
+
+                historyListEl.innerHTML = "";
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const dateStr = data.processDate || "日付不明";
+                    const seller = data.sellerName || "セラー名なし";
+                    const staff = data.staffName || "担当者なし";
+
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = "bg-slate-800/60 hover:bg-slate-800 p-2.5 rounded-xl flex justify-between items-center cursor-pointer transition border border-slate-700/50";
+                    itemDiv.onclick = () => {
+                        document.getElementById("p-date").value = data.processDate || getTodayStr();
+                        document.getElementById("p-seller").value = data.sellerName || "";
+                        document.getElementById("p-staff").value = data.staffName || "";
+
+                        const rows = document.querySelectorAll('.item-row');
+                        if (data.items && Array.isArray(data.items)) {
+                            data.items.forEach((item, idx) => {
+                                if (rows[idx]) {
+                                    rows[idx].querySelector('.t').value = item.text || "";
+                                    rows[idx].querySelector('.c').checked = !!item.checked;
+                                }
+                            });
+                        }
+                        window.saveProcessedData();
+                    };
+
+                    itemDiv.innerHTML = `
+                        <div class="truncate mr-2">
+                            <p class="font-bold text-slate-200 truncate">${escapeHtml(seller)} (${escapeHtml(staff)})</p>
+                            <p class="text-[10px] text-slate-400">処理日: ${dateStr}</p>
+                        </div>
+                        <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
+                    `;
+                    processedHistoryList.appendChild(itemDiv);
+                });
+            } catch (e) {
+                console.error("処理済み履歴取得エラー: ", e);
+                historyListEl.innerHTML = '<p class="text-center py-3 text-rose-400">履歴の取得に失敗しました</p>';
+            }
         };
 
         // --- 2. QRコードラベル作成のロジック ---
@@ -480,52 +586,34 @@
         document.getElementById("printCount").addEventListener("input", window.updatePreview);
 
         window.addEventListener('DOMContentLoaded', () => {
-            // 処理済みラベルのローカルストレージ復元
             const savedJson = localStorage.getItem(PROCESSED_STORAGE_KEY);
-            
-            // --- ① 当日の日付を取得する関数 (YYYY-MM-DD形式) ---
-            const getTodayStr = () => {
-                const now = new Date();
-                const yyyy = now.getFullYear();
-                const mm = String(now.getMonth() + 1).padStart(2, '0');
-                const dd = String(now.getDate()).padStart(2, '0');
-                return `${yyyy}-${mm}-${dd}`;
-            };
 
             if (savedJson) {
                 try {
                     const d = JSON.parse(savedJson);
                     
-                    // ② 保存されたデータに日付があればそれを使用、なければ今日の日付を設定
                     document.getElementById('p-date').value = d.processDate || getTodayStr();
-                    
                     document.getElementById('p-seller').value = d.sellerName || "";
                     document.getElementById('p-staff').value = d.staffName || "";
 
-                    const list = document.getElementById('items-list');
-                    list.innerHTML = "";
-                    (d.items || []).forEach(i => {
-                        list.insertAdjacentHTML('beforeend', `
-                            <div class="item-row flex items-center gap-2">
-                                <input type="checkbox" class="c w-4 h-4 accent-green-600" ${i.checked ? 'checked' : ''} onchange="saveProcessedData()">
-                                <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="${i.value || i.text || ''}" oninput="saveProcessedData()">
-                                <button onclick="this.closest('.item-row').remove(); saveProcessedData();" class="no-print text-red-600 font-bold px-2">✕</button>
-                            </div>
-                        `);
+                    const rows = document.querySelectorAll('.item-row');
+                    (d.items || []).forEach((i, idx) => {
+                        if (rows[idx]) {
+                            rows[idx].querySelector('.c').checked = !!i.checked;
+                            rows[idx].querySelector('.t').value = i.text || "";
+                        }
                     });
                 } catch (e) {
                     console.error("データ読み込みエラー", e);
+                    document.getElementById('p-date').value = getTodayStr();
                 }
             } else {
-                // ③ まったくローカルストレージにデータがない初回開いたときなども今日の日付をセット
                 document.getElementById('p-date').value = getTodayStr();
             }
 
-            // 初回読み込み時に日付が入った状態を保存しておく
             window.saveProcessedData();
-
-            // QR履歴読み込み
             window.loadHistory();
+            window.loadProcessedHistory();
         });
     </script>
 </body>
