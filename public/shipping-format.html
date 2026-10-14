@@ -72,11 +72,11 @@
 
                 <!-- 送り状・検品アクション -->
                 <div class="mt-6 pt-4 border-t border-slate-200">
-                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては自動で佐川からヤマトへ振り分けられます）</div>
+                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては佐川E列で判定され、ヤマトへ自動振り分けされます）</div>
                     <div class="flex gap-3 flex-wrap">
                         <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
-                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
-                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力</button>
+                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力（沖縄自動追加）</button>
+                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄E列除外）</button>
                     </div>
                 </div>
             </div>
@@ -145,7 +145,6 @@
             } else {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('masterTab').classList.add('active');
-                // タブを開いた時に確実に最新のマスタを読み込む
                 loadMasterItems();
             }
         };
@@ -153,41 +152,21 @@
         function initDropZone() {
             const dropZone = document.getElementById('dropZone');
             const fileInput = document.getElementById('fileInput');
-
             if (!dropZone || !fileInput) return;
 
-            dropZone.addEventListener('click', () => {
-                fileInput.click();
-            });
-
+            dropZone.addEventListener('click', () => fileInput.click());
             ['dragenter', 'dragover'].forEach(eventName => {
-                dropZone.addEventListener(eventName, (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dropZone.classList.add('bg-sky-100', 'border-sky-600');
-                }, false);
+                dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('bg-sky-100', 'border-sky-600'); }, false);
             });
-
             ['dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dropZone.classList.remove('bg-sky-100', 'border-sky-600');
-                }, false);
+                dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('bg-sky-100', 'border-sky-600'); }, false);
             });
-
             dropZone.addEventListener('drop', (e) => {
                 const dt = e.dataTransfer;
-                const files = dt.files;
-                if (files.length > 0) {
-                    handleFiles(files);
-                }
+                if (dt.files.length > 0) handleFiles(dt.files);
             }, false);
-
             fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) {
-                    handleFiles(e.target.files);
-                }
+                if (e.target.files.length > 0) handleFiles(e.target.files);
             });
         }
 
@@ -209,9 +188,9 @@
                     if (rows.length > 0) {
                         let sampleStr = rows.slice(0, 5).map(r => r.join(',')).join('\n');
                         let type = getFileType(file.name, sampleStr);
-
                         let headerRow = [];
                         let dataStartIndex = 0;
+
                         if (type === 'yamato') {
                             headerRow = [];
                             dataStartIndex = 0;
@@ -303,24 +282,18 @@
             document.getElementById('calcPickBtn').disabled = !hasOrder;
             document.getElementById('printBtn').disabled = !hasOrder;
             document.getElementById('zaicoBtn').disabled = !hasOrder;
-            document.getElementById('yamatoBtn').disabled = !(hasOrder && yamatoRowsCount > 0);
-            document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
+            document.getElementById('yamatoBtn').disabled = !hasOrder;
+            document.getElementById('ehidenBtn').disabled = !hasOrder; 
         }
 
         function getAllOrderRows() {
-            let rows = [];
-            uploadedFiles.filter(f => f.type === 'order').forEach(f => { rows = rows.concat(f.rows); });
-            return rows;
+            return uploadedFiles.filter(f => f.type === 'order').flatMap(f => f.rows);
         }
         function getAllYamatoRows() {
-            let rows = [];
-            uploadedFiles.filter(f => f.type === 'yamato').forEach(f => { rows = rows.concat(f.rows); });
-            return rows;
+            return uploadedFiles.filter(f => f.type === 'yamato').flatMap(f => f.rows);
         }
         function getAllSagawaRows() {
-            let rows = [];
-            uploadedFiles.filter(f => f.type === 'sagawa').forEach(f => { rows = rows.concat(f.rows); });
-            return rows;
+            return uploadedFiles.filter(f => f.type === 'sagawa').flatMap(f => f.rows);
         }
 
         window.processOrderPickCalculation = async () => {
@@ -347,8 +320,7 @@
                 }
             });
 
-            const items = Array.from(rawItemsMap.values());
-            await processOrderLocally(items);
+            await processOrderLocally(Array.from(rawItemsMap.values()));
         };
 
         async function processOrderLocally(items) {
@@ -374,21 +346,12 @@
                         existing.orderQty += item.quantity;
                         existing.pickCount = existing.orderQty * existing.multiplier;
                     } else {
-                        aggregatedMap.set(key, {
-                            barcode: barcode,
-                            productName: finalProductName,
-                            orderQty: item.quantity,
-                            multiplier: multiplier,
-                            shelfNumber: shelfNumber,
-                            status: status,
-                            pickCount: item.quantity * multiplier
-                        });
+                        aggregatedMap.set(key, { barcode, productName: finalProductName, orderQty: item.quantity, multiplier, shelfNumber, status, pickCount: item.quantity * multiplier });
                     }
                 }
 
                 currentPickResults = Array.from(aggregatedMap.values());
                 currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
-
                 renderPickTable(currentPickResults);
             } catch (err) {
                 console.error(err);
@@ -455,22 +418,9 @@
             }
 
             try {
-                await setDoc(doc(db, "product_masters", barcode), {
-                    barcode: barcode,
-                    productName: productName,
-                    multiplier: multiplier,
-                    shelfNumber: shelfNumber,
-                    updatedAt: new Date()
-                }, { merge: true });
-
-                currentPickResults[index].barcode = barcode;
-                currentPickResults[index].multiplier = multiplier;
-                currentPickResults[index].shelfNumber = shelfNumber;
-                currentPickResults[index].status = "REGISTERED";
-                currentPickResults[index].pickCount = orderQty * multiplier;
-
+                await setDoc(doc(db, "product_masters", barcode), { barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
+                currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: orderQty * multiplier };
                 sortAndReRenderPickTable();
-                
                 if (!isSilent) alert('保存しました！棚番順に並び替えました。');
             } catch (err) {
                 console.error(err);
@@ -480,12 +430,9 @@
 
         window.saveAllOrderPickItems = async () => {
             if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
-
-            let successCount = 0;
-            let skippedCount = 0;
+            let successCount = 0, skippedCount = 0;
 
             for (let index = 0; index < currentPickResults.length; index++) {
-                const item = currentPickResults[index];
                 const bcInput = document.getElementById(`barcode_${index}`);
                 const multInput = document.getElementById(`mult_${index}`);
                 const shelfInput = document.getElementById(`shelf_${index}`);
@@ -494,33 +441,15 @@
                     const barcode = bcInput.value.trim();
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
-
-                    if (!barcode || !shelfNumber) {
-                        skippedCount++;
-                        continue;
-                    }
+                    if (!barcode || !shelfNumber) { skippedCount++; continue; }
 
                     try {
-                        await setDoc(doc(db, "product_masters", barcode), {
-                            barcode: barcode,
-                            productName: item.productName,
-                            multiplier: multiplier,
-                            shelfNumber: shelfNumber,
-                            updatedAt: new Date()
-                        }, { merge: true });
-
+                        await setDoc(doc(db, "product_masters", barcode), { barcode, productName: currentPickResults[index].productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
                         successCount++;
-                        currentPickResults[index].barcode = barcode;
-                        currentPickResults[index].multiplier = multiplier;
-                        currentPickResults[index].shelfNumber = shelfNumber;
-                        currentPickResults[index].status = "REGISTERED";
-                        currentPickResults[index].pickCount = item.orderQty * multiplier;
-                    } catch (err) {
-                        console.error(err);
-                    }
+                        currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: currentPickResults[index].orderQty * multiplier };
+                    } catch (err) { console.error(err); }
                 }
             }
-
             sortAndReRenderPickTable();
             alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件\n\n※棚番順に並び替えました。`);
         };
@@ -533,10 +462,8 @@
             allOrders.forEach(cols => {
                 if (cols[6] === '1-0') return;
                 if (cols.length > 31 && cols[31]) {
-                    let pName = cols[31];
-                    let qty = cols[34] ? Number(cols[34]) : 1;
-                    let parts = pName.trim().split(/\s+/);
-                    let bc = parts.length > 0 ? parts[parts.length - 1] : '';
+                    let pName = cols[31], qty = cols[34] ? Number(cols[34]) : 1;
+                    let parts = pName.trim().split(/\s+/), bc = parts.length > 0 ? parts[parts.length - 1] : '';
                     let k = bc || pName;
                     if (rawItemsMap.has(k)) { rawItemsMap.get(k).quantity += qty; }
                     else { rawItemsMap.set(k, { productName: pName, quantity: qty, barcode: bc }); }
@@ -553,33 +480,16 @@
                     let mData = masterMap.get(val.barcode);
                     if (mData && mData.shelfNumber && val.barcode) {
                         let mult = mData.multiplier || 1;
-                        validItems.push({
-                            barcode: val.barcode,
-                            productName: mData.productName || val.productName,
-                            orderQty: val.quantity,
-                            multiplier: mult,
-                            shelfNumber: mData.shelfNumber,
-                            pickCount: val.quantity * mult,
-                            status: "REGISTERED"
-                        });
+                        validItems.push({ barcode: val.barcode, productName: mData.productName || val.productName, orderQty: val.quantity, multiplier: mult, shelfNumber: mData.shelfNumber, pickCount: val.quantity * mult, status: "REGISTERED" });
                     }
                 });
 
-                if (validItems.length === 0) {
-                    alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。');
-                    return;
-                }
-
+                if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
                 if (!confirm(`棚番が登録されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
 
                 showStatus("zaicoに出庫指示を送信中...");
-                const res = await fetch(URL_CREATE_SHIPMENT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: validItems })
-                });
+                const res = await fetch(URL_CREATE_SHIPMENT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: validItems }) });
                 const data = await res.json();
-
                 if (data.success) {
                     alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)`);
                     showStatus("<b>出庫指示の送信が完了しました。</b>");
@@ -595,10 +505,7 @@
         // ==================== 送り状・沖縄判定・検品シート ====================
         function cleanOrderNoNormalized(rawStr) {
             if (!rawStr) return "";
-            return String(rawStr).replace(/^No:?[\.\s]*/i, "")
-                                 .replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                                 .replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "")
-                                 .trim().toLowerCase();
+            return String(rawStr).replace(/^No:?[\.\s]*/i, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "").trim().toLowerCase();
         }
 
         function cleanPhone(phoneStr) {
@@ -608,36 +515,59 @@
             return s;
         }
 
-        function isOkinawaAddress(addrStr) {
-            if (!addrStr) return false;
-            return addrStr.includes('沖縄') || addrStr.includes('おきなわ');
+        // 佐川データ（e飛伝）専用の強固な沖縄判定：E列(4)とF列(5)のみを確実にチェック
+        function isOkinawaFromSagawaRow(sagawaRow) {
+            if (!sagawaRow) return false;
+            let addrE = sagawaRow[4] ? String(sagawaRow[4]) : "";
+            let addrF = sagawaRow[5] ? String(sagawaRow[5]) : "";
+            let combined = (addrE + " " + addrF).toLowerCase();
+            return combined.includes('沖縄') || combined.includes('おきなわ') || combined.includes('okinawa');
+        }
+
+        // 受注データの住所付近からの沖縄判定フォールバック
+        function isOkinawaFromOrderRow(orderRow) {
+            if (!orderRow) return false;
+            let combined = orderRow.slice(6, 16).join(' ').toLowerCase();
+            return combined.includes('沖縄') || combined.includes('おきなわ') || combined.includes('okinawa');
         }
 
         function getOrderUniqueIds() {
             let set = new Set();
-            getAllOrderRows().forEach(r => {
-                let n = cleanOrderNoNormalized(r[5]);
-                if (n) set.add(n);
-            });
+            getAllOrderRows().forEach(r => { let n = cleanOrderNoNormalized(r[5]); if (n) set.add(n); });
             return set;
         }
 
+        // ヤマトCSV出力（ヤマトB2フォーマットに完全準拠）
         window.exportYamatoCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let yamatoRows = getAllYamatoRows();
-            if (yamatoRows.length === 0) { alert("ヤマトデータが読み込まれていません。"); return; }
+            let sagawaRows = getAllSagawaRows();
+            let allOrders = getAllOrderRows();
+
+            if (allOrders.length === 0) { alert("受注データが読み込まれていません。"); return; }
+
+            // 1. 沖縄宛ての受注番号を特定
+            let okinawaOrderNos = new Set();
+            sagawaRows.forEach(sRow => {
+                if (isOkinawaFromSagawaRow(sRow)) {
+                    // 佐川の行に含まれる管理番号等から特定
+                    for (let c = 0; c < sRow.length; c++) {
+                        let valNorm = cleanOrderNoNormalized(sRow[c]);
+                        if (uniqueOrderNos.has(valNorm)) okinawaOrderNos.add(valNorm);
+                    }
+                }
+            });
+            allOrders.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[5]);
+                if (isOkinawaFromOrderRow(oRow) && oNum) okinawaOrderNos.add(oNum);
+            });
 
             let outputRows = [];
             let todayStr = getTodayString();
 
+            // 2. 既存ヤマトデータの処理
             uniqueOrderNos.forEach(oNum => {
-                let matchedYRow = yamatoRows.find(r => {
-                    for(let c=0; c<r.length; c++) {
-                        if (cleanOrderNoNormalized(r[c]) === oNum) return true;
-                    }
-                    return false;
-                });
-
+                let matchedYRow = yamatoRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
                 if (matchedYRow) {
                     let newRow = [...matchedYRow];
                     while (newRow.length < 42) newRow.push("");
@@ -654,22 +584,67 @@
                 }
             });
 
-            if (outputRows.length === 0) { alert("ヤマトデータと紐付く受注番号が見つかりませんでした。"); return; }
+            // 3. 沖縄宛てで、ヤマト側に存在しないものを自動生成して追加
+            okinawaOrderNos.forEach(oNum => {
+                let alreadyAdded = outputRows.some(r => r.some(cell => cleanOrderNoNormalized(cell) === oNum));
+                if (!alreadyAdded) {
+                    let sRow = sagawaRows.find(r => r.some(cell => cleanOrderNoNormalized(cell) === oNum));
+                    let oRow = allOrders.find(r => cleanOrderNoNormalized(r[5]) === oNum);
+
+                    let dummyRow = new Array(42).fill("");
+                    dummyRow[0] = oNum; // 0: お客様管理番号
+                    dummyRow[1] = "0";  // 1: 送り状種類(発払)
+                    dummyRow[4] = todayStr; // 4: 出荷予定日
+                    dummyRow[39] = '09050540672'; // 39: ご依頼主電話番号(等)
+                    dummyRow[26] = ""; 
+
+                    if (sRow) {
+                        dummyRow[8] = cleanPhone(sRow[2] || ""); // 8: お届け先電話番号
+                        dummyRow[9] = sRow[3] || "";             // 9: お届け先郵便番号
+                        dummyRow[10] = sRow[4] || "";            // 10: お届け先住所
+                        dummyRow[11] = sRow[5] || "";            // 11: お届け先アパート等
+                        dummyRow[14] = sRow[7] || "";            // 14: お届け先名
+                        dummyRow[24] = sRow[24] || "";           // 24: 品名１
+                    } else if (oRow) {
+                        dummyRow[10] = oRow[10] || ""; 
+                        dummyRow[14] = oRow[40] || ""; 
+                    }
+
+                    // ヤマト文字数制限対応 (25文字以内)
+                    for (let c = 0; c < dummyRow.length; c++) {
+                        let valStr = String(dummyRow[c]);
+                        if (c >= 24 && c <= 30 && valStr.length > 25) dummyRow[c] = valStr.substring(0, 25);
+                    }
+                    outputRows.push(dummyRow);
+                }
+            });
+
+            if (outputRows.length === 0) { alert("ヤマト対象となるデータが見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed.csv");
-            alert("ヤマトCSVを出力しました。");
+            alert(`ヤマトCSVを出力しました。（対象件数: ${outputRows.length}件、うち沖縄自動追加分含む）`);
         };
 
+        // 佐川CSV出力（E列判断による完全除外）
         window.exportEhidenCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let sagawaRows = getAllSagawaRows();
             let allOrders = getAllOrderRows();
+
             if (sagawaRows.length === 0) { alert("佐川データが読み込まれていません。"); return; }
 
+            // 沖縄特定
             let okinawaOrderNos = new Set();
+            sagawaRows.forEach(sRow => {
+                if (isOkinawaFromSagawaRow(sRow)) {
+                    for (let c = 0; c < sRow.length; c++) {
+                        let valNorm = cleanOrderNoNormalized(sRow[c]);
+                        if (uniqueOrderNos.has(valNorm)) okinawaOrderNos.add(valNorm);
+                    }
+                }
+            });
             allOrders.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[5]);
-                let addrCombined = oRow.slice(6, 15).join(' ');
-                if (isOkinawaAddress(addrCombined) && oNum) okinawaOrderNos.add(oNum);
+                if (isOkinawaFromOrderRow(oRow) && oNum) okinawaOrderNos.add(oNum);
             });
 
             let sagawaHeader = sagawaDataHeader();
@@ -677,16 +652,14 @@
             let targetIdx = sagawaHeader.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
             if (targetIdx === -1) targetIdx = 24;
 
+            let excludedCount = 0;
             uniqueOrderNos.forEach(oNum => {
-                if (okinawaOrderNos.has(oNum)) return;
+                if (okinawaOrderNos.has(oNum)) {
+                    excludedCount++;
+                    return;
+                }
 
-                let matchedSRow = sagawaRows.find(r => {
-                    for(let c=0; c<r.length; c++) {
-                        if (cleanOrderNoNormalized(r[c]) === oNum) return true;
-                    }
-                    return false;
-                });
-
+                let matchedSRow = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
                 if (matchedSRow) {
                     let newRow = [...matchedSRow];
                     for (let c = 0; c < newRow.length; c++) {
@@ -701,7 +674,7 @@
 
             if (outputRows.length <= 1) { alert("佐川データと紐付く有効なデータがありません。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed.csv");
-            alert("佐川CSVを出力しました（沖縄宛て自動除外）。");
+            alert(`佐川CSVを出力しました。\n※E/F列の判定により、沖縄宛て ${excludedCount} 件を自動除外しました。`);
         };
 
         function sagawaDataHeader() {
@@ -724,12 +697,7 @@
 
                 let koBanVal = r[koBanIdx] !== undefined ? String(r[koBanIdx]).trim() : '';
                 if (!orderGroupMap.has(normalizedNo)) {
-                    orderGroupMap.set(normalizedNo, {
-                        orderNo: orderNo,
-                        shop: r[3] !== undefined ? r[3] : '',
-                        name: r[40] !== undefined ? r[40] : '',
-                        rows: []
-                    });
+                    orderGroupMap.set(normalizedNo, { orderNo: orderNo, shop: r[3] !== undefined ? r[3] : '', name: r[40] !== undefined ? r[40] : '', rows: [] });
                 }
                 let group = orderGroupMap.get(normalizedNo);
                 if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
@@ -741,26 +709,22 @@
 
             let htmlPages = [];
             orderGroupMap.forEach((group) => {
-                let itemRowsHtml = '';
-                let totalQty = 0;
+                let itemRowsHtml = '', totalQty = 0;
                 group.rows.forEach(mRow => {
                     let koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
                     let itemCode = mRow[30] !== undefined ? mRow[30] : '';
                     let itemName = mRow[31] !== undefined ? mRow[31] : '';
                     let qty = mRow[34] !== undefined ? mRow[34] : '1';
                     totalQty += parseInt(qty, 10) || 1;
-
                     let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
                     itemRowsHtml += `
                         <tr style="border-bottom: 1px solid #ddd; background:${isChild ? '#fafbfc' : '#ffffff'};">
                             <td style="text-align:center; padding:4px;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td>
                             <td style="padding:4px; ${isChild ? 'padding-left:12px; font-size:9.5pt;' : 'font-weight:bold; font-size:10pt;'}">
-                                ${isChild ? '└ ' : ''}${itemName}<br>
-                                <span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span>
+                                ${isChild ? '└ ' : ''}${itemName}<br><span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span>
                             </td>
                             <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
-                        </tr>
-                    `;
+                        </tr>`;
                 });
 
                 htmlPages.push(`
@@ -789,13 +753,13 @@
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 masterItemsCache = [];
-                querySnapshot.forEach(docSnap => {
-                    const data = docSnap.data();
-                    masterItemsCache.push({ id: docSnap.id, ...data });
-                });
-                filterMasterTable();
+                querySnapshot.forEach(docSnap => masterItemsCache.push({ id: docSnap.id, ...docSnap.data() }));
+
+                if (document.getElementById('masterSearch')) document.getElementById('masterSearch').value = '';
+                if (document.getElementById('shelfFilter')) document.getElementById('shelfFilter').value = '';
+
+                renderMasterTable(masterItemsCache);
             } catch (err) {
-                console.error(err);
                 if (masterArea) masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
             }
         };
@@ -805,22 +769,13 @@
             if (!masterArea) return;
             
             let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
-                <table><thead><tr>
-                <th>商品名</th>
-                <th>バーコード</th>
-                <th>倍率</th>
-                <th>棚番</th>
-                <th>操作</th>
-                </tr></thead><tbody>`;
+                <table><thead><tr><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>操作</th></tr></thead><tbody>`;
 
             if (!items || items.length === 0) {
                 html += `<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
             } else {
                 items.forEach((item, i) => {
-                    let name = item.productName || item.product_name || '';
-                    let shelf = item.shelfNumber || item.shelf_number || '';
-                    let barcode = item.barcode || item.id || '';
-                    let mult = item.multiplier || 1;
+                    let name = item.productName || item.product_name || '', shelf = item.shelfNumber || item.shelf_number || '', barcode = item.barcode || item.id || '', mult = item.multiplier || 1;
                     html += `<tr>
                         <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%;padding:4px;"></td>
                         <td><code>${escapeHtml(barcode)}</code></td>
@@ -841,9 +796,7 @@
             const kw = document.getElementById('masterSearch') ? document.getElementById('masterSearch').value.toLowerCase() : '';
             const skw = document.getElementById('shelfFilter') ? document.getElementById('shelfFilter').value.toLowerCase() : '';
             const filtered = masterItemsCache.filter(item => {
-                let name = (item.productName || item.product_name || '').toLowerCase();
-                let bc = (item.barcode || item.id || '').toLowerCase();
-                let sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
+                let name = (item.productName || item.product_name || '').toLowerCase(), bc = (item.barcode || item.id || '').toLowerCase(), sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
                 let mKw = name.includes(kw) || bc.includes(kw) || sh.includes(kw);
                 let mSh = (skw === '' || skw === '空欄' || skw === '未設定') ? (sh === '') : sh.includes(skw);
                 return mKw && mSh;
@@ -851,10 +804,7 @@
             renderMasterTable(filtered);
         };
 
-        window.filterUnassignedShelf = () => {
-            document.getElementById('shelfFilter').value = '空欄';
-            filterMasterTable();
-        };
+        window.filterUnassignedShelf = () => { document.getElementById('shelfFilter').value = '空欄'; filterMasterTable(); };
 
         window.applyBatchShelf = () => {
             let val = document.getElementById('batchShelfInput').value.trim();
@@ -867,15 +817,11 @@
         };
 
         window.updateMaster = async (barcode, i) => {
-            let pName = document.getElementById(`master_name_${i}`).value.trim();
-            let mult = Number(document.getElementById(`master_mult_${i}`).value) || 1;
-            let sh = document.getElementById(`master_shelf_${i}`).value.trim();
+            let pName = document.getElementById(`master_name_${i}`).value.trim(), mult = Number(document.getElementById(`master_mult_${i}`).value) || 1, sh = document.getElementById(`master_shelf_${i}`).value.trim();
             if (!sh) { alert('棚番を入力してください。'); return; }
-
             try {
                 await setDoc(doc(db, "product_masters", barcode), { barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
-                alert('マスタを更新しました！');
-                loadMasterItems(); // 再読み込みして同期
+                alert('マスタを更新しました！'); loadMasterItems();
             } catch(e) { alert('エラー: ' + e.message); }
         };
 
@@ -884,34 +830,21 @@
             try {
                 await deleteDoc(doc(db, "product_masters", barcode));
                 masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.id) !== barcode);
-                filterMasterTable();
-                alert('削除しました。');
+                renderMasterTable(masterItemsCache); alert('削除しました。');
             } catch(e) { alert('削除エラー: ' + e.message); }
         };
 
         window.saveAllMasters = async () => {
             if (!confirm('画面に表示されているマスタのうち、棚番が入力されているものを一括保存しますか？')) return;
-            let rows = document.querySelectorAll('#masterResultArea tbody tr');
-            let count = 0;
+            let rows = document.querySelectorAll('#masterResultArea tbody tr'), count = 0;
             for (let i = 0; i < rows.length; i++) {
-                let r = rows[i];
-                let nIn = r.querySelector('input[id^="master_name_"]');
-                let mIn = r.querySelector('input[id^="master_mult_"]');
-                let sIn = r.querySelector('input[id^="master_shelf_"]');
-                let cEl = r.querySelector('code');
+                let nIn = rows[i].querySelector('input[id^="master_name_"]'), mIn = rows[i].querySelector('input[id^="master_mult_"]'), sIn = rows[i].querySelector('input[id^="master_shelf_"]'), cEl = rows[i].querySelector('code');
                 if (nIn && mIn && sIn && cEl) {
-                    let bc = cEl.textContent.trim();
-                    let name = nIn.value.trim();
-                    let mult = Number(mIn.value) || 1;
-                    let sh = sIn.value.trim();
-                    if (sh) {
-                        await setDoc(doc(db, "product_masters", bc), { barcode: bc, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
-                        count++;
-                    }
+                    let bc = cEl.textContent.trim(), name = nIn.value.trim(), mult = Number(mIn.value) || 1, sh = sIn.value.trim();
+                    if (sh) { await setDoc(doc(db, "product_masters", bc), { barcode: bc, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true }); count++; }
                 }
             }
-            alert(`${count}件のマスタを保存しました！`);
-            loadMasterItems(); // 再読み込み
+            alert(`${count}件のマスタを保存しました！`); loadMasterItems();
         };
 
         function parseRobustCSV(text) {
@@ -936,16 +869,12 @@
             let uint8Array = parseCsvStringToUint8(csvString);
             const blob = new Blob([uint8Array], { type: 'text/csv;charset=shift_jis;' });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = filename;
-            document.body.appendChild(a); a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const a = document.createElement('a'); a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
         }
 
         function getTodayString() {
-            const d = new Date();
-            return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+            const d = new Date(); return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
         }
     </script>
 </body>
