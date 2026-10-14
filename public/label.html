@@ -111,9 +111,8 @@
         /* 処理済みラベルのカードスタイル */
         .card { background: white; padding: 15px; border-radius: 12px; color: #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
 
-        /* ================= 印刷時の強力な全体制御 ================= */
+        /* ================= 印刷時の強力な全体制御 ================= -->
         @media print {
-            /* 1. 画面上のUIや余分な要素をすべて強制非表示 */
             body > *:not(.print-area) {
                 display: none !important;
             }
@@ -158,6 +157,7 @@
                 height: 29mm !important;
                 page-break-after: always;
                 break-after: page;
+                display: flex !important;
             }
         }
 
@@ -172,7 +172,6 @@
                 size: 100mm 150mm;
                 margin: 0 !important;
             }
-            /* 処理済みモードのときは print-area ではなく直接カードを印刷させるため表示を許可 */
             body.print-processed-mode #processedTabContent {
                 display: block !important;
             }
@@ -565,6 +564,19 @@
             document.getElementById("previewDisplayText").innerText = val;
             document.getElementById("previewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
+            // プレビュー用のQRコード描画
+            const qrContainer = document.getElementById("previewQrcode");
+            qrContainer.innerHTML = "";
+            new QRCode(qrContainer, {
+                text: val,
+                width: 60,
+                height: 60,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+
+            // 印刷用コンテナの構築
             const printArea = document.getElementById("printArea");
             printArea.innerHTML = "";
 
@@ -628,10 +640,12 @@
             }
 
             document.body.classList.add('print-qr-mode');
-            window.print();
             setTimeout(() => {
-                document.body.classList.remove('print-qr-mode');
-            }, 500);
+                window.print();
+                setTimeout(() => {
+                    document.body.classList.remove('print-qr-mode');
+                }, 500);
+            }, 100);
         };
 
         window.loadHistory = async function() {
@@ -688,6 +702,22 @@
             document.getElementById("bcPreviewDisplayText").innerText = val;
             document.getElementById("bcPreviewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
+            // プレビュー用のバーコード描画
+            try {
+                JsBarcode("#previewBarcodeSvg", val, {
+                    format: format,
+                    lineColor: "#000",
+                    width: 1.2,
+                    height: 32,
+                    displayValue: true,
+                    fontSize: 9,
+                    margin: 0
+                });
+            } catch (e) {
+                console.error("プレビューバーコード生成エラー:", e);
+            }
+
+            // 印刷用コンテナの構築
             const printArea = document.getElementById("printArea");
             printArea.innerHTML = "";
 
@@ -760,10 +790,12 @@
             }
 
             document.body.classList.add('print-barcode-mode');
-            window.print();
             setTimeout(() => {
-                document.body.classList.remove('print-barcode-mode');
-            }, 500);
+                window.print();
+                setTimeout(() => {
+                    document.body.classList.remove('print-barcode-mode');
+                }, 500);
+            }, 100);
         };
 
         window.loadBarcodeHistory = async function() {
@@ -854,6 +886,7 @@
             window.loadProcessedHistory();
             window.loadBarcodeHistory();
             window.updatePreview();
+            window.updateBarcodePreview();
         });
     </script>
 </body>
