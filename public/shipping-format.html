@@ -42,9 +42,10 @@
                 <h2 class="text-lg font-bold text-slate-800 mb-2">📥 CSVファイル ドロップ＆蓄積エリア</h2>
                 <p class="text-xs text-slate-500 mb-4">「受注CSV」「ヤマトCSV」「佐川CSV」をまとめて、または何度かに分けてドラッグ＆ドロップしてください。</p>
 
-                <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
+                <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4">
                     <div class="text-3xl mb-1">📂</div>
                     <div class="font-bold text-slate-700 text-sm">ここにCSVをドラッグ＆ドロップ（複数可・追加可能）</div>
+                    <p class="text-xs text-slate-400 mt-1">またはクリックしてファイルを選択</p>
                     <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
                 </div>
 
@@ -132,6 +133,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             loadMasterItems();
+            initDropZone();
         });
 
         window.switchTab = (tabId) => {
@@ -147,11 +149,46 @@
             }
         };
 
-        const dropZone = document.getElementById('dropZone');
-        ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
-        ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('bg-sky-100'); }));
-        dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
-        document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
+        function initDropZone() {
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+
+            if (!dropZone || !fileInput) return;
+
+            dropZone.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('bg-sky-100', 'border-sky-600');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('bg-sky-100', 'border-sky-600');
+                }, false);
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                if (files.length > 0) {
+                    handleFiles(files);
+                }
+            }, false);
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFiles(e.target.files);
+                }
+            });
+        }
 
         function handleFiles(files) {
             Array.from(files).forEach(file => {
@@ -401,8 +438,7 @@
             }
         };
 
-        // 保存後に自動で棚番ソート＆再描画するヘルパー
-        function sortAndRe-renderPickTable() {
+        function sortAndReRenderPickTable() {
             currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
             renderPickTable(currentPickResults);
         }
@@ -432,8 +468,7 @@
                 currentPickResults[index].status = "REGISTERED";
                 currentPickResults[index].pickCount = orderQty * multiplier;
 
-                // 保存後、自動で棚番ソートして再描画
-                sortAndRe-renderPickTable();
+                sortAndReRenderPickTable();
                 
                 if (!isSilent) alert('保存しました！棚番順に並び替えました。');
             } catch (err) {
@@ -442,7 +477,6 @@
             }
         };
 
-        // ピック数一覧の一括保存
         window.saveAllOrderPickItems = async () => {
             if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
 
@@ -486,9 +520,7 @@
                 }
             }
 
-            // 一括保存完了後、自動で棚番順にソートして再描画
-            sortAndRe-renderPickTable();
-
+            sortAndReRenderPickTable();
             alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件\n\n※棚番順に並び替えました。`);
         };
 
