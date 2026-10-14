@@ -704,7 +704,7 @@
                                         <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                             ${membersOpts}
                                         </select>
-                                        <button onclick="insertQuoteToTextarea('${uniqueTextareaId}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
+                                        <button onclick="insertQuoteToTextarea('${uniqueTextareaId}', '${latestMsg.account ? latestMsg.account.account_id : ''}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
                                             💬 引用
                                         </button>
                                     </div>
@@ -869,6 +869,7 @@
                 } else {
                     messages.forEach(m => {
                         const senderName = m.account && m.account.name ? m.account.name : '不明';
+                        const senderAccId = m.account && m.account.account_id ? m.account.account_id : '';
                         const sendDateStr = m.send_time ? new Date(m.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const encodedBody = encodeURIComponent(m.body);
                         const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
@@ -882,7 +883,7 @@
                                         <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             🔗 連携
                                         </button>
-                                        <button onclick="insertQuoteToTextarea('normal_txt_${roomId}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                        <button onclick="insertQuoteToTextarea('normal_txt_${roomId}', '${senderAccId}', '${escapeHtml(senderName)}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             💬 引用
                                         </button>
                                     </div>
@@ -1006,18 +1007,22 @@
             const name = selectEl.options[selectEl.selectedIndex].getAttribute('data-name');
             const ta = document.getElementById(textareaId);
             
-            // 改行とスペースを強制的に保証して先頭に配置
-            const mentionText = `[to:${accId}] ${name}さん\n`;
+            const mentionText = `[To:${accId}] ${name}さん\n`;
             ta.value = mentionText + ta.value;
             selectEl.selectedIndex = 0;
         }
 
-        function insertQuoteToTextarea(textareaId, senderName, encodedBody) {
+        function insertQuoteToTextarea(textareaId, senderAccId, senderName, encodedBody) {
             const body = decodeURIComponent(encodedBody);
             const ta = document.getElementById(textareaId);
             
-            // 正確な改行付きの引用ブロックタグ
-            const quoteText = `[info][title]${senderName}さんのメッセージ[/title]\n${body}\n[/info]\n\n`;
+            // Chatworkの標準的な引用・リプライ形式（宛先To＋引用ブロック）
+            let quoteText = '';
+            if (senderAccId) {
+                quoteText += `[To:${senderAccId}] ${senderName}さん\n`;
+            }
+            quoteText += `[info][title]${senderName}さんのメッセージ[/title]\n${body}\n[/info]\n\n`;
+            
             ta.value = quoteText + ta.value;
         }
 
