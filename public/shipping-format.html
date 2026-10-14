@@ -29,7 +29,7 @@
             </div>
 
             <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
-                <div id="statusOrder">📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span></div>
+                <div id="statusOrder">📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span></div>
                 <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
                 <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
             </div>
@@ -53,7 +53,7 @@
             <div class="max-h-48 overflow-y-auto border border-slate-200 rounded mb-4">
                 <table class="w-full text-left text-xs border-collapse">
                     <thead class="bg-slate-800 text-white sticky top-0">
-                        <tr><th class="p-2">ショップ</th><th class="p-2">受注番号 (F列)</th><th class="p-2">宛名</th><th class="p-2">商品名</th></tr>
+                        <tr><th class="p-2">ショップ</th><th class="p-2">受注番号 (F列)</th><th class="p-2">配送先氏名 (AO列)</th><th class="p-2">商品名</th></tr>
                     </thead>
                     <tbody id="orderTableBody">
                         <tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>
@@ -70,13 +70,13 @@
     </div>
 
     <script>
-        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 }; // F列 = インデックス5に固定
+        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 }; // F列 = インデックス5
         let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
         
         let sortedOrderRows = [];
         let originalOrderRows = [];
-        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 };
+        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 }; // nameをAO列(40)に固定
 
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
@@ -92,7 +92,7 @@
             originalOrderRows = [];
             document.getElementById('fileInput').value = '';
             
-            document.getElementById('statusOrder').innerHTML = `📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusYamato').innerHTML = `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
             document.getElementById('statusSagawa').innerHTML = `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
             
@@ -193,13 +193,11 @@
 
         function rebuildData() {
             if (orderData.rows.length > 0) {
-                orderData.orderNoColIdx = 5; // F列に固定
+                orderData.orderNoColIdx = 5; // F列固定
+                colMap.name = 40;            // AO列固定 (インデックス40)
 
                 colMap.shop = orderData.header.findIndex(h => String(h) === '店舗名' || String(h) === 'ショップ');
                 if (colMap.shop === -1) colMap.shop = 3;
-
-                colMap.name = orderData.header.findIndex(h => String(h) === '配送先氏名' || String(h) === '注文者氏名' || String(h).includes('氏名'));
-                if (colMap.name === -1) colMap.name = 40;
 
                 colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
                 if (colMap.itemCode === -1) colMap.itemCode = 30;
@@ -245,9 +243,9 @@
         }
 
         function updateUIStatus() {
-            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ (F列=受注番号): <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ (F列=受注番号): <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ (自動検出列=${yamatoData.orderNoColIdx}): <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ (自動検出列=${sagawaData.orderNoColIdx}): <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
 
             if (orderData.rows.length > 0) document.getElementById('sortControlArea').classList.remove('hidden');
             
@@ -417,7 +415,7 @@
 
                 if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
                     if (r[colMap.shop]) group.shop = r[colMap.shop];
-                    if (r[colMap.name]) group.name = r[colMap.name];
+                    if (r[colMap.name]) group.name = r[colMap.name]; // AO列(配送先氏名)を更新
                 }
 
                 group.rows.push(r);
