@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ラベル管理＆QR作成ポータル</title>
+    <title>ラベル管理＆コード作成ポータル</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- QRコード生成ライブラリ (QRCode.js) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- 1次元バーコード生成ライブラリ (JsBarcode) -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.0/dist/JsBarcode.all.min.js"></script>
     <style>
         body { 
             background: #0f172a; 
@@ -23,7 +25,7 @@
             border-color: #3b82f6;
         }
 
-        /* 52mm × 29mm のQRラベルコンテナ（画面プレビュー用） */
+        /* 52mm × 29mm のラベルコンテナ（画面プレビュー用） */
         .label-container {
             width: 52mm;
             height: 29mm;
@@ -66,6 +68,23 @@
             height: 100% !important;
         }
 
+        .barcode-area {
+            width: 26mm;
+            height: 18mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .barcode-area svg {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
         /* 処理済みラベルのカードスタイル */
         .card { background: white; padding: 15px; border-radius: 12px; color: #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
 
@@ -99,6 +118,7 @@
             body.print-qr-mode #qrTabContent {
                 display: block !important;
             }
+            body.print-qr-mode #barcodeTabContent,
             body.print-qr-mode #processedTabContent {
                 display: none !important;
             }
@@ -106,6 +126,41 @@
                 display: block !important;
             }
             body.print-qr-mode .label-container {
+                border: none !important;
+                box-shadow: none !important;
+                margin: 0;
+                width: 52mm;
+                height: 29mm;
+                page-break-after: always;
+                break-after: page;
+            }
+            @page {
+                size: 52mm 29mm;
+                margin: 0mm;
+            }
+        }
+
+        /* 1次元バーコードタブ印刷用の個別メディア設定 */
+        @media print {
+            body.print-barcode-mode {
+                background: none;
+                padding: 0;
+                margin: 0;
+            }
+            body.print-barcode-mode .no-print {
+                display: none !important;
+            }
+            body.print-barcode-mode #barcodeTabContent {
+                display: block !important;
+            }
+            body.print-barcode-mode #qrTabContent,
+            body.print-barcode-mode #processedTabContent {
+                display: none !important;
+            }
+            body.print-barcode-mode .print-area {
+                display: block !important;
+            }
+            body.print-barcode-mode .label-container {
                 border: none !important;
                 box-shadow: none !important;
                 margin: 0;
@@ -133,7 +188,8 @@
             body.print-processed-mode #processedTabContent {
                 display: block !important;
             }
-            body.print-processed-mode #qrTabContent {
+            body.print-processed-mode #qrTabContent,
+            body.print-processed-mode #barcodeTabContent {
                 display: none !important;
             }
             body.print-processed-mode html, body.print-processed-mode {
@@ -168,12 +224,15 @@
                     ← ポータルへ
                 </a>
             </div>
-            <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800 gap-1">
-                <button id="btnProcessedTab" onclick="switchTab('processed')" class="tab-btn active flex-1 py-2 text-xs font-bold rounded-lg transition text-slate-400">
-                    📋 処理済みラベル管理
+            <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800 gap-1 text-[11px]">
+                <button id="btnProcessedTab" onclick="switchTab('processed')" class="tab-btn active flex-1 py-2 font-bold rounded-lg transition text-slate-400">
+                    📋 処理済み
                 </button>
-                <button id="btnQrTab" onclick="switchTab('qr')" class="tab-btn flex-1 py-2 text-xs font-bold rounded-lg transition text-slate-400">
-                    🔲 QRコードラベル
+                <button id="btnQrTab" onclick="switchTab('qr')" class="tab-btn flex-1 py-2 font-bold rounded-lg transition text-slate-400">
+                    🔲 QRコード
+                </button>
+                <button id="btnBarcodeTab" onclick="switchTab('barcode')" class="tab-btn flex-1 py-2 font-bold rounded-lg transition text-slate-400">
+                    📊 バーコード
                 </button>
             </div>
         </header>
@@ -197,7 +256,6 @@
 
                 <div class="text-xs font-bold text-slate-700 mb-1">処理内容（チェック項目）</div>
                 <div id="items-list" class="space-y-1.5 mb-4">
-                    <!-- 固定チェック項目 -->
                     <div class="item-row flex items-center gap-2">
                         <input type="checkbox" class="c w-4 h-4 accent-green-600" onchange="saveProcessedData()">
                         <input type="text" class="t flex-1 p-1.5 border rounded text-sm text-slate-800" value="検品完了" oninput="saveProcessedData()">
@@ -217,7 +275,6 @@
                 </div>
             </div>
 
-            <!-- Firestore 処理済みラベル履歴セクション -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl no-print">
                 <div class="flex justify-between items-center mb-3">
                     <h3 class="text-xs font-bold text-slate-300">☁️ 最近の処理済みラベル履歴</h3>
@@ -231,7 +288,6 @@
 
         <!-- ================= 2. QRコードラベル作成タブのコンテンツ ================= -->
         <div id="qrTabContent" class="tab-content" style="display: none;">
-            <!-- 入力フォームカード -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl mb-6 space-y-4 no-print">
                 <div>
                     <label class="block text-xs font-bold text-slate-300 mb-1">ラベルに記載するテキスト / QRコードのデータ</label>
@@ -255,7 +311,6 @@
                 </div>
             </div>
 
-            <!-- プレビュー表示エリア -->
             <div class="no-print">
                 <div class="mb-3 flex justify-between items-center px-1">
                     <span class="text-xs font-bold text-slate-400">リアルタイムプレビュー (1枚分)</span>
@@ -269,7 +324,6 @@
                 </div>
             </div>
 
-            <!-- Firestore 履歴セクション -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl no-print">
                 <div class="flex justify-between items-center mb-3">
                     <h3 class="text-xs font-bold text-slate-300">☁️ 最近のラベル発行履歴</h3>
@@ -280,9 +334,69 @@
                 </div>
             </div>
         </div>
+
+        <!-- ================= 3. 1次元バーコードラベル作成タブのコンテンツ ================= -->
+        <div id="barcodeTabContent" class="tab-content" style="display: none;">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl mb-6 space-y-4 no-print">
+                <div>
+                    <label class="block text-xs font-bold text-slate-300 mb-1">バーコードデータ (CODE128等)</label>
+                    <input type="text" id="bcInputText" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500" value="RS-2026-001" placeholder="バーコードにする文字列">
+                </div>
+
+                <div class="flex gap-3">
+                    <div class="flex-1">
+                        <label class="block text-xs font-bold text-slate-300 mb-1">バーコード規格</label>
+                        <select id="bcFormat" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 font-bold" onchange="updateBarcodePreview()">
+                            <option value="CODE128">CODE128 (標準)</option>
+                            <option value="CODE39">CODE39</option>
+                            <option value="EAN13">EAN-13 (JAN)</option>
+                            <option value="UPC">UPC</option>
+                        </select>
+                    </div>
+                    <div class="w-28">
+                        <label class="block text-xs font-bold text-slate-300 mb-1">印刷枚数</label>
+                        <input type="number" id="bcPrintCount" value="1" min="1" max="100" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 text-center font-bold">
+                    </div>
+                </div>
+
+                <div class="flex gap-2 pt-1">
+                    <button onclick="updateBarcodePreview()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 px-3 rounded-xl text-xs transition border border-slate-700">
+                        プレビュー更新
+                    </button>
+                    <button onclick="printAndSaveBarcode()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg shadow-blue-600/20">
+                        🖨️ 印刷 ＆ 履歴保存
+                    </button>
+                </div>
+            </div>
+
+            <div class="no-print">
+                <div class="mb-3 flex justify-between items-center px-1">
+                    <span class="text-xs font-bold text-slate-400">リアルタイムプレビュー (1枚分)</span>
+                    <span id="bcPreviewCountLabel" class="text-[11px] text-slate-500">印刷枚数: 1枚</span>
+                </div>
+                <div class="flex justify-center bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6 mb-6">
+                    <div class="label-container" id="bcPreviewLabel">
+                        <div class="text-area" id="bcPreviewDisplayText">RS-2026-001</div>
+                        <div class="barcode-area">
+                            <svg id="previewBarcodeSvg"></svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl no-print">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-xs font-bold text-slate-300">☁️ 最近のバーコード発行履歴</h3>
+                    <button onclick="loadBarcodeHistory()" class="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-800 px-2 py-1 rounded">更新</button>
+                </div>
+                <div id="barcodeHistoryList" class="space-y-2 max-h-48 overflow-y-auto text-xs text-slate-400">
+                    <p class="text-center py-3 text-slate-500">履歴を読み込み中...</p>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- QRコード印刷用コンテナ -->
+    <!-- 印刷用コンテナ -->
     <div id="printArea" class="print-area" style="display: none;"></div>
 
     <!-- 統合制御スクリプト -->
@@ -290,7 +404,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Firebase設定
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
             authDomain: "souko-2de57.firebaseapp.com",
@@ -304,7 +417,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- 当日の日付を取得する関数 (YYYY-MM-DD形式) ---
         const getTodayStr = () => {
             const now = new Date();
             const yyyy = now.getFullYear();
@@ -317,26 +429,35 @@
         window.switchTab = function(tabName) {
             const processedTab = document.getElementById('processedTabContent');
             const qrTab = document.getElementById('qrTabContent');
+            const barcodeTab = document.getElementById('barcodeTabContent');
+            
             const btnProcessed = document.getElementById('btnProcessedTab');
             const btnQr = document.getElementById('btnQrTab');
+            const btnBarcode = document.getElementById('btnBarcodeTab');
+
+            processedTab.style.display = 'none';
+            qrTab.style.display = 'none';
+            barcodeTab.style.display = 'none';
+            btnProcessed.classList.remove('active');
+            btnQr.classList.remove('active');
+            btnBarcode.classList.remove('active');
 
             if (tabName === 'processed') {
                 processedTab.style.display = 'block';
-                qrTab.style.display = 'none';
                 btnProcessed.classList.add('active');
-                btnQr.classList.remove('active');
-                
                 const dateInput = document.getElementById('p-date');
                 if (!dateInput.value) {
                     dateInput.value = getTodayStr();
                     saveProcessedData();
                 }
-            } else {
-                processedTab.style.display = 'none';
+            } else if (tabName === 'qr') {
                 qrTab.style.display = 'block';
                 btnQr.classList.add('active');
-                btnProcessed.classList.remove('active');
                 window.updatePreview();
+            } else if (tabName === 'barcode') {
+                barcodeTab.style.display = 'block';
+                btnBarcode.classList.add('active');
+                window.updateBarcodePreview();
             }
         };
 
@@ -362,12 +483,10 @@
 
         window.printAndSaveProcessed = async function() {
             window.saveProcessedData();
-            
             const seller = document.getElementById('p-seller').value.trim();
             const staff = document.getElementById('p-staff').value.trim();
             const processDate = document.getElementById('p-date').value;
             
-            // 履歴としてFirestoreに保存
             try {
                 const items = [];
                 document.querySelectorAll('.item-row').forEach(r => {
@@ -577,11 +696,146 @@
             }
         };
 
+        // --- 3. 1次元バーコードラベル作成のロジック ---
+        window.updateBarcodePreview = function() {
+            const val = document.getElementById("bcInputText").value.trim() || "RS-2026-001";
+            const format = document.getElementById("bcFormat").value;
+            const count = parseInt(document.getElementById("bcPrintCount").value) || 1;
+
+            document.getElementById("bcPreviewDisplayText").innerText = val;
+            document.getElementById("bcPreviewCountLabel").innerText = `印刷枚数: ${count}枚`;
+
+            try {
+                JsBarcode("#previewBarcodeSvg", val, {
+                    format: format,
+                    lineColor: "#000",
+                    width: 1.5,
+                    height: 40,
+                    displayValue: true,
+                    fontSize: 12,
+                    margin: 0
+                });
+            } catch (e) {
+                console.error("バーコード生成エラー:", e);
+            }
+
+            const printArea = document.getElementById("printArea");
+            printArea.innerHTML = "";
+
+            for (let i = 0; i < count; i++) {
+                const labelDiv = document.createElement("div");
+                labelDiv.className = "label-container";
+
+                const textArea = document.createElement("div");
+                textArea.className = "text-area";
+                textArea.innerText = val;
+                labelDiv.appendChild(textArea);
+
+                const bcArea = document.createElement("div");
+                bcArea.className = "barcode-area";
+                const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                bcArea.appendChild(svgEl);
+                labelDiv.appendChild(bcArea);
+
+                printArea.appendChild(labelDiv);
+
+                try {
+                    JsBarcode(svgEl, val, {
+                        format: format,
+                        lineColor: "#000",
+                        width: 1.5,
+                        height: 40,
+                        displayValue: true,
+                        fontSize: 12,
+                        margin: 0
+                    });
+                } catch (e) {
+                    console.error("印刷用バーコード生成エラー:", e);
+                }
+            }
+        };
+
+        window.printAndSaveBarcode = async function() {
+            const val = document.getElementById("bcInputText").value.trim();
+            const format = document.getElementById("bcFormat").value;
+            const count = parseInt(document.getElementById("bcPrintCount").value) || 1;
+
+            if (!val) {
+                alert("バーコードデータを入力してください。");
+                return;
+            }
+
+            window.updateBarcodePreview();
+
+            try {
+                await addDoc(collection(db, "barcode_label_history"), {
+                    text: val,
+                    format: format,
+                    count: count,
+                    createdAt: serverTimestamp()
+                });
+                loadBarcodeHistory();
+            } catch (e) {
+                console.error("Firestoreバーコード保存エラー: ", e);
+            }
+
+            document.body.classList.add('print-barcode-mode');
+            window.print();
+            setTimeout(() => {
+                document.body.classList.remove('print-barcode-mode');
+            }, 500);
+        };
+
+        window.loadBarcodeHistory = async function() {
+            const historyListEl = document.getElementById("barcodeHistoryList");
+            if (!historyListEl) return;
+            historyListEl.innerHTML = '<p class="text-center py-2 text-slate-500">読み込み中...</p>';
+
+            try {
+                const q = query(collection(db, "barcode_label_history"), orderBy("createdAt", "desc"), limit(10));
+                const querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    historyListEl.innerHTML = '<p class="text-center py-3 text-slate-500">履歴がありません</p>';
+                    return;
+                }
+
+                historyListEl.innerHTML = "";
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const dateStr = data.createdAt ? new Date(data.createdAt.toDate()).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : "日時不明";
+
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = "bg-slate-800/60 hover:bg-slate-800 p-2.5 rounded-xl flex justify-between items-center cursor-pointer transition border border-slate-700/50";
+                    itemDiv.onclick = () => {
+                        document.getElementById("bcInputText").value = data.text;
+                        document.getElementById("bcFormat").value = data.format || "CODE128";
+                        document.getElementById("bcPrintCount").value = data.count || 1;
+                        window.updateBarcodePreview();
+                    };
+
+                    itemDiv.innerHTML = `
+                        <div class="truncate mr-2">
+                            <p class="font-bold text-slate-200 truncate">${escapeHtml(data.text)} <span class="text-[10px] text-slate-400">(${escapeHtml(data.format || 'CODE128')})</span></p>
+                            <p class="text-[10px] text-slate-400">${dateStr} / ${data.count}枚</p>
+                        </div>
+                        <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
+                    `;
+                    historyListEl.appendChild(itemDiv);
+                });
+            } catch (e) {
+                console.error("バーコード履歴取得エラー: ", e);
+                historyListEl.innerHTML = '<p class="text-center py-3 text-rose-400">履歴の取得に失敗しました</p>';
+            }
+        };
+
         function escapeHtml(str) {
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         // --- 初期化処理 ---
+        document.getElementById("bcInputText").addEventListener("input", window.updateBarcodePreview);
+        document.getElementById("bcPrintCount").addEventListener("input", window.updateBarcodePreview);
         document.getElementById("inputText").addEventListener("input", window.updatePreview);
         document.getElementById("printCount").addEventListener("input", window.updatePreview);
 
@@ -591,7 +845,6 @@
             if (savedJson) {
                 try {
                     const d = JSON.parse(savedJson);
-                    
                     document.getElementById('p-date').value = d.processDate || getTodayStr();
                     document.getElementById('p-seller').value = d.sellerName || "";
                     document.getElementById('p-staff').value = d.staffName || "";
@@ -614,6 +867,7 @@
             window.saveProcessedData();
             window.loadHistory();
             window.loadProcessedHistory();
+            window.loadBarcodeHistory();
         });
     </script>
 </body>
