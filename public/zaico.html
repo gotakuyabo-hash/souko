@@ -17,14 +17,18 @@
         .btn-success:hover { background: #218838; }
         .btn-danger { background: #dc3545; }
         .btn-danger:hover { background: #c82333; }
-        .actions-bar { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn-secondary { background: #64748b; }
+        .btn-secondary:hover { background: #475569; }
+        .actions-bar { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
         .tab-btn { background: #e2e8f0; color: #475569; padding: 8px 16px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; }
         .tab-btn.active { background: #2563eb; color: white; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        .search-box { margin-bottom: 15px; width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+        .search-box { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+        .filter-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+        .filter-row input { flex: 1; min-width: 200px; }
     </style>
 </head>
 <body>
@@ -56,13 +60,24 @@
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
                 <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。ヘッダーをクリックすると並び替えができます。</p>
+                
                 <div style="margin-top: 15px;">
-                    <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
+                    <div class="filter-row">
+                        <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
+                        <input type="text" id="shelfFilter" class="search-box" placeholder="棚番で絞り込み (例: A-1, 空欄=未設定)" oninput="filterMasterTable()" style="max-width: 250px;">
+                        <button onclick="filterUnassignedShelf()" class="btn-secondary">棚番未設定のみ表示</button>
+                    </div>
                 </div>
-                <div class="actions-bar">
+
+                <div class="actions-bar" style="background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
                     <button onclick="loadMasterItems()">マスタデータを再読み込み</button>
                     <button onclick="saveAllMasters()" class="btn-success">変更したマスタを一括保存</button>
+                    <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="batchShelfInput" placeholder="一括設定する棚番" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; width: 120px;">
+                        <button onclick="applyBatchShelf()" class="btn-secondary">表示中の行に棚番を一括適用</button>
+                    </div>
                 </div>
+
                 <div id="masterResultArea">
                     <p style="margin-top: 15px;">「マスタデータを再読み込み」ボタンを押してデータを取得してください。</p>
                 </div>
@@ -83,7 +98,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // zaico出庫指示のみ外部APIを使用
         const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
 
         let currentResults = [];
@@ -127,10 +141,8 @@
                         const productName = cols[31];
                         const quantity = cols[34] ? Number(cols[34]) : 1;
 
-                        // AF列（商品名）の最後の単語をバーコードとして抽出
                         const parts = productName.trim().split(/\s+/);
                         const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
-
                         const key = extractedBarcode || productName;
 
                         if (rawItemsMap.has(key)) {
@@ -160,8 +172,7 @@
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 const masterMap = new Map();
                 querySnapshot.forEach(docSnap => {
-                    const data = docSnap.data();
-                    masterMap.set(docSnap.id, data); // doc.id = barcode
+                    masterMap.set(docSnap.id, docSnap.data());
                 });
 
                 const aggregatedMap = new Map();
@@ -195,7 +206,6 @@
 
                 currentResults = Array.from(aggregatedMap.values());
 
-                // ★ 自動で棚番順にソート（昇順）を適用してからレンダリング
                 currentResults.sort((a, b) => {
                     const sA = a.shelfNumber || "";
                     const sB = b.shelfNumber || "";
@@ -450,7 +460,7 @@
                 querySnapshot.forEach(docSnap => {
                     masterItemsCache.push({ id: docSnap.id, ...docSnap.data() });
                 });
-                renderMasterTable(masterItemsCache);
+                window.filterMasterTable();
             } catch (err) {
                 console.error(err);
                 masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
@@ -459,11 +469,7 @@
 
         function renderMasterTable(items) {
             const masterArea = document.getElementById('masterResultArea');
-            if (!items || items.length === 0) {
-                masterArea.innerHTML = '<p style="margin-top:15px;">登録されているマスタデータはありません。</p>';
-                return;
-            }
-            let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを読み込みました</b></p>
+            let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
                 <table>
                 <thead>
                     <tr>
@@ -476,23 +482,27 @@
                 </thead>
                 <tbody>`;
 
-            items.forEach((item, i) => {
-                const name = item.productName || item.product_name || '';
-                const shelf = item.shelfNumber || item.shelf_number || '';
-                const barcode = item.barcode || item.id || '';
-                const multiplier = item.multiplier || 1;
+            if (!items || items.length === 0) {
+                html += `<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
+            } else {
+                items.forEach((item, i) => {
+                    const name = item.productName || item.product_name || '';
+                    const shelf = item.shelfNumber || item.shelf_number || '';
+                    const barcode = item.barcode || item.id || '';
+                    const multiplier = item.multiplier || 1;
 
-                html += `<tr id="master_row_${i}">
-                    <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
-                    <td><code>${escapeHtml(barcode)}</code></td>
-                    <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
-                    <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
-                    <td>
-                        <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
-                        <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
-                    </td>
-                </tr>`;
-            });
+                    html += `<tr id="master_row_${i}" data-barcode="${escapeHtml(barcode)}">
+                        <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                        <td><code>${escapeHtml(barcode)}</code></td>
+                        <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
+                        <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
+                        <td>
+                            <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
+                            <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
+                        </td>
+                    </tr>`;
+                });
+            }
             html += `</tbody></table>`;
             masterArea.innerHTML = html;
         }
@@ -536,52 +546,57 @@
 
         window.filterMasterTable = () => {
             const keyword = document.getElementById('masterSearch').value.toLowerCase();
+            const shelfKeyword = document.getElementById('shelfFilter').value.toLowerCase();
+
             const filtered = masterItemsCache.filter(item => {
                 const name = (item.productName || item.product_name || '').toLowerCase();
                 const barcode = (item.barcode || item.id || '').toLowerCase();
                 const shelf = (item.shelfNumber || item.shelf_number || '').toLowerCase();
-                return name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
+
+                const matchKeyword = name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
+                
+                let matchShelf = true;
+                if (shelfKeyword === '' || shelfKeyword === '空欄' || shelfKeyword === '未設定') {
+                    matchShelf = (shelf === '');
+                } else {
+                    matchShelf = shelf.includes(shelfKeyword);
+                }
+
+                return matchKeyword && matchShelf;
             });
-            renderMasterTableOnly(filtered);
+            renderMasterTable(filtered);
         };
 
-        function renderMasterTableOnly(items) {
-            const masterArea = document.getElementById('masterResultArea');
-            const countElem = masterArea.querySelector('p');
-            if (countElem) {
-                countElem.innerHTML = `<b>全 ${items.length} 件のマスタを表示中</b>`;
-            }
-            const tbody = masterArea.querySelector('tbody');
-            if (!tbody) {
-                renderMasterTable(items);
+        window.filterUnassignedShelf = () => {
+            document.getElementById('shelfFilter').value = '空欄';
+            window.filterMasterTable();
+        };
+
+        window.applyBatchShelf = () => {
+            const batchShelf = document.getElementById('batchShelfInput').value.trim();
+            if (!batchShelf) {
+                alert('一括適用する棚番を入力してください。');
                 return;
             }
 
-            if (!items || items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>';
+            const rows = document.querySelectorAll('#masterResultArea tbody tr');
+            if (rows.length === 0 || rows[0].querySelector('td').getAttribute('colspan')) {
+                alert('対象となる行がありません。');
                 return;
             }
 
-            let html = '';
-            items.forEach((item, i) => {
-                const name = item.productName || item.product_name || '';
-                const shelf = item.shelfNumber || item.shelf_number || '';
-                const barcode = item.barcode || item.id || '';
-                const multiplier = item.multiplier || 1;
+            if (!confirm(`現在画面に表示されている ${rows.length} 件の商品の棚番をすべて「${batchShelf}」に変更しますか？（まだデータベースには保存されません。「変更したマスタを一括保存」を押すと反映されます）`)) {
+                return;
+            }
 
-                html += `<tr id="master_row_${i}">
-                    <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
-                    <td><code>${escapeHtml(barcode)}</code></td>
-                    <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
-                    <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
-                    <td>
-                        <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
-                        <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
-                    </td>
-                </tr>`;
+            rows.forEach((row, i) => {
+                const shelfInput = row.querySelector('input[id^="master_shelf_"]');
+                if (shelfInput) {
+                    shelfInput.value = batchShelf;
+                }
             });
-            tbody.innerHTML = html;
-        }
+            alert('画面上の棚番に一括適用しました。必要に応じて内容を確認し、「変更したマスタを一括保存」を実行してください。');
+        };
 
         window.updateMaster = async (barcode, i) => {
             const productName = document.getElementById(`master_name_${i}`).value.trim();
@@ -639,7 +654,8 @@
             let skippedCount = 0;
             let failCount = 0;
 
-            for (const row of rows) {
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
                 const nameInput = row.querySelector('input[id^="master_name_"]');
                 const multInput = row.querySelector('input[id^="master_mult_"]');
                 const shelfInput = row.querySelector('input[id^="master_shelf_"]');
