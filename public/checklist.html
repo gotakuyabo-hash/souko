@@ -116,7 +116,7 @@
 <body>
     <div style="max-width: 900px; margin: 0 auto;">
         <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
-        <!-- タブ切り替えボタン -->
+        
         <div class="flex gap-2 mb-4">
             <div class="tab-btn-wrapper">
                 <button id="tabBtn-checklist" onclick="switchTab('checklist')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow">📋 日次報告チェックリスト</button>
@@ -128,7 +128,6 @@
             </div>
         </div>
 
-        <!-- 1. 日次報告チェックリスト コンテンツ -->
         <div id="content-checklist" class="tab-content active">
             <div class="card">
                 <div class="flex justify-between items-center border-b pb-3 mb-4">
@@ -212,7 +211,6 @@
             </div>
         </div>
 
-        <!-- 2. 出荷件数 日別集計・サービス管理 コンテンツ -->
         <div id="content-shukka" class="tab-content">
             <div class="card" style="max-width: 900px;">
                 <h1 class="text-lg font-bold text-slate-800 mb-1">📊 出荷件数 日別集計・サービス管理</h1>
@@ -251,11 +249,14 @@
                     <button id="clearBtn" class="bg-gray-500 text-white p-3 rounded font-bold text-sm flex-1">入力クリア</button>
                     <button onclick="saveShukkaData()" class="bg-emerald-600 text-white p-3 rounded font-bold text-sm flex-[2]">データを保存</button>
                 </div>
+
+                <div class="mt-4 text-center border-t border-dashed pt-4">
+                    <button onclick="openHistoryModal()" class="w-full bg-slate-600 text-white p-3 rounded font-bold text-sm hover:bg-slate-700">🗓 過去の履歴一覧を見る</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- 共通削除確認モーダル -->
     <div class="modal-overlay" id="confirm-modal">
         <div class="modal-content">
             <div class="modal-header">⚠️ 削除の確認</div>
@@ -269,13 +270,22 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="history-modal">
+        <div class="modal-content" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding: 16px;">
+            <div class="modal-header">🗓 出荷件数 過去の履歴</div>
+            <div style="overflow-y: auto; text-align: left; margin-bottom: 15px; flex: 1;" id="history-list-container">
+                <p class="text-center text-sm text-gray-500">読み込み中...</p>
+            </div>
+            <button type="button" class="bg-slate-200 text-slate-800 p-3 rounded-lg font-bold w-full" onclick="document.getElementById('history-modal').style.display='none'">閉じる</button>
+        </div>
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, getDocs, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
 
-        // 💡 ポータルのストレージへ未完了数を書き込む共通関数
         function updatePortalBadge(cardId, count) {
             const STORAGE_KEY = 'warehouse_portal_v7_data';
             const saved = localStorage.getItem(STORAGE_KEY);
@@ -304,7 +314,6 @@
             }
         }
 
-        // 💡 スタッフ間依頼の未完了件数を監視し、チェックリストタブおよびポータル（checklist）へ連動
         function watchStaffRequestsBadge() {
             try {
                 onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), (snapshot) => {
@@ -312,7 +321,6 @@
                     const pendingCount = requests.filter(r => r.status !== 'completed').length;
                     
                     setBadgeCount('checklist', pendingCount);
-                    // ポータルの「📋 日次チェックリスト」アイコンへバッジ数を反映
                     updatePortalBadge('checklist', pendingCount);
                 });
             } catch (e) {
@@ -836,6 +844,62 @@
                 saveShukkaData();
             });
         });
+
+        window.openHistoryModal = async () => {
+            const modal = document.getElementById('history-modal');
+            const container = document.getElementById('history-list-container');
+            modal.style.display = 'flex';
+            container.innerHTML = '<p class="text-center text-sm text-gray-500 mt-4">データを読み込んでいます...</p>';
+
+            try {
+                const querySnapshot = await getDocs(collection(db, "shukka_records"));
+                const records = [];
+                querySnapshot.forEach((doc) => {
+                    records.push({ date: doc.id, data: doc.data() });
+                });
+
+                records.sort((a, b) => b.date.localeCompare(a.date));
+
+                if (records.length === 0) {
+                    container.innerHTML = '<p class="text-center text-sm text-gray-500 mt-4">保存されている履歴がありません。</p>';
+                    return;
+                }
+
+                let html = '<table class="w-full text-sm border-collapse mt-2">';
+                html += '<tr class="bg-slate-100"><th class="border p-2 text-center whitespace-nowrap">日付</th><th class="border p-2 text-center whitespace-nowrap">合計</th><th class="border p-2 text-left">内訳</th></tr>';
+
+                records.forEach(record => {
+                    let total = 0;
+                    let breakdown = [];
+                    for (const [service, count] of Object.entries(record.data)) {
+                        const num = parseInt(count, 10);
+                        if (!isNaN(num) && num > 0) {
+                            total += num;
+                            breakdown.push(`<span class="inline-block mr-2">${service}:<b class="ml-1">${num}</b></span>`);
+                        }
+                    }
+                    
+                    if (total === 0) return;
+
+                    html += `<tr>
+                        <td class="border p-2 font-bold text-center text-blue-600 underline cursor-pointer" onclick="loadSpecificDate('${record.date}')">${record.date.replace('202', '2')}</td>
+                        <td class="border p-2 text-right font-bold text-lg">${total.toLocaleString()}</td>
+                        <td class="border p-2 text-xs text-gray-700 leading-relaxed">${breakdown.join('')}</td>
+                    </tr>`;
+                });
+                html += '</table>';
+                container.innerHTML = html;
+
+            } catch (error) {
+                container.innerHTML = '<p class="text-center text-sm text-red-500 mt-4">データの取得に失敗しました。</p>';
+            }
+        };
+
+        window.loadSpecificDate = (date) => {
+            document.getElementById('history-modal').style.display = 'none';
+            document.getElementById('commonDate').value = date;
+            onDateChange(date);
+        };
 
         window.onload = async () => {
             const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
