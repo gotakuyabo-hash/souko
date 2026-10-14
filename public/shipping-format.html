@@ -3,143 +3,164 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出荷・送り状 自動連携ツール</title>
+    <title>受注・出荷・zaico 統合管理ポータル</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.1.0/encoding.min.js"></script>
     <style>
-        body { background: #f4f6f8; font-family: sans-serif; padding: 15px; }
-        .card { background: white; padding: 20px; border-radius: 8px; max-width: 800px; margin: 0 auto; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        body { background: #f8fafc; font-family: sans-serif; color: #1e293b; margin: 0; padding: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
+        th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }
+        th { background: #f1f5f9; cursor: pointer; user-select: none; }
+        th:hover { background: #e2e8f0; }
+        .unregistered { background: #fff3cd; }
+        .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
+        .tab-btn { background: #e2e8f0; color: #475569; padding: 8px 16px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #2563eb; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .search-box { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+        .filter-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+        .filter-row input { flex: 1; min-width: 200px; }
     </style>
 </head>
 <body>
-    <div style="max-width: 800px; margin: 0 auto;">
-        <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
-        <div class="card">
-            <div class="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
-                <h2 class="text-lg font-bold text-slate-800">📦 出荷・送り状 自動連携ツール</h2>
-                <button onclick="resetData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 リセット</button>
-            </div>
-            <p class="text-xs text-slate-500 mb-4">「受注データCSV」と「送り状データ（佐川/ヤマト）CSV」を<span class="font-bold text-sky-600">まとめて一緒にドラッグ＆ドロップ</span>してください。</p>
+    <div style="max-width: 1100px; margin: 0 auto;">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-xl font-bold text-slate-800">📦 受注・出荷・zaico 統合管理システム</h1>
+            <button onclick="resetAllData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 全データリセット</button>
+        </div>
 
-            <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
-                <div class="text-3xl mb-1">📂</div>
-                <div class="font-bold text-slate-700 text-sm">ここにすべてのCSVをドラッグ＆ドロップ（複数可）</div>
-                <p class="text-xs text-slate-500 mt-1">中身を自動判別して紐付けます</p>
-                <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
-            </div>
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="switchTab('allInOneTab')">🚀 一括処理・出荷連携</button>
+            <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（棚番・倍率）</button>
+        </div>
 
-            <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
-                <div id="statusOrder">📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span></div>
-                <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
-                <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
-            </div>
+        <!-- 一括処理・出荷連携タブ -->
+        <div id="allInOneTab" class="tab-content active">
+            <div class="card">
+                <h2 class="text-lg font-bold text-slate-800 mb-2">📥 CSVファイル ドロップ＆蓄積エリア</h2>
+                <p class="text-xs text-slate-500 mb-4">「受注CSV」「ヤマトCSV」「佐川CSV」をまとめて、または何度かに分けてドラッグ＆ドロップしてください。中身を自動判別して蓄積します。</p>
 
-            <!-- 受注データ基準のソート機能エリア -->
-            <div id="sortControlArea" class="hidden bg-slate-50 p-3.5 rounded border border-slate-200 mb-4">
-                <div class="text-xs font-bold text-slate-700 mb-2">⚙️ 受注データ基準のソート設定（並び替え）</div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <select id="sortColumnSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white flex-1 min-w-[180px] cursor-pointer">
-                        <option value="">（ソートする列を選択）</option>
-                    </select>
-                    <select id="sortDirectionSelect" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white cursor-pointer">
-                        <option value="asc">昇順 (古い順 / A→Z)</option>
-                        <option value="desc">降順 (新しい順 / Z→A)</option>
-                    </select>
-                    <button onclick="applyDynamicSort()" class="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3.5 py-1.5 rounded font-bold transition">ソート実行</button>
-                    <button onclick="resetSort()" class="bg-slate-300 hover:bg-slate-400 text-slate-700 text-xs px-3 py-1.5 rounded font-bold transition">初期順に戻す</button>
+                <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4" onclick="document.getElementById('fileInput').click()">
+                    <div class="text-3xl mb-1">📂</div>
+                    <div class="font-bold text-slate-700 text-sm">ここにCSVをドラッグ＆ドロップ（複数可・追加可能）</div>
+                    <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
+                </div>
+
+                <!-- 読み込み済みファイル一覧（個別削除用） -->
+                <div id="fileListSection" class="hidden mb-4 p-3 bg-slate-50 border border-slate-200 rounded">
+                    <div class="text-xs font-bold text-slate-700 mb-2">📋 読み込み済みファイル一覧（間違えたファイルは削除できます）</div>
+                    <div id="fileListContainer" class="space-y-1.5 text-xs"></div>
+                </div>
+
+                <!-- ステータス表示 -->
+                <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
+                    <div id="statusOrder">📦 受注データ: <span class="text-slate-400">（未読み込み）</span></div>
+                    <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
+                    <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
+                </div>
+
+                <!-- ピック数計算 & zaicoアクション -->
+                <div class="flex gap-3 flex-wrap mb-4">
+                    <button onclick="processOrderPickCalculation()" id="calcPickBtn" disabled class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🔢 ピック数算出 & 棚番チェック</button>
+                    <button onclick="sendToZaico()" id="zaicoBtn" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">☁️ zaicoに出庫指示を送信</button>
+                </div>
+
+                <div id="pickResultArea"></div>
+
+                <!-- 送り状・検品アクション -->
+                <div class="mt-6 pt-4 border-t border-slate-200">
+                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては自動で佐川からヤマトへ振り分けられます）</div>
+                    <div class="flex gap-3 flex-wrap">
+                        <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
+                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力（沖縄振替分含む）</button>
+                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄除外）</button>
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <div class="max-h-48 overflow-y-auto border border-slate-200 rounded mb-4">
-                <table class="w-full text-left text-xs border-collapse">
-                    <thead class="bg-slate-800 text-white sticky top-0">
-                        <tr><th class="p-2">ショップ</th><th class="p-2">受注番号 (F列)</th><th class="p-2">配送先氏名 (AO列)</th><th class="p-2">商品名</th></tr>
-                    </thead>
-                    <tbody id="orderTableBody">
-                        <tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <!-- 商品マスタ管理タブ -->
+        <div id="masterTab" class="tab-content">
+            <div class="card">
+                <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。</p>
+                
+                <div style="margin-top: 15px;">
+                    <div class="filter-row">
+                        <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
+                        <input type="text" id="shelfFilter" class="search-box" placeholder="棚番で絞り込み (例: A-1, 空欄=未設定)" oninput="filterMasterTable()" style="max-width: 250px;">
+                        <button onclick="filterUnassignedShelf()" class="bg-slate-500 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs font-bold">棚番未設定のみ</button>
+                    </div>
+                </div>
 
-            <div class="flex gap-3 flex-wrap">
-                <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
-                <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
-                <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力</button>
+                <div class="actions-bar flex gap-2 items-center my-3 bg-slate-50 p-3 rounded border border-slate-200">
+                    <button onclick="loadMasterItems()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-xs font-bold">マスタ再読み込み</button>
+                    <button onclick="saveAllMasters()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded text-xs font-bold">変更したマスタを一括保存</button>
+                    <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="batchShelfInput" placeholder="一括設定する棚番" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; width: 120px; font-size: 12px;">
+                        <button onclick="applyBatchShelf()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded text-xs font-bold">表示行に棚番一括適用</button>
+                    </div>
+                </div>
+
+                <div id="masterResultArea">
+                    <p style="margin-top: 15px;">「マスタ再読み込み」ボタンを押してデータを取得してください。</p>
+                </div>
             </div>
         </div>
     </div>
 
-    <script>
-        let orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 }; // F列 = インデックス5
-        let sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
-        let yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
-        
-        let sortedOrderRows = [];
-        let originalOrderRows = [];
-        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 }; // nameをAO列(40)に固定
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app"
+        };
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        const URL_CREATE_SHIPMENT = "https://createzaicoshipment-l22atg5m7q-uc.a.run.app";
+
+        // 蓄積データ管理
+        let uploadedFiles = []; // { id, name, type, rows, header }
+        let currentPickResults = [];
+        let masterItemsCache = [];
+        let currentSortColumn = null;
+        let currentSortAsc = true;
+
+        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 };
+
+        window.switchTab = (tabId) => {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            if (tabId === 'allInOneTab') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('allInOneTab').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('masterTab').classList.add('active');
+                if (masterItemsCache.length === 0) loadMasterItems();
+            }
+        };
+
+        // ドラッグ＆ドロップ・ファイル選択
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('bg-sky-100'); }));
         ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('bg-sky-100'); }));
         dropZone.addEventListener('drop', (e) => { if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
         document.getElementById('fileInput').addEventListener('change', (e) => { if(e.target.files.length) handleFiles(e.target.files); });
 
-        function resetData() {
-            orderData = { fileName: "", header: [], rows: [], orderNoColIdx: 5 };
-            sagawaData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
-            yamatoData = { fileName: "", header: [], rows: [], orderNoColIdx: -1 };
-            sortedOrderRows = [];
-            originalOrderRows = [];
-            document.getElementById('fileInput').value = '';
-            
-            document.getElementById('statusOrder').innerHTML = `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusYamato').innerHTML = `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusSagawa').innerHTML = `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
-            
-            document.getElementById('sortControlArea').classList.add('hidden');
-            document.getElementById('orderTableBody').innerHTML = '<tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>';
-            document.getElementById('printBtn').disabled = true;
-            document.getElementById('yamatoBtn').disabled = true;
-            document.getElementById('ehidenBtn').disabled = true;
-        }
-
-        function getFileType(fileName, sampleStr) {
-            let lower = fileName.toLowerCase();
-            if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
-            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
-            if (lower.includes('yamato') || lower.includes('ヤマト') || lower.includes('b2') || lower.includes('クロネコ') || lower.includes('送り状')) return 'yamato';
-            
-            if (sampleStr.includes('お届け先コード') || sampleStr.includes('e飛伝') || sampleStr.includes('お客様管理番号')) return 'sagawa';
-            if (sampleStr.includes('受注番号') || sampleStr.includes('受注ID') || sampleStr.includes('店舗名') || sampleStr.includes('コントロールカラム')) return 'order';
-            
-            return 'yamato';
-        }
-
-        function cleanOrderNoNormalized(rawStr) {
-            if (!rawStr) return "";
-            return String(rawStr).replace(/^No:?[\.\s]*/i, "")
-                                 .replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                                 .replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "")
-                                 .trim().toLowerCase();
-        }
-
-        function cleanPhone(phoneStr) {
-            if (!phoneStr) return "";
-            let s = String(phoneStr).trim();
-            if (s.startsWith('+81')) {
-                s = '0' + s.substring(3).replace(/^\-+/, '');
-            }
-            return s;
-        }
-
         function handleFiles(files) {
-            let processedCount = 0;
             Array.from(files).forEach(file => {
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const buffer = e.target.result;
                     let text = '';
-                    
                     try {
                         const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
                         text = utf8Decoder.decode(buffer);
@@ -149,14 +170,12 @@
                     }
 
                     const rows = parseRobustCSV(text);
-
                     if (rows.length > 0) {
                         let sampleStr = rows.slice(0, 5).map(r => r.join(',')).join('\n');
                         let type = getFileType(file.name, sampleStr);
 
                         let headerRow = [];
                         let dataStartIndex = 0;
-
                         if (type === 'yamato') {
                             headerRow = [];
                             dataStartIndex = 0;
@@ -172,159 +191,408 @@
                         }
                         
                         let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
-                        
-                        if (type === 'order') {
-                            orderData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: 5 };
-                        } else if (type === 'sagawa') {
-                            sagawaData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
-                        } else if (type === 'yamato') {
-                            yamatoData = { fileName: file.name, header: headerRow, rows: fileRows, orderNoColIdx: -1 };
-                        }
+
+                        uploadedFiles.push({
+                            id: Date.now() + Math.random().toString(36.2),
+                            name: file.name,
+                            type: type, // 'order', 'yamato', 'sagawa'
+                            header: headerRow,
+                            rows: fileRows
+                        });
                     }
-                    
-                    processedCount++;
-                    if (processedCount === files.length) {
-                        rebuildData();
-                    }
+                    updateAccumulatedData();
                 };
                 reader.readAsArrayBuffer(file);
             });
+            document.getElementById('fileInput').value = '';
         }
 
-        function rebuildData() {
-            if (orderData.rows.length > 0) {
-                orderData.orderNoColIdx = 5; // F列固定
-                colMap.name = 40;            // AO列固定 (インデックス40)
+        window.removeFile = (fileId) => {
+            uploadedFiles = uploadedFiles.filter(f => f.id !== fileId);
+            updateAccumulatedData();
+        };
 
-                colMap.shop = orderData.header.findIndex(h => String(h) === '店舗名' || String(h) === 'ショップ');
-                if (colMap.shop === -1) colMap.shop = 3;
+        window.resetAllAllData = () => resetAllData();
+        function resetAllData() {
+            uploadedFiles = [];
+            currentPickResults = [];
+            document.getElementById('pickResultArea').innerHTML = '';
+            updateAccumulatedData();
+        }
 
-                colMap.itemCode = orderData.header.findIndex(h => String(h) === '商品コード' || String(h) === 'SKU');
-                if (colMap.itemCode === -1) colMap.itemCode = 30;
+        function getFileType(fileName, sampleStr) {
+            let lower = fileName.toLowerCase();
+            if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
+            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
+            if (lower.includes('yamato') || lower.includes('ヤマト') || lower.includes('b2') || lower.includes('クロネコ') || lower.includes('送り状')) return 'yamato';
+            
+            if (sampleStr.includes('お届け先コード') || sampleStr.includes('e飛伝') || sampleStr.includes('お客様管理番号')) return 'sagawa';
+            if (sampleStr.includes('受注番号') || sampleStr.includes('受注ID') || sampleStr.includes('店舗名')) return 'order';
+            return 'yamato';
+        }
 
-                colMap.itemName = orderData.header.findIndex(h => String(h) === '商品名' || String(h) === '品名');
-                if (colMap.itemName === -1) colMap.itemName = 31;
+        function updateAccumulatedData() {
+            let orders = uploadedFiles.filter(f => f.type === 'order');
+            let yamatos = uploadedFiles.filter(f => f.type === 'yamato');
+            let sagawas = uploadedFiles.filter(f => f.type === 'sagawa');
 
-                colMap.qty = orderData.header.findIndex(h => String(h) === '数量' || String(h) === '個数');
-                if (colMap.qty === -1) colMap.qty = 34;
-                
-                originalOrderRows = [...orderData.rows];
-                sortedOrderRows = [...orderData.rows];
-            }
+            let orderRowsCount = orders.reduce((sum, f) => sum + f.rows.length, 0);
+            let yamatoRowsCount = yamatos.reduce((sum, f) => sum + f.rows.length, 0);
+            let sagawaRowsCount = sagawas.reduce((sum, f) => sum + f.rows.length, 0);
 
-            let validOrderSet = new Set();
-            if (orderData.rows.length > 0) {
-                orderData.rows.forEach(r => {
-                    let num = cleanOrderNoNormalized(r[orderData.orderNoColIdx]);
-                    if (num) validOrderSet.add(num);
+            // ステータス更新
+            document.getElementById('statusOrder').innerHTML = orders.length > 0 ? `📦 受注データ: <span class="text-blue-600 font-bold">${orders.map(f=>f.name).join(', ')}</span> (${orderRowsCount}行)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = yamatos.length > 0 ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatos.map(f=>f.name).join(', ')}</span> (${yamatoRowsCount}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = sagawas.length > 0 ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawas.map(f=>f.name).join(', ')}</span> (${sagawaRowsCount}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+
+            // ファイルリスト表示
+            const listSec = document.getElementById('fileListSection');
+            const listCont = document.getElementById('fileListContainer');
+            if (uploadedFiles.length > 0) {
+                listSec.classList.remove('hidden');
+                let html = '';
+                uploadedFiles.forEach(f => {
+                    let typeLabel = f.type === 'order' ? '受注' : (f.type === 'yamato' ? 'ヤマト' : '佐川');
+                    html += `<div class="flex justify-between items-center bg-white p-2 rounded border border-slate-200">
+                        <div><span class="font-bold text-sky-600">[${typeLabel}]</span> ${f.name} (${f.rows.length}件)</div>
+                        <button onclick="removeFile('${f.id}')" class="bg-rose-100 hover:bg-rose-200 text-rose-700 px-2 py-0.5 rounded font-bold">🗑️ 削除</button>
+                    </div>`;
                 });
+                listCont.innerHTML = html;
+            } else {
+                listSec.classList.add('hidden');
+                listCont.innerHTML = '';
             }
 
-            function findBestOrderCol(rows) {
-                if (rows.length === 0 || validOrderSet.size === 0) return -1;
-                let bestIdx = 0, maxMatches = 0;
-                let scanRows = Math.min(rows.length, 50);
-                for (let c = 0; c < rows[0].length; c++) {
-                    let matches = 0;
-                    for (let r = 0; r < scanRows; r++) {
-                        if (validOrderSet.has(cleanOrderNoNormalized(rows[r][c]))) matches++;
-                    }
-                    if (matches > maxMatches) { maxMatches = matches; bestIdx = c; }
-                }
-                return maxMatches > 0 ? bestIdx : -1;
-            }
-
-            if (sagawaData.rows.length > 0) sagawaData.orderNoColIdx = findBestOrderCol(sagawaData.rows);
-            if (yamatoData.rows.length > 0) yamatoData.orderNoColIdx = findBestOrderCol(yamatoData.rows);
-
-            updateUIStatus();
-            setupSortDropdown();
-            renderTable();
+            // ボタン活性制御
+            const hasOrder = orderRowsCount > 0;
+            document.getElementById('calcPickBtn').disabled = !hasOrder;
+            document.getElementById('printBtn').disabled = !hasOrder;
+            document.getElementById('zaicoBtn').disabled = !hasOrder;
+            document.getElementById('yamatoBtn').disabled = !(hasOrder && yamatoRowsCount > 0);
+            document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
         }
 
-        function updateUIStatus() {
-            document.getElementById('statusOrder').innerHTML = orderData.fileName ? `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-blue-600 font-bold">${orderData.fileName}</span> (${orderData.rows.length}件)` : `📦 受注データ (F列=受注番号 / AO列=配送先氏名): <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusYamato').innerHTML = yamatoData.fileName ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatoData.fileName}</span> (${yamatoData.rows.length}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
-            document.getElementById('statusSagawa').innerHTML = sagawaData.fileName ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawaData.fileName}</span> (${sagawaData.rows.length}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
-
-            if (orderData.rows.length > 0) document.getElementById('sortControlArea').classList.remove('hidden');
-            
-            document.getElementById('printBtn').disabled = (orderData.rows.length === 0);
-            document.getElementById('yamatoBtn').disabled = (orderData.rows.length === 0 || yamatoData.rows.length === 0);
-            document.getElementById('ehidenBtn').disabled = (orderData.rows.length === 0 || sagawaData.rows.length === 0);
-        }
-
-        function setupSortDropdown() {
-            const select = document.getElementById('sortColumnSelect');
-            select.innerHTML = '<option value="">（ソートする列を選択）</option>';
-            if (orderData.header.length === 0) return;
-            
-            orderData.header.forEach((hName, idx) => {
-                let label = String(hName).trim() !== '' ? `${hName} (列 ${idx})` : `列 ${idx}`;
-                select.appendChild(new Option(label, idx));
+        // 統合された受注データの取得ヘルパー
+        function getAllOrderRows() {
+            let rows = [];
+            uploadedFiles.filter(f => f.type === 'order').forEach(f => {
+                rows = rows.concat(f.rows);
             });
-
-            let defaultIdx = orderData.header.findIndex(h => String(h).includes('商品コード') || String(h).includes('SKU'));
-            if (defaultIdx !== -1) {
-                select.value = defaultIdx;
-            }
+            return rows;
         }
-
-        function applyDynamicSort() {
-            const colIndexVal = document.getElementById('sortColumnSelect').value;
-            const direction = document.getElementById('sortDirectionSelect').value;
-            if (colIndexVal === "") { alert('ソートする列を選択してください。'); return; }
-
-            const colIndex = parseInt(colIndexVal, 10);
-            sortedOrderRows = [...originalOrderRows].sort((a, b) => {
-                let valA = a[colIndex] !== undefined ? String(a[colIndex]).trim() : '';
-                let valB = b[colIndex] !== undefined ? String(b[colIndex]).trim() : '';
-                let cmp = valA.localeCompare(valB, 'ja', { numeric: true, sensitivity: 'base' });
-                return direction === 'asc' ? cmp : -cmp;
+        function getAllYamatoRows() {
+            let rows = [];
+            uploadedFiles.filter(f => f.type === 'yamato').forEach(f => {
+                rows = rows.concat(f.rows);
             });
-            renderTable();
+            return rows;
+        }
+        function getAllSagawaRows() {
+            let rows = [];
+            uploadedFiles.filter(f => f.type === 'sagawa').forEach(f => {
+                rows = rows.concat(f.rows);
+            });
+            return rows;
         }
 
-        function resetSort() {
-            document.getElementById('sortColumnSelect').value = "";
-            document.getElementById('sortDirectionSelect').value = "asc";
-            sortedOrderRows = [...originalOrderRows];
-            renderTable();
-        }
-
-        function renderTable() {
-            const tbody = document.getElementById('orderTableBody');
-            tbody.innerHTML = '';
-            if (sortedOrderRows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-slate-400 p-4">データがありません</td></tr>';
+        // ==================== ピック数算出 & zaico連動 ====================
+        window.processOrderPickCalculation = async () => {
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) {
+                alert('受注データが読み込まれていません。');
                 return;
             }
-            sortedOrderRows.forEach(r => {
-                let tr = document.createElement('tr');
-                tr.className = "border-b border-slate-100 hover:bg-slate-50";
-                
-                let shop = r[colMap.shop] !== undefined ? r[colMap.shop] : '';
-                let orderNo = r[orderData.orderNoColIdx] !== undefined ? r[orderData.orderNoColIdx] : '';
-                let name = r[colMap.name] !== undefined ? r[colMap.name] : '';
-                let item = r[colMap.itemName] !== undefined ? r[colMap.itemName] : '';
-                
-                tr.innerHTML = `<td class="p-2">${shop}</td><td class="p-2 font-bold">${orderNo}</td><td class="p-2">${name}</td><td class="p-2">${item}</td>`;
-                tbody.appendChild(tr);
+
+            const rawItemsMap = new Map();
+            allOrders.forEach(cols => {
+                const itemNo = cols[6] || '';
+                if (itemNo === '1-0') return;
+
+                if (cols.length > 31 && cols[31]) {
+                    const productName = cols[31];
+                    const quantity = cols[34] ? Number(cols[34]) : 1;
+                    const parts = productName.trim().split(/\s+/);
+                    const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
+                    const key = extractedBarcode || productName;
+
+                    if (rawItemsMap.has(key)) {
+                        rawItemsMap.get(key).quantity += quantity;
+                    } else {
+                        rawItemsMap.set(key, { productName, quantity, barcode: extractedBarcode });
+                    }
+                }
             });
+
+            const items = Array.from(rawItemsMap.values());
+            await processOrderLocally(items);
+        };
+
+        async function processOrderLocally(items) {
+            showStatus("データを解析中...");
+            try {
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                const masterMap = new Map();
+                querySnapshot.forEach(docSnap => {
+                    masterMap.set(docSnap.id, docSnap.data());
+                });
+
+                const aggregatedMap = new Map();
+                for (const item of items) {
+                    const barcode = item.barcode;
+                    const mData = masterMap.get(barcode);
+
+                    let multiplier = mData ? (mData.multiplier || 1) : 1;
+                    let shelfNumber = mData ? (mData.shelfNumber || mData.shelf_number || "") : "";
+                    let status = mData ? "REGISTERED" : "UNREGISTERED";
+                    let finalProductName = mData ? (mData.productName || mData.product_name || item.productName) : item.productName;
+
+                    const key = barcode || item.productName;
+                    if (aggregatedMap.has(key)) {
+                        const existing = aggregatedMap.get(key);
+                        existing.orderQty += item.quantity;
+                        existing.pickCount = existing.orderQty * existing.multiplier;
+                    } else {
+                        aggregatedMap.set(key, {
+                            barcode: barcode,
+                            productName: finalProductName,
+                            orderQty: item.quantity,
+                            multiplier: multiplier,
+                            shelfNumber: shelfNumber,
+                            status: status,
+                            pickCount: item.quantity * multiplier
+                        });
+                    }
+                }
+
+                currentPickResults = Array.from(aggregatedMap.values());
+                currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
+
+                renderPickTable(currentPickResults);
+            } catch (err) {
+                console.error(err);
+                alert('データ解析エラー: ' + err.message);
+            }
         }
 
-        function exportYamatoCsv() {
-            let uniqueOrderNos = new Set();
-            sortedOrderRows.forEach(oRow => {
-                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
-                if (oNum) uniqueOrderNos.add(oNum);
+        function showStatus(msg) {
+            document.getElementById('pickResultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
+        }
+
+        function renderPickTable(results) {
+            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み・棚番順ソート）</b></p>
+                <table>
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>バーコード</th>
+                        <th>注文数</th>
+                        <th>倍率</th>
+                        <th>棚番</th>
+                        <th>ピック数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            results.forEach((item, index) => {
+                const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
+                html += `<tr id="row_${index}" class="${isUnreg ? 'unregistered' : ''}">
+                    <td>${escapeHtml(item.productName)}</td>
+                    <td><input type="text" id="barcode_${index}" value="${escapeHtml(item.barcode || '')}" style="width: 120px;" onkeydown="handleKeydown(event, ${index})"></td>
+                    <td>${item.orderQty}</td>
+                    <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
+                    <td><input type="text" id="shelf_${index}" value="${escapeHtml(item.shelfNumber || '')}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
+                    <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存して計算</button></td>
+                </tr>`;
             });
+            html += `</tbody></table>`;
+            document.getElementById('pickResultArea').innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            if(!str) return '';
+            return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        }
+
+        window.handleKeydown = (event, index) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const item = currentPickResults[index];
+                if (item) registerItem(index, item.orderQty, item.productName, true);
+            }
+        };
+
+        window.registerItem = async (index, orderQty, productName, isSilent = false) => {
+            const barcode = document.getElementById(`barcode_${index}`).value.trim();
+            const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
+            const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
+
+            if (!barcode || !shelfNumber) {
+                if (!isSilent) alert('バーコードと棚番を入力してください。');
+                return;
+            }
+
+            try {
+                await setDoc(doc(db, "product_masters", barcode), {
+                    barcode: barcode,
+                    productName: productName,
+                    multiplier: multiplier,
+                    shelfNumber: shelfNumber,
+                    updatedAt: new Date()
+                }, { merge: true });
+
+                const row = document.getElementById(`row_${index}`);
+                if (row) row.classList.remove('unregistered');
+                currentPickResults[index].barcode = barcode;
+                currentPickResults[index].multiplier = multiplier;
+                currentPickResults[index].shelfNumber = shelfNumber;
+                currentPickResults[index].status = "REGISTERED";
+                currentPickResults[index].pickCount = orderQty * multiplier;
+                document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentPickResults[index].pickCount}</b>`;
+                
+                if (!isSilent) alert('保存しました！');
+            } catch (err) {
+                console.error(err);
+                if (!isSilent) alert('保存エラー: ' + err.message);
+            }
+        };
+
+        window.sendToZaico = async () => {
+            // 現在蓄積されている受注データから計算して送信
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) { alert('受注データがありません。'); return; }
+
+            // 一度ピック数計算がまだなら簡易算出
+            const rawItemsMap = new Map();
+            allOrders.forEach(cols => {
+                if (cols[6] === '1-0') return;
+                if (cols.length > 31 && cols[31]) {
+                    let pName = cols[31];
+                    let qty = cols[34] ? Number(cols[34]) : 1;
+                    let parts = pName.trim().split(/\s+/);
+                    let bc = parts.length > 0 ? parts[parts.length - 1] : '';
+                    let k = bc || pName;
+                    if (rawItemsMap.has(k)) { rawItemsMap.get(k).quantity += qty; }
+                    else { rawItemsMap.set(k, { productName: pName, quantity: qty, barcode: bc }); }
+                }
+            });
+
+            try {
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                const masterMap = new Map();
+                querySnapshot.forEach(docSnap => masterMap.set(docSnap.id, docSnap.data()));
+
+                let validItems = [];
+                rawItemsMap.forEach((val) => {
+                    let mData = masterMap.get(val.barcode);
+                    if (mData && mData.shelfNumber && val.barcode) {
+                        let mult = mData.multiplier || 1;
+                        validItems.push({
+                            barcode: val.barcode,
+                            productName: mData.productName || val.productName,
+                            orderQty: val.quantity,
+                            multiplier: mult,
+                            shelfNumber: mData.shelfNumber,
+                            pickCount: val.quantity * mult,
+                            status: "REGISTERED"
+                        });
+                    }
+                });
+
+                if (validItems.length === 0) {
+                    alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。商品マスタをご確認ください。');
+                    return;
+                }
+
+                if (!confirm(`棚番が登録されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
+
+                showStatus("zaicoに出庫指示を送信中...");
+                const res = await fetch(URL_CREATE_SHIPMENT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: validItems })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)\n\n※処理完了につき蓄積データをリセットします。`);
+                    showStatus("<b>出庫指示の送信が完了しました。</b>");
+                    resetAllData();
+                } else {
+                    alert('送信失敗: ' + data.error);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('通信エラーが発生しました: ' + err.message);
+            }
+        };
+
+        // ==================== 送り状・沖縄判定・検品シート ====================
+        function cleanOrderNoNormalized(rawStr) {
+            if (!rawStr) return "";
+            return String(rawStr).replace(/^No:?[\.\s]*/i, "")
+                                 .replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                 .replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "")
+                                 .trim().toLowerCase();
+        }
+
+        function cleanPhone(phoneStr) {
+            if (!phoneStr) return "";
+            let s = String(phoneStr).trim();
+            if (s.startsWith('+81')) s = '0' + s.substring(3).replace(/^\-+/, '');
+            return s;
+        }
+
+        function isOkinawaAddress(addrStr) {
+            if (!addrStr) return false;
+            return addrStr.includes('沖縄') || addrStr.includes('おきなわ');
+        }
+
+        // 佐川データ・ヤマトデータから沖縄宛てを判定して振り分けるヘルパー
+        function getOrderUniqueIds() {
+            let set = new Set();
+            getAllOrderRows().forEach(r => {
+                let n = cleanOrderNoNormalized(r[5]); // F列
+                if (n) set.add(n);
+            });
+            return set;
+        }
+
+        window.exportYamatoCsv = () => {
+            let uniqueOrderNos = getOrderUniqueIds();
+            let yamatoRows = getAllYamatoRows();
+            let allOrders = getAllOrderRows();
+
+            if (yamatoRows.length === 0) {
+                alert("ヤマトデータが読み込まれていません。");
+                return;
+            }
 
             let outputRows = [];
             let todayStr = getTodayString();
-            
+            let okinawaOrderNos = new Set();
+
+            // 沖縄宛て判定（受注データまたはヤマトデータの住所カラムを走査）
+            allOrders.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[5]);
+                // 住所カラム（通常は受注データのG〜L列あたりやヤマト側の住所を確認）
+                let addrCombined = oRow.slice(6, 15).join(' ');
+                if (isOkinawaAddress(addrCombined)) {
+                    if (oNum) okinawaOrderNos.add(oNum);
+                }
+            });
+
             uniqueOrderNos.forEach(oNum => {
-                let matchedYRow = yamatoData.rows.find(r => cleanOrderNoNormalized(r[yamatoData.orderNoColIdx]) === oNum);
+                let matchedYRow = yamatoRows.find(r => {
+                    // ヤマトデータ側の受注番号カラムを探索
+                    for(let c=0; c<r.length; c++) {
+                        if (cleanOrderNoNormalized(r[c]) === oNum) return true;
+                    }
+                    return false;
+                });
+
                 if (matchedYRow) {
                     let newRow = [...matchedYRow];
                     while (newRow.length < 42) newRow.push("");
@@ -334,187 +602,304 @@
 
                     for (let c = 0; c < newRow.length; c++) {
                         let valStr = String(newRow[c]);
-                        if (valStr.startsWith('+81')) {
-                            newRow[c] = cleanPhone(valStr);
-                        }
-                    }
-
-                    for (let c = 24; c <= 30; c++) {
-                        if (newRow[c] && newRow[c].length > 25) {
-                            newRow[c] = newRow[c].substring(0, 25);
-                        }
+                        if (valStr.startsWith('+81')) newRow[c] = cleanPhone(valStr);
+                        if (c >= 24 && c <= 30 && newRow[c].length > 25) newRow[c] = newRow[c].substring(0, 25);
                     }
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length === 0) { alert("ヤマトデータの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
-            exportCsvGeneric(outputRows, "yamato_processed_sorted.csv");
-        }
 
-        function exportEhidenCsv() {
-            let uniqueOrderNos = new Set();
-            sortedOrderRows.forEach(oRow => {
-                let oNum = cleanOrderNoNormalized(oRow[orderData.orderNoColIdx]);
-                if (oNum) uniqueOrderNos.add(oNum);
+            if (outputRows.length === 0) {
+                alert("ヤマトデータと紐付く受注番号が見つかりませんでした。");
+                return;
+            }
+
+            exportCsvGeneric(outputRows, "yamato_processed_okinawa_included.csv");
+            alert("ヤマトCSVを出力しました。\n\n※処理完了につき蓄積データをリセットします。");
+            resetAllData();
+        };
+
+        window.exportEhidenCsv = () => {
+            let uniqueOrderNos = getOrderUniqueIds();
+            let sagawaRows = getAllSagawaRows();
+            let allOrders = getAllOrderRows();
+
+            if (sagawaRows.length === 0) {
+                alert("佐川データが読み込まれていません。");
+                return;
+            }
+
+            // 沖縄宛ての受注番号を抽出
+            let okinawaOrderNos = new Set();
+            allOrders.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[5]);
+                let addrCombined = oRow.slice(6, 15).join(' ');
+                if (isOkinawaAddress(addrCombined) && oNum) {
+                    okinawaOrderNos.add(oNum);
+                }
             });
 
-            let outputRows = sagawaData.header && sagawaData.header.length > 0 ? [sagawaData.header] : [];
-            let targetIdx = -1;
-            if (sagawaData.header.length > 0) {
-                targetIdx = sagawaData.header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
-            }
+            let sagawaHeader = sagawaDataHeader();
+            let outputRows = sagawaHeader.length > 0 ? [sagawaHeader] : [];
+            let targetIdx = sagawaHeader.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
             if (targetIdx === -1) targetIdx = 24;
-            
+
             uniqueOrderNos.forEach(oNum => {
-                let matchedSRow = sagawaData.rows.find(r => cleanOrderNoNormalized(r[sagawaData.orderNoColIdx]) === oNum);
+                // 沖縄宛ては佐川から除外
+                if (okinawaOrderNos.has(oNum)) return;
+
+                let matchedSRow = sagawaRows.find(r => {
+                    for(let c=0; c<r.length; c++) {
+                        if (cleanOrderNoNormalized(r[c]) === oNum) return true;
+                    }
+                    return false;
+                });
+
                 if (matchedSRow) {
                     let newRow = [...matchedSRow];
-                    
                     for (let c = 0; c < newRow.length; c++) {
-                        let valStr = String(newRow[c]);
-                        if (valStr.startsWith('+81')) {
-                            newRow[c] = cleanPhone(valStr);
-                        }
+                        if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
                     }
-
-                    if (newRow[targetIdx]) {
-                        let val = String(newRow[targetIdx]).trim();
-                        if (val.length > 16) newRow[targetIdx] = val.substring(0, 16);
+                    if (newRow[targetIdx] && String(newRow[targetIdx]).length > 16) {
+                        newRow[targetIdx] = String(newRow[targetIdx]).substring(0, 16);
                     }
                     outputRows.push(newRow);
                 }
             });
-            if (outputRows.length <= 1) { alert("佐川データの中に、受注データと紐付く受注番号が見つかりませんでした。"); return; }
-            exportCsvGeneric(outputRows, "ehiden_processed_sorted.csv");
+
+            if (outputRows.length <= 1) {
+                alert("佐川データと紐付く有効な受注データ（沖縄宛て除外後）がありません。");
+                return;
+            }
+
+            exportCsvGeneric(outputRows, "ehiden_processed_okinawa_excluded.csv");
+            alert("佐川CSVを出力しました（沖縄宛ては自動除外済み）。\n\n※処理完了につき蓄積データをリセットします。");
+            resetAllData();
+        };
+
+        function sagawaDataHeader() {
+            let f = uploadedFiles.find(item => item.type === 'sagawa');
+            return f ? f.header : [];
         }
 
-        function openPrintPreview() {
-            const todayStr = new Date().toLocaleDateString();
-            let htmlPages = [];
+        window.openPrintPreview = () => {
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) { alert('受注データがありません。'); return; }
 
+            const todayStr = new Date().toLocaleDateString();
             let koBanIdx = 6;
             let orderGroupMap = new Map();
 
-            sortedOrderRows.forEach(r => {
-                let orderNo = r[orderData.orderNoColIdx] !== undefined ? r[orderData.orderNoColIdx] : '';
+            allOrders.forEach(r => {
+                let orderNo = r[5] !== undefined ? r[5] : '';
                 let normalizedNo = cleanOrderNoNormalized(orderNo);
                 if (!normalizedNo) return;
 
                 let koBanVal = r[koBanIdx] !== undefined ? String(r[koBanIdx]).trim() : '';
-
                 if (!orderGroupMap.has(normalizedNo)) {
                     orderGroupMap.set(normalizedNo, {
                         orderNo: orderNo,
-                        shop: r[colMap.shop] !== undefined ? r[colMap.shop] : '',
-                        name: r[colMap.name] !== undefined ? r[colMap.name] : '',
+                        shop: r[3] !== undefined ? r[3] : '',
+                        name: r[40] !== undefined ? r[40] : '',
                         rows: []
                     });
                 }
-
                 let group = orderGroupMap.get(normalizedNo);
-
                 if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
-                    if (r[colMap.shop]) group.shop = r[colMap.shop];
-                    if (r[colMap.name]) group.name = r[colMap.name]; // AO列(配送先氏名)を更新
+                    if (r[3]) group.shop = r[3];
+                    if (r[40]) group.name = r[40];
                 }
-
                 group.rows.push(r);
             });
 
-            if (orderGroupMap.size === 0) {
-                alert("印刷対象の受注データがありません。");
-                return;
-            }
-
+            let htmlPages = [];
             orderGroupMap.forEach((group) => {
-                group.rows.sort((a, b) => {
-                    let kA = a[koBanIdx] !== undefined ? String(a[koBanIdx]).trim() : '';
-                    let kB = b[koBanIdx] !== undefined ? String(b[koBanIdx]).trim() : '';
-                    let isAParent = (kA.endsWith('-0') || kA === '0');
-                    let isBParent = (kB.endsWith('-0') || kB === '0');
-                    if (isAParent && !isBParent) return -1;
-                    if (!isAParent && isBParent) return 1;
-                    return 0;
-                });
-
                 let itemRowsHtml = '';
                 let totalQty = 0;
-
                 group.rows.forEach(mRow => {
                     let koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
-                    let itemCode = mRow[colMap.itemCode] !== undefined ? mRow[colMap.itemCode] : '';
-                    let itemName = mRow[colMap.itemName] !== undefined ? mRow[colMap.itemName] : '';
-                    let qty = mRow[colMap.qty] !== undefined ? mRow[colMap.qty] : '1';
-
+                    let itemCode = mRow[30] !== undefined ? mRow[30] : '';
+                    let itemName = mRow[31] !== undefined ? mRow[31] : '';
+                    let qty = mRow[34] !== undefined ? mRow[34] : '1';
                     totalQty += parseInt(qty, 10) || 1;
 
                     let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
-                    let rowBg = isChild ? '#fafbfc' : '#ffffff';
-                    let nameStyle = isChild 
-                        ? 'padding-left:12px; font-size:9.5pt; color:#111;' 
-                        : 'font-weight:bold; font-size:10pt; color:#111;';
-                    let codePrefix = isChild ? '└ ' : '';
-
                     itemRowsHtml += `
-                        <tr style="border-bottom: 1px solid #ddd; background:${rowBg};">
+                        <tr style="border-bottom: 1px solid #ddd; background:${isChild ? '#fafbfc' : '#ffffff'};">
                             <td style="text-align:center; padding:4px;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td>
-                            <td style="padding:4px; ${nameStyle}">
-                                ${codePrefix}${itemName}<br>
+                            <td style="padding:4px; ${isChild ? 'padding-left:12px; font-size:9.5pt;' : 'font-weight:bold; font-size:10pt;'}">
+                                ${isChild ? '└ ' : ''}${itemName}<br>
                                 <span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span>
                             </td>
                             <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
                         </tr>
                     `;
                 });
-                
+
                 htmlPages.push(`
                 <div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;">
                     <div style="font-size:13pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;">
-                        <span>出荷検品シート</span>
-                        <span style="font-size:9pt;font-weight:normal;color:#555;">合計数量: ${totalQty}</span>
+                        <span>出荷検品シート</span><span style="font-size:9pt;font-weight:normal;">合計数量: ${totalQty}</span>
                     </div>
                     <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${group.name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${group.shop}</td></tr></table>
                     <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${group.orderNo}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
                     <table style="width:100%;border-collapse:collapse;">
-                        <thead>
-                            <tr style="background:#2c3e50;color:#fff;font-size:9pt;">
-                                <th style="width:12%;padding:4px;text-align:center;">確認</th>
-                                <th style="width:73%;padding:4px;text-align:left;">商品名 / 商品コード</th>
-                                <th style="width:15%;padding:4px;text-align:center;">数量</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${itemRowsHtml}
-                        </tbody>
+                        <thead><tr style="background:#2c3e50;color:#fff;font-size:9pt;"><th style="width:12%;padding:4px;text-align:center;">確認</th><th style="width:73%;padding:4px;text-align:left;">商品名 / コード</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead>
+                        <tbody>${itemRowsHtml}</tbody>
                     </table>
                 </div>`);
             });
 
             const printWin = window.open('', '_blank');
-            printWin.document.write(`<html><head><title>出荷検品シート印刷</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; padding: 0; background: #eee; } .page { margin: 0 auto; margin-bottom: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.2); } @media print { body { background: none; } .page { margin: 0; box-shadow: none; } }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => { window.print(); }, 400); };<\/script></body></html>`);
+            printWin.document.write(`<html><head><title>出荷検品シート</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; background: #eee; }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script></body></html>`);
             printWin.document.close();
+        };
+
+        // ==================== マスタ管理タブ関連 ====================
+        window.loadMasterItems = async () => {
+            const masterArea = document.getElementById('masterResultArea');
+            masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
+            try {
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                masterItemsCache = [];
+                querySnapshot.forEach(docSnap => masterItemsCache.push({ id: docSnap.id, ...docSnap.data() }));
+                filterMasterTable();
+            } catch (err) {
+                console.error(err);
+                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
+            }
+        };
+
+        function renderMasterTable(items) {
+            const masterArea = document.getElementById('masterResultArea');
+            let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
+                <table><thead><tr>
+                <th onclick="sortMasterTable('name')">商品名</th>
+                <th onclick="sortMasterTable('barcode')">バーコード</th>
+                <th onclick="sortMasterTable('multiplier')">倍率</th>
+                <th onclick="sortMasterTable('shelf')">棚番</th>
+                <th>操作</th>
+                </tr></thead><tbody>`;
+
+            if (!items || items.length === 0) {
+                html += `<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
+            } else {
+                items.forEach((item, i) => {
+                    let name = item.productName || item.product_name || '';
+                    let shelf = item.shelfNumber || item.shelf_number || '';
+                    let barcode = item.barcode || item.id || '';
+                    let mult = item.multiplier || 1;
+                    html += `<tr>
+                        <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%;padding:4px;"></td>
+                        <td><code>${escapeHtml(barcode)}</code></td>
+                        <td><input type="number" id="master_mult_${i}" value="${mult}" style="width:60px;padding:4px;"></td>
+                        <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px;padding:4px;"></td>
+                        <td>
+                            <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="bg-emerald-600 text-white px-2 py-1 rounded text-xs font-bold">更新</button>
+                            <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold">削除</button>
+                        </td>
+                    </tr>`;
+                });
+            }
+            html += `</tbody></table>`;
+            masterArea.innerHTML = html;
         }
+
+        window.filterMasterTable = () => {
+            const kw = document.getElementById('masterSearch').value.toLowerCase();
+            const skw = document.getElementById('shelfFilter').value.toLowerCase();
+            const filtered = masterItemsCache.filter(item => {
+                let name = (item.productName || item.product_name || '').toLowerCase();
+                let bc = (item.barcode || item.id || '').toLowerCase();
+                let sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
+                let mKw = name.includes(kw) || bc.includes(kw) || sh.includes(kw);
+                let mSh = (skw === '' || skw === '空欄' || skw === '未設定') ? (sh === '') : sh.includes(skw);
+                return mKw && mSh;
+            });
+            renderMasterTable(filtered);
+        };
+
+        window.filterUnassignedShelf = () => {
+            document.getElementById('shelfFilter').value = '空欄';
+            filterMasterTable();
+        };
+
+        window.applyBatchShelf = () => {
+            let val = document.getElementById('batchShelfInput').value.trim();
+            if (!val) { alert('一括設定する棚番を入力してください。'); return; }
+            document.querySelectorAll('#masterResultArea tbody tr').forEach(row => {
+                let shInput = row.querySelector('input[id^="master_shelf_"]');
+                if (shInput) shInput.value = val;
+            });
+            alert('画面上の棚番に一括適用しました。「変更したマスタを一括保存」を押すと保存されます。');
+        };
+
+        window.updateMaster = async (barcode, i) => {
+            let pName = document.getElementById(`master_name_${i}`).value.trim();
+            let mult = Number(document.getElementById(`master_mult_${i}`).value) || 1;
+            let sh = document.getElementById(`master_shelf_${i}`).value.trim();
+            if (!sh) { alert('棚番を入力してください。'); return; }
+
+            try {
+                await setDoc(doc(db, "product_masters", barcode), { barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
+                alert('マスタを更新しました！');
+            } catch(e) { alert('エラー: ' + e.message); }
+        };
+
+        window.deleteMaster = async (barcode, name) => {
+            if (!confirm(`「${name} (${barcode})」を削除しますか？`)) return;
+            try {
+                await deleteDoc(doc(db, "product_masters", barcode));
+                masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.id) !== barcode);
+                filterMasterTable();
+                alert('削除しました。');
+            } catch(e) { alert('削除エラー: ' + e.message); }
+        };
+
+        window.saveAllMasters = async () => {
+            if (!confirm('画面に表示されているマスタのうち、棚番が入力されているものを一括保存しますか？')) return;
+            let rows = document.querySelectorAll('#masterResultArea tbody tr');
+            let count = 0;
+            for (let i = 0; i < rows.length; i++) {
+                let r = rows[i];
+                let nIn = r.querySelector('input[id^="master_name_"]');
+                let mIn = r.querySelector('input[id^="master_mult_"]');
+                let sIn = r.querySelector('input[id^="master_shelf_"]');
+                let cEl = r.querySelector('code');
+                if (nIn && mIn && sIn && cEl) {
+                    let bc = cEl.textContent.trim();
+                    let name = nIn.value.trim();
+                    let mult = Number(mIn.value) || 1;
+                    let sh = sIn.value.trim();
+                    if (sh) {
+                        await setDoc(doc(db, "product_masters", bc), { barcode: bc, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
+                        count++;
+                    }
+                }
+            }
+            alert(`${count}件のマスタを保存しました！`);
+        };
 
         function parseRobustCSV(text) {
             let rows = [], currentRow = [], currentVal = '', inQuotes = false;
             for (let i = 0; i < text.length; i++) {
                 let c = text[i], nextC = text[i + 1];
-                if (inQuotes) { if (c === '"') { if (nextC === '"') { currentVal += '"'; i++; } else { inQuotes = false; } } else { currentVal += c; } } else { if (c === '"') { inQuotes = true; } else if (c === ',') { currentRow.push(currentVal); currentVal = ''; } else if (c === '\r' || c === '\n') { if (c === '\r' && nextC === '\n') { i++; } currentRow.push(currentVal); rows.push(currentRow); currentRow = []; currentVal = ''; } else { currentVal += c; } }
+                if (inQuotes) { if (c === '"') { if (nextC === '"') { currentVal += '"'; i++; } else { inQuotes = false; } } else { currentVal += c; } }
+                else { if (c === '"') { inQuotes = true; } else if (c === ',') { currentRow.push(currentVal); currentVal = ''; } else if (c === '\r' || c === '\n') { if (c === '\r' && nextC === '\n') i++; currentRow.push(currentVal); rows.push(currentRow); currentRow = []; currentVal = ''; } else { currentVal += c; } }
             }
             if (currentVal !== '' || currentRow.length > 0) { currentRow.push(currentVal); rows.push(currentRow); }
             return rows;
         }
+
         function parseCsvStringToUint8(csvString) {
             const unicodeList = Encoding.stringToCode(csvString);
             const sjisCodeList = Encoding.convert(unicodeList, { to: 'SJIS', from: 'UNICODE', type: 'array' });
             return new Uint8Array(sjisCodeList);
         }
-        function exportCsvGeneric(dataOrUint8, filename) {
-            let uint8Array = dataOrUint8;
-            if (Array.isArray(dataOrUint8)) {
-                let csvString = dataOrUint8.map(r => r.map(v => `"${String(v !== undefined && v !== null ? v : '').replace(/"/g, '""')}"`).join(",")).join("\r\n");
-                uint8Array = parseCsvStringToUint8(csvString);
-            }
+
+        function exportCsvGeneric(dataRows, filename) {
+            let csvString = dataRows.map(r => r.map(v => `"${String(v !== undefined && v !== null ? v : '').replace(/"/g, '""')}"`).join(",")).join("\r\n");
+            let uint8Array = parseCsvStringToUint8(csvString);
             const blob = new Blob([uint8Array], { type: 'text/csv;charset=shift_jis;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -523,6 +908,7 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+
         function getTodayString() {
             const d = new Date();
             return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
