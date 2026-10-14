@@ -133,8 +133,6 @@
         let currentSortColumn = null;
         let currentSortAsc = true;
 
-        let colMap = { shop: 3, orderNo: 5, name: 40, itemCode: 30, itemName: 31, qty: 34 };
-
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -212,13 +210,14 @@
             updateAccumulatedData();
         };
 
-        window.resetAllAllData = () => resetAllData();
-        function resetAllData() {
+        window.resetAllData = () => {
+            if (!confirm("本当にすべての蓄積データをリセットしますか？")) return;
             uploadedFiles = [];
             currentPickResults = [];
             document.getElementById('pickResultArea').innerHTML = '';
             updateAccumulatedData();
-        }
+            alert("データをリセットしました。");
+        };
 
         function getFileType(fileName, sampleStr) {
             let lower = fileName.toLowerCase();
@@ -273,36 +272,26 @@
             document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
         }
 
-        // 統合された受注データの取得ヘルパー
         function getAllOrderRows() {
             let rows = [];
-            uploadedFiles.filter(f => f.type === 'order').forEach(f => {
-                rows = rows.concat(f.rows);
-            });
+            uploadedFiles.filter(f => f.type === 'order').forEach(f => { rows = rows.concat(f.rows); });
             return rows;
         }
         function getAllYamatoRows() {
             let rows = [];
-            uploadedFiles.filter(f => f.type === 'yamato').forEach(f => {
-                rows = rows.concat(f.rows);
-            });
+            uploadedFiles.filter(f => f.type === 'yamato').forEach(f => { rows = rows.concat(f.rows); });
             return rows;
         }
         function getAllSagawaRows() {
             let rows = [];
-            uploadedFiles.filter(f => f.type === 'sagawa').forEach(f => {
-                rows = rows.concat(f.rows);
-            });
+            uploadedFiles.filter(f => f.type === 'sagawa').forEach(f => { rows = rows.concat(f.rows); });
             return rows;
         }
 
         // ==================== ピック数算出 & zaico連動 ====================
         window.processOrderPickCalculation = async () => {
             const allOrders = getAllOrderRows();
-            if (allOrders.length === 0) {
-                alert('受注データが読み込まれていません。');
-                return;
-            }
+            if (allOrders.length === 0) { alert('受注データが読み込まれていません。'); return; }
 
             const rawItemsMap = new Map();
             allOrders.forEach(cols => {
@@ -333,9 +322,7 @@
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 const masterMap = new Map();
-                querySnapshot.forEach(docSnap => {
-                    masterMap.set(docSnap.id, docSnap.data());
-                });
+                querySnapshot.forEach(docSnap => { masterMap.set(docSnap.id, docSnap.data()); });
 
                 const aggregatedMap = new Map();
                 for (const item of items) {
@@ -460,11 +447,9 @@
         };
 
         window.sendToZaico = async () => {
-            // 現在蓄積されている受注データから計算して送信
             const allOrders = getAllOrderRows();
             if (allOrders.length === 0) { alert('受注データがありません。'); return; }
 
-            // 一度ピック数計算がまだなら簡易算出
             const rawItemsMap = new Map();
             allOrders.forEach(cols => {
                 if (cols[6] === '1-0') return;
@@ -502,7 +487,7 @@
                 });
 
                 if (validItems.length === 0) {
-                    alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。商品マスタをご確認ください。');
+                    alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。');
                     return;
                 }
 
@@ -517,9 +502,8 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)\n\n※処理完了につき蓄積データをリセットします。`);
+                    alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)`);
                     showStatus("<b>出庫指示の送信が完了しました。</b>");
-                    resetAllData();
                 } else {
                     alert('送信失敗: ' + data.error);
                 }
@@ -550,7 +534,6 @@
             return addrStr.includes('沖縄') || addrStr.includes('おきなわ');
         }
 
-        // 佐川データ・ヤマトデータから沖縄宛てを判定して振り分けるヘルパー
         function getOrderUniqueIds() {
             let set = new Set();
             getAllOrderRows().forEach(r => {
@@ -565,28 +548,13 @@
             let yamatoRows = getAllYamatoRows();
             let allOrders = getAllOrderRows();
 
-            if (yamatoRows.length === 0) {
-                alert("ヤマトデータが読み込まれていません。");
-                return;
-            }
+            if (yamatoRows.length === 0) { alert("ヤマトデータが読み込まれていません。"); return; }
 
             let outputRows = [];
             let todayStr = getTodayString();
-            let okinawaOrderNos = new Set();
-
-            // 沖縄宛て判定（受注データまたはヤマトデータの住所カラムを走査）
-            allOrders.forEach(oRow => {
-                let oNum = cleanOrderNoNormalized(oRow[5]);
-                // 住所カラム（通常は受注データのG〜L列あたりやヤマト側の住所を確認）
-                let addrCombined = oRow.slice(6, 15).join(' ');
-                if (isOkinawaAddress(addrCombined)) {
-                    if (oNum) okinawaOrderNos.add(oNum);
-                }
-            });
 
             uniqueOrderNos.forEach(oNum => {
                 let matchedYRow = yamatoRows.find(r => {
-                    // ヤマトデータ側の受注番号カラムを探索
                     for(let c=0; c<r.length; c++) {
                         if (cleanOrderNoNormalized(r[c]) === oNum) return true;
                     }
@@ -609,14 +577,9 @@
                 }
             });
 
-            if (outputRows.length === 0) {
-                alert("ヤマトデータと紐付く受注番号が見つかりませんでした。");
-                return;
-            }
-
+            if (outputRows.length === 0) { alert("ヤマトデータと紐付く受注番号が見つかりませんでした。"); return; }
             exportCsvGeneric(outputRows, "yamato_processed_okinawa_included.csv");
-            alert("ヤマトCSVを出力しました。\n\n※処理完了につき蓄積データをリセットします。");
-            resetAllData();
+            alert("ヤマトCSVを出力しました。");
         };
 
         window.exportEhidenCsv = () => {
@@ -624,19 +587,13 @@
             let sagawaRows = getAllSagawaRows();
             let allOrders = getAllOrderRows();
 
-            if (sagawaRows.length === 0) {
-                alert("佐川データが読み込まれていません。");
-                return;
-            }
+            if (sagawaRows.length === 0) { alert("佐川データが読み込まれていません。"); return; }
 
-            // 沖縄宛ての受注番号を抽出
             let okinawaOrderNos = new Set();
             allOrders.forEach(oRow => {
                 let oNum = cleanOrderNoNormalized(oRow[5]);
                 let addrCombined = oRow.slice(6, 15).join(' ');
-                if (isOkinawaAddress(addrCombined) && oNum) {
-                    okinawaOrderNos.add(oNum);
-                }
+                if (isOkinawaAddress(addrCombined) && oNum) okinawaOrderNos.add(oNum);
             });
 
             let sagawaHeader = sagawaDataHeader();
@@ -645,8 +602,7 @@
             if (targetIdx === -1) targetIdx = 24;
 
             uniqueOrderNos.forEach(oNum => {
-                // 沖縄宛ては佐川から除外
-                if (okinawaOrderNos.has(oNum)) return;
+                if (okinawaOrderNos.has(oNum)) return; // 沖縄宛ては除外
 
                 let matchedSRow = sagawaRows.find(r => {
                     for(let c=0; c<r.length; c++) {
@@ -667,14 +623,9 @@
                 }
             });
 
-            if (outputRows.length <= 1) {
-                alert("佐川データと紐付く有効な受注データ（沖縄宛て除外後）がありません。");
-                return;
-            }
-
+            if (outputRows.length <= 1) { alert("佐川データと紐付く有効なデータがありません。"); return; }
             exportCsvGeneric(outputRows, "ehiden_processed_okinawa_excluded.csv");
-            alert("佐川CSVを出力しました（沖縄宛ては自動除外済み）。\n\n※処理完了につき蓄積データをリセットします。");
-            resetAllData();
+            alert("佐川CSVを出力しました（沖縄宛ては自動除外済み）。");
         };
 
         function sagawaDataHeader() {
