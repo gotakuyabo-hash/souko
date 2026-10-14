@@ -25,20 +25,7 @@
 
         // グローバルに登録関数を公開（メッセージ本文のテキスト連携）
         window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
-            let memoData = {};
-            try {
-                const memos = JSON.parse(localStorage.getItem("chatwork_room_memos_v1")) || {};
-                memoData = memos[roomId] || {};
-            } catch(e) {}
-
             let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
-            if (memoData.tag) {
-                taskContent += `\n🏷️ タグ: ${memoData.tag}`;
-            }
-            if (memoData.content) {
-                taskContent += `\n📌 セラーメモ: ${memoData.content}`;
-            }
-            
             taskContent += `\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
             
             if (memoVal) {
@@ -126,12 +113,9 @@
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
                 <input type="text" id="roomSearchInput" oninput="filterNormalRooms()" placeholder="🔍 ルーム名検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:outline-none">
                 <select id="roomSelect" onchange="onNormalRoomSelected()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white shadow-inner focus:outline-none">
-                    <option value="">-- セラーを選択 --</option>
+                    <option value="">-- ルームを選択 --</option>
                 </select>
                 <div class="flex gap-2">
-                    <button onclick="openRoomMemoModalForSelected()" class="bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs px-3 py-2 rounded-lg font-bold border border-amber-300 shrink-0">
-                        📝 このセラーのメモ
-                    </button>
                     <button onclick="loadSingleRoomMessages()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold py-2.5 rounded-lg shadow active:scale-95 transition">
                         メッセージを見る
                     </button>
@@ -169,28 +153,6 @@
             </div>
             <button onclick="submitToStaffApp(this)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
                 🚀 スタッフ間連絡アプリに登録する
-            </button>
-        </div>
-    </div>
-
-    <!-- セラーメモ・タグ編集モーダル -->
-    <div id="modalRoomMemo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
-        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-amber-50 rounded-t-xl">
-            <h2 class="font-bold text-amber-900">📌 セラーのメモ・タグ設定</h2>
-            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
-        </div>
-        <div class="p-4 space-y-3">
-            <input type="hidden" id="memoRoomId">
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">🏷️ ステータス・タグ</label>
-                <input type="text" id="memoTagInput" placeholder="カンマ区切りなどで入力" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
-            </div>
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">📝 一言メモ・注意点</label>
-                <textarea id="memoContentInput" placeholder="特記事項やルール..." class="w-full h-28 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
-            </div>
-            <button onclick="saveRoomMemoSubmit()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
-                メモを保存する
             </button>
         </div>
     </div>
@@ -238,7 +200,6 @@
         let allRoomsCache = [];
         let currentMode = 'burst';
         const TEMPLATE_KEY = "chatwork_custom_templates_v2";
-        const MEMO_KEY = "chatwork_room_memos_v1";
         const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
         const LATER_KEY = "chatwork_later_rooms_v1";
 
@@ -300,6 +261,26 @@
         /* ======== 🌐 Chatwork公式ルームを開く ======== */
         function openChatworkOfficial(roomId) {
             window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
+        }
+
+        /* ======== ✅ 既読にする機能 ======== */
+        async function markRoomAsRead(roomId, cardOrContainerEl) {
+            if (!confirm('このルームの未読をすべて既読にしますか？')) return;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "mark_read", token: getCurrentToken(), room_id: roomId })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message || '既読化失敗');
+
+                // 完了時の見た目変更または再読み込み
+                alert('既読にしました！');
+                refreshCurrentView();
+            } catch (e) {
+                alert('既読化失敗: ' + e.message);
+            }
         }
 
         /* ======== ⏳ 後で対応する機能 ======== */
@@ -373,10 +354,8 @@
             }
 
             let html = '';
-            const memos = getRoomMemos();
 
             for (const item of list) {
-                const memo = memos[item.roomId] || {};
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
 
                 html += `
@@ -387,10 +366,11 @@
                                     <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">⏳ 後で対応</span>
                                     <h3 class="font-bold text-sm text-slate-800">${escapeHtml(item.roomName)}</h3>
                                 </div>
-                                ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
-                                ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                             </div>
                             <div class="flex gap-1 shrink-0">
+                                <button onclick="markRoomAsRead('${item.roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded border border-indigo-300 font-bold">
+                                    📖 既読
+                                </button>
                                 <button onclick="openChatworkOfficial('${item.roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1.5 rounded border border-sky-300 font-bold">
                                     🌐 公式
                                 </button>
@@ -515,56 +495,6 @@
         }
         /* =========================================== */
 
-        /* ======== 📌 セラーメモ・タグ管理機能 ======== */
-        function getRoomMemos() {
-            try { return JSON.parse(localStorage.getItem(MEMO_KEY)) || {}; } catch(e) { return {}; }
-        }
-
-        function openRoomMemoModal(roomId, roomName) {
-            const memos = getRoomMemos();
-            const memoData = memos[roomId] || { tag: '', content: '' };
-
-            document.getElementById('memoRoomId').value = roomId;
-            document.getElementById('memoTagInput').value = memoData.tag || '';
-            document.getElementById('memoContentInput').value = memoData.content || '';
-
-            document.getElementById('modalOverlay').style.display = 'block';
-            document.getElementById('modalRoomMemo').style.display = 'flex';
-        }
-
-        function openRoomMemoModalForSelected() {
-            const roomId = document.getElementById('roomSelect').value;
-            if (!roomId) {
-                alert('ルームが選択されていません。');
-                return;
-            }
-            const selectEl = document.getElementById('roomSelect');
-            const roomName = selectEl.options[selectEl.selectedIndex].text;
-            openRoomMemoModal(roomId, roomName);
-        }
-
-        function saveRoomMemoSubmit() {
-            const roomId = document.getElementById('memoRoomId').value;
-            const tag = document.getElementById('memoTagInput').value.trim();
-            const content = document.getElementById('memoContentInput').value.trim();
-
-            let memos = getRoomMemos();
-            if (!tag && !content) delete memos[roomId];
-            else memos[roomId] = { tag, content };
-
-            localStorage.setItem(MEMO_KEY, JSON.stringify(memos));
-            closeAllModals();
-            if (currentMode === 'burst') fetchAllUnreadRooms();
-            else if (currentMode === 'later') renderLaterRooms();
-            else {
-                fetchNormalRooms();
-                if (document.getElementById('roomSelect').value === roomId) {
-                    loadSingleRoomMessages();
-                }
-            }
-        }
-        /* =========================================== */
-
         /* ======== ⚡ 未読バースト処理コア ======== */
         async function fetchAllUnreadRooms() {
             const statusEl = document.getElementById('loadStatus');
@@ -604,7 +534,6 @@
                 }
 
                 burstCont.innerHTML = '';
-                const memos = getRoomMemos();
                 const later = getLaterRooms();
                 const currentTokenKey = getCurrentToken();
                 const laterList = later[currentTokenKey] || [];
@@ -612,7 +541,6 @@
                 for (const room of unreadRooms) {
                     const roomId = room.room_id;
                     const roomName = room.name;
-                    const memo = memos[roomId] || {};
                     const cardId = `burst_card_${roomId}`;
 
                     let cardHtml = `
@@ -623,15 +551,13 @@
                                         <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
                                         <h3 class="font-bold text-sm text-slate-800">${escapeHtml(room.name)}</h3>
                                     </div>
-                                    ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
-                                    ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                                 </div>
                                 <div class="flex gap-1 shrink-0">
+                                    <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                        📖 既読
+                                    </button>
                                     <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
                                         🌐 公式
-                                    </button>
-                                    <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold">
-                                        📝 メモ
                                     </button>
                                 </div>
                             </div>
@@ -789,14 +715,11 @@
         function filterNormalRooms() {
             const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
             const filtered = allRoomsCache.filter(r => r.name.toLowerCase().includes(keyword));
-            const memos = getRoomMemos();
             
-            let html = '<option value="">-- セラーを選択 --</option>';
+            let html = '<option value="">-- ルームを選択 --</option>';
             filtered.forEach(r => {
-                const memo = memos[r.room_id];
-                const tagStr = memo && memo.tag ? ` [🏷️ ${memo.tag}]` : '';
                 const unreadStr = r.unread_num > 0 ? ` (🔴未読 ${r.unread_num})` : '';
-                html += `<option value="${r.room_id}">${escapeHtml(r.name)}${tagStr}${unreadStr}</option>`;
+                html += `<option value="${r.room_id}">${escapeHtml(r.name)}${unreadStr}</option>`;
             });
             document.getElementById('roomSelect').innerHTML = html;
         }
@@ -830,8 +753,6 @@
                 let messages = roomData.messages || [];
                 messages.sort((a, b) => a.send_time - b.send_time);
 
-                const memos = getRoomMemos();
-                const memo = memos[roomId] || {};
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId)) || {};
                 const roomName = roomObj.name || 'ルーム';
 
@@ -840,15 +761,13 @@
                         <div class="flex justify-between items-start border-b border-slate-100 pb-2">
                             <div>
                                 <h3 class="font-bold text-sm text-slate-800">📁 ${escapeHtml(roomName)}</h3>
-                                ${memo.tag ? `<div class="mt-1"><span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">🏷️ ${escapeHtml(memo.tag)}</span></div>` : ''}
-                                ${memo.content ? `<div class="text-xs text-slate-500 bg-amber-50/50 p-1.5 rounded mt-1 border border-amber-100">📌 ${escapeHtml(memo.content)}</div>` : ''}
                             </div>
                             <div class="flex gap-1 shrink-0">
+                                <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                    📖 既読
+                                </button>
                                 <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
                                     🌐 公式
-                                </button>
-                                <button onclick="openRoomMemoModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded border border-slate-300 font-bold">
-                                    📝 メモ
                                 </button>
                             </div>
                         </div>
@@ -1004,7 +923,6 @@
         function closeAllModals() {
             document.getElementById('modalOverlay').style.display = 'none';
             document.getElementById('modalLinkCopy').style.display = 'none';
-            document.getElementById('modalRoomMemo').style.display = 'none';
             document.getElementById('modalTemplateManager').style.display = 'none';
             document.getElementById('modalTemplateEditor').style.display = 'none';
         }
