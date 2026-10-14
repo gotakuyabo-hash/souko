@@ -378,7 +378,6 @@
             for (const item of list) {
                 const memo = memos[item.roomId] || {};
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
-                const encodedBody = encodeURIComponent(item.messageBody);
 
                 html += `
                     <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
@@ -414,9 +413,6 @@
                                 <select id="later_members_${item.roomId}" onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                     <option value="">👤 宛先(To)を追加</option>
                                 </select>
-                                <button onclick="insertReToTextarea('${uniqueTextareaId}', '', '${escapeHtml(item.senderName)}', '', '', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
-                                    💬 Re
-                                </button>
                             </div>
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             <button onclick="sendLaterReply('${item.roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
@@ -670,12 +666,9 @@
 
                         const latestMsg = messages[0];
                         const senderName = latestMsg.account && latestMsg.account.name ? latestMsg.account.name : '不明';
-                        const senderAccId = latestMsg.account && latestMsg.account.account_id ? latestMsg.account.account_id : '';
-                        const msgId = latestMsg.message_id || '';
                         const msgTime = latestMsg.send_time || '';
                         let sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
-                        const encodedBody = encodeURIComponent(latestMsg.body);
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                         const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
@@ -707,9 +700,6 @@
                                         <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                             ${membersOpts}
                                         </select>
-                                        <button onclick="insertReToTextarea('${uniqueTextareaId}', '${senderAccId}', '${escapeHtml(senderName)}', '${msgId}', '${msgTime}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold border border-indigo-200 shrink-0">
-                                            💬 Re
-                                        </button>
                                     </div>
                                     <div class="flex gap-1.5">
                                         <select onchange="insertTemplate(this, '${uniqueTextareaId}')" class="flex-1 template-dropdown text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none">
@@ -872,11 +862,8 @@
                 } else {
                     messages.forEach(m => {
                         const senderName = m.account && m.account.name ? m.account.name : '不明';
-                        const senderAccId = m.account && m.account.account_id ? m.account.account_id : '';
-                        const msgId = m.message_id || '';
                         const msgTime = m.send_time || '';
                         const sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-                        const encodedBody = encodeURIComponent(m.body);
                         const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
                         html += `
@@ -887,9 +874,6 @@
                                         <span class="text-slate-400 font-normal">${sendDateStr}</span>
                                         <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             🔗 連携
-                                        </button>
-                                        <button onclick="insertReToTextarea('normal_txt_${roomId}', '${senderAccId}', '${escapeHtml(senderName)}', '${msgId}', '${msgTime}', '${encodedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
-                                            💬 Re
                                         </button>
                                     </div>
                                 </div>
@@ -1015,16 +999,6 @@
             const mentionText = `[To:${accId}] ${name}さん\n`;
             ta.value = mentionText + ta.value;
             selectEl.selectedIndex = 0;
-        }
-
-        function insertReToTextarea(textareaId, senderAccId, senderName, msgId, msgTime, encodedBody) {
-            const body = decodeURIComponent(encodedBody);
-            const ta = document.getElementById(textareaId);
-            
-            // ご指定いただいた正しいChatwork公式の返信(Re)タグフォーマット
-            const reText = `[返信 aid=${senderAccId} to=${msgId}] ${senderName} さん\n${body}\n\n`;
-            
-            ta.value = reText + ta.value;
         }
 
         function closeAllModals() {
