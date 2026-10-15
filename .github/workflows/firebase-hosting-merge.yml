@@ -7,8 +7,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # すべての履歴を取得して正確な差分を追跡できるようにする
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -43,41 +41,12 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
-          GH_BEFORE: ${{ github.event.before }}
-          GH_AFTER: ${{ github.event.after }}
         run: |
           node -e '
-            const { execSync } = require("child_process");
             const https = require("https");
-
             const commitMsg = process.env.COMMIT_MSG || "更新";
             const firstLine = commitMsg.split("\n")[0];
-            const before = process.env.GH_BEFORE;
-            const after = process.env.GH_AFTER;
-
-            let diff = "";
-            try {
-              if (before && !before.startsWith("000000")) {
-                // 今回のプッシュで変更された正確な差分を取得
-                diff = execSync(`git diff ${before} ${after} --unified=0`).toString().trim();
-              } else {
-                diff = execSync("git show --unified=0").toString().trim();
-              }
-            } catch (e) {
-              diff = "";
-            }
-
-            // 追加・変更された行（+から始まる行）を抽出
-            const changedLines = diff.split("\n")
-              .filter(line => line.startsWith("+") && !line.startsWith("+++"))
-              .map(line => line.substring(1).trim())
-              .filter(line => line.length > 0 && !line.startsWith("<!") && !line.startsWith("<script") && !line.startsWith("</script"));
-
-            const details = changedLines.length > 0 
-              ? changedLines.slice(0, 10).map(l => `• ${l}`).join("\n") 
-              : "変更箇所の詳細なし";
-
-            const text = `<!channel> チェックリストが更新されました: ${firstLine}\n\n*【変更された内容】*\n${details}`;
+            const text = `<!channel> アプリが更新されました: ${firstLine}`;
 
             const data = JSON.stringify({ text });
             const url = new URL(process.env.SLACK_WEBHOOK_URL);
