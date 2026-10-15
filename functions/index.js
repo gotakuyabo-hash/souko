@@ -24,9 +24,9 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
-// 1. material_orders（資材発注など）の更新通知（即時通知）
+// 1. material_orders（資材発注など）の更新通知
 exports.notifyMaterialOrders = onDocumentWritten(
-    { document: "material_orders/{docId}" },
+    { document: "material_orders/{docId}", region: "asia-northeast1" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -37,9 +37,9 @@ exports.notifyMaterialOrders = onDocumentWritten(
     }
 );
 
-// 2. shared_notes（共有ノートなど）の更新通知（即時通知）
+// 2. shared_notes（共有ノートなど）の更新通知
 exports.notifySharedNotes = onDocumentWritten(
-    { document: "shared_notes/{docId}" },
+    { document: "shared_notes/{docId}", region: "asia-northeast1" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -54,13 +54,12 @@ exports.notifySharedNotes = onDocumentWritten(
 
 // 3. shukka_records（出荷件数）の更新通知 ★15分クールダウンあり
 exports.notifyShukkaRecords = onDocumentWritten(
-    { document: "shukka_records/{dateId}" },
+    { document: "shukka_records/{dateId}", region: "asia-northeast1" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
         const dateId = event.params.dateId;
 
-        // 15分以内の連続更新なら通知をブロック
         if (!canSendNotification(`shukka_records_${dateId}`)) return;
 
         const afterData = snap.after.data();
@@ -75,9 +74,9 @@ exports.notifyShukkaRecords = onDocumentWritten(
     }
 );
 
-// 4. staff_requests（スタッフからの要望・依頼など）の更新通知（即時通知）
+// 4. staff_requests（スタッフからの要望・依頼など）の更新通知
 exports.notifyStaffRequests = onDocumentWritten(
-    { document: "staff_requests/{docId}" },
+    { document: "staff_requests/{docId}", region: "asia-northeast1" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -92,13 +91,12 @@ exports.notifyStaffRequests = onDocumentWritten(
 
 // 5. warehouse_reports（日次報告チェックリスト）の更新通知 ★15分クールダウンあり
 exports.notifyWarehouseReports = onDocumentWritten(
-    { document: "warehouse_reports/{dateId}" },
+    { document: "warehouse_reports/{dateId}", region: "asia-northeast1" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
         const dateId = event.params.dateId;
 
-        // 15分以内の連続更新なら通知をブロック
         if (!canSendNotification(`warehouse_reports_${dateId}`)) return;
 
         const data = snap.after.data();
@@ -111,7 +109,7 @@ exports.notifyWarehouseReports = onDocumentWritten(
 
 // 定時チェック機能（毎日15:00に warehouse_reports の未完了をチェック）
 exports.checkIncompleteTasks = onSchedule(
-    { schedule: "0 15 * * *", timeZone: "Asia/Tokyo" },
+    { schedule: "0 15 * * *", timeZone: "Asia/Tokyo", region: "asia-northeast1" },
     async (event) => {
         const db = admin.firestore();
 
