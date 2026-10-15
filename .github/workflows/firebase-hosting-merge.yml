@@ -1,9 +1,9 @@
-name: Deploy to Firebase
+name: Deploy to Firebase Functions
 on:
   push:
     branches: [ main ]
 jobs:
-  build_and_deploy:
+  deploy_functions:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,22 +13,12 @@ jobs:
         with:
           node-version: '18'
           
-      # 1. ウェブサイト(Hosting)のデプロイ
-      - name: Deploy Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
-          channelId: live
-          projectId: souko-2de57
-          entryPoint: '.'
-          
-      # 2. 関数に必要なパッケージを自動インストール（これを追加！）
+      # 1. 関数に必要なパッケージをインストール
       - name: Install Functions Dependencies
         run: npm install
         working-directory: functions
           
-      # 3. 関数(Functions)のデプロイ
+      # 2. 関数(Functions)だけをデプロイ
       - name: Deploy Functions
         uses: w9jds/firebase-action@v13.3.0
         with:
