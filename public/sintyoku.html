@@ -23,9 +23,9 @@
         <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                    <span>📦</span> FBA作業・タスク進捗ボード
+                    <span>📦</span> FBA作業・件数管理ボード
                 </h1>
-                <p class="text-sm text-slate-500 mt-1">案件ごとに作業カードを登録し、ドラッグ＆ドロップで進捗を管理します</p>
+                <p class="text-sm text-slate-500 mt-1">商品名、作業名、件数を入力してドラッグ＆ドロップで進捗を管理します</p>
             </div>
             
             <div class="flex items-center gap-3 w-full md:w-auto">
@@ -45,14 +45,14 @@
         <div id="taskInputContainer" class="bg-blue-50/60 border border-blue-100 p-4 rounded-xl mb-8 hidden">
             <h2 class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-2">この案件に新しい作業カードを追加</h2>
             <form onsubmit="handleAddTask(event)" class="grid grid-cols-1 md:grid-cols-12 gap-3">
-                <div class="md:col-span-5">
-                    <input type="text" id="taskTitle" required placeholder="作業名（例: 商品ラベル貼り 40面シール）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                <div class="md:col-span-4">
+                    <input type="text" id="taskProductName" required placeholder="商品名（例: ステンレスマグボトル）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-4">
+                    <input type="text" id="taskName" required placeholder="作業名（例: 商品ラベル貼り）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
                 </div>
                 <div class="md:col-span-3">
-                    <input type="text" id="taskAssignee" placeholder="担当者（例: 松下）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div class="md:col-span-3">
-                    <input type="date" id="taskDueDate" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <input type="text" id="taskQuantity" required placeholder="件数（例: 120個 / 5箱）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
                 </div>
                 <div class="md:col-span-1">
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-sm transition shadow-sm h-full">追加</button>
@@ -87,7 +87,7 @@
                 <div id="col-in_progress" class="space-y-3 min-h-[350px]"></div>
             </div>
 
-            <!-- カラム 3: 確認・出荷中 -->
+            <!-- カラム 3: 出荷・配送中 -->
             <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 transition" 
                  ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'shipping')">
                 <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
@@ -155,7 +155,6 @@
 
         const statuses = ['todo', 'in_progress', 'shipping', 'done'];
 
-        // 1. 案件（プラン）一覧を読み込んでセレクトボックスを構築
         async function loadPlans() {
             const planSelector = document.getElementById('planSelector');
             const snapshot = await getDocs(collection(db, "fba_plans"));
@@ -187,7 +186,6 @@
             switchPlan(planId);
         }
 
-        // 2. 選択された案件に紐づく作業カードをリアルタイム監視
         function switchPlan(planId) {
             currentPlanId = planId;
             const inputContainer = document.getElementById('taskInputContainer');
@@ -234,19 +232,20 @@
             });
         }
 
-        // 作業カードのHTML生成（ドラッグ＆ドロップ対応）
+        // 作業カードのHTML生成（商品名・作業名・件数を表示）
         function createTaskCardHTML(id, data) {
             return `
                 <div draggable="true" 
                      ondragstart="dragStart(event, '${id}')" 
                      class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-grab active:cursor-grabbing">
-                    <div class="flex justify-between items-start mb-1.5">
-                        <h4 class="font-bold text-slate-800 text-sm leading-snug">${escapeHTML(data.title)}</h4>
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHTML(data.productName || '商品名なし')}</span>
                         <button onclick="deleteTask('${id}')" class="text-slate-300 hover:text-red-500 text-xs p-1">✕</button>
                     </div>
-                    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500 pt-2 border-t border-slate-100">
-                        ${data.assignee ? `<span class="bg-slate-100 px-2 py-0.5 rounded font-medium">👤 ${escapeHTML(data.assignee)}</span>` : ''}
-                        ${data.dueDate ? `<span class="bg-slate-100 px-2 py-0.5 rounded font-medium">📅 ${escapeHTML(data.dueDate)}</span>` : ''}
+                    <h4 class="font-bold text-slate-800 text-sm leading-snug mb-2">${escapeHTML(data.taskName || '')}</h4>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
+                        <span>件数:</span>
+                        <span class="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">${escapeHTML(data.quantity || '')}</span>
                     </div>
                 </div>
             `;
@@ -285,7 +284,7 @@
             }
         };
 
-        // --- 作業カードの追加 ---
+        // --- 作業カードの追加（商品名・作業名・件数） ---
         window.handleAddTask = async function(event) {
             event.preventDefault();
             if (!currentPlanId) {
@@ -293,22 +292,22 @@
                 return;
             }
 
-            const title = document.getElementById('taskTitle').value;
-            const assignee = document.getElementById('taskAssignee').value;
-            const dueDate = document.getElementById('taskDueDate').value;
+            const productName = document.getElementById('taskProductName').value;
+            const taskName = document.getElementById('taskName').value;
+            const quantity = document.getElementById('taskQuantity').value;
 
             try {
                 await addDoc(collection(db, "fba_tasks"), {
                     planId: currentPlanId,
-                    title,
-                    assignee,
-                    dueDate,
+                    productName,
+                    taskName,
+                    quantity,
                     status: 'todo',
                     createdAt: serverTimestamp()
                 });
-                document.getElementById('taskTitle').value = '';
-                document.getElementById('taskAssignee').value = '';
-                document.getElementById('taskDueDate').value = '';
+                document.getElementById('taskProductName').value = '';
+                document.getElementById('taskName').value = '';
+                document.getElementById('taskQuantity').value = '';
             } catch (e) {
                 console.error("Error adding task: ", e);
                 alert("タスクの追加に失敗しました。");
