@@ -1,18 +1,15 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
-const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const slackWebhookUrl = defineSecret("SLACK_WEBHOOK_URL");
-
 // 1. material_orders（資材発注など）の更新通知
 exports.notifyMaterialOrders = onDocumentWritten(
-    { document: "material_orders/{docId}", secrets: [slackWebhookUrl] },
+    { document: "material_orders/{docId}" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -26,7 +23,7 @@ exports.notifyMaterialOrders = onDocumentWritten(
 
 // 2. shared_notes（共有ノートなど）の更新通知
 exports.notifySharedNotes = onDocumentWritten(
-    { document: "shared_notes/{docId}", secrets: [slackWebhookUrl] },
+    { document: "shared_notes/{docId}" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -42,7 +39,7 @@ exports.notifySharedNotes = onDocumentWritten(
 
 // 3. shukka_records（出荷件数）の更新通知
 exports.notifyShukkaRecords = onDocumentWritten(
-    { document: "shukka_records/{dateId}", secrets: [slackWebhookUrl] },
+    { document: "shukka_records/{dateId}" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -63,7 +60,7 @@ exports.notifyShukkaRecords = onDocumentWritten(
 
 // 4. staff_requests（スタッフからの要望・依頼など）の更新通知
 exports.notifyStaffRequests = onDocumentWritten(
-    { document: "staff_requests/{docId}", secrets: [slackWebhookUrl] },
+    { document: "staff_requests/{docId}" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -79,7 +76,7 @@ exports.notifyStaffRequests = onDocumentWritten(
 
 // 5. warehouse_reports（日次報告チェックリスト）の更新通知
 exports.notifyWarehouseReports = onDocumentWritten(
-    { document: "warehouse_reports/{dateId}", secrets: [slackWebhookUrl] },
+    { document: "warehouse_reports/{dateId}" },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
@@ -95,7 +92,7 @@ exports.notifyWarehouseReports = onDocumentWritten(
 
 // 定時チェック機能（毎日15:00に warehouse_reports の未完了をチェック）
 exports.checkIncompleteTasks = onSchedule(
-    { schedule: "0 15 * * *", timeZone: "Asia/Tokyo", secrets: [slackWebhookUrl] },
+    { schedule: "0 15 * * *", timeZone: "Asia/Tokyo" },
     async (event) => {
         const db = admin.firestore();
 
@@ -143,7 +140,7 @@ exports.checkIncompleteTasks = onSchedule(
 // Slackへリクエストを送信する共通関数
 async function sendSlackNotification(text) {
     try {
-        await fetch(slackWebhookUrl.value(), {
+        await fetch(process.env.SLACK_WEBHOOK_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
