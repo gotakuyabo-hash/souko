@@ -1,5 +1,5 @@
-const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const functions = require("firebase-functions"); // v1用
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
 
@@ -107,52 +107,49 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 定時チェック機能（毎日15:00に warehouse_reports の未完了をチェック）
-exports.checkIncompleteTasks = onSchedule(
-    { schedule: "0 15 * * *", timeZone: "Asia/Tokyo", region: "asia-northeast1" },
-    async (event) => {
-        const db = admin.firestore();
+// 定時チェック機能（v1の仕組みに変更してIAMエラーを回避）
+exports.checkIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("0 15 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
+    const db = admin.firestore();
 
-        try {
-            const todayStr = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
-            const docRef = db.collection("warehouse_reports").doc(todayStr);
-            const docSnap = await docRef.get();
+    try {
+        const todayStr = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+        const docRef = db.collection("warehouse_reports").doc(todayStr);
+        const docSnap = await docRef.get();
 
-            if (!docSnap.exists) {
-                logger.info("本日の日次報告データがまだ存在しません。");
-                return;
-            }
-
-            const data = docSnap.data();
-            const sections = data.sections || {};
-            let uncheckedItems = [];
-
-            for (const sectionKey of Object.keys(sections)) {
-                const items = sections[sectionKey] || [];
-                items.forEach(item => {
-                    if (item.type === "checkbox" && item.checked === false) {
-                        uncheckedItems.push(item.title || "無題のチェック項目");
-                    }
-                });
-            }
-
-            if (uncheckedItems.length === 0) {
-                logger.info("未完了の項目はありません。");
-                return;
-            }
-
-            let messageText = `⏰ *定時になりましたが、以下のチェックが未完了です！* (${todayStr})\n`;
-            uncheckedItems.forEach(title => {
-                messageText += `>・ ${title}\n`;
-            });
-
-            await sendSlackNotification(messageText);
-            logger.info("定時チェックのSlack通知を送信しました。");
-        } catch (error) {
-            logger.error("定時チェックの処理でエラーが発生しました:", error);
+        if (!docSnap.exists) {
+            logger.info("本日の日次報告データがまだ存在しません。");
+            return;
         }
+
+        const data = docSnap.data();
+        const sections = data.sections || {};
+        let uncheckedItems = [];
+
+        for (const sectionKey of Object.keys(sections)) {
+            const items = sections[sectionKey] || [];
+            items.forEach(item => {
+                if (item.type === "checkbox" && item.checked === false) {
+                    uncheckedItems.push(item.title || "無題のチェック項目");
+                }
+            });
+        }
+
+        if (uncheckedItems.length === 0) {
+            logger.info("未完了の項目はありません。");
+            return;
+        }
+
+        let messageText = `⏰ *定時になりましたが、以下のチェックが未完了です！* (${todayStr})\n`;
+        uncheckedItems.forEach(title => {
+            messageText += `>・ ${title}\n`;
+        });
+
+        await sendSlackNotification(messageText);
+        logger.info("定時チェックのSlack通知を送信しました。");
+    } catch (error) {
+        logger.error("定時チェックの処理でエラーが発生しました:", error);
     }
-);
+});
 
 // Slackへリクエストを送信する共通関数
 async function sendSlackNotification(text) {
