@@ -1,4 +1,4 @@
-name: Deploy to Firebase Hosting on merge
+Name: Deploy to Firebase
 on:
   push:
     branches: [ main ]
@@ -7,10 +7,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies (functions)
+        run: npm ci
+        working-directory: functions
+      - name: Deploy to Firebase
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
           channelId: live
           projectId: souko-2de57
           entryPoint: '.'
+      - name: Deploy Functions and Rules
+        uses: w9jds/firebase-action@v13.3.0
+        with:
+          args: deploy --only functions
+        env:
+          FIREBASE_TOKEN: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
