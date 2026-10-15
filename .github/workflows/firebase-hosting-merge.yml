@@ -7,9 +7,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to Firebase
+      
+      # 1. まずは今まで成功していた方法でウェブサイト(Hosting)をデプロイ
+      - name: Deploy Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+          channelId: live
+          projectId: souko-2de57
+          entryPoint: '.'
+          
+      # 2. 次に正しい認証鍵(GCP_SA_KEY)を使って関数(Functions)だけをデプロイ
+      - name: Deploy Functions
         uses: w9jds/firebase-action@v13.3.0
         with:
-          args: deploy --project souko-2de57
+          args: deploy --only functions --project souko-2de57
         env:
-          FIREBASE_TOKEN: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+          GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
