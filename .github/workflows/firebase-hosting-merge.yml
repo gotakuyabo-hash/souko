@@ -1,39 +1,49 @@
 name: Deploy to Firebase
 on:
-  push:
-    branches: [ main ]
+push:
+branches: [ main ]
 jobs:
-  deploy_all:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+deploy_all:
+runs-on: ubuntu-latest
+steps:
+- uses: actions/checkout@v4
 
-      # ▼ Hosting（ウェブサイト）のアップロード指示（修正版） ▼
-      - name: Deploy Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
-          channelId: live
-          projectId: souko-2de57
-          # 以下の行を追加（firebase.jsonを探す場所を明記）
-          entryPoint: '.'
-          
-      - name: Install Functions Dependencies
-        run: npm install
-        working-directory: functions
-          
-      - name: Create .env file
-        run: echo "SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}" > functions/.env
-          
-      - name: Deploy Functions
-        uses: w9jds/firebase-action@v13.3.0
-        with:
-          args: deploy --only functions --project souko-2de57 --force
-        env:
-          GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+  - name: Setup Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: '20'
+
+  # ▼ Hosting（ウェブサイト）のアップロード指示（修正版） ▼
+  - name: Deploy Hosting
+    uses: FirebaseExtended/action-hosting-deploy@v0
+    with:
+      repoToken: '${{ secrets.GITHUB_TOKEN }}'
+      firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+      channelId: live
+      projectId: souko-2de57
+      # 以下の行を追加（firebase.jsonを探す場所を明記）
+      entryPoint: '.'
+      
+  - name: Install Functions Dependencies
+    run: npm install
+    working-directory: functions
+      
+  - name: Create .env file
+    run: echo "SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}" > functions/.env
+      
+  - name: Deploy Functions
+    uses: w9jds/firebase-action@v13.3.0
+    with:
+      args: deploy --only functions --project souko-2de57 --force
+    env:
+      GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+
+  - name: Send Slack Notification
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      COMMIT_MSG: ${{ github.event.head_commit.message }}
+    run: |
+      FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+      curl -X POST -H 'Content-Type: application/json' \
+      -d "{\"text\": \"<!channel> アプリが更新されました: ${FIRST_LINE}\"}" \
+      $SLACK_WEBHOOK_URL
