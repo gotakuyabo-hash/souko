@@ -140,12 +140,13 @@ exports.checkIncompleteTasks = onSchedule(
 // Slackへリクエストを送信する共通関数
 async function sendSlackNotification(text) {
     try {
+        const messageWithMention = `<!channel>\n` + text;
         await fetch(process.env.SLACK_WEBHOOK_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text: messageWithMention }),
         });
     } catch (error) {
         logger.error("Slack通知の送信に失敗しました:", error);
