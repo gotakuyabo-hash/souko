@@ -1,4 +1,5 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -9,6 +10,90 @@ if (!admin.apps.length) {
 
 const slackWebhookUrl = defineSecret("SLACK_WEBHOOK_URL");
 
+// 1. material_orders（資材発注など）の更新通知
+exports.notifyMaterialOrders = onDocumentWritten(
+    { document: "material_orders/{docId}", secrets: [slackWebhookUrl] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        const docId = event.params.docId;
+
+        let messageText = `📦 *資材発注データが更新されました！*\n>・ *ID/日付:* ${docId}`;
+
+        await sendSlackNotification(messageText);
+    }
+);
+
+// 2. shared_notes（共有ノートなど）の更新通知
+exports.notifySharedNotes = onDocumentWritten(
+    { document: "shared_notes/{docId}", secrets: [slackWebhookUrl] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        const docId = event.params.docId;
+        const data = snap.after.data();
+        const title = data.title || data.name || "無題";
+
+        let messageText = `📝 *共有ノートが更新されました！*\n>・ *タイトル:* ${title}\n>・ *ID:* ${docId}`;
+
+        await sendSlackNotification(messageText);
+    }
+);
+
+// 3. shukka_records（出荷件数）の更新通知
+exports.notifyShukkaRecords = onDocumentWritten(
+    { document: "shukka_records/{dateId}", secrets: [slackWebhookUrl] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        const dateId = event.params.dateId;
+        const afterData = snap.after.data();
+        
+        let totalCount = 0;
+        Object.values(afterData).forEach(val => {
+            const num = parseInt(val, 10);
+            if (!isNaN(num)) totalCount += num;
+        });
+
+        let messageText = `📊 *出荷件数データが更新されました！*\n>・ *対象日:* ${dateId}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
+
+        await sendSlackNotification(messageText);
+    }
+);
+
+// 4. staff_requests（スタッフからの要望・依頼など）の更新通知
+exports.notifyStaffRequests = onDocumentWritten(
+    { document: "staff_requests/{docId}", secrets: [slackWebhookUrl] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        const docId = event.params.docId;
+        const data = snap.after.data();
+        const staffName = data.name || data.staffName || "スタッフ";
+
+        let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *担当/氏名:* ${staffName}\n>・ *ID:* ${docId}`;
+
+        await sendSlackNotification(messageText);
+    }
+);
+
+// 5. warehouse_reports（日次報告チェックリスト）の更新通知
+exports.notifyWarehouseReports = onDocumentWritten(
+    { document: "warehouse_reports/{dateId}", secrets: [slackWebhookUrl] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        const dateId = event.params.dateId;
+        const data = snap.after.data();
+        const reporterName = data.name || "未設定";
+
+        let messageText = `📋 *日次報告チェックリストが更新されました！*\n>・ *対象日:* ${dateId}\n>・ *管理者:* ${reporterName}`;
+
+        await sendSlackNotification(messageText);
+    }
+);
+
+// 定時チェック機能（毎日15:00に warehouse_reports の未完了をチェック）
 exports.checkIncompleteTasks = onSchedule(
     { schedule: "0 15 * * *", timeZone: "Asia/Tokyo", secrets: [slackWebhookUrl] },
     async (event) => {
@@ -38,7 +123,7 @@ exports.checkIncompleteTasks = onSchedule(
             }
 
             if (uncheckedItems.length === 0) {
-                logger.info("未完了のチェック項目はありません。");
+                logger.info("未完了の項目はありません。");
                 return;
             }
 
@@ -47,17 +132,25 @@ exports.checkIncompleteTasks = onSchedule(
                 messageText += `>・ ${title}\n`;
             });
 
-            await fetch(slackWebhookUrl.value(), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ text: messageText }),
-            });
-
+            await sendSlackNotification(messageText);
             logger.info("定時チェックのSlack通知を送信しました。");
         } catch (error) {
             logger.error("定時チェックの処理でエラーが発生しました:", error);
         }
     }
 );
+
+// Slackへリクエストを送信する共通関数
+async function sendSlackNotification(text) {
+    try {
+        await fetch(slackWebhookUrl.value(), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ text }),
+        });
+    } catch (error) {
+        logger.error("Slack通知の送信に失敗しました:", error);
+    }
+}
