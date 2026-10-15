@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FBA作業カード進捗管理ボード</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .dragging {
+            opacity: 0.4;
+        }
+        .drag-over {
+            background-color: #f1f5f9 !important;
+            border-color: #3b82f6 !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <!-- ヘッダー & 案件（プラン）切り替え -->
+        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <span>📦</span> FBA作業・タスク進捗ボード
+                </h1>
+                <p class="text-sm text-slate-500 mt-1">案件ごとに作業カードを登録し、ドラッグ＆ドロップで進捗を管理します</p>
+            </div>
+            
+            <div class="flex items-center gap-3 w-full md:w-auto">
+                <div class="flex-1 md:w-64">
+                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">現在の対象案件（プラン）</label>
+                    <select id="planSelector" onchange="changePlan(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="">案件を選択してください...</option>
+                    </select>
+                </div>
+                <button onclick="openPlanModal()" class="mt-4 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap">
+                    + 案件を追加
+                </button>
+            </div>
+        </header>
+
+        <!-- 作業カード追加バー（案件選択時のみ有効） -->
+        <div id="taskInputContainer" class="bg-blue-50/60 border border-blue-100 p-4 rounded-xl mb-8 hidden">
+            <h2 class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-2">この案件に新しい作業カードを追加</h2>
+            <form onsubmit="handleAddTask(event)" class="grid grid-cols-1 md:grid-cols-12 gap-3">
+                <div class="md:col-span-5">
+                    <input type="text" id="taskTitle" required placeholder="作業名（例: 商品ラベル貼り 40面シール）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-3">
+                    <input type="text" id="taskAssignee" placeholder="担当者（例: 松下）" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-3">
+                    <input type="date" id="taskDueDate" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-1">
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-sm transition shadow-sm h-full">追加</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- カンバンボード（4カラム） -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+            
+            <!-- カラム 1: 未着手 -->
+            <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 transition" 
+                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'todo')">
+                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
+                    <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 pointer-events-none">
+                        <span class="w-3 h-3 rounded-full bg-amber-500"></span> 1. 未着手 (To Do)
+                    </h3>
+                    <span id="count-todo" class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">0</span>
+                </div>
+                <div id="col-todo" class="space-y-3 min-h-[350px]"></div>
+            </div>
+
+            <!-- カラム 2: 進行中 -->
+            <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 transition" 
+                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'in_progress')">
+                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
+                    <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 pointer-events-none">
+                        <span class="w-3 h-3 rounded-full bg-blue-500"></span> 2. 進行中 (Doing)
+                    </h3>
+                    <span id="count-in_progress" class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">0</span>
+                </div>
+                <div id="col-in_progress" class="space-y-3 min-h-[350px]"></div>
+            </div>
+
+            <!-- カラム 3: 確認・出荷中 -->
+            <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 transition" 
+                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'shipping')">
+                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
+                    <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 pointer-events-none">
+                        <span class="w-3 h-3 rounded-full bg-purple-500"></span> 3. 出荷・配送中
+                    </h3>
+                    <span id="count-shipping" class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">0</span>
+                </div>
+                <div id="col-shipping" class="space-y-3 min-h-[350px]"></div>
+            </div>
+
+            <!-- カラム 4: 完了 -->
+            <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 transition" 
+                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'done')">
+                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
+                    <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 pointer-events-none">
+                        <span class="w-3 h-3 rounded-full bg-emerald-500"></span> 4. 完了 (Done)
+                    </h3>
+                    <span id="count-done" class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">0</span>
+                </div>
+                <div id="col-done" class="space-y-3 min-h-[350px]"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- 新規案件作成モーダル -->
+    <div id="planModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100">
+            <h3 class="text-lg font-bold text-slate-900 mb-4">新規FBA案件（プラン）の追加</h3>
+            <form onsubmit="handleCreatePlan(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">案件名・納品プラン名</label>
+                    <input type="text" id="planTitle" required placeholder="例: 10月下旬 FBA通常納品 第1便" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" onclick="closePlanModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition">キャンセル</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition shadow-sm">作成する</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Firebase SDK & アプリケーションロジック -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ご提示いただいたFirebase設定
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let currentPlanId = null;
+        let unsubscribeTasks = null;
+
+        const statuses = ['todo', 'in_progress', 'shipping', 'done'];
+
+        // 1. 案件（プラン）一覧を読み込んでセレクトボックスを構築
+        async function loadPlans() {
+            const planSelector = document.getElementById('planSelector');
+            const snapshot = await getDocs(collection(db, "fba_plans"));
+            
+            planSelector.innerHTML = '<option value="">案件を選択してください...</option>';
+            
+            let firstId = null;
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const id = docSnap.id;
+                if (!firstId) firstId = id;
+
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = data.title;
+                planSelector.appendChild(option);
+            });
+
+            if (currentPlanId && document.querySelector(`option[value="${currentPlanId}"]`)) {
+                planSelector.value = currentPlanId;
+                switchPlan(currentPlanId);
+            } else if (snapshot.size > 0) {
+                planSelector.value = firstId;
+                switchPlan(firstId);
+            }
+        }
+
+        window.changePlan = function(planId) {
+            switchPlan(planId);
+        }
+
+        // 2. 選択された案件に紐づく作業カードをリアルタイム監視
+        function switchPlan(planId) {
+            currentPlanId = planId;
+            const inputContainer = document.getElementById('taskInputContainer');
+
+            if (!planId) {
+                inputContainer.classList.add('hidden');
+                clearColumns();
+                return;
+            }
+
+            inputContainer.classList.remove('hidden');
+
+            if (unsubscribeTasks) unsubscribeTasks();
+
+            const q = query(collection(db, "fba_tasks"), where("planId", "==", planId));
+            unsubscribeTasks = onSnapshot(q, (snapshot) => {
+                statuses.forEach(status => {
+                    document.getElementById(`col-${status}`).innerHTML = '';
+                    document.getElementById(`count-${status}`).textContent = '0';
+                });
+
+                const counts = { todo: 0, in_progress: 0, shipping: 0, done: 0 };
+
+                snapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const id = docSnap.id;
+                    const status = data.status || 'todo';
+                    counts[status]++;
+
+                    const cardHTML = createTaskCardHTML(id, data);
+                    document.getElementById(`col-${status}`).insertAdjacentHTML('beforeend', cardHTML);
+                });
+
+                statuses.forEach(status => {
+                    document.getElementById(`count-${status}`).textContent = counts[status];
+                });
+            });
+        }
+
+        function clearColumns() {
+            statuses.forEach(status => {
+                document.getElementById(`col-${status}`).innerHTML = '';
+                document.getElementById(`count-${status}`).textContent = '0';
+            });
+        }
+
+        // 作業カードのHTML生成（ドラッグ＆ドロップ対応）
+        function createTaskCardHTML(id, data) {
+            return `
+                <div draggable="true" 
+                     ondragstart="dragStart(event, '${id}')" 
+                     class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-grab active:cursor-grabbing">
+                    <div class="flex justify-between items-start mb-1.5">
+                        <h4 class="font-bold text-slate-800 text-sm leading-snug">${escapeHTML(data.title)}</h4>
+                        <button onclick="deleteTask('${id}')" class="text-slate-300 hover:text-red-500 text-xs p-1">✕</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500 pt-2 border-t border-slate-100">
+                        ${data.assignee ? `<span class="bg-slate-100 px-2 py-0.5 rounded font-medium">👤 ${escapeHTML(data.assignee)}</span>` : ''}
+                        ${data.dueDate ? `<span class="bg-slate-100 px-2 py-0.5 rounded font-medium">📅 ${escapeHTML(data.dueDate)}</span>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- ドラッグ＆ドロップ処理 ---
+        window.dragStart = function(event, id) {
+            event.dataTransfer.setData('text/plain', id);
+            event.target.classList.add('dragging');
+            event.target.addEventListener('dragend', () => {
+                event.target.classList.remove('dragging');
+            }, { once: true });
+        };
+
+        window.allowDrop = function(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('drag-over');
+        };
+
+        window.removeDropStyle = function(event) {
+            event.currentTarget.classList.remove('drag-over');
+        };
+
+        window.dropTask = async function(event, newStatus) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+
+            const id = event.dataTransfer.getData('text/plain');
+            if (!id) return;
+
+            try {
+                const docRef = doc(db, "fba_tasks", id);
+                await updateDoc(docRef, { status: newStatus });
+            } catch (e) {
+                console.error("Error updating status: ", e);
+            }
+        };
+
+        // --- 作業カードの追加 ---
+        window.handleAddTask = async function(event) {
+            event.preventDefault();
+            if (!currentPlanId) {
+                alert("先に案件を選択してください。");
+                return;
+            }
+
+            const title = document.getElementById('taskTitle').value;
+            const assignee = document.getElementById('taskAssignee').value;
+            const dueDate = document.getElementById('taskDueDate').value;
+
+            try {
+                await addDoc(collection(db, "fba_tasks"), {
+                    planId: currentPlanId,
+                    title,
+                    assignee,
+                    dueDate,
+                    status: 'todo',
+                    createdAt: serverTimestamp()
+                });
+                document.getElementById('taskTitle').value = '';
+                document.getElementById('taskAssignee').value = '';
+                document.getElementById('taskDueDate').value = '';
+            } catch (e) {
+                console.error("Error adding task: ", e);
+                alert("タスクの追加に失敗しました。");
+            }
+        };
+
+        // --- 作業カードの削除 ---
+        window.deleteTask = async function(id) {
+            if (confirm("この作業カードを削除してもよろしいですか？")) {
+                try {
+                    await deleteDoc(doc(db, "fba_tasks", id));
+                } catch (e) {
+                    console.error("Error deleting task: ", e);
+                }
+            }
+        };
+
+        // --- 新規案件（プラン）の作成 ---
+        window.handleCreatePlan = async function(event) {
+            event.preventDefault();
+            const title = document.getElementById('planTitle').value;
+
+            try {
+                const docRef = await addDoc(collection(db, "fba_plans"), {
+                    title,
+                    createdAt: serverTimestamp()
+                });
+                closePlanModal();
+                document.getElementById('planTitle').value = '';
+                await loadPlans();
+                document.getElementById('planSelector').value = docRef.id;
+                switchPlan(docRef.id);
+            } catch (e) {
+                console.error("Error creating plan: ", e);
+                alert("案件の作成に失敗しました。");
+            }
+        };
+
+        window.openPlanModal = function() {
+            document.getElementById('planModal').classList.remove('hidden');
+            document.getElementById('planModal').classList.add('flex');
+        }
+        window.closePlanModal = function() {
+            document.getElementById('planModal').classList.remove('flex');
+            document.getElementById('planModal').classList.add('hidden');
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            );
+        }
+
+        loadPlans();
+    </script>
+</body>
+</html>
