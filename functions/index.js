@@ -3,38 +3,50 @@ const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 
-// Firebase Adminの初期化（まだ書いていない場合は必要です）
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 
 const slackWebhookUrl = defineSecret("SLACK_WEBHOOK_URL");
 
-// 毎日「定時（例: 18時00分）」に実行するスケジュール設定
-// cron形式: "0 18 * * *" （毎日18:00）
 exports.checkIncompleteTasks = onSchedule(
     { schedule: "0 15 * * *", timeZone: "Asia/Tokyo", secrets: [slackWebhookUrl] },
     async (event) => {
         const db = admin.firestore();
 
         try {
-            // "notes" や "tasks" など、チェックリストを保存しているコレクションを指定
-            const snapshot = await db.collection("warehouse_reports").where("checked", "==", false).get();
+            const todayStr = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+            const docRef = db.collection("warehouse_reports").doc(todayStr);
+            const docSnap = await docRef.get();
 
-            if (snapshot.empty) {
-                logger.info("未完了の項目はありません。");
+            if (!docSnap.exists) {
+                logger.info("本日の日次報告データがまだ存在しません。");
                 return;
             }
 
-            // 未完了の項目がある場合、リストをまとめる
-            let messageText = "⏰ *定時になりましたが、以下の未完了の項目があります！*\n";
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                const title = data.title || "無題";
+            const data = docSnap.data();
+            const sections = data.sections || {};
+            let uncheckedItems = [];
+
+            for (const sectionKey of Object.keys(sections)) {
+                const items = sections[sectionKey] || [];
+                items.forEach(item => {
+                    if (item.type === "checkbox" && item.checked === false) {
+                        uncheckedItems.push(item.title || "無題のチェック項目");
+                    }
+                });
+            }
+
+            if (uncheckedItems.length === 0) {
+                logger.info("未完了のチェック項目はありません。");
+                return;
+            }
+
+            let messageText = `⏰ *定時になりましたが、以下のチェックが未完了です！* (${todayStr})\n`;
+            uncheckedItems.forEach(title => {
                 messageText += `>・ ${title}\n`;
             });
 
-            // Slackへ通知を送信
             await fetch(slackWebhookUrl.value(), {
                 method: "POST",
                 headers: {
