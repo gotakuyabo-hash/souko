@@ -1,3 +1,7 @@
+const { onRequest } = require("firebase-functions/v2/https");
+const functions = require("firebase-functions");
+const logger = require("firebase-functions/logger");
+
 // zaico出庫指示用API（memo削除 & customer_nameを引数で受け取る仕様）
 exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
@@ -11,7 +15,6 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
 
     try {
         const items = req.body.items; 
-        // フロントから任意の顧客名を受け取る（指定がない場合はデフォルト値）
         const customerName = req.body.customerName || "受注一括出荷";
 
         if (!items || !Array.isArray(items) || items.length === 0) {
@@ -93,7 +96,6 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         const slipNum = "SLIP-" + Date.now();
         const todayStr = new Date().toISOString().split('T')[0];
 
-        // memoを外し、受け取った customerName を設定
         const zaicoPayload = {
             num: slipNum,
             customer_name: customerName,
