@@ -244,32 +244,28 @@
 
         function getCurrentToken() { return document.getElementById('accountSelect').value; }
         
-        // 共通GET通信関数（CORSエラー完全回避）
+        // 共通GET通信関数（デバッグログ付き）
         async function callGasApi(action, params = {}) {
             params.action = action;
             params.token = getCurrentToken();
             const query = new URLSearchParams(params).toString();
-            const res = await fetch(`${GAS_WEB_APP_URL}?${query}`);
-            const data = await res.json();
-            if (data.status !== "success") {
-                throw new Error(data.message || "GAS通信エラー");
-            }
-            return data;
-        }
+            const targetUrl = `${GAS_WEB_APP_URL}?${query}`;
+            
+            console.log("🚀 GAS通信開始:", action, targetUrl); // ← 追加
 
-        function changeAccount() {
-            if (currentMode === 'burst') fetchAllUnreadRooms();
-            else if (currentMode === 'later') renderLaterRooms();
-            else fetchNormalRooms();
-        }
+            try {
+                const res = await fetch(targetUrl);
+                const text = await res.text(); // 一度テキストとして受け取る
+                console.log("📥 GAS受信テキスト:", text); // ← 追加
 
-        function refreshCurrentView() {
-            if (currentMode === 'burst') {
-                fetchAllUnreadRooms();
-            } else if (currentMode === 'later') {
-                renderLaterRooms();
-            } else {
-                fetchNormalRooms();
+                const data = JSON.parse(text);
+                if (data.status !== "success") {
+                    throw new Error(data.message || "GAS通信エラー");
+                }
+                return data;
+            } catch (err) {
+                console.error("❌ callGasApi エラー:", err); // ← 追加
+                throw err;
             }
         }
 
