@@ -826,7 +826,8 @@
                 const roomName = roomObj.name || 'ルーム';
 
                 const later = getLaterRooms();
-                const isLater = (later[getCurrentToken()] || []).some(item => String(item.roomId) === String(roomId));
+                const currentTokenKey = getCurrentToken();
+                const laterList = later[currentTokenKey] || [];
 
                 let html = `
                     <div class="bg-white border-2 border-indigo-100 rounded-xl p-4 shadow-sm space-y-3">
@@ -864,6 +865,10 @@
                         const msgTime = m.send_time || '';
                         const sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        const escapedBodyForMsgLater = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        
+                        // 各メッセージが「後で対応」に登録されているか判定
+                        const isMsgLater = laterList.some(item => String(item.roomId) === String(roomId) && String(item.messageBody) === String(m.body));
 
                         html += `
                             <div class="bg-white p-2.5 rounded border border-slate-200 space-y-1.5">
@@ -871,6 +876,9 @@
                                     <span>👤 ${escapeHtml(senderName)}</span>
                                     <div class="flex items-center gap-1.5">
                                         <span class="text-slate-400 font-normal">${sendDateStr}</span>
+                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForMsgLater}', '${sendDateStr}', this)" class="${isMsgLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-[10px] px-2 py-0.5 rounded font-bold transition">
+                                            ${isMsgLater ? '⏳ 対応中' : '⏳ 後で'}
+                                        </button>
                                         <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
                                             🔗 連携
                                         </button>
@@ -888,12 +896,13 @@
                     membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
                 });
 
-                // 直近のメッセージ（存在する場合）を変数として後で対応ボタンに渡す
+                // 直近のメッセージを変数としてフォーム下の「後で対応する」ボタンに渡す
                 const latestMsgForLater = messages.length > 0 ? messages[messages.length - 1] : null;
                 const latestSenderName = latestMsgForLater && latestMsgForLater.account && latestMsgForLater.account.name ? latestMsgForLater.account.name : '不明';
                 const latestBody = latestMsgForLater ? latestMsgForLater.body : '';
                 const latestTime = latestMsgForLater && latestMsgForLater.send_time ? new Date(latestMsgForLater.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                 const escapedLatestBodyForLater = escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                const isRoomLater = laterList.some(item => String(item.roomId) === String(roomId));
 
                 html += `
                         </div>
@@ -916,8 +925,8 @@
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
-                                <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(latestSenderName).replace(/'/g, "\\'")}', '${escapedLatestBodyForLater}', '${latestTime}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
-                                    ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
+                                <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(latestSenderName).replace(/'/g, "\\'")}', '${escapedLatestBodyForLater}', '${latestTime}', this)" class="${isRoomLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                    ${isRoomLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
                                 </button>
                                 <button onclick="sendNormalReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
                                     📤 このルームに返信する
