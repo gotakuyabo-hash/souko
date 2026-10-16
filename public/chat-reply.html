@@ -78,7 +78,7 @@
             <div class="flex items-center gap-2">
                 <select id="accountSelect" onchange="changeAccount()" class="flex-1 border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50/50 font-bold text-indigo-950 focus:outline-none">
                     <option value="5435a05ddd195c46ca688d021e45bbce">ラクロジスタッフアカウント</option>
-                    <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント</option>
+                    <option value="57d74ea2e63325c5306b594c3bb231af" selected>松下アカウント</option>
                 </select>
             </div>
             
@@ -201,7 +201,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
-            // 既存の初期化処理（未読ルーム取得など）
+            fetchAllUnreadRooms();
         });
 
         function getCurrentToken() { return document.getElementById('accountSelect').value; }
@@ -249,10 +249,103 @@
             }
         }
 
+        // ⚡ 未読ルーム一覧を取得してカードを描画する関数
+        async function fetchAllUnreadRooms() {
+            const container = document.getElementById('burstModeContainer');
+            document.getElementById('loadStatus').textContent = "スキャン中...";
+            
+            container.innerHTML = `
+                <div class="text-center text-xs text-slate-500 py-8">
+                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
+                    <div>未読ルームをスキャン中...</div>
+                </div>
+            `;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message || '取得失敗');
+
+                const rooms = data.rooms.filter(r => r.unread_num > 0);
+                document.getElementById('loadStatus').textContent = `未読 ${rooms.length}件`;
+
+                if (rooms.length === 0) {
+                    container.innerHTML = `
+                        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
+                            <div class="text-2xl">✨</div>
+                            <div class="text-sm font-bold text-slate-700">未読のルームはありません！</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '';
+                for (const r of rooms) {
+                    // ルーム名などをキーにしてワンクリックでセラー情報を引けるボタンをカード内に設置
+                    html += `
+                        <div class="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm space-y-2">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="font-bold text-sm text-slate-900">${r.name}</div>
+                                <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">未読 ${r.unread_num}</span>
+                            </div>
+                            <div class="flex items-center gap-2 pt-2 border-t border-slate-100 flex-wrap">
+                                <button onclick="fetchSellerInfo('${r.name}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-2.5 py-1.5 rounded font-bold transition">
+                                    🔑 セラー情報
+                                </button>
+                                <button onclick="markRoomAsRead('${r.room_id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs px-2 py-1.5 rounded font-bold transition">
+                                    ✅ 既読にする
+                                </button>
+                                <button onclick="openChatworkOfficial('${r.room_id}')" class="text-xs text-indigo-600 hover:underline font-bold ml-auto">
+                                    Chatworkで開く ↗
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+                container.innerHTML = html;
+
+            } catch (e) {
+                console.error(e);
+                container.innerHTML = `
+                    <div class="bg-red-50 border border-red-200 p-4 rounded-xl text-center text-red-700 text-xs">
+                        取得エラー: ${e.message}
+                    </div>
+                `;
+                document.getElementById('loadStatus').textContent = "エラー";
+            }
+        }
+
+        // 🌐 Chatwork公式ルームを開く
+        function openChatworkOfficial(roomId) {
+            window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
+        }
+
+        // ✅ 既読にする機能
+        async function markRoomAsRead(roomId) {
+            if (!confirm('このルームの未読をすべて既読にしますか？')) return;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "mark_read", token: getCurrentToken(), room_id: roomId })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message || '既読化失敗');
+
+                alert('既読にしました！');
+                refreshCurrentView();
+            } catch (e) {
+                alert('既読化失敗: ' + e.message);
+            }
+        }
+
         // 🔑 セラー情報をGASから取得してモーダルに表示する関数
         async function fetchSellerInfo(chatworkId) {
             if (!chatworkId) {
-                alert("Chatwork IDが見つかりません");
+                alert("キーワードが見つかりません");
                 return;
             }
 
