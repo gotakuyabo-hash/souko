@@ -543,10 +543,23 @@
             return String(rawStr).replace(/^No:?[\.\s]*/i, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "").trim().toLowerCase();
         }
 
-        function cleanPhone(phoneStr) {
+       function cleanPhone(phoneStr) {
             if (!phoneStr) return "";
             let s = String(phoneStr).trim();
-            if (s.startsWith('+81')) s = '0' + s.substring(3).replace(/^\-+/, '');
+            
+            // 国際電話番号(+81)の処理
+            if (s.startsWith('+81')) {
+                s = '0' + s.substring(3);
+            }
+            
+            // 全角数字を半角に変換しつつ、全角マイナス・各種ダッシュ・長音記号を半角ハイフンに統一
+            s = s.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+                 .replace(/[ー－ｰ―‐‑‒–—―]/g, '-');
+
+            // もし「数字とハイフン以外」のゴミ文字が混ざっている場合は除去するか、
+            // またはそのまま綺麗に残す形にします（通常は数字とハイフンのみにするのが安全です）
+            // s = s.replace(/[^\d-]/g, '');
+
             return s;
         }
 
