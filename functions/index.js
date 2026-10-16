@@ -108,7 +108,7 @@ exports.notifyWarehouseReports = onDocumentWritten(
 );
 
 // 定時チェック機能（v1の仕組み）
-exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("0 15 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
+exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("30 17 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
     const db = admin.firestore();
 
     try {
