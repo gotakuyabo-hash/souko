@@ -28,16 +28,21 @@
                 <p class="text-sm text-slate-600 mt-1">商品名と件数を入れると「ピック」「梱包」のカードが自動生成されます</p>
             </div>
             
-            <div class="flex items-center gap-3 w-full md:w-auto">
+            <div class="flex items-center gap-3 w-full md:w-auto flex-wrap">
                 <div class="flex-1 md:w-64">
                     <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">現在の対象案件（プラン）</label>
                     <select id="planSelector" onchange="changePlan(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
                         <option value="">案件を選択してください...</option>
                     </select>
                 </div>
-                <button onclick="openPlanModal()" class="mt-5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap">
-                    + 案件を追加
-                </button>
+                <div class="flex items-center gap-2 mt-5">
+                    <button onclick="openPlanModal()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap">
+                        + 案件を追加
+                    </button>
+                    <button onclick="openArchiveModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap flex items-center gap-1.5">
+                        <span>🗂️</span> アーカイブ一覧
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -135,6 +140,33 @@
         </div>
     </div>
 
+    <!-- アーカイブ一覧モーダル -->
+    <div id="archiveModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden items-center justify-center p-4 z-55">
+        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
+                <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <span>🗂️</span> アーカイブされたタスク一覧
+                </h3>
+                <button onclick="closeArchiveModal()" class="text-slate-400 hover:text-slate-700 text-xl font-bold px-2">✕</button>
+            </div>
+            
+            <div class="mb-3 flex items-center justify-between gap-3">
+                <p class="text-xs text-slate-500">現在選択中の案件、またはすべての案件のアーカイブ済みタスクを確認できます。</p>
+                <select id="archivePlanFilter" onchange="filterArchiveTasks(this.value)" class="border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <option value="all">すべての案件</option>
+                </select>
+            </div>
+
+            <div id="archiveTaskList" class="overflow-y-auto flex-1 space-y-3 pr-1 min-h-[250px] max-h-[50vh]">
+                <!-- 動的に挿入 -->
+            </div>
+
+            <div class="flex justify-end pt-4 mt-2 border-t border-slate-200">
+                <button type="button" onclick="closeArchiveModal()" class="px-4 py-2 text-sm font-medium bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition shadow-sm">閉じる</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Firebase SDK & アプリケーションロジック -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -156,25 +188,36 @@
         let currentPlanId = null;
         let unsubscribeTasks = null;
         let currentTasksData = []; // 現在のタスクデータを保持
+        let allPlansMap = {}; // 案件IDとタイトルの対応マップ
+        let allArchivedTasksData = []; // アーカイブ済みタスクデータ
 
         const statuses = ['todo', 'in_progress', 'shipping', 'done'];
 
         async function loadPlans() {
             const planSelector = document.getElementById('planSelector');
+            const archivePlanFilter = document.getElementById('archivePlanFilter');
             const snapshot = await getDocs(collection(db, "fba_plans"));
             
             planSelector.innerHTML = '<option value="">案件を選択してください...</option>';
+            archivePlanFilter.innerHTML = '<option value="all">すべての案件</option>';
+            allPlansMap = {};
             
             let firstId = null;
             snapshot.forEach((docSnap) => {
                 const data = docSnap.data();
                 const id = docSnap.id;
                 if (!firstId) firstId = id;
+                allPlansMap[id] = data.title;
 
                 const option = document.createElement('option');
                 option.value = id;
                 option.textContent = data.title;
                 planSelector.appendChild(option);
+
+                const filterOption = document.createElement('option');
+                filterOption.value = id;
+                filterOption.textContent = data.title;
+                archivePlanFilter.appendChild(filterOption);
             });
 
             if (currentPlanId && document.querySelector(`option[value="${currentPlanId}"]`)) {
@@ -289,6 +332,110 @@
                 alert("アーカイブに失敗しました。");
             }
         };
+
+        // --- アーカイブ一覧モーダルの制御 ---
+        window.openArchiveModal = async function() {
+            document.getElementById('archiveModal').classList.remove('hidden');
+            document.getElementById('archiveModal').classList.add('flex');
+            await fetchArchivedTasks();
+        }
+
+        window.closeArchiveModal = function() {
+            document.getElementById('archiveModal').classList.remove('flex');
+            document.getElementById('archiveModal').classList.add('hidden');
+        }
+
+        async function fetchArchivedTasks() {
+            const listContainer = document.getElementById('archiveTaskList');
+            listContainer.innerHTML = '<p class="text-center text-slate-400 py-8 text-sm">読み込み中...</p>';
+
+            try {
+                const q = query(collection(db, "fba_tasks"), where("status", "==", "archived"));
+                const snapshot = await getDocs(q);
+                allArchivedTasksData = [];
+
+                snapshot.forEach((docSnap) => {
+                    allArchivedTasksData.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
+                renderArchiveList(allArchivedTasksData);
+            } catch (e) {
+                console.error("Error fetching archived tasks: ", e);
+                listContainer.innerHTML = '<p class="text-center text-red-500 py-8 text-sm">アーカイブの取得に失敗しました。</p>';
+            }
+        }
+
+        window.filterArchiveTasks = function(planId) {
+            if (planId === 'all') {
+                renderArchiveList(allArchivedTasksData);
+            } else {
+                const filtered = allArchivedTasksData.filter(task => task.planId === planId);
+                renderArchiveList(filtered);
+            }
+        }
+
+        function renderArchiveList(tasks) {
+            const listContainer = document.getElementById('archiveTaskList');
+            if (tasks.length === 0) {
+                listContainer.innerHTML = '<p class="text-center text-slate-400 py-8 text-sm">アーカイブされたタスクはありません。</p>';
+                return;
+            }
+
+            // 新しい順にソート (createdAtがある場合)
+            tasks.sort((a, b) => {
+                const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                return timeB - timeA;
+            });
+
+            let html = '';
+            tasks.forEach(task => {
+                const planTitle = allPlansMap[task.planId] || '不明な案件';
+                const isPick = task.taskName === 'ピック';
+                const badgeColor = isPick ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-indigo-100 text-indigo-900 border-indigo-300';
+
+                html += `
+                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded">${escapeHTML(planTitle)}</span>
+                                <span class="text-xs font-extrabold px-2 py-0.5 rounded border ${badgeColor}">${escapeHTML(task.taskName || '作業')}</span>
+                            </div>
+                            <div class="font-bold text-slate-900 text-sm">${escapeHTML(task.productName || '')}</div>
+                            <div class="text-xs text-slate-500">数量: <span class="font-bold text-slate-700">${escapeHTML(task.quantity || '')}</span></div>
+                        </div>
+                        <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                            <button onclick="restoreTask('${task.id}')" class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-lg border border-blue-200 transition">未着手に戻す</button>
+                            <button onclick="deleteArchivedTask('${task.id}')" class="text-xs bg-red-50 hover:bg-red-100 text-red-600 font-bold px-3 py-1.5 rounded-lg border border-red-200 transition">完全削除</button>
+                        </div>
+                    </div>
+                `;
+            });
+            listContainer.innerHTML = html;
+        }
+
+        window.restoreTask = async function(id) {
+            if (!confirm("このタスクを「未着手 (To Do)」に戻しますか？")) return;
+            try {
+                const docRef = doc(db, "fba_tasks", id);
+                await updateDoc(docRef, { status: 'todo' });
+                await fetchArchivedTasks();
+            } catch (e) {
+                console.error("Error restoring task: ", e);
+                alert("復元に失敗しました。");
+            }
+        }
+
+        window.deleteArchivedTask = async function(id) {
+            if (!confirm("このアーカイブタスクを完全に削除しますか？")) return;
+            try {
+                await deleteDoc(doc(db, "fba_tasks", id));
+                await fetchArchivedTasks();
+            } catch (e) {
+                console.error("Error deleting archived task: ", e);
+                alert("削除に失敗しました。");
+            }
+        }
 
         // --- ドラッグ＆ドロップ処理 ---
         window.dragStart = function(event, id) {
