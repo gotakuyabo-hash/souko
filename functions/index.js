@@ -107,7 +107,7 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 定時チェック機能（v1の仕組みに変更してIAMエラーを回避）
+// 定時チェック機能（v1の仕組み）
 exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("0 15 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
     const db = admin.firestore();
 
@@ -151,8 +151,8 @@ exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.s
     }
 });
 
-// zaico出庫指示受け付け用API（第1世代 v1）
-exports.createzaicoshipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
+// zaico出庫指示受け付け用API（関数名を変更してIAM権限エラーを回避）
+exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
     // CORSを許可するヘッダーを付与
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
