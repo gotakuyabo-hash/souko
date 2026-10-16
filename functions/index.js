@@ -254,14 +254,14 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             return;
         }
 
-        // 3. zaicoへ出庫指示（packing_slips.json）をPOST送信
+       // 3. zaicoへ出庫指示（packing_slips.json）をPOST送信
         const slipNum = "SLIP-" + Date.now();
         const todayStr = new Date().toISOString().split('T')[0];
 
         const zaicoPayload = {
             num: slipNum,
             customer_name: "受注一括出荷",
-            status: "completed_delivery",
+            status: "before_delivery", // ← ここを before_delivery に変更しました
             delivery_date: todayStr,
             date_of_issue: todayStr,
             memo: "統合管理システムからのピンポイント出庫指示",
