@@ -221,7 +221,45 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         res.status(500).json({ success: false, error: error.message });
     }
 });
+// zaico在庫一覧取得用API
+exports.apiGetZaicoInventory = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
 
+    if (req.method === 'OPTIONS') {
+        res.status(204).send('');
+        return;
+    }
+
+    try {
+        const companyId = "220891";
+        logger.info("zaicoから最新の在庫一覧を取得します...");
+
+        const inventoriesRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${companyId}/inventories.json`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${ZAICO_API_TOKEN}` }
+        });
+
+        if (!inventoriesRes.ok) {
+            const errText = await inventoriesRes.text();
+            throw new Error("zaico在庫一覧の取得に失敗しました: " + errText);
+        }
+
+        const inventoriesData = await inventoriesRes.json();
+        const inventoryList = inventoriesData.inventories || inventoriesData.data || [];
+
+        logger.info(`zaico在庫一覧取得成功: ${inventoryList.length}件`);
+        res.json({
+            success: true,
+            count: inventoryList.length,
+            inventories: inventoryList
+        });
+    } catch (error) {
+        logger.error("zaico在庫一覧の取得でエラーが発生しました:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 // Slackへリクエストを送信する共通関数
 async function sendSlackNotification(text) {
     try {
