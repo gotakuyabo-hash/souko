@@ -2,25 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>受注CSV ピック数算出 & zaico連動ツール</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>受注・出荷・zaico 統合管理システム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.1.0/encoding.min.js"></script>
     <style>
-        body { font-family: sans-serif; margin: 20px; background: #f8fafc; color: #1e293b; }
-        .back-link { display: inline-block; margin-bottom: 15px; color: #2563eb; text-decoration: none; font-weight: bold; font-size: 14px; }
+        body { background: #f8fafc; font-family: sans-serif; color: #1e293b; margin: 0; padding: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
         th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }
         th { background: #f1f5f9; cursor: pointer; user-select: none; }
         th:hover { background: #e2e8f0; }
         .unregistered { background: #fff3cd; }
-        button { cursor: pointer; padding: 6px 12px; background: #2563eb; color: white; border: none; border-radius: 4px; font-weight: bold; }
-        button:hover { background: #1d4ed8; }
-        .btn-success { background: #28a745; }
-        .btn-success:hover { background: #218838; }
-        .btn-danger { background: #dc3545; }
-        .btn-danger:hover { background: #c82333; }
-        .btn-secondary { background: #64748b; }
-        .btn-secondary:hover { background: #475569; }
-        .actions-bar { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab-buttons { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
         .tab-btn { background: #e2e8f0; color: #475569; padding: 8px 16px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; }
         .tab-btn.active { background: #2563eb; color: white; }
@@ -32,54 +25,88 @@
     </style>
 </head>
 <body>
-    <div style="max-width: 1000px; margin: 0 auto;">
-        <a href="index.html" class="back-link">← ポータルサイトに戻る</a>
+    <div style="max-width: 1100px; margin: 0 auto;">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-xl font-bold text-slate-800">📦 受注・出荷・zaico 統合管理システム</h1>
+            <button onclick="resetAllData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded font-bold transition">🔄 全データリセット</button>
+        </div>
 
         <div class="tab-buttons">
-            <button class="tab-btn active" onclick="switchTab('orderTab')">📦 受注CSV・出庫指示</button>
+            <button class="tab-btn active" onclick="switchTab('allInOneTab')">🚀 一括処理・出荷連携</button>
             <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（棚番・倍率）</button>
         </div>
 
-        <div id="orderTab" class="tab-content active">
+        <!-- 一括処理・出荷連携タブ -->
+        <div id="allInOneTab" class="tab-content active">
             <div class="card">
-                <h2>受注CSV ピック数算出 & zaico連動ツール</h2>
-                <div style="margin-top: 15px;">
-                    <p>受注CSVファイル（例: order_*.csv）を選択してください：</p>
-                    <input type="file" id="csvFile" accept=".csv" style="margin-top: 8px;">
+                <h2 class="text-lg font-bold text-slate-800 mb-2">📥 CSVファイル ドロップ＆蓄積エリア</h2>
+                <p class="text-xs text-slate-500 mb-4">「受注CSV」「ヤマトCSV」「佐川CSV」をまとめて、または何度かに分けてドラッグ＆ドロップしてください。</p>
+
+                <div id="dropZone" class="border-2 border-dashed border-sky-400 rounded-lg bg-sky-50/50 p-6 text-center cursor-pointer hover:bg-sky-50 transition mb-4">
+                    <div class="text-3xl mb-1">📂</div>
+                    <div class="font-bold text-slate-700 text-sm">ここにCSVをドラッグ＆ドロップ（複数可・追加可能）</div>
+                    <p class="text-xs text-slate-400 mt-1">またはクリックしてファイルを選択</p>
+                    <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
                 </div>
-                <div class="actions-bar" id="actionsBar" style="display:none;">
-                    <button onclick="sortByShelf()">棚番順でソート</button>
-                    <button onclick="saveAllOrders()" class="btn-success">変更した明細を一括保存して計算</button>
-                    <button onclick="sendToZaico()" class="btn-success">zaicoに出庫指示を送信</button>
+
+                <!-- 読み込み済みファイル一覧 -->
+                <div id="fileListSection" class="hidden mb-4 p-3 bg-slate-50 border border-slate-200 rounded">
+                    <div class="text-xs font-bold text-slate-700 mb-2">📋 読み込み済みファイル一覧</div>
+                    <div id="fileListContainer" class="space-y-1.5 text-xs"></div>
                 </div>
-                <div id="resultArea"></div>
+
+                <!-- ステータス表示 -->
+                <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
+                    <div id="statusOrder">📦 受注データ: <span class="text-slate-400">（未読み込み）</span></div>
+                    <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
+                    <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
+                </div>
+
+                <!-- ピック数計算 & zaicoアクション -->
+                <div class="flex gap-3 flex-wrap mb-4">
+                    <button onclick="processOrderPickCalculation()" id="calcPickBtn" disabled class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🔢 ピック数算出 & 棚番チェック</button>
+                    <button onclick="sendToZaico()" id="zaicoBtn" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">☁️ zaicoに出庫指示を送信</button>
+                </div>
+
+                <div id="pickResultArea"></div>
+
+                <!-- 送り状・検品アクション -->
+                <div class="mt-6 pt-4 border-t border-slate-200">
+                    <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては佐川出力時に自動除外されます）</div>
+                    <div class="flex gap-3 flex-wrap">
+                        <button id="printBtn" onclick="openPrintPreview()" disabled class="flex-1 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🖨️ 検品シート印刷</button>
+                        <button id="yamatoBtn" onclick="exportYamatoCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🐱 ヤマトB2 出力</button>
+                        <button id="ehidenBtn" onclick="exportEhidenCsv()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">飛 佐川 出力（沖縄自動除外）</button>
+                    </div>
+                </div>
             </div>
         </div>
 
+        <!-- 商品マスタ管理タブ -->
         <div id="masterTab" class="tab-content">
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
-                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報（商品名・倍率・棚番）を直接変更・保存できます。ヘッダーをクリックすると並び替えができます。</p>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報を直接変更・保存できます。</p>
                 
                 <div style="margin-top: 15px;">
                     <div class="filter-row">
                         <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
                         <input type="text" id="shelfFilter" class="search-box" placeholder="棚番で絞り込み (例: A-1, 空欄=未設定)" oninput="filterMasterTable()" style="max-width: 250px;">
-                        <button onclick="filterUnassignedShelf()" class="btn-secondary">棚番未設定のみ表示</button>
+                        <button onclick="filterUnassignedShelf()" class="bg-slate-500 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs font-bold">棚番未設定のみ</button>
                     </div>
                 </div>
 
-                <div class="actions-bar" style="background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                    <button onclick="loadMasterItems()">マスタデータを再読み込み</button>
-                    <button onclick="saveAllMasters()" class="btn-success">変更したマスタを一括保存</button>
+                <div class="actions-bar flex gap-2 items-center my-3 bg-slate-50 p-3 rounded border border-slate-200">
+                    <button onclick="loadMasterItems()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-xs font-bold">マスタ再読み込み</button>
+                    <button onclick="saveAllMasters()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded text-xs font-bold">変更したマスタを一括保存</button>
                     <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="batchShelfInput" placeholder="一括設定する棚番" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; width: 120px;">
-                        <button onclick="applyBatchShelf()" class="btn-secondary">表示中の行に棚番を一括適用</button>
+                        <input type="text" id="batchShelfInput" placeholder="一括設定する棚番" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; width: 120px; font-size: 12px;">
+                        <button onclick="applyBatchShelf()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded text-xs font-bold">表示行に棚番一括適用</button>
                     </div>
                 </div>
 
                 <div id="masterResultArea">
-                    <p style="margin-top: 15px;">「マスタデータを再読み込み」ボタンを押してデータを取得してください。</p>
+                    <p style="margin-top: 15px;">マスタデータを読み込んでいます...</p>
                 </div>
             </div>
         </div>
@@ -98,86 +125,213 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 正しいエンドポイントに設定済み
+        // ★ 新しいCloud FunctionsのURLに修正済み
         const URL_CREATE_SHIPMENT = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment";
 
-        let currentResults = [];
+        let uploadedFiles = [];
+        let currentPickResults = [];
         let masterItemsCache = [];
-        let currentSortColumn = null;
-        let currentSortAsc = true;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadMasterItems();
+            initDropZone();
+        });
 
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            if (tabId === 'orderTab') {
+            if (tabId === 'allInOneTab') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
-                document.getElementById('orderTab').classList.add('active');
+                document.getElementById('allInOneTab').classList.add('active');
             } else {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('masterTab').classList.add('active');
-                if (masterItemsCache.length === 0) {
-                    loadMasterItems();
-                }
+                loadMasterItems();
             }
         };
 
-        document.getElementById('csvFile').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
+        function initDropZone() {
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+            if (!dropZone || !fileInput) return;
 
-            try {
-                const arrayBuffer = await file.arrayBuffer();
-                const decoder = new TextDecoder('shift-jis');
-                const text = decoder.decode(arrayBuffer);
+            dropZone.addEventListener('click', () => fileInput.click());
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('bg-sky-100', 'border-sky-600'); }, false);
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('bg-sky-100', 'border-sky-600'); }, false);
+            });
+            dropZone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                if (dt.files.length > 0) handleFiles(dt.files);
+            }, false);
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) handleFiles(e.target.files);
+            });
+        }
 
-                const rows = parseCSVRows(text);
-                const rawItemsMap = new Map();
+        function handleFiles(files) {
+            Array.from(files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const buffer = e.target.result;
+                    let text = '';
+                    try {
+                        const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+                        text = utf8Decoder.decode(buffer);
+                    } catch (err) {
+                        const sjisDecoder = new TextDecoder('shift_jis');
+                        text = sjisDecoder.decode(buffer);
+                    }
 
-                for (let i = 1; i < rows.length; i++) {
-                    const cols = rows[i];
-                    const itemNo = cols[6] || '';
-                    if (itemNo === '1-0') continue;
+                    const rows = parseRobustCSV(text);
+                    if (rows.length > 0) {
+                        let sampleStr = rows.slice(0, 5).map(r => r.join(',')).join('\n');
+                        let type = getFileType(file.name, sampleStr);
+                        let headerRow = [];
+                        let dataStartIndex = 0;
 
-                    if (cols.length > 31 && cols[31]) {
-                        const productName = cols[31];
-                        const quantity = cols[34] ? Number(cols[34]) : 1;
-
-                        const parts = productName.trim().split(/\s+/);
-                        const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
-                        const key = extractedBarcode || productName;
-
-                        if (rawItemsMap.has(key)) {
-                            const existing = rawItemsMap.get(key);
-                            existing.quantity += quantity;
+                        if (type === 'yamato') {
+                            headerRow = [];
+                            dataStartIndex = 0;
                         } else {
-                            rawItemsMap.set(key, { productName, quantity, barcode: extractedBarcode });
+                            for (let i = 0; i < Math.min(rows.length, 5); i++) {
+                                if (rows[i].length > 5 && (rows[i].some(c => String(c).includes('受注番号') || String(c).includes('受注ID') || String(c).includes('e飛伝') || String(c).includes('氏名') || String(c).includes('店舗')))) {
+                                    headerRow = rows[i];
+                                    dataStartIndex = i + 1;
+                                    break;
+                                }
+                            }
+                            if (headerRow.length === 0) { headerRow = rows[0]; dataStartIndex = 1; }
                         }
+                        
+                        let fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
+
+                        uploadedFiles.push({
+                            id: Date.now() + Math.random().toString(36.2),
+                            name: file.name,
+                            type: type,
+                            header: headerRow,
+                            rows: fileRows
+                        });
+                    }
+                    updateAccumulatedData();
+                };
+                reader.readAsArrayBuffer(file);
+            });
+            document.getElementById('fileInput').value = '';
+        }
+
+        window.removeFile = (fileId) => {
+            uploadedFiles = uploadedFiles.filter(f => f.id !== fileId);
+            updateAccumulatedData();
+        };
+
+        window.resetAllData = () => {
+            if (!confirm("本当にすべての蓄積データをリセットしますか？")) return;
+            uploadedFiles = [];
+            currentPickResults = [];
+            document.getElementById('pickResultArea').innerHTML = '';
+            updateAccumulatedData();
+            alert("データをリセットしました。");
+        };
+
+        function getFileType(fileName, sampleStr) {
+            let lower = fileName.toLowerCase();
+            if (lower.includes('sagawa') || lower.includes('ehiden') || lower.includes('佐川')) return 'sagawa';
+            if (lower.includes('order') || lower.includes('受注') || lower.includes('納品書')) return 'order';
+            if (lower.includes('yamato') || lower.includes('ヤマト') || lower.includes('b2') || lower.includes('クロネコ') || lower.includes('送り状')) return 'yamato';
+            
+            if (sampleStr.includes('お届け先コード') || sampleStr.includes('e飛伝') || sampleStr.includes('お客様管理番号')) return 'sagawa';
+            if (sampleStr.includes('受注番号') || sampleStr.includes('受注ID') || sampleStr.includes('店舗名')) return 'order';
+            return 'yamato';
+        }
+
+        function updateAccumulatedData() {
+            let orders = uploadedFiles.filter(f => f.type === 'order');
+            let yamatos = uploadedFiles.filter(f => f.type === 'yamato');
+            let sagawas = uploadedFiles.filter(f => f.type === 'sagawa');
+
+            let orderRowsCount = orders.reduce((sum, f) => sum + f.rows.length, 0);
+            let yamatoRowsCount = yamatos.reduce((sum, f) => sum + f.rows.length, 0);
+            let sagawaRowsCount = sagawas.reduce((sum, f) => sum + f.rows.length, 0);
+
+            document.getElementById('statusOrder').innerHTML = orders.length > 0 ? `📦 受注データ: <span class="text-blue-600 font-bold">${orders.map(f=>f.name).join(', ')}</span> (${orderRowsCount}行)` : `📦 受注データ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusYamato').innerHTML = yamatos.length > 0 ? `🐱 ヤマトデータ: <span class="text-emerald-600 font-bold">${yamatos.map(f=>f.name).join(', ')}</span> (${yamatoRowsCount}件)` : `🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span>`;
+            document.getElementById('statusSagawa').innerHTML = sagawas.length > 0 ? `飛 佐川データ: <span class="text-emerald-600 font-bold">${sagawas.map(f=>f.name).join(', ')}</span> (${sagawaRowsCount}件)` : `飛 佐川データ: <span class="text-slate-400">（未読み込み）</span>`;
+
+            const listSec = document.getElementById('fileListSection');
+            const listCont = document.getElementById('fileListContainer');
+            if (uploadedFiles.length > 0) {
+                listSec.classList.remove('hidden');
+                let html = '';
+                uploadedFiles.forEach(f => {
+                    let typeLabel = f.type === 'order' ? '受注' : (f.type === 'yamato' ? 'ヤマト' : '佐川');
+                    html += `<div class="flex justify-between items-center bg-white p-2 rounded border border-slate-200">
+                        <div><span class="font-bold text-sky-600">[${typeLabel}]</span> ${f.name} (${f.rows.length}件)</div>
+                        <button onclick="removeFile('${f.id}')" class="bg-rose-100 hover:bg-rose-200 text-rose-700 px-2 py-0.5 rounded font-bold">🗑️ 削除</button>
+                    </div>`;
+                });
+                listCont.innerHTML = html;
+            } else {
+                listSec.classList.add('hidden');
+                listCont.innerHTML = '';
+            }
+
+            const hasOrder = orderRowsCount > 0;
+            document.getElementById('calcPickBtn').disabled = !hasOrder;
+            document.getElementById('printBtn').disabled = !hasOrder;
+            document.getElementById('zaicoBtn').disabled = !hasOrder;
+            document.getElementById('yamatoBtn').disabled = !(hasOrder && yamatoRowsCount > 0);
+            document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
+        }
+
+        function getAllOrderRows() {
+            return uploadedFiles.filter(f => f.type === 'order').flatMap(f => f.rows);
+        }
+        function getAllYamatoRows() {
+            return uploadedFiles.filter(f => f.type === 'yamato').flatMap(f => f.rows);
+        }
+        function getAllSagawaRows() {
+            return uploadedFiles.filter(f => f.type === 'sagawa').flatMap(f => f.rows);
+        }
+
+        window.processOrderPickCalculation = async () => {
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) { alert('受注データが読み込まれていません。'); return; }
+
+            const rawItemsMap = new Map();
+            allOrders.forEach(cols => {
+                const itemNo = cols[6] || '';
+                if (itemNo === '1-0') return;
+
+                if (cols.length > 31 && cols[31]) {
+                    const productName = cols[31];
+                    const quantity = cols[34] ? Number(cols[34]) : 1;
+                    const parts = productName.trim().split(/\s+/);
+                    const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
+                    const key = extractedBarcode || productName;
+
+                    if (rawItemsMap.has(key)) {
+                        rawItemsMap.get(key).quantity += quantity;
+                    } else {
+                        rawItemsMap.set(key, { productName, quantity, barcode: extractedBarcode });
                     }
                 }
+            });
 
-                const items = [];
-                rawItemsMap.forEach((val) => {
-                    items.push({ productName: val.productName, quantity: val.quantity, barcode: val.barcode });
-                });
-
-                await processOrderLocally(items);
-            } catch (err) {
-                console.error(err);
-                alert('処理中にエラーが発生しました: ' + err.message);
-            }
-        });
+            await processOrderLocally(Array.from(rawItemsMap.values()));
+        };
 
         async function processOrderLocally(items) {
             showStatus("データを解析中...");
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 const masterMap = new Map();
-                querySnapshot.forEach(docSnap => {
-                    masterMap.set(docSnap.id, docSnap.data());
-                });
+                querySnapshot.forEach(docSnap => { masterMap.set(docSnap.id, docSnap.data()); });
 
                 const aggregatedMap = new Map();
-
                 for (const item of items) {
                     const barcode = item.barcode;
                     const mData = masterMap.get(barcode);
@@ -193,90 +347,32 @@
                         existing.orderQty += item.quantity;
                         existing.pickCount = existing.orderQty * existing.multiplier;
                     } else {
-                        aggregatedMap.set(key, {
-                            barcode: barcode,
-                            productName: finalProductName,
-                            orderQty: item.quantity,
-                            multiplier: multiplier,
-                            shelfNumber: shelfNumber,
-                            status: status,
-                            pickCount: item.quantity * multiplier
-                        });
+                        aggregatedMap.set(key, { barcode, productName: finalProductName, orderQty: item.quantity, multiplier, shelfNumber, status, pickCount: item.quantity * multiplier });
                     }
                 }
 
-                currentResults = Array.from(aggregatedMap.values());
-
-                currentResults.sort((a, b) => {
-                    const sA = a.shelfNumber || "";
-                    const sB = b.shelfNumber || "";
-                    return sA.localeCompare(sB);
-                });
-
-                renderTable(currentResults);
-                document.getElementById('actionsBar').style.display = 'flex';
+                currentPickResults = Array.from(aggregatedMap.values());
+                currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
+                renderPickTable(currentPickResults);
             } catch (err) {
                 console.error(err);
                 alert('データ解析エラー: ' + err.message);
             }
         }
 
-        function parseCSVRows(text) {
-            const rows = [];
-            let currentRow = [];
-            let currentField = '';
-            let inQuotes = false;
-            let i = 0;
-            while (i < text.length) {
-                const char = text[i];
-                const nextChar = text[i + 1] || '';
-                if (char === '"') {
-                    if (inQuotes && nextChar === '"') {
-                        currentField += '"';
-                        i++;
-                    } else {
-                        inQuotes = !inQuotes;
-                    }
-                } else if (char === ',' && !inQuotes) {
-                    currentRow.push(currentField.trim());
-                    currentField = '';
-                } else if ((char === '\r' && nextChar === '\n') || (char === '\n' && !inQuotes)) {
-                    if (char === '\r' && nextChar === '\n') i++;
-                    currentRow.push(currentField.trim());
-                    if (currentRow.some(field => field !== '')) rows.push(currentRow);
-                    currentRow = [];
-                    currentField = '';
-                } else {
-                    currentField += char;
-                }
-                i++;
-            }
-            if (currentField !== '' || currentRow.length > 0) {
-                currentRow.push(currentField.trim());
-                if (currentRow.some(field => field !== '')) rows.push(currentRow);
-            }
-            return rows;
-        }
-
         function showStatus(msg) {
-            document.getElementById('resultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
+            document.getElementById('pickResultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
         }
 
-        window.renderTable = (results) => {
-            let html = `<p style="margin-top:15px;"><b>全 ${results.length} 件の明細を検出しました（親セット除外・SKU合算済み・棚番順自動ソート）</b></p>
-                <table>
-                <thead>
-                    <tr>
-                        <th>商品名 (AF列)</th>
-                        <th>バーコード</th>
-                        <th>注文数</th>
-                        <th>倍率</th>
-                        <th>棚番</th>
-                        <th>ピック数</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>`;
+        function renderPickTable(results) {
+            let html = `
+                <div class="flex justify-between items-center mt-4 mb-2">
+                    <p><b>全 ${results.length} 件の明細を検出しました</b></p>
+                    <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更した明細を一括保存して計算</button>
+                </div>
+                <table><thead><tr>
+                <th>商品名</th><th>バーコード</th><th>注文数</th><th>倍率</th><th>棚番</th><th>ピック数</th><th>操作</th>
+                </tr></thead><tbody>`;
 
             results.forEach((item, index) => {
                 const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
@@ -287,13 +383,12 @@
                     <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td><input type="text" id="shelf_${index}" value="${escapeHtml(item.shelfNumber || '')}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
-                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)">保存して計算</button></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存</button></td>
                 </tr>`;
             });
-
             html += `</tbody></table>`;
-            document.getElementById('resultArea').innerHTML = html;
-        };
+            document.getElementById('pickResultArea').innerHTML = html;
+        }
 
         function escapeHtml(str) {
             if(!str) return '';
@@ -303,203 +398,341 @@
         window.handleKeydown = (event, index) => {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                const item = currentResults[index];
-                if (item) {
-                    registerItem(index, item.orderQty, item.productName, true);
-                }
+                const item = currentPickResults[index];
+                if (item) registerItem(index, item.orderQty, item.productName, true);
             }
         };
+
+        function sortAndReRenderPickTable() {
+            currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
+            renderPickTable(currentPickResults);
+        }
 
         window.registerItem = async (index, orderQty, productName, isSilent = false) => {
             const barcode = document.getElementById(`barcode_${index}`).value.trim();
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
             const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
 
-            if (!barcode) {
-                if (!isSilent) alert('バーコードを入力してください。');
-                return;
-            }
-            if (!shelfNumber) {
-                if (!isSilent) alert('棚番を入力してください。');
+            if (!barcode || !shelfNumber) {
+                if (!isSilent) alert('バーコードと棚番を入力してください。');
                 return;
             }
 
             try {
-                await setDoc(doc(db, "product_masters", barcode), {
-                    barcode: barcode,
-                    productName: productName,
-                    multiplier: multiplier,
-                    shelfNumber: shelfNumber,
-                    updatedAt: new Date()
-                }, { merge: true });
-
-                const row = document.getElementById(`row_${index}`);
-                row.classList.remove('unregistered');
-                currentResults[index].barcode = barcode;
-                currentResults[index].multiplier = multiplier;
-                currentResults[index].shelfNumber = shelfNumber;
-                currentResults[index].status = "REGISTERED";
-                currentResults[index].pickCount = orderQty * multiplier;
-                document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                
-                if (!isSilent) {
-                    alert('保存しました！');
-                } else {
-                    const nextShelf = document.getElementById(`shelf_${index + 1}`);
-                    if (nextShelf) nextShelf.focus();
-                }
+                await setDoc(doc(db, "product_masters", barcode), { barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
+                currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: orderQty * multiplier };
+                sortAndReRenderPickTable();
+                if (!isSilent) alert('保存しました！棚番順に並び替えました。');
             } catch (err) {
                 console.error(err);
                 if (!isSilent) alert('保存エラー: ' + err.message);
             }
         };
 
-        window.saveAllOrders = async () => {
-            if (!confirm('画面に表示されている明細のうち、棚番が入力されているものだけ一括保存・計算しますか？')) return;
+        window.saveAllOrderPickItems = async () => {
+            if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
+            let successCount = 0, skippedCount = 0;
 
-            let successCount = 0;
-            let skippedCount = 0;
-            let failCount = 0;
-
-            for (let index = 0; index < currentResults.length; index++) {
-                const item = currentResults[index];
-                const barcodeInput = document.getElementById(`barcode_${index}`);
+            for (let index = 0; index < currentPickResults.length; index++) {
+                const bcInput = document.getElementById(`barcode_${index}`);
                 const multInput = document.getElementById(`mult_${index}`);
                 const shelfInput = document.getElementById(`shelf_${index}`);
 
-                if (barcodeInput && multInput && shelfInput) {
-                    const barcode = barcodeInput.value.trim();
+                if (bcInput && multInput && shelfInput) {
+                    const barcode = bcInput.value.trim();
                     const multiplier = Number(multInput.value) || 1;
                     const shelfNumber = shelfInput.value.trim();
-
-                    if (!barcode || !shelfNumber) {
-                        skippedCount++;
-                        continue;
-                    }
+                    if (!barcode || !shelfNumber) { skippedCount++; continue; }
 
                     try {
-                        await setDoc(doc(db, "product_masters", barcode), {
-                            barcode: barcode,
-                            productName: item.productName,
-                            multiplier: multiplier,
-                            shelfNumber: shelfNumber,
-                            updatedAt: new Date()
-                        }, { merge: true });
-
+                        await setDoc(doc(db, "product_masters", barcode), { barcode, productName: currentPickResults[index].productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
                         successCount++;
-                        const row = document.getElementById(`row_${index}`);
-                        row.classList.remove('unregistered');
-                        currentResults[index].barcode = barcode;
-                        currentResults[index].multiplier = multiplier;
-                        currentResults[index].shelfNumber = shelfNumber;
-                        currentResults[index].status = "REGISTERED";
-                        currentResults[index].pickCount = item.orderQty * multiplier;
-                        document.getElementById(`pick_cell_${index}`).innerHTML = `<b>${currentResults[index].pickCount}</b>`;
-                    } catch (err) {
-                        failCount++;
-                    }
+                        currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: currentPickResults[index].orderQty * multiplier };
+                    } catch (err) { console.error(err); }
                 }
             }
-
-            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(棚番未入力など): ${skippedCount} 件\n失敗: ${failCount} 件`);
-        };
-
-        window.sortByShelf = () => {
-            currentResults.sort((a, b) => {
-                const sA = a.shelfNumber || "";
-                const sB = b.shelfNumber || "";
-                return sA.localeCompare(sB);
-            });
-            renderTable(currentResults);
-            alert('棚番順にソートしました！');
+            sortAndReRenderPickTable();
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件\n\n※棚番順に並び替えました。`);
         };
 
         window.sendToZaico = async () => {
-            const validItems = currentResults.filter(item => item.status !== "UNREGISTERED" && item.barcode && item.shelfNumber);
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) { alert('受注データがありません。'); return; }
 
-            if (validItems.length === 0) {
-                alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。');
-                return;
-            }
-
-            const unregisteredCount = currentResults.length - validItems.length;
-            let confirmMsg = unregisteredCount > 0 
-                ? `棚番未入力等の ${unregisteredCount} 件を除外し、条件を満たした ${validItems.length} 件のみでzaicoに出庫指示を送信しますか？`
-                : `表示されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`;
-
-            if (!confirm(confirmMsg)) return;
+            const rawItemsMap = new Map();
+            allOrders.forEach(cols => {
+                if (cols[6] === '1-0') return;
+                if (cols.length > 31 && cols[31]) {
+                    let pName = cols[31], qty = cols[34] ? Number(cols[34]) : 1;
+                    let parts = pName.trim().split(/\s+/), bc = parts.length > 0 ? parts[parts.length - 1] : '';
+                    let k = bc || pName;
+                    if (rawItemsMap.has(k)) { rawItemsMap.get(k).quantity += qty; }
+                    else { rawItemsMap.set(k, { productName: pName, quantity: qty, barcode: bc }); }
+                }
+            });
 
             try {
-                showStatus("zaicoに出庫指示を送信中...");
-                const res = await fetch(URL_CREATE_SHIPMENT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: validItems })
-                });
-                const data = await res.json();
+                const querySnapshot = await getDocs(collection(db, "product_masters"));
+                const masterMap = new Map();
+                querySnapshot.forEach(docSnap => masterMap.set(docSnap.id, docSnap.data()));
 
+                let validItems = [];
+                rawItemsMap.forEach((val) => {
+                    let mData = masterMap.get(val.barcode);
+                    if (mData && mData.shelfNumber && val.barcode) {
+                        let mult = mData.multiplier || 1;
+                        validItems.push({ barcode: val.barcode, productName: mData.productName || val.productName, orderQty: val.quantity, multiplier: mult, shelfNumber: mData.shelfNumber, pickCount: val.quantity * mult, status: "REGISTERED" });
+                    }
+                });
+
+                if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
+                if (!confirm(`棚番が登録されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
+
+                showStatus("zaicoに出庫指示を送信中...");
+                const res = await fetch(URL_CREATE_SHIPMENT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: validItems }) });
+                const data = await res.json();
                 if (data.success) {
                     alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)`);
                     showStatus("<b>出庫指示の送信が完了しました。</b>");
                 } else {
                     alert('送信失敗: ' + data.error);
-                    showStatus("<b>送信に失敗しました。</b>");
                 }
             } catch (err) {
                 console.error(err);
-                alert('通信エラーが発生しました。');
+                alert('通信エラーが発生しました: ' + err.message);
             }
         };
 
-        // ==================== マスタ管理タブ ====================
+        // ==================== 送り状・沖縄判定・検品シート ====================
+        function cleanOrderNoNormalized(rawStr) {
+            if (!rawStr) return "";
+            return String(rawStr).replace(/^No:?[\.\s]*/i, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "").trim().toLowerCase();
+        }
+
+        function cleanPhone(phoneStr) {
+            if (!phoneStr) return "";
+            let s = String(phoneStr).trim();
+            if (s.startsWith('+81')) s = '0' + s.substring(3).replace(/^\-+/, '');
+            return s;
+        }
+
+        // 佐川データ（e飛伝）専用の強固な沖縄判定：E列(4)とF列(5)のみを確実にチェック
+        function isOkinawaFromSagawaRow(sagawaRow) {
+            if (!sagawaRow) return false;
+            let addrE = sagawaRow[4] ? String(sagawaRow[4]) : "";
+            let addrF = sagawaRow[5] ? String(sagawaRow[5]) : "";
+            let combined = (addrE + " " + addrF).toLowerCase();
+            return combined.includes('沖縄') || combined.includes('おきなわ') || combined.includes('okinawa');
+        }
+
+        // 受注データの住所付近からの沖縄判定フォールバック
+        function isOkinawaFromOrderRow(orderRow) {
+            if (!orderRow) return false;
+            let combined = orderRow.slice(6, 16).join(' ').toLowerCase();
+            return combined.includes('沖縄') || combined.includes('おきなわ') || combined.includes('okinawa');
+        }
+
+        function getOrderUniqueIds() {
+            let set = new Set();
+            getAllOrderRows().forEach(r => { let n = cleanOrderNoNormalized(r[5]); if (n) set.add(n); });
+            return set;
+        }
+
+        // ヤマトCSV出力（読み込まれたヤマトデータを処理するのみ）
+        window.exportYamatoCsv = () => {
+            let uniqueOrderNos = getOrderUniqueIds();
+            let yamatoRows = getAllYamatoRows();
+            let allOrders = getAllOrderRows();
+
+            if (allOrders.length === 0) { alert("受注データが読み込まれていません。"); return; }
+            if (yamatoRows.length === 0) { alert("ヤマトデータが読み込まれていません。"); return; }
+
+            let outputRows = [];
+            let todayStr = getTodayString();
+
+            uniqueOrderNos.forEach(oNum => {
+                let matchedYRow = yamatoRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
+                if (matchedYRow) {
+                    let newRow = [...matchedYRow];
+                    while (newRow.length < 42) newRow.push("");
+                    newRow[4] = todayStr;
+                    newRow[39] = '09050540672';
+                    newRow[26] = "";
+
+                    for (let c = 0; c < newRow.length; c++) {
+                        let valStr = String(newRow[c]);
+                        if (valStr.startsWith('+81')) newRow[c] = cleanPhone(valStr);
+                        if (c >= 24 && c <= 30 && newRow[c].length > 25) newRow[c] = newRow[c].substring(0, 25);
+                    }
+                    outputRows.push(newRow);
+                }
+            });
+
+            if (outputRows.length === 0) { alert("ヤマトデータと紐付く受注番号が見つかりませんでした。"); return; }
+            exportCsvGeneric(outputRows, "yamato_processed.csv");
+            alert(`ヤマトCSVを出力しました。（対象件数: ${outputRows.length}件）`);
+        };
+
+        // 佐川CSV出力（E列判断による完全除外）
+        window.exportEhidenCsv = () => {
+            let uniqueOrderNos = getOrderUniqueIds();
+            let sagawaRows = getAllSagawaRows();
+            let allOrders = getAllOrderRows();
+
+            if (sagawaRows.length === 0) { alert("佐川データが読み込まれていません。"); return; }
+
+            // 沖縄特定
+            let okinawaOrderNos = new Set();
+            sagawaRows.forEach(sRow => {
+                if (isOkinawaFromSagawaRow(sRow)) {
+                    for (let c = 0; c < sRow.length; c++) {
+                        let valNorm = cleanOrderNoNormalized(sRow[c]);
+                        if (uniqueOrderNos.has(valNorm)) okinawaOrderNos.add(valNorm);
+                    }
+                }
+            });
+            allOrders.forEach(oRow => {
+                let oNum = cleanOrderNoNormalized(oRow[5]);
+                if (isOkinawaFromOrderRow(oRow) && oNum) okinawaOrderNos.add(oNum);
+            });
+
+            let sagawaHeader = sagawaDataHeader();
+            let outputRows = sagawaHeader.length > 0 ? [sagawaHeader] : [];
+            let targetIdx = sagawaHeader.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
+            if (targetIdx === -1) targetIdx = 24;
+
+            let excludedCount = 0;
+            uniqueOrderNos.forEach(oNum => {
+                if (okinawaOrderNos.has(oNum)) {
+                    excludedCount++;
+                    return;
+                }
+
+                let matchedSRow = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
+                if (matchedSRow) {
+                    let newRow = [...matchedSRow];
+                    for (let c = 0; c < newRow.length; c++) {
+                        if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
+                    }
+                    if (newRow[targetIdx] && String(newRow[targetIdx]).length > 16) {
+                        newRow[targetIdx] = String(newRow[targetIdx]).substring(0, 16);
+                    }
+                    outputRows.push(newRow);
+                }
+            });
+
+            if (outputRows.length <= 1) { alert("佐川データと紐付く有効なデータがありません。"); return; }
+            exportCsvGeneric(outputRows, "ehiden_processed.csv");
+            alert(`佐川CSVを出力しました。\n※E/F列の判定により、沖縄宛て ${excludedCount} 件を自動除外しました。`);
+        };
+
+        function sagawaDataHeader() {
+            let f = uploadedFiles.find(item => item.type === 'sagawa');
+            return f ? f.header : [];
+        }
+
+        window.openPrintPreview = () => {
+            const allOrders = getAllOrderRows();
+            if (allOrders.length === 0) { alert('受注データがありません。'); return; }
+
+            const todayStr = new Date().toLocaleDateString();
+            let koBanIdx = 6;
+            let orderGroupMap = new Map();
+
+            allOrders.forEach(r => {
+                let orderNo = r[5] !== undefined ? r[5] : '';
+                let normalizedNo = cleanOrderNoNormalized(orderNo);
+                if (!normalizedNo) return;
+
+                let koBanVal = r[koBanIdx] !== undefined ? String(r[koBanIdx]).trim() : '';
+                if (!orderGroupMap.has(normalizedNo)) {
+                    orderGroupMap.set(normalizedNo, { orderNo: orderNo, shop: r[3] !== undefined ? r[3] : '', name: r[40] !== undefined ? r[40] : '', rows: [] });
+                }
+                let group = orderGroupMap.get(normalizedNo);
+                if (koBanVal.endsWith('-0') || koBanVal === '0' || group.rows.length === 0) {
+                    if (r[3]) group.shop = r[3];
+                    if (r[40]) group.name = r[40];
+                }
+                group.rows.push(r);
+            });
+
+            let htmlPages = [];
+            orderGroupMap.forEach((group) => {
+                let itemRowsHtml = '', totalQty = 0;
+                group.rows.forEach(mRow => {
+                    let koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
+                    let itemCode = mRow[30] !== undefined ? mRow[30] : '';
+                    let itemName = mRow[31] !== undefined ? mRow[31] : '';
+                    let qty = mRow[34] !== undefined ? mRow[34] : '1';
+                    totalQty += parseInt(qty, 10) || 1;
+                    let isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
+                    itemRowsHtml += `
+                        <tr style="border-bottom: 1px solid #ddd; background:${isChild ? '#fafbfc' : '#ffffff'};">
+                            <td style="text-align:center; padding:4px;"><div style="width:14px;height:14px;border:1.5px solid #333;margin:0 auto;"></div></td>
+                            <td style="padding:4px; ${isChild ? 'padding-left:12px; font-size:9.5pt;' : 'font-weight:bold; font-size:10pt;'}">
+                                ${isChild ? '└ ' : ''}${itemName}<br><span style="font-size:7.5pt; color:#666;">${itemCode} ${koBan ? '(' + koBan + ')' : ''}</span>
+                            </td>
+                            <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
+                        </tr>`;
+                });
+
+                htmlPages.push(`
+                <div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;">
+                    <div style="font-size:13pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;">
+                        <span>出荷検品シート</span><span style="font-size:9pt;font-weight:normal;">合計数量: ${totalQty}</span>
+                    </div>
+                    <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${group.name || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${group.shop}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${group.orderNo}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr style="background:#2c3e50;color:#fff;font-size:9pt;"><th style="width:12%;padding:4px;text-align:center;">確認</th><th style="width:73%;padding:4px;text-align:left;">商品名 / コード</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead>
+                        <tbody>${itemRowsHtml}</tbody>
+                    </table>
+                </div>`);
+            });
+
+            const printWin = window.open('', '_blank');
+            printWin.document.write(`<html><head><title>出荷検品シート</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; background: #eee; }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script></body></html>`);
+            printWin.document.close();
+        };
+
+        // ==================== マスタ管理タブ関連 ====================
         window.loadMasterItems = async () => {
             const masterArea = document.getElementById('masterResultArea');
-            masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
+            if (masterArea) masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
             try {
                 const querySnapshot = await getDocs(collection(db, "product_masters"));
                 masterItemsCache = [];
-                querySnapshot.forEach(docSnap => {
-                    masterItemsCache.push({ id: docSnap.id, ...docSnap.data() });
-                });
-                window.filterMasterTable();
+                querySnapshot.forEach(docSnap => masterItemsCache.push({ id: docSnap.id, ...docSnap.data() }));
+
+                if (document.getElementById('masterSearch')) document.getElementById('masterSearch').value = '';
+                if (document.getElementById('shelfFilter')) document.getElementById('shelfFilter').value = '';
+
+                renderMasterTable(masterItemsCache);
             } catch (err) {
-                console.error(err);
-                masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
+                if (masterArea) masterArea.innerHTML = '<p style="color:red; margin-top:15px;">取得エラー: ' + err.message + '</p>';
             }
         };
 
         function renderMasterTable(items) {
             const masterArea = document.getElementById('masterResultArea');
+            if (!masterArea) return;
+            
             let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
-                <table>
-                <thead>
-                    <tr>
-                        <th onclick="sortMasterTable('name')">商品名 ${getSortIcon('name')}</th>
-                        <th onclick="sortMasterTable('barcode')">バーコード ${getSortIcon('barcode')}</th>
-                        <th onclick="sortMasterTable('multiplier')">セット倍率 ${getSortIcon('multiplier')}</th>
-                        <th onclick="sortMasterTable('shelf')">棚番 ${getSortIcon('shelf')}</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>`;
+                <table><thead><tr><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>操作</th></tr></thead><tbody>`;
 
             if (!items || items.length === 0) {
                 html += `<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
             } else {
                 items.forEach((item, i) => {
-                    const name = item.productName || item.product_name || '';
-                    const shelf = item.shelfNumber || item.shelf_number || '';
-                    const barcode = item.barcode || item.id || '';
-                    const multiplier = item.multiplier || 1;
-
-                    html += `<tr id="master_row_${i}" data-barcode="${escapeHtml(barcode)}">
-                        <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%; box-sizing:border-box; padding:4px;"></td>
+                    let name = item.productName || item.product_name || '', shelf = item.shelfNumber || item.shelf_number || '', barcode = item.barcode || item.id || '', mult = item.multiplier || 1;
+                    html += `<tr>
+                        <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%;padding:4px;"></td>
                         <td><code>${escapeHtml(barcode)}</code></td>
-                        <td><input type="number" id="master_mult_${i}" value="${multiplier}" style="width:60px; padding:4px;"></td>
-                        <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px; padding:4px;"></td>
+                        <td><input type="number" id="master_mult_${i}" value="${mult}" style="width:60px;padding:4px;"></td>
+                        <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px;padding:4px;"></td>
                         <td>
-                            <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="btn-success">更新</button>
-                            <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="btn-danger">削除</button>
+                            <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="bg-emerald-600 text-white px-2 py-1 rounded text-xs font-bold">更新</button>
+                            <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold">削除</button>
                         </td>
                     </tr>`;
                 });
@@ -508,195 +741,90 @@
             masterArea.innerHTML = html;
         }
 
-        function getSortIcon(column) {
-            if (currentSortColumn !== column) return '↕';
-            return currentSortAsc ? '▲' : '▼';
-        }
-
-        window.sortMasterTable = (column) => {
-            if (currentSortColumn === column) {
-                currentSortAsc = !currentSortAsc;
-            } else {
-                currentSortColumn = column;
-                currentSortAsc = true;
-            }
-
-            masterItemsCache.sort((a, b) => {
-                let valA, valB;
-                if (column === 'name') {
-                    valA = (a.productName || a.product_name || '').toLowerCase();
-                    valB = (b.productName || b.product_name || '').toLowerCase();
-                } else if (column === 'barcode') {
-                    valA = (a.barcode || a.id || '').toLowerCase();
-                    valB = (b.barcode || b.id || '').toLowerCase();
-                } else if (column === 'multiplier') {
-                    valA = Number(a.multiplier) || 1;
-                    valB = Number(b.multiplier) || 1;
-                } else if (column === 'shelf') {
-                    valA = (a.shelfNumber || a.shelf_number || '').toLowerCase();
-                    valB = (b.shelfNumber || b.shelf_number || '').toLowerCase();
-                }
-
-                if (valA < valB) return currentSortAsc ? -1 : 1;
-                if (valA > valB) return currentSortAsc ? 1 : -1;
-                return 0;
-            });
-
-            window.filterMasterTable();
-        };
-
         window.filterMasterTable = () => {
-            const keyword = document.getElementById('masterSearch').value.toLowerCase();
-            const shelfKeyword = document.getElementById('shelfFilter').value.toLowerCase();
-
+            const kw = document.getElementById('masterSearch') ? document.getElementById('masterSearch').value.toLowerCase() : '';
+            const skw = document.getElementById('shelfFilter') ? document.getElementById('shelfFilter').value.toLowerCase() : '';
             const filtered = masterItemsCache.filter(item => {
-                const name = (item.productName || item.product_name || '').toLowerCase();
-                const barcode = (item.barcode || item.id || '').toLowerCase();
-                const shelf = (item.shelfNumber || item.shelf_number || '').toLowerCase();
-
-                const matchKeyword = name.includes(keyword) || barcode.includes(keyword) || shelf.includes(keyword);
-                
-                let matchShelf = true;
-                if (shelfKeyword === '' || shelfKeyword === '空欄' || shelfKeyword === '未設定') {
-                    matchShelf = (shelf === '');
-                } else {
-                    matchShelf = shelf.includes(shelfKeyword);
-                }
-
-                return matchKeyword && matchShelf;
+                let name = (item.productName || item.product_name || '').toLowerCase(), bc = (item.barcode || item.id || '').toLowerCase(), sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
+                let mKw = name.includes(kw) || bc.includes(kw) || sh.includes(kw);
+                let mSh = (skw === '' || skw === '空欄' || skw === '未設定') ? (sh === '') : sh.includes(skw);
+                return mKw && mSh;
             });
             renderMasterTable(filtered);
         };
 
-        window.filterUnassignedShelf = () => {
-            document.getElementById('shelfFilter').value = '空欄';
-            window.filterMasterTable();
-        };
+        window.filterUnassignedShelf = () => { document.getElementById('shelfFilter').value = '空欄'; filterMasterTable(); };
 
         window.applyBatchShelf = () => {
-            const batchShelf = document.getElementById('batchShelfInput').value.trim();
-            if (!batchShelf) {
-                alert('一括適用する棚番を入力してください。');
-                return;
-            }
-
-            const rows = document.querySelectorAll('#masterResultArea tbody tr');
-            if (rows.length === 0 || rows[0].querySelector('td').getAttribute('colspan')) {
-                alert('対象となる行がありません。');
-                return;
-            }
-
-            if (!confirm(`現在画面に表示されている ${rows.length} 件の商品の棚番をすべて「${batchShelf}」に変更しますか？（まだデータベースには保存されません。「変更したマスタを一括保存」を押すと反映されます）`)) {
-                return;
-            }
-
-            rows.forEach((row, i) => {
-                const shelfInput = row.querySelector('input[id^="master_shelf_"]');
-                if (shelfInput) {
-                    shelfInput.value = batchShelf;
-                }
+            let val = document.getElementById('batchShelfInput').value.trim();
+            if (!val) { alert('一括設定する棚番を入力してください。'); return; }
+            document.querySelectorAll('#masterResultArea tbody tr').forEach(row => {
+                let shInput = row.querySelector('input[id^="master_shelf_"]');
+                if (shInput) shInput.value = val;
             });
-            alert('画面上の棚番に一括適用しました。必要に応じて内容を確認し、「変更したマスタを一括保存」を実行してください。');
+            alert('画面上の棚番に一括適用しました。「変更したマスタを一括保存」を押すと保存されます。');
         };
 
         window.updateMaster = async (barcode, i) => {
-            const productName = document.getElementById(`master_name_${i}`).value.trim();
-            const multiplier = Number(document.getElementById(`master_mult_${i}`).value) || 1;
-            const shelfNumber = document.getElementById(`master_shelf_${i}`).value.trim();
-
-            if (!shelfNumber) {
-                alert('棚番を入力してください。');
-                return;
-            }
-
+            let pName = document.getElementById(`master_name_${i}`).value.trim(), mult = Number(document.getElementById(`master_mult_${i}`).value) || 1, sh = document.getElementById(`master_shelf_${i}`).value.trim();
+            if (!sh) { alert('棚番を入力してください。'); return; }
             try {
-                await setDoc(doc(db, "product_masters", barcode), {
-                    barcode: barcode,
-                    productName: productName,
-                    multiplier: multiplier,
-                    shelfNumber: shelfNumber,
-                    updatedAt: new Date()
-                }, { merge: true });
-
-                alert('マスタを更新しました！');
-                const target = masterItemsCache.find(item => (item.barcode || item.id) === barcode);
-                if (target) {
-                    target.productName = productName;
-                    target.multiplier = multiplier;
-                    target.shelfNumber = shelfNumber;
-                }
-            } catch (err) {
-                console.error(err);
-                alert('更新エラー: ' + err.message);
-            }
+                await setDoc(doc(db, "product_masters", barcode), { barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
+                alert('マスタを更新しました！'); loadMasterItems();
+            } catch(e) { alert('エラー: ' + e.message); }
         };
 
-        window.deleteMaster = async (barcode, productName) => {
-            if (!confirm(`本当に「${productName} (バーコード: ${barcode})」を削除しますか？\n（この操作は元に戻せません）`)) {
-                return;
-            }
-
+        window.deleteMaster = async (barcode, name) => {
+            if (!confirm(`「${name} (${barcode})」を削除しますか？`)) return;
             try {
                 await deleteDoc(doc(db, "product_masters", barcode));
-                alert('削除しました。');
                 masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.id) !== barcode);
-                window.filterMasterTable();
-            } catch (err) {
-                console.error(err);
-                alert('削除エラー: ' + err.message);
-            }
+                renderMasterTable(masterItemsCache); alert('削除しました。');
+            } catch(e) { alert('削除エラー: ' + e.message); }
         };
 
         window.saveAllMasters = async () => {
-            if (!confirm('現在画面に表示されているマスタのうち、棚番が入力されているものだけ一括保存しますか？')) return;
-
-            const rows = document.querySelectorAll('#masterResultArea tbody tr');
-            let successCount = 0;
-            let skippedCount = 0;
-            let failCount = 0;
-
+            if (!confirm('画面に表示されているマスタのうち、棚番が入力されているものを一括保存しますか？')) return;
+            let rows = document.querySelectorAll('#masterResultArea tbody tr'), count = 0;
             for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                const nameInput = row.querySelector('input[id^="master_name_"]');
-                const multInput = row.querySelector('input[id^="master_mult_"]');
-                const shelfInput = row.querySelector('input[id^="master_shelf_"]');
-                const codeCell = row.querySelector('code');
-
-                if (nameInput && multInput && shelfInput && codeCell) {
-                    const barcode = codeCell.textContent.trim();
-                    const productName = nameInput.value.trim();
-                    const multiplier = Number(multInput.value) || 1;
-                    const shelfNumber = shelfInput.value.trim();
-
-                    if (!shelfNumber) {
-                        skippedCount++;
-                        continue;
-                    }
-
-                    try {
-                        await setDoc(doc(db, "product_masters", barcode), {
-                            barcode: barcode,
-                            productName: productName,
-                            multiplier: multiplier,
-                            shelfNumber: shelfNumber,
-                            updatedAt: new Date()
-                        }, { merge: true });
-
-                        successCount++;
-                        const target = masterItemsCache.find(t => (t.barcode || t.id) === barcode);
-                        if (target) {
-                            target.productName = productName;
-                            target.multiplier = multiplier;
-                            target.shelfNumber = shelfNumber;
-                        }
-                    } catch (err) {
-                        failCount++;
-                    }
+                let nIn = rows[i].querySelector('input[id^="master_name_"]'), mIn = rows[i].querySelector('input[id^="master_mult_"]'), sIn = rows[i].querySelector('input[id^="master_shelf_"]'), cEl = rows[i].querySelector('code');
+                if (nIn && mIn && sIn && cEl) {
+                    let bc = cEl.textContent.trim(), name = nIn.value.trim(), mult = Number(mIn.value) || 1, sh = sIn.value.trim();
+                    if (sh) { await setDoc(doc(db, "product_masters", bc), { barcode: bc, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true }); count++; }
                 }
             }
-
-            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(棚番未入力): ${skippedCount} 件\n失敗: ${failCount} 件`);
+            alert(`${count}件のマスタを保存しました！`); loadMasterItems();
         };
+
+        function parseRobustCSV(text) {
+            let rows = [], currentRow = [], currentVal = '', inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                let c = text[i], nextC = text[i + 1];
+                if (inQuotes) { if (c === '"') { if (nextC === '"') { currentVal += '"'; i++; } else { inQuotes = false; } } else { currentVal += c; } }
+                else { if (c === '"') { inQuotes = true; } else if (c === ',') { currentRow.push(currentVal); currentVal = ''; } else if (c === '\r' || c === '\n') { if (c === '\r' && nextC === '\n') i++; currentRow.push(currentVal); rows.push(currentRow); currentRow = []; currentVal = ''; } else { currentVal += c; } }
+            }
+            if (currentVal !== '' || currentRow.length > 0) { currentRow.push(currentVal); rows.push(currentRow); }
+            return rows;
+        }
+
+        function parseCsvStringToUint8(csvString) {
+            const unicodeList = Encoding.stringToCode(csvString);
+            const sjisCodeList = Encoding.convert(unicodeList, { to: 'SJIS', from: 'UNICODE', type: 'array' });
+            return new Uint8Array(sjisCodeList);
+        }
+
+        function exportCsvGeneric(dataRows, filename) {
+            let csvString = dataRows.map(r => r.map(v => `"${String(v !== undefined && v !== null ? v : '').replace(/"/g, '""')}"`).join(",")).join("\r\n");
+            let uint8Array = parseCsvStringToUint8(csvString);
+            const blob = new Blob([uint8Array], { type: 'text/csv;charset=shift_jis;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        }
+
+        function getTodayString() {
+            const d = new Date(); return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+        }
     </script>
 </body>
 </html>
