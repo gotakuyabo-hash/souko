@@ -1,8 +1,11 @@
-const { onRequest } = require("firebase-functions/v2/https");
 const functions = require("firebase-functions");
 const logger = require("firebase-functions/logger");
 
-// zaico出庫指示用API（memo削除 & customer_nameを引数で受け取る仕様）
+// zaicoのAPIトークンと会社IDを定義
+const ZAICO_API_TOKEN = "JrUbGqtdGSndDtF3K8VsNtVwHZnSQKxW";
+const COMPANY_ID = "220891";
+
+// zaico出庫指示用API（ピンポイント逆引き・宛名指定・memo削除・before_delivery対応）
 exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -22,7 +25,6 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             return;
         }
 
-        const companyId = "220891";
         logger.info(`出荷対象 ${items.length} 件のinventory_idをzaicoからピンポイントで取得します...`);
 
         const targetBarcodes = new Set(items.map(item => String(item.barcode).trim()));
@@ -33,7 +35,7 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         const perPage = 100;
 
         while (hasMore && codeToInventoryIdMap.size < targetBarcodes.size) {
-            const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${companyId}/inventories.json?page=${page}&per_page=${perPage}`;
+            const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=${perPage}`;
             const inventoriesRes = await fetch(url, {
                 method: "GET",
                 headers: { "Authorization": `Bearer ${ZAICO_API_TOKEN}` }
@@ -105,7 +107,7 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             deliveries: deliveries
         };
 
-        const zaicoRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${companyId}/packing_slips.json`, {
+        const zaicoRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/packing_slips.json`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
