@@ -62,6 +62,13 @@
                     <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
                 </div>
 
+                <!-- zaico連携設定エリア（宛名入力欄） -->
+                <div class="bg-emerald-50 border border-emerald-200 p-3 rounded mb-4 flex items-center gap-3">
+                    <label for="customerNameInput" class="text-xs font-bold text-emerald-800 whitespace-nowrap">☁️ zaico出庫先 (customer_name):</label>
+                    <input type="text" id="customerNameInput" class="search-box bg-white" placeholder="例: 自社出荷 / Amazon / 等" style="max-width: 300px;">
+                    <span class="text-[11px] text-emerald-600">※入力内容は自動保存されます</span>
+                </div>
+
                 <!-- ピック数計算 & zaicoアクション -->
                 <div class="flex gap-3 flex-wrap mb-4">
                     <button onclick="processOrderPickCalculation()" id="calcPickBtn" disabled class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">🔢 ピック数算出 & 棚番チェック</button>
@@ -134,7 +141,23 @@
         window.addEventListener('DOMContentLoaded', () => {
             loadMasterItems();
             initDropZone();
+            initCustomerNameStorage();
         });
+
+        // 宛名入力欄のLocalStorage永続化処理
+        function initCustomerNameStorage() {
+            const inputEl = document.getElementById('customerNameInput');
+            if (!inputEl) return;
+
+            // 保存されている値があれば復元、なければデフォルト
+            const savedName = localStorage.getItem('zaico_customer_name');
+            inputEl.value = savedName !== null ? savedName : "受注一括出荷";
+
+            // 入力されるたびに自動保存
+            inputEl.addEventListener('input', () => {
+                localStorage.setItem('zaico_customer_name', inputEl.value);
+            });
+        }
 
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -458,10 +481,10 @@
             const allOrders = getAllOrderRows();
             if (allOrders.length === 0) { alert('受注データがありません。'); return; }
 
-            // ★ 宛名（customer_name）をその都度ダイアログで入力を求める
-            let customerNameInput = prompt("zaicoに登録する宛先名（customer_name）を入力してください：", "受注一括出荷");
-            if (customerNameInput === null) return; // キャンセル時は中止
-            let customerName = customerNameInput.trim() || "受注一括出荷";
+            // ★ 画面上の入力欄から宛名を取得（未入力ならデフォルト）
+            const customerNameInput = document.getElementById('customerNameInput');
+            let customerName = customerNameInput ? customerNameInput.value.trim() : "";
+            if (!customerName) customerName = "受注一括出荷";
 
             const rawItemsMap = new Map();
             allOrders.forEach(cols => {
@@ -490,7 +513,7 @@
                 });
 
                 if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
-                if (!confirm(`宛名: 「${customerName}」\n棚番登録済みの ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
+                if (!confirm(`出庫先: 「${customerName}」\n棚番登録済みの ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
 
                 showStatus("zaicoに出庫指示を送信中...");
                 const res = await fetch(URL_CREATE_SHIPMENT, { 
