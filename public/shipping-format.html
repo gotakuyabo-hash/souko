@@ -75,6 +75,15 @@
                     <button onclick="sendToZaico()" id="zaicoBtn" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2 px-4 rounded text-xs transition">☁️ zaicoに出庫指示を送信</button>
                 </div>
 
+                <!-- 受注データのソートコントロール（AB列 / AF列） -->
+                <div id="orderSortBar" class="hidden bg-slate-50 border border-slate-200 p-3 rounded mb-4 flex items-center gap-3 flex-wrap">
+                    <span class="text-xs font-bold text-slate-700">📑 受注データ並び替え（セット品維持）:</span>
+                    <button onclick="sortOrderRowsByCol(27)" class="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3 py-1.5 rounded font-bold transition">AB列（メモ1等）でソート</button>
+                    <button onclick="sortOrderRowsByCol(31)" class="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3 py-1.5 rounded font-bold transition">AF列（商品名等）でソート</button>
+                    <span id="orderSortStatus" class="text-xs text-slate-500 ml-auto"></span>
+                </div>
+
+                <div id="orderPreviewArea"></div>
                 <div id="pickResultArea"></div>
 
                 <!-- 送り状・検品アクション -->
@@ -137,6 +146,9 @@
         let uploadedFiles = [];
         let currentPickResults = [];
         let masterItemsCache = [];
+        let currentSortColumn = 'shelfNumber';
+        let currentSortAsc = true;
+        let orderSortState = { col: null, asc: true };
 
         window.addEventListener('DOMContentLoaded', () => {
             loadMasterItems();
@@ -144,14 +156,11 @@
             initCustomerNameStorage();
         });
 
-        // 宛名入力欄のLocalStorage永続化処理
         function initCustomerNameStorage() {
             const inputEl = document.getElementById('customerNameInput');
             if (!inputEl) return;
-
             const savedName = localStorage.getItem('zaico_customer_name');
             inputEl.value = savedName !== null ? savedName : "受注一括出荷";
-
             inputEl.addEventListener('input', () => {
                 localStorage.setItem('zaico_customer_name', inputEl.value);
             });
@@ -252,7 +261,9 @@
             if (!confirm("本当にすべての蓄積データをリセットしますか？")) return;
             uploadedFiles = [];
             currentPickResults = [];
+            orderSortState = { col: null, asc: true };
             document.getElementById('pickResultArea').innerHTML = '';
+            document.getElementById('orderPreviewArea').innerHTML = '';
             updateAccumulatedData();
             alert("データをリセットしました。");
         };
@@ -283,6 +294,8 @@
 
             const listSec = document.getElementById('fileListSection');
             const listCont = document.getElementById('fileListContainer');
+            const orderSortBar = document.getElementById('orderSortBar');
+
             if (uploadedFiles.length > 0) {
                 listSec.classList.remove('hidden');
                 let html = '';
@@ -299,12 +312,110 @@
                 listCont.innerHTML = '';
             }
 
+            if (orderRowsCount > 0) {
+                orderSortBar.classList.remove('hidden');
+                renderOrderPreview();
+            } else {
+                orderSortBar.classList.add('hidden');
+                document.getElementById('orderPreviewArea').innerHTML = '';
+            }
+
             const hasOrder = orderRowsCount > 0;
             document.getElementById('calcPickBtn').disabled = !hasOrder;
             document.getElementById('printBtn').disabled = !hasOrder;
             document.getElementById('zaicoBtn').disabled = !hasOrder;
             document.getElementById('yamatoBtn').disabled = !(hasOrder && yamatoRowsCount > 0);
             document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
+        }
+
+        // ==================== 受注データのソート機能（セット品維持） ====================
+        window.sortOrderRowsByCol = (colIndex) => {
+            let orderFiles = uploadedFiles.filter(f => f.type === 'order');
+            if (orderFiles.length === 0) return;
+
+            if (orderSortState.col === colIndex) {
+                orderSortState.asc = !orderSortState.asc;
+            } else {
+                orderSortState.col = colIndex;
+                orderSortState.asc = true;
+            }
+
+            // 受注データをグループ化（受注番号: index 5 をキーにしてセット品がバラけないようにする）
+            orderFiles.forEach(file => {
+                let groups = new Map();
+                file.rows.forEach(row => {
+                    let orderNo = row[5] !== undefined ? String(row[5]) : '';
+                    if (!groups.has(orderNo)) {
+                        groups.set(orderNo, []);
+                    }
+                    groups.get(orderNo).push(row);
+                });
+
+                // グループごとにソートキーを決定（グループ内代表行の指定列の値）
+                let groupArray = Array.from(groups.entries());
+                groupArray.sort((a, b) => {
+                    let rowsA = a[1], rowsB = b[1];
+                    let valA = rowsA[0][colIndex] !== undefined ? String(rowsA[0][colIndex]) : '';
+                    let valB = rowsB[0][colIndex] !== undefined ? String(rowsB[0][colIndex]) : '';
+
+                    let comp = valA.localeCompare(valB, 'ja', { numeric: true });
+                    return orderSortState.asc ? comp : -comp;
+                });
+
+                // 並び替えたグループを平坦化してファイル行に戻す
+                let sortedRows = [];
+                groupArray.forEach(([orderNo, rows]) => {
+                    sortedRows.push(...rows);
+                });
+                file.rows = sortedRows;
+            });
+
+            let colName = (colIndex === 27) ? 'AB列' : 'AF列';
+            document.getElementById('orderSortStatus').textContent = `[${colName} ${orderSortState.asc ? '昇順▲' : '降順▼'} でソート済み]`;
+            renderOrderPreview();
+            alert(`受注データを${colName}で並び替えました（セット品の親子関係を維持しています）。`);
+        };
+
+        function renderOrderPreview() {
+            let allOrders = getAllOrderRows();
+            if (allOrders.length === 0) {
+                document.getElementById('orderPreviewArea').innerHTML = '';
+                return;
+            }
+
+            // プレビューとして最大50件を表示
+            let previewRows = allOrders.slice(0, 50);
+            let html = `
+                <div class="mt-4 mb-2">
+                    <p><b>📦 受注データプレビュー（全 ${allOrders.length} 件中 先頭50件を表示）</b></p>
+                </div>
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 4px;">
+                <table>
+                <thead><tr>
+                    <th>受注番号 (F列)</th>
+                    <th>顧客名 (O列等)</th>
+                    <th>AB列 (メモ1等)</th>
+                    <th>AF列 (商品名)</th>
+                    <th>数量</th>
+                </tr></thead>
+                <tbody>`;
+
+            previewRows.forEach(r => {
+                let orderNo = r[5] || '';
+                let customerName = r[40] || r[14] || '';
+                let abVal = r[27] || '';
+                let afVal = r[31] || '';
+                let qty = r[34] || '1';
+                html += `<tr>
+                    <td><code>${escapeHtml(orderNo)}</code></td>
+                    <td>${escapeHtml(customerName)}</td>
+                    <td>${escapeHtml(abVal)}</td>
+                    <td>${escapeHtml(afVal)}</td>
+                    <td>${escapeHtml(qty)}</td>
+                </tr>`;
+            });
+            html += `</tbody></table></div>`;
+            document.getElementById('orderPreviewArea').innerHTML = html;
         }
 
         function getAllOrderRows() {
@@ -372,8 +483,7 @@
                 }
 
                 currentPickResults = Array.from(aggregatedMap.values());
-                currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
-                renderPickTable(currentPickResults);
+                sortPickResults(currentSortColumn, currentSortAsc);
             } catch (err) {
                 console.error(err);
                 alert('データ解析エラー: ' + err.message);
@@ -384,14 +494,52 @@
             document.getElementById('pickResultArea').innerHTML = `<p style="margin-top:15px;"><b>${msg}</b></p>`;
         }
 
+        window.sortTable = (column) => {
+            if (currentSortColumn === column) {
+                currentSortAsc = !currentSortAsc;
+            } else {
+                currentSortColumn = column;
+                currentSortAsc = true;
+            }
+            sortPickResults(currentSortColumn, currentSortAsc);
+        };
+
+        function sortPickResults(column, asc) {
+            currentPickResults.sort((a, b) => {
+                let valA = a[column] !== undefined ? a[column] : '';
+                let valB = b[column] !== undefined ? b[column] : '';
+
+                if (typeof valA === 'number' && typeof valB === 'number') {
+                    return asc ? valA - valB : valB - valA;
+                }
+                
+                valA = String(valA).toLowerCase();
+                valB = String(valB).toLowerCase();
+                let comp = valA.localeCompare(valB, 'ja', { numeric: true });
+                return asc ? comp : -comp;
+            });
+            renderPickTable(currentPickResults);
+        }
+
         function renderPickTable(results) {
+            let getArrow = (col) => {
+                if (currentSortColumn !== col) return ' ↕';
+                return currentSortAsc ? ' ▲' : ' ▼';
+            };
+
             let html = `
                 <div class="flex justify-between items-center mt-4 mb-2">
-                    <p><b>全 ${results.length} 件の明細を検出しました</b></p>
+                    <p><b>全 ${results.length} 件の明細を検出しました（ヘッダーをクリックして並び替え可能）</b></p>
                     <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更した明細を一括保存して計算</button>
                 </div>
                 <table><thead><tr>
-                <th>商品名</th><th>バーコード</th><th>注文数</th><th>倍率</th><th>棚番</th><th>ピック数</th><th>操作</th>
+                <th onclick="sortTable('productName')">商品名${getArrow('productName')}</th>
+                <th onclick="sortTable('barcode')">バーコード${getArrow('barcode')}</th>
+                <th onclick="sortTable('orderQty')">注文数${getArrow('orderQty')}</th>
+                <th onclick="sortTable('multiplier')">倍率${getArrow('multiplier')}</th>
+                <th onclick="sortTable('shelfNumber')">棚番${getArrow('shelfNumber')}</th>
+                <th onclick="sortTable('pickCount')">ピック数${getArrow('pickCount')}</th>
+                <th>操作</th>
                 </tr></thead><tbody>`;
 
             results.forEach((item, index) => {
@@ -423,11 +571,6 @@
             }
         };
 
-        function sortAndReRenderPickTable() {
-            currentPickResults.sort((a, b) => (a.shelfNumber || "").localeCompare(b.shelfNumber || ""));
-            renderPickTable(currentPickResults);
-        }
-
         window.registerItem = async (index, orderQty, productName, isSilent = false) => {
             const barcode = document.getElementById(`barcode_${index}`).value.trim();
             const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
@@ -441,8 +584,8 @@
             try {
                 await setDoc(doc(db, "product_masters", barcode), { barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
                 currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: orderQty * multiplier };
-                sortAndReRenderPickTable();
-                if (!isSilent) alert('保存しました！棚番順に並び替えました。');
+                sortPickResults(currentSortColumn, currentSortAsc);
+                if (!isSilent) alert('保存しました！');
             } catch (err) {
                 console.error(err);
                 if (!isSilent) alert('保存エラー: ' + err.message);
@@ -471,8 +614,8 @@
                     } catch (err) { console.error(err); }
                 }
             }
-            sortAndReRenderPickTable();
-            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件\n\n※棚番順に並び替えました。`);
+            sortPickResults(currentSortColumn, currentSortAsc);
+            alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件`);
         };
 
         window.sendToZaico = async () => {
@@ -534,7 +677,6 @@
             }
         };
 
-        // ==================== 送り状・沖縄判定・検品シート ====================
         function cleanOrderNoNormalized(rawStr) {
             if (!rawStr) return "";
             return String(rawStr).replace(/^No:?[\.\s]*/i, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "").trim().toLowerCase();
@@ -544,7 +686,6 @@
             if (!phoneStr) return "";
             let s = String(phoneStr).trim();
             if (!s) return "";
-
             if (s.startsWith('+81')) {
                 s = '0' + s.substring(3);
             }
@@ -725,7 +866,6 @@
             printWin.document.close();
         };
 
-        // ==================== マスタ管理タブ関連 ====================
         window.loadMasterItems = async () => {
             const masterArea = document.getElementById('masterResultArea');
             if (masterArea) masterArea.innerHTML = '<p style="margin-top:15px;"><b>マスタデータを取得中...</b></p>';
