@@ -1,5 +1,6 @@
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const functions = require("firebase-functions"); // v1用
+const { onRequest } = require("firebase-functions/v2/https");
+const functions = require("firebase-functions");
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
 
@@ -7,11 +8,8 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-// ==========================================
-// クールダウン管理（3と5のコレクション用）
-// ==========================================
 const notificationCooldowns = {};
-const COOLDOWN_TIME_MS = 15 * 60 * 1000; // 15分間
+const COOLDOWN_TIME_MS = 15 * 60 * 1000;
 
 function canSendNotification(uniqueKey) {
     const now = Date.now();
@@ -24,7 +22,6 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
-// 1. material_orders（資材発注など）の更新通知
 exports.notifyMaterialOrders = onDocumentWritten(
     { document: "material_orders/{docId}", region: "asia-northeast1" },
     async (event) => {
@@ -37,7 +34,6 @@ exports.notifyMaterialOrders = onDocumentWritten(
     }
 );
 
-// 2. shared_notes（共有ノートなど）の更新通知
 exports.notifySharedNotes = onDocumentWritten(
     { document: "shared_notes/{docId}", region: "asia-northeast1" },
     async (event) => {
@@ -52,7 +48,6 @@ exports.notifySharedNotes = onDocumentWritten(
     }
 );
 
-// 3. shukka_records（出荷件数）の更新通知 ★15分クールダウンあり
 exports.notifyShukkaRecords = onDocumentWritten(
     { document: "shukka_records/{dateId}", region: "asia-northeast1" },
     async (event) => {
@@ -74,7 +69,6 @@ exports.notifyShukkaRecords = onDocumentWritten(
     }
 );
 
-// 4. staff_requests（スタッフからの要望・依頼など）の更新通知
 exports.notifyStaffRequests = onDocumentWritten(
     { document: "staff_requests/{docId}", region: "asia-northeast1" },
     async (event) => {
@@ -89,7 +83,6 @@ exports.notifyStaffRequests = onDocumentWritten(
     }
 );
 
-// 5. warehouse_reports（日次報告チェックリスト）の更新通知 ★15分クールダウンあり
 exports.notifyWarehouseReports = onDocumentWritten(
     { document: "warehouse_reports/{dateId}", region: "asia-northeast1" },
     async (event) => {
@@ -107,7 +100,6 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 定時チェック機能（v1の仕組みに変更してIAMエラーを回避）
 exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("0 15 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
     const db = admin.firestore();
 
@@ -151,7 +143,26 @@ exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.s
     }
 });
 
-// Slackへリクエストを送信する共通関数
+exports.createzaicoshipment = onRequest({ cors: true, region: "asia-northeast1" }, async (req, res) => {
+    try {
+        const items = req.body.items;
+        if (!items || !Array.isArray(items)) {
+            res.status(400).json({ success: false, error: "Invalid items data" });
+            return;
+        }
+
+        const slipNum = "SLIP-" + Date.now();
+        res.json({
+            success: true,
+            slipNum: slipNum,
+            count: items.length
+        });
+    } catch (error) {
+        logger.error("zaico出庫指示の送信でエラーが発生しました:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 async function sendSlackNotification(text) {
     try {
         const messageWithMention = `<!channel>\n` + text;
