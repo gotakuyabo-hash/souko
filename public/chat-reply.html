@@ -23,6 +23,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // グローバルに登録関数を公開（メッセージ本文のテキスト連携）
         window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
             let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
             taskContent += `\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
@@ -76,7 +77,7 @@
         <!-- アカウント＆モード切替カード -->
         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <div class="flex items-center gap-2">
-                <!-- ★ ラクロジスタッフアカウントをデフォルトに設定 -->
+                <!-- ★ ラクロジスタッフアカウントをデフォルト（selected）に設定 -->
                 <select id="accountSelect" onchange="changeAccount()" class="flex-1 border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50/50 font-bold text-indigo-950 focus:outline-none">
                     <option value="5435a05ddd195c46ca688d021e45bbce" selected>ラクロジスタッフアカウント</option>
                     <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント</option>
@@ -128,7 +129,7 @@
     <!-- ================= モーダル ================= -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
-    <!-- セラー情報表示モーダル -->
+    <!-- ★ セラー情報表示モーダルを追加 -->
     <div id="modalSellerInfo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-sm bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900">🔑 紐づくセラー情報</h2>
@@ -191,6 +192,42 @@
             </button>
         </div>
     </div>
+
+    <!-- 定型文「管理」モーダル -->
+    <div id="modalTemplateManager" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col max-h-[85vh]">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-xl">
+            <h2 class="font-bold text-slate-800">⚙️ 定型文の管理</h2>
+            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
+        </div>
+        <div id="templateManagerList" class="p-4 overflow-y-auto space-y-4"></div>
+    </div>
+
+    <!-- 定型文「編集・保存」モーダル -->
+    <div id="modalTemplateEditor" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-indigo-50 rounded-t-xl">
+            <h2 class="font-bold text-indigo-900" id="editorModalTitle">💾 定型文を保存・編集</h2>
+            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <input type="hidden" id="editTmplId">
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">📂 カテゴリ</label>
+                <input type="text" id="editTmplCategory" list="categoryList" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+                <datalist id="categoryList"></datalist>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">🏷️ タイトル</label>
+                <input type="text" id="editTmplTitle" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">📝 本文</label>
+                <textarea id="editTmplText" class="w-full h-32 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
+            </div>
+            <button onclick="saveTemplateSubmit()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg shadow mt-2">
+                保存する
+            </button>
+        </div>
+    </div>
     <!-- ========================================================= -->
 
     <script>
@@ -198,6 +235,8 @@
         
         let allRoomsCache = [];
         let currentMode = 'burst';
+        const TEMPLATE_KEY = "chatwork_custom_templates_v2";
+        const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
         const LATER_KEY = "chatwork_later_rooms_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -214,9 +253,13 @@
         }
 
         function refreshCurrentView() {
-            if (currentMode === 'burst') fetchAllUnreadRooms();
-            else if (currentMode === 'later') renderLaterRooms();
-            else fetchNormalRooms();
+            if (currentMode === 'burst') {
+                fetchAllUnreadRooms();
+            } else if (currentMode === 'later') {
+                renderLaterRooms();
+            } else {
+                fetchNormalRooms();
+            }
         }
 
         function switchMode(mode) {
@@ -228,6 +271,7 @@
             const laterCont = document.getElementById('laterModeContainer');
             const normalCont = document.getElementById('normalModeContainer');
 
+            // リセット
             btnBurst.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
             btnLater.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
             btnNormal.className = "flex-1 py-1.5 text-[11px] font-bold rounded-md text-slate-600 transition";
@@ -250,153 +294,12 @@
             }
         }
 
-        // ⚡ 未読ルーム一覧を取得してカードを描画する関数
-        async function fetchAllUnreadRooms() {
-            const container = document.getElementById('burstModeContainer');
-            document.getElementById('loadStatus').textContent = "スキャン中...";
-            
-            container.innerHTML = `
-                <div class="text-center text-xs text-slate-500 py-8">
-                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
-                    <div>未読ルームをスキャン中...</div>
-                </div>
-            `;
-
-            try {
-                const res = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
-                });
-                const data = await res.json();
-                if (data.status !== "success") throw new Error(data.message || '取得失敗');
-
-                const rooms = data.rooms.filter(r => r.unread_num > 0);
-                document.getElementById('loadStatus').textContent = `未読 ${rooms.length}件`;
-
-                if (rooms.length === 0) {
-                    container.innerHTML = `
-                        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
-                            <div class="text-2xl">✨</div>
-                            <div class="text-sm font-bold text-slate-700">未読のルームはありません！</div>
-                        </div>
-                    `;
-                    return;
-                }
-
-                let html = '';
-                for (const r of rooms) {
-                    html += `
-                        <div class="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm space-y-2">
-                            <div class="flex justify-between items-start gap-2">
-                                <div class="font-bold text-sm text-slate-900">${r.name}</div>
-                                <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">未読 ${r.unread_num}</span>
-                            </div>
-                            <div class="flex items-center gap-2 pt-2 border-t border-slate-100 flex-wrap">
-                                <button onclick="fetchSellerInfo('${r.name}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-2.5 py-1.5 rounded font-bold transition">
-                                    🔑 セラー情報
-                                </button>
-                                <button onclick="markRoomAsRead('${r.room_id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs px-2 py-1.5 rounded font-bold transition">
-                                    ✅ 既読にする
-                                </button>
-                                <button onclick="openChatworkOfficial('${r.room_id}')" class="text-xs text-indigo-600 hover:underline font-bold ml-auto">
-                                    Chatworkで開く ↗
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }
-                container.innerHTML = html;
-
-            } catch (e) {
-                console.error(e);
-                container.innerHTML = `
-                    <div class="bg-red-50 border border-red-200 p-4 rounded-xl text-center text-red-700 text-xs">
-                        取得エラー: ${e.message}
-                    </div>
-                `;
-                document.getElementById('loadStatus').textContent = "エラー";
-            }
-        }
-
-        // 📁 通常個別ルーム一覧を取得
-        async function fetchNormalRooms() {
-            const select = document.getElementById('roomSelect');
-            if (select.options.length > 1) return; // すでに読み込み済みの場合はスキップ
-
-            try {
-                const res = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
-                });
-                const data = await res.json();
-                if (data.status !== "success") throw new Error('ルーム一覧の取得に失敗しました');
-
-                allRoomsCache = data.rooms;
-                renderRoomSelect(allRoomsCache);
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        function renderRoomSelect(rooms) {
-            const select = document.getElementById('roomSelect');
-            let html = '<option value="">-- ルームを選択 --</option>';
-            rooms.forEach(r => {
-                html += `<option value="${r.room_id}">${r.name}</option>`;
-            });
-            select.innerHTML = html;
-        }
-
-        function filterNormalRooms() {
-            const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
-            const filtered = allRoomsCache.filter(r => r.name.toLowerCase().includes(keyword));
-            renderRoomSelect(filtered);
-        }
-
-        function onNormalRoomSelected() {
-            // 必要に応じて個別ルーム選択時の処理
-        }
-
-        async function loadSingleRoomMessages() {
-            const roomId = document.getElementById('roomSelect').value;
-            const container = document.getElementById('singleRoomMessageContainer');
-            if (!roomId) {
-                alert("ルームを選択してください");
-                return;
-            }
-
-            container.innerHTML = `<div class="text-center text-xs text-slate-500 py-4">メッセージを読み込み中...</div>`;
-
-            try {
-                const res = await fetch(GAS_WEB_APP_URL, {
-                    method: 'POST',
-                    body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: roomId })
-                });
-                const data = await res.json();
-                if (data.status !== "success") throw new Error('メッセージ取得失敗');
-
-                let html = `<div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 space-y-2"><div class="text-xs font-bold text-indigo-600">最新メッセージ</div>`;
-                if (data.messages.length === 0) {
-                    html += `<div class="text-xs text-slate-500">メッセージはありません</div>`;
-                } else {
-                    data.messages.slice(-10).forEach(m => {
-                        html += `<div class="text-xs border-b border-slate-100 pb-1.5"><span class="font-bold text-slate-700">${m.account.name}:</span> ${m.body}</div>`;
-                    });
-                }
-                html += `</div>`;
-                container.innerHTML = html;
-
-            } catch (e) {
-                container.innerHTML = `<div class="text-xs text-red-500">エラー: ${e.message}</div>`;
-            }
-        }
-
-        // 🌐 Chatwork公式ルームを開く
+        /* ======== 🌐 Chatwork公式ルームを開く ======== */
         function openChatworkOfficial(roomId) {
             window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
         }
 
-        // ✅ 既読にする機能
+        /* ======== ✅ 既読にする機能 ======== */
         async function markRoomAsRead(roomId) {
             if (!confirm('このルームの未読をすべて既読にしますか？')) return;
 
@@ -415,9 +318,9 @@
             }
         }
 
-        // 🔑 セラー情報をGASから取得してモーダルに表示する関数
-        async function fetchSellerInfo(chatworkId) {
-            if (!chatworkId) {
+        /* ======== 🔑 セラー情報をGASから取得してモーダルに表示する関数 ======== */
+        async function fetchSellerInfo(keyword) {
+            if (!keyword) {
                 alert("キーワードが見つかりません");
                 return;
             }
@@ -437,7 +340,7 @@
                     body: JSON.stringify({
                         action: "get_seller_info",
                         token: getCurrentToken(),
-                        chatwork_id: chatworkId
+                        chatwork_id: keyword
                     })
                 });
                 const data = await res.json();
@@ -461,18 +364,880 @@
             }
         }
 
-        function closeAllModals() {
-            document.getElementById('modalOverlay').style.display = 'none';
-            document.getElementById('modalSellerInfo').style.display = 'none';
-            document.getElementById('modalLinkCopy').style.display = 'none';
+        /* ======== 📷 カメラ撮影機能 ======== */
+        function triggerCameraUpload(roomId) {
+            const fileInput = document.getElementById(`camera_input_${roomId}`);
+            if (fileInput) fileInput.click();
+        }
+
+        // ======== 📁 一般ファイル選択機能 ======== */
+        function triggerFileUpload(roomId) {
+            const fileInput = document.getElementById(`file_input_${roomId}`);
+            if (fileInput) fileInput.click();
+        }
+
+        async function handleFileSelected(roomId, fileInputEl) {
+            const file = fileInputEl.files[0];
+            if (!file) return;
+
+            if (!confirm(`選択したファイル（${file.name}）をChatworkに送信しますか？`)) {
+                fileInputEl.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result.split(',')[1];
+                const fileName = file.name || `file_${Date.now()}`;
+                const mimeType = file.type || 'application/octet-stream';
+
+                alert('ファイルをアップロード中...');
+
+                try {
+                    const res = await fetch(GAS_WEB_APP_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            action: "upload_file",
+                            token: getCurrentToken(),
+                            room_id: roomId,
+                            file_data: base64Data,
+                            file_name: fileName,
+                            mime_type: mimeType
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.status !== "success") throw new Error(data.message || 'アップロード失敗');
+
+                    alert('📁 ファイルの送信が完了しました！');
+                } catch (err) {
+                    alert('送信失敗: ' + err.message);
+                } finally {
+                    fileInputEl.value = '';
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /* ======== ⏳ 後で対応する機能 ======== */
+        function getLaterRooms() {
+            try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; }
         }
 
         function updateLaterBadge() {
-            const later = JSON.parse(localStorage.getItem(LATER_KEY)) || {};
+            const later = getLaterRooms();
             const token = getCurrentToken();
             const list = later[token] || [];
             document.getElementById('laterCountBadge').textContent = list.length;
         }
+
+        function toggleLaterRoom(roomId, roomName, senderName, messageBody, sendDateStr, btnEl) {
+            let later = getLaterRooms();
+            const token = getCurrentToken();
+            if (!later[token]) later[token] = [];
+
+            const index = later[token].findIndex(item => String(item.roomId) === String(roomId));
+            if (index > -1) {
+                later[token].splice(index, 1);
+                btnEl.className = "bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 text-xs px-3 py-2 rounded font-bold shrink-0 transition";
+                btnEl.textContent = "⏳ 後で対応する";
+            } else {
+                later[token].unshift({
+                    roomId,
+                    roomName,
+                    senderName,
+                    messageBody,
+                    sendDateStr,
+                    savedAt: Date.now()
+                });
+                btnEl.className = "bg-amber-600 text-white text-xs px-3 py-2 rounded font-bold shrink-0 transition";
+                btnEl.textContent = "⏳ 後で対応中";
+            }
+
+            localStorage.setItem(LATER_KEY, JSON.stringify(later));
+            updateLaterBadge();
+        }
+
+        function completeLaterRoom(roomId) {
+            if (!confirm('このルームの対応を完了し、「後で対応」リストから削除しますか？')) return;
+
+            let later = getLaterRooms();
+            const token = getCurrentToken();
+            if (later[token]) {
+                later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                localStorage.setItem(LATER_KEY, JSON.stringify(later));
+            }
+            renderLaterRooms();
+            updateLaterBadge();
+        }
+
+        async function renderLaterRooms() {
+            const laterCont = document.getElementById('laterModeContainer');
+            const later = getLaterRooms();
+            const token = getCurrentToken();
+            const list = later[token] || [];
+
+            updateLaterBadge();
+
+            if (list.length === 0) {
+                laterCont.innerHTML = `
+                    <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
+                        <div class="text-2xl">☕</div>
+                        <div class="text-sm font-bold text-slate-700">「後で対応」に保存されたルームはありません。</div>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            for (const item of list) {
+                const uniqueTextareaId = `later_txt_${item.roomId}`;
+
+                html += `
+                    <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
+                        <div class="flex justify-between items-start gap-2">
+                            <div>
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">⏳ 後で対応</span>
+                                    <h3 class="font-bold text-sm text-slate-800">${escapeHtml(item.roomName)}</h3>
+                                </div>
+                            </div>
+                            <div class="flex gap-1 shrink-0">
+                                <input type="file" id="camera_input_${item.roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                                <input type="file" id="file_input_${item.roomId}" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                                <button onclick="triggerCameraUpload('${item.roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                    📷 写真
+                                </button>
+                                <button onclick="triggerFileUpload('${item.roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                    📁 ファイル
+                                </button>
+                                <button onclick="markRoomAsRead('${item.roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded border border-indigo-300 font-bold">
+                                    📖 既読
+                                </button>
+                                <button onclick="openChatworkOfficial('${item.roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1.5 rounded border border-sky-300 font-bold">
+                                    🌐 公式
+                                </button>
+                                <button onclick="completeLaterRoom('${item.roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1.5 rounded border border-emerald-300 font-bold">
+                                    ✅ 完了
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
+                            <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                <span>👤 ${escapeHtml(item.senderName)}</span>
+                                <span class="text-slate-400 font-normal">${item.sendDateStr}</span>
+                            </div>
+                            <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(item.messageBody)}</div>
+                        </div>
+
+                        <div class="space-y-2 pt-1">
+                            <div class="flex gap-1.5">
+                                <select id="later_members_${item.roomId}" onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                                    <option value="">👤 宛先(To)を追加</option>
+                                </select>
+                            </div>
+                            <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <button onclick="sendLaterReply('${item.roomId}', '${uniqueTextareaId}', this)" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                📤 返信して対応完了にする
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            laterCont.innerHTML = html;
+
+            list.forEach(async (item) => {
+                try {
+                    const roomRes = await fetch(GAS_WEB_APP_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: item.roomId })
+                    });
+                    const roomData = await roomRes.json();
+                    if (roomData.status === "success" && roomData.members) {
+                        const selectEl = document.getElementById(`later_members_${item.roomId}`);
+                        if (selectEl) {
+                            let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
+                            roomData.members.forEach(m => {
+                                membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
+                            });
+                            selectEl.innerHTML = membersOpts;
+                        }
+                    }
+                } catch(e) {}
+            });
+        }
+
+        async function sendLaterReply(roomId, textareaId, btnEl) {
+            const bodyText = document.getElementById(textareaId).value.trim();
+            if (!bodyText) { alert('メッセージが空です。'); return; }
+            if (!confirm('返信して「後で対応」リストから削除しますか？')) return;
+
+            btnEl.disabled = true;
+            btnEl.textContent = "送信中...";
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message);
+
+                let later = getLaterRooms();
+                const token = getCurrentToken();
+                if (later[token]) {
+                    later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                    localStorage.setItem(LATER_KEY, JSON.stringify(later));
+                }
+
+                btnEl.textContent = "✅ 送信完了＆リストから解除！";
+                setTimeout(() => { renderLaterRooms(); updateLaterBadge(); }, 1000);
+            } catch (e) {
+                alert('送信失敗: ' + e.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📤 返信して対応完了にする";
+            }
+        }
+        /* =========================================== */
+
+        /* ======== 🔗 スタッフ間連絡アプリ連携 ======== */
+        function openLinkCopyModal(roomId, roomName, senderName, messageBody) {
+            document.getElementById('linkRoomId').value = roomId;
+            document.getElementById('linkRoomName').value = roomName;
+            document.getElementById('linkSenderName').value = senderName;
+            document.getElementById('linkMessageBody').value = messageBody;
+            
+            const savedFrom = localStorage.getItem(FROM_NAME_KEY) || '';
+            document.getElementById('linkFromInput').value = savedFrom;
+            document.getElementById('linkToInput').value = '';
+            document.getElementById('linkMemoInput').value = '';
+
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('modalLinkCopy').style.display = 'flex';
+        }
+
+        function submitToStaffApp(btnEl) {
+            const roomId = document.getElementById('linkRoomId').value;
+            const roomName = document.getElementById('linkRoomName').value;
+            const senderName = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
+            const fromVal = document.getElementById('linkFromInput').value.trim();
+            const toVal = document.getElementById('linkToInput').value.trim();
+            const memoVal = document.getElementById('linkMemoInput').value.trim();
+
+            if (fromVal) {
+                localStorage.setItem(FROM_NAME_KEY, fromVal);
+            }
+
+            if (window.registerToStaffApp) {
+                window.registerToStaffApp(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl);
+            } else {
+                alert('Firebaseの初期化が完了していません。');
+            }
+        }
+        /* =========================================== */
+
+        /* ======== ⚡ 未読バースト処理コア ======== */
+        async function fetchAllUnreadRooms() {
+            const statusEl = document.getElementById('loadStatus');
+            const burstCont = document.getElementById('burstModeContainer');
+            statusEl.textContent = "スキャン中...";
+            
+            burstCont.innerHTML = `
+                <div class="text-center text-xs text-slate-500 py-8 bg-white rounded-xl shadow-sm border border-slate-200">
+                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
+                    <div>未読ルームのメッセージを一括スキャン中...</div>
+                </div>
+            `;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message);
+
+                allRoomsCache = data.rooms || [];
+                const unreadRooms = allRoomsCache.filter(r => r.unread_num > 0);
+
+                updateLaterBadge();
+
+                if (unreadRooms.length === 0) {
+                    burstCont.innerHTML = `
+                        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-2">
+                            <div class="text-2xl">🎉</div>
+                            <div class="text-sm font-bold text-slate-700">未読のルームはありません！すべて完了しています。</div>
+                        </div>
+                    `;
+                    statusEl.textContent = "未読ゼロ";
+                    statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
+                    return;
+                }
+
+                burstCont.innerHTML = '';
+                const later = getLaterRooms();
+                const currentTokenKey = getCurrentToken();
+                const laterList = later[currentTokenKey] || [];
+
+                for (const room of unreadRooms) {
+                    const roomId = room.room_id;
+                    const roomName = room.name;
+                    const cardId = `burst_card_${roomId}`;
+
+                    let cardHtml = `
+                        <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-2.5">
+                            <div class="flex justify-between items-start gap-2">
+                                <div>
+                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                        <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
+                                        <h3 class="font-bold text-sm text-slate-800">${escapeHtml(room.name)}</h3>
+                                    </div>
+                                </div>
+                                <div class="flex gap-1 shrink-0 flex-wrap justify-end">
+                                    <!-- ★ 🔑 セラー情報ボタンを追加 -->
+                                    <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
+                                        🔑 セラー
+                                    </button>
+                                    <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                    <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                    <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                        📷 写真
+                                    </button>
+                                    <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                        📁 ファイル
+                                    </button>
+                                    <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                        📖 既読
+                                    </button>
+                                    <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
+                                        🌐 公式
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="burst-msg-area text-xs text-slate-500 p-2 bg-slate-50 rounded">メッセージを読み込み中...</div>
+                        </div>
+                    `;
+                    burstCont.innerHTML += cardHtml;
+                }
+
+                unreadRooms.forEach(async (room) => {
+                    const roomId = room.room_id;
+                    const roomName = room.name;
+                    const cardEl = document.getElementById(`burst_card_${roomId}`);
+                    if (!cardEl) return;
+                    const msgArea = cardEl.querySelector('.burst-msg-area');
+
+                    try {
+                        const roomRes = await fetch(GAS_WEB_APP_URL, {
+                            method: 'POST',
+                            body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: roomId })
+                        });
+                        const roomData = await roomRes.json();
+                        if (roomData.status !== "success") throw new Error();
+
+                        let messages = roomData.messages || [];
+                        messages.sort((a, b) => b.send_time - a.send_time);
+
+                        if (messages.length === 0) {
+                            msgArea.innerHTML = '<span class="text-slate-400">メッセージなし</span>';
+                            return;
+                        }
+
+                        const latestMsg = messages[0];
+                        const senderName = latestMsg.account && latestMsg.account.name ? latestMsg.account.name : '不明';
+                        const msgTime = latestMsg.send_time || '';
+                        let sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                        const uniqueTextareaId = `burst_txt_${roomId}`;
+                        const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+
+                        const later = getLaterRooms();
+                        const isLater = (later[getCurrentToken()] || []).some(item => String(item.roomId) === String(roomId));
+
+                        let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
+                        (roomData.members || []).forEach(m => {
+                            membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
+                        });
+
+                        msgArea.outerHTML = `
+                            <div class="space-y-2">
+                                <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
+                                    <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                      <span>👤 ${escapeHtml(senderName)}</span>
+                                      <div class="flex items-center gap-1.5">
+                                        <span class="text-slate-400 font-normal">${sendDateStr}</span>
+                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                          🔗 連携
+                                        </button>
+                                      </div>
+                                  </div>
+                                  <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(latestMsg.body)}</div>
+                              </div>
+
+                              <div class="space-y-2 pt-1">
+                                  <div class="flex gap-1.5">
+                                    <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                                      ${membersOpts}
+                                  </select>
+                                </div>
+                                  <div class="flex gap-1.5">
+                                    <select onchange="insertTemplate(this, '${uniqueTextareaId}')" class="flex-1 template-dropdown text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none">
+                                      <option value="">📥 定型文を呼び出す</option>
+                                  </select>
+                                  <button onclick="openTemplateEditorForSave('${uniqueTextareaId}')" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs px-2 py-1.5 rounded font-bold border border-indigo-300 shrink-0">
+                                      💾 登録
+                                  </button>
+                                </div>
+                                <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                                
+                                <div class="flex gap-2">
+                                  <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                    ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
+                                  </button>
+                                  <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                    📤 このルームに返信する
+                                  </button>
+                              </div>
+                            </div>
+                        </div>
+                      `;
+                      renderTemplateSelects();
+                  } catch (err) {
+                      msgArea.innerHTML = '<span class="text-red-500">取得失敗</span>';
+                  }
+              });
+
+              statusEl.textContent = `未読 ${unreadRooms.length}件`;
+              statusEl.className = "text-xs bg-amber-500 px-2 py-0.5 rounded-full text-white";
+
+            } catch (e) {
+                burstCont.innerHTML = `<div class="text-xs text-red-500 text-center p-4">エラー: ${e.message}</div>`;
+                statusEl.textContent = "エラー";
+            }
+        }
+
+        async function sendBurstReply(roomId, textareaId, btnEl) {
+            const bodyText = document.getElementById(textareaId).value.trim();
+            if (!bodyText) { alert('メッセージが空です。'); return; }
+            if (!confirm('この内容で送信しますか？')) return;
+
+            btnEl.disabled = true;
+            btnEl.textContent = "送信中...";
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
+              });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error(data.message);
+
+                let later = getLaterRooms();
+                const token = getCurrentToken();
+                if (later[token]) {
+                    later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                    localStorage.setItem(LATER_KEY, JSON.stringify(later));
+                    updateLaterBadge();
+              }
+
+                btnEl.textContent = "✅ 送信完了！";
+                btnEl.className = "w-full bg-slate-300 text-white text-xs py-2 rounded cursor-default";
+                btnEl.closest('.bg-white').style.opacity = '0.6';
+            } catch (e) {
+                alert('送信失敗: ' + e.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📤 このルームに返信する";
+            }
+        }
+        /* =========================================== */
+
+        /* ======== 📁 通常ルーム個別モード ======== */
+        async function fetchNormalRooms() {
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
+              });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error();
+                allRoomsCache = data.rooms || [];
+                filterNormalRooms();
+            } catch(e) {}
+        }
+
+        function filterNormalRooms() {
+            const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
+            const filtered = allRoomsCache.filter(r => r.name.toLowerCase().includes(keyword));
+            
+            let html = '<option value="">-- ルームを選択 --</option>';
+            filtered.forEach(r => {
+                const unreadStr = r.unread_num > 0 ? ` (🔴未読 ${r.unread_num})` : '';
+                html += `<option value="${r.room_id}">${escapeHtml(r.name)}${unreadStr}</option>`;
+            });
+            document.getElementById('roomSelect').innerHTML = html;
+        }
+
+        function onNormalRoomSelected() {}
+
+        async function loadSingleRoomMessages() {
+            const roomId = document.getElementById('roomSelect').value;
+            const container = document.getElementById('singleRoomMessageContainer');
+            
+            if (!roomId) {
+                alert('ルームを選択してください。');
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="text-center text-xs text-slate-500 py-6 bg-white rounded-xl shadow-sm border border-slate-200">
+                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
+                    <div>メッセージを読み込み中...</div>
+                </div>
+            `;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: roomId })
+              });
+                const roomData = await res.json();
+                if (roomData.status !== "success") throw new Error(roomData.message || '取得失敗');
+
+                let messages = roomData.messages || [];
+                messages.sort((a, b) => a.send_time - b.send_time);
+
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId)) || {};
+                const roomName = roomObj.name || 'ルーム';
+
+                const later = getLaterRooms();
+                const currentTokenKey = getCurrentToken();
+                const laterList = later[currentTokenKey] || [];
+
+                let html = `
+                    <div class="bg-white border-2 border-indigo-100 rounded-xl p-4 shadow-sm space-y-3">
+                        <div class="flex justify-between items-start border-b border-slate-100 pb-2">
+                            <div>
+                                <h3 class="font-bold text-sm text-slate-800">📁 ${escapeHtml(roomName)}</h3>
+                            </div>
+                            <div class="flex gap-1 shrink-0 flex-wrap justify-end">
+                                <!-- ★ 🔑 セラー情報ボタンを追加 -->
+                                <button onclick="fetchSellerInfo('${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
+                                    🔑 セラー
+                                </button>
+                                <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
+                                    📷 写真
+                                </button>
+                                <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
+                                    📁 ファイル
+                                </button>
+                                <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                    📖 既読
+                                </button>
+                                <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
+                                    🌐 公式
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 履歴表示エリア -->
+                        <div class="max-h-80 overflow-y-auto space-y-2 p-2 bg-slate-50 rounded border border-slate-200 text-xs">
+            `;
+
+            if (messages.length === 0) {
+                html += '<div class="text-slate-400 text-center py-4">メッセージはありません</div>';
+            } else {
+                messages.forEach(m => {
+                    const senderName = m.account && m.account.name ? m.account.name : '不明';
+                    const msgTime = m.send_time || '';
+                    const sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                    const escapedBodyForModal = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                    const escapedBodyForMsgLater = escapeHtml(m.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                    
+                    const isMsgLater = laterList.some(item => String(item.roomId) === String(roomId) && String(item.messageBody) === String(m.body));
+
+                    html += `
+                        <div class="bg-white p-2.5 rounded border border-slate-200 space-y-1.5">
+                            <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                <span>👤 ${escapeHtml(senderName)}</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-slate-400 font-normal">${sendDateStr}</span>
+                                    <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForMsgLater}', '${sendDateStr}', this)" class="${isMsgLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-[10px] px-2 py-0.5 rounded font-bold transition">
+                                        ${isMsgLater ? '⏳ 対応中' : '⏳ 後で'}
+                                    </button>
+                                    <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                        🔗 連携
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="text-slate-700 whitespace-pre-wrap">${escapeHtml(m.body)}</div>
+                        </div>
+                    `;
+              });
+          }
+
+          const uniqueTextareaId = `normal_txt_${roomId}`;
+          let membersOpts = '<option value="">👤 宛先(To)を追加</option>';
+          (roomData.members || []).forEach(m => {
+              membersOpts += `<option value="${m.account_id}" data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
+          });
+
+          const latestMsgForLater = messages.length > 0 ? messages[messages.length - 1] : null;
+          const latestSenderName = latestMsgForLater && latestMsgForLater.account && latestMsgForLater.account.name ? latestMsgForLater.account.name : '不明';
+          const latestBody = latestMsgForLater ? latestMsgForLater.body : '';
+          const latestTime = latestMsgForLater && latestMsgForLater.send_time ? new Date(latestMsgForLater.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          const escapedLatestBodyForLater = escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+          const isRoomLater = laterList.some(item => String(item.roomId) === String(roomId));
+
+          html += `
+                </div>
+
+                <!-- 返信フォーム -->
+                <div class="space-y-2 pt-1">
+                    <div class="flex gap-1.5">
+                        <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                            ${membersOpts}
+                        </select>
+                    </div>
+                    <div class="flex gap-1.5">
+                        <select onchange="insertTemplate(this, '${uniqueTextareaId}')" class="flex-1 template-dropdown text-xs border border-indigo-300 rounded p-1.5 bg-white text-indigo-950 font-bold focus:outline-none">
+                            <option value="">📥 定型文を呼び出す</option>
+                        </select>
+                        <button onclick="openTemplateEditorForSave('${uniqueTextareaId}')" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs px-2 py-1.5 rounded font-bold border border-indigo-300 shrink-0">
+                            💾 登録
+                        </button>
+                    </div>
+                    <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                    
+                    <div class="flex gap-2">
+                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(latestSenderName).replace(/'/g, "\\'")}', '${escapedLatestBodyForLater}', '${latestTime}', this)" class="${isRoomLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                            ${isRoomLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
+                        </button>
+                        <button onclick="sendNormalReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                            📤 このルームに返信する
+                        </button>
+                    </div>
+                </div>
+          </div>
+        `;
+
+        container.innerHTML = html;
+        renderTemplateSelects();
+
+        } catch (e) {
+            container.innerHTML = `<div class="text-xs text-red-500 text-center p-4 bg-white rounded-xl">エラー: ${e.message}</div>`;
+        }
+    }
+
+    async function sendNormalReply(roomId, textareaId, btnEl) {
+        const bodyText = document.getElementById(textareaId).value.trim();
+        if (!bodyText) { alert('メッセージが空です。'); return; }
+        if (!confirm('この内容で送信しますか？')) return;
+
+        btnEl.disabled = true;
+        btnEl.textContent = "送信中...";
+
+        try {
+            const res = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: "send_message", token: getCurrentToken(), room_id: roomId, body: bodyText })
+            });
+            const data = await res.json();
+            if (data.status !== "success") throw new Error(data.message);
+
+            let later = getLaterRooms();
+            const token = getCurrentToken();
+            if (later[token]) {
+                later[token] = later[token].filter(item => String(item.roomId) !== String(roomId));
+                localStorage.setItem(LATER_KEY, JSON.stringify(later));
+                updateLaterBadge();
+            }
+
+            btnEl.textContent = "✅ 送信完了！";
+            btnEl.className = "w-full bg-slate-300 text-white text-xs py-2 rounded cursor-default";
+            document.getElementById(textareaId).value = '';
+            setTimeout(() => { loadSingleRoomMessages(); }, 1000);
+        } catch (e) {
+            alert('送信失敗: ' + e.message);
+            btnEl.disabled = false;
+            btnEl.textContent = "📤 このルームに返信する";
+        }
+    }
+    /* =========================================== */
+
+    /* ======== 定型文管理機能 ======== */
+    function getTemplates() {
+        try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY)) || []; } catch(e) { return []; }
+    }
+
+    function insertTemplate(selectEl, textareaId) {
+        const templateId = selectEl.value;
+        if (!templateId) return;
+        if (templateId === "manage") { openTemplateManager(); selectEl.selectedIndex = 0; return; }
+
+        const tmpl = getTemplates().find(t => t.id === templateId);
+        if (tmpl) {
+            const ta = document.getElementById(textareaId);
+            ta.value += (ta.value ? '\n' : '') + tmpl.text;
+        }
+        selectEl.selectedIndex = 0;
+    }
+
+    function renderTemplateSelects() {
+        const templates = getTemplates();
+        const grouped = templates.reduce((acc, t) => {
+            const cat = t.category || '未分類';
+            if (!acc[cat]) acc[cat] = [];
+            acc[cat].push(t);
+            return acc;
+        }, {});
+
+        let opts = '<option value="">📥 定型文を呼び出す</option>';
+        for (const [cat, tmpls] of Object.entries(grouped)) {
+            opts += `<optgroup label="📂 ${escapeHtml(cat)}">`;
+            tmpls.forEach(t => opts += `<option value="${t.id}">📄 ${escapeHtml(t.title)}</option>`);
+            opts += `</optgroup>`;
+        }
+        if (templates.length > 0) {
+            opts += `<option disabled>──────────</option><option value="manage">⚙️ 定型文の管理 (編集・削除)</option>`;
+        }
+        document.querySelectorAll('.template-dropdown').forEach(sel => sel.innerHTML = opts);
+    }
+
+    function insertMention(selectEl, textareaId) {
+        const accId = selectEl.value;
+        if (!accId) return;
+        const name = selectEl.options[selectEl.selectedIndex].getAttribute('data-name');
+        const ta = document.getElementById(textareaId);
+        
+        const mentionText = `[To:${accId}] ${name}さん\n`;
+        ta.value = mentionText + ta.value;
+        selectEl.selectedIndex = 0;
+    }
+
+    function closeAllModals() {
+        document.getElementById('modalOverlay').style.display = 'none';
+        document.getElementById('modalSellerInfo').style.display = 'none'; // ★ セラー情報モーダルも閉じる
+        document.getElementById('modalLinkCopy').style.display = 'none';
+        document.getElementById('modalTemplateManager').style.display = 'none';
+        document.getElementById('modalTemplateEditor').style.display = 'none';
+    }
+
+    function openTemplateEditorForSave(textareaId) {
+        const text = document.getElementById(textareaId).value.trim();
+        if (!text) { alert('保存する文章が入力されていません。'); return; }
+        document.getElementById('editorModalTitle').textContent = '💾 新しい定型文を登録';
+        document.getElementById('editTmplId').value = '';
+        document.getElementById('editTmplCategory').value = '未分類';
+        document.getElementById('editTmplTitle').value = '';
+        document.getElementById('editTmplText').value = text;
+        
+        const cats = [...new Set(getTemplates().map(t => t.category || '未分類'))];
+        document.getElementById('categoryList').innerHTML = cats.map(c => `<option value="${escapeHtml(c)}">`).join('');
+        
+        document.getElementById('modalOverlay').style.display = 'block';
+        document.getElementById('modalTemplateEditor').style.display = 'flex';
+    }
+
+    function openTemplateEditorForEdit(id) {
+        const templates = getTemplates();
+        const tmpl = templates.find(t => String(t.id) === String(id));
+        if (!tmpl) {
+            alert('対象の定型文が見つかりませんでした。');
+            return;
+        }
+
+        document.getElementById('editorModalTitle').textContent = '✏️ 定型文を編集';
+        document.getElementById('editTmplId').value = tmpl.id;
+        document.getElementById('editTmplCategory').value = tmpl.category || '未分類';
+        document.getElementById('editTmplTitle').value = tmpl.title;
+        document.getElementById('editTmplText').value = tmpl.text;
+        
+        const cats = [...new Set(templates.map(t => t.category || '未分類'))];
+        document.getElementById('categoryList').innerHTML = cats.map(c => `<option value="${escapeHtml(c)}">`).join('');
+        
+        document.getElementById('modalTemplateManager').style.display = 'none';
+        document.getElementById('modalTemplateEditor').style.display = 'flex';
+    }
+
+    function saveTemplateSubmit() {
+        const id = document.getElementById('editTmplId').value;
+        const category = document.getElementById('editTmplCategory').value.trim() || '未分類';
+        const title = document.getElementById('editTmplTitle').value.trim();
+        const text = document.getElementById('editTmplText').value.trim();
+
+        if (!title || !text) { alert('タイトルと本文を入力してください。'); return; }
+
+        let templates = getTemplates();
+        if (id) {
+            const idx = templates.findIndex(t => String(t.id) === String(id));
+            if (idx > -1) {
+                templates[idx] = { id, category, title, text };
+            }
+        } else {
+            templates.push({ id: Date.now().toString(), category, title, text });
+        }
+        localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
+        renderTemplateSelects();
+        
+        if (id) {
+            openTemplateManager();
+        } else {
+            closeAllModals();
+            alert('保存しました！');
+        }
+    }
+
+    function openTemplateManager() {
+        const templates = getTemplates();
+        const container = document.getElementById('templateManagerList');
+        container.innerHTML = templates.length === 0 ? '<p class="text-xs text-slate-500 text-center py-4">定型文はありません。</p>' : '';
+        
+        const grouped = templates.reduce((acc, t) => {
+            const cat = t.category || '未分類';
+            if (!acc[cat]) acc[cat] = [];
+            acc[cat].push(t);
+            return acc;
+        }, {});
+
+        for (const [cat, tmpls] of Object.entries(grouped)) {
+            let html = `<div class="mb-4"><h3 class="text-xs font-bold text-slate-500 border-b border-slate-200 pb-1 mb-2">📂 ${escapeHtml(cat)}</h3><div class="space-y-2">`;
+            tmpls.forEach(t => {
+                html += `
+                    <div class="bg-white border rounded p-2.5 flex justify-between items-center shadow-sm">
+                        <span class="font-bold text-sm text-slate-700 truncate pr-2">${escapeHtml(t.title)}</span>
+                        <div class="flex gap-1 shrink-0">
+                            <button onclick="openTemplateEditorForEdit('${t.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-2 py-1.5 rounded border border-slate-300">✏️ 編集</button>
+                            <button onclick="deleteTemplate('${t.id}')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs px-2 py-1.5 rounded border border-red-200">🗑️ 削除</button>
+                        </div>
+                    </div>`;
+            });
+            html += `</div></div>`;
+            container.innerHTML += html;
+        }
+        document.getElementById('modalOverlay').style.display = 'block';
+        document.getElementById('modalTemplateManager').style.display = 'flex';
+    }
+
+    function deleteTemplate(id) {
+        const templates = getTemplates();
+        const tmpl = templates.find(t => String(t.id) === String(id));
+        const titleName = tmpl ? tmpl.title : 'この定型文';
+
+        if (!confirm(`「${titleName}」を本当に削除しますか？`)) return;
+
+        const filtered = templates.filter(t => String(t.id) !== String(id));
+        localStorage.setItem(TEMPLATE_KEY, JSON.stringify(filtered));
+        renderTemplateSelects();
+        openTemplateManager();
+    }
+
+    function escapeHtml(str) {
+        return (str || '').replace(/[&'`<>"]/g, m => ({'&':'&amp;',"'":'&#x27;','`':'&#x60;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+    }
     </script>
 </body>
 </html>
