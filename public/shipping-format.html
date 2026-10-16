@@ -83,19 +83,20 @@
         </div>
 
         <!-- 商品マスタ管理タブ -->
-        <!-- zaico一覧取得セクション -->
-<div class="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-    <h3 class="text-md font-semibold text-gray-700 mb-2">📦 zaico 在庫データ連携</h3>
-    <p class="text-sm text-gray-600 mb-3">zaicoから最新の在庫一覧（マスタ）を手動で取得し、システムに反映させます。</p>
-    <button id="fetchZaicoBtn" onclick="fetchZaicoInventoryMaster()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-md shadow transition duration-150 ease-in-out flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
-        </svg>
-        <span>zaico一覧取得</span>
-    </button>
-    <div id="zaicoFetchStatus" class="mt-2 text-sm text-gray-500"></div>
-</div>
         <div id="masterTab" class="tab-content">
+            <!-- zaico一覧取得セクション -->
+            <div class="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h3 class="text-md font-semibold text-gray-700 mb-2">📦 zaico 在庫データ連携</h3>
+                <p class="text-sm text-gray-600 mb-3">zaicoから最新の在庫一覧（マスタ）を手動で取得し、システムに反映させます。</p>
+                <button id="fetchZaicoBtn" onclick="fetchZaicoInventoryMaster()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-md shadow transition duration-150 ease-in-out flex items-center space-x-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    <span>zaico一覧取得</span>
+                </button>
+                <div id="zaicoFetchStatus" class="mt-2 text-sm text-gray-500"></div>
+            </div>
+
             <div class="card">
                 <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
                 <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報を直接変更・保存できます。</p>
@@ -125,66 +126,6 @@
     </div>
 
     <script type="module">
-        // zaicoから最新の在庫一覧を取得する関数
-window.fetchZaicoInventoryMaster = async function() {
-    const statusEl = document.getElementById('zaicoFetchStatus');
-    const btnEl = document.getElementById('fetchZaicoBtn');
-    
-    statusEl.textContent = "zaicoから在庫一覧を取得中...";
-    statusEl.className = "mt-2 text-sm text-blue-600 font-medium";
-    btnEl.disabled = true;
-    btnEl.classList.add('opacity-50', 'cursor-not-allowed');
-
-    try {
-        const functionUrl = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiGetZaicoInventory";
-        
-        const response = await fetch(functionUrl, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json"
-            }
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || "取得に失敗しました");
-        }
-
-        localStorage.setItem('zaico_inventories', JSON.stringify(data.inventories));
-        
-        statusEl.textContent = `✅ 取得成功！ 最新の在庫データ ${data.count} 件をキャッシュしました。`;
-        statusEl.className = "mt-2 text-sm text-green-600 font-medium";
-    } catch (error) {
-        console.error("zaico在庫取得エラー:", error);
-        statusEl.textContent = `❌ エラー: ${error.message}`;
-        statusEl.className = "mt-2 text-sm text-red-600 font-medium";
-    } finally {
-        btnEl.disabled = false;
-        btnEl.classList.remove('opacity-50', 'cursor-not-allowed');
-    }
-};
-
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || "取得に失敗しました");
-        }
-
-        // 取得成功時の処理（localStorageに一時保存するなどのキャッシュ処理）
-        localStorage.setItem('zaico_inventories', JSON.stringify(data.inventories));
-        
-        statusEl.textContent = `✅ 取得成功！ 最新の在庫データ ${data.count} 件をキャッシュしました。`;
-        statusEl.className = "mt-2 text-sm text-green-600 font-medium";
-    } catch (error) {
-        console.error("zaico在庫取得エラー:", error);
-        statusEl.textContent = `❌ エラー: ${error.message}`;
-        statusEl.className = "mt-2 text-sm text-red-600 font-medium";
-    } finally {
-        btnEl.disabled = false;
-        btnEl.classList.remove('opacity-50', 'cursor-not-allowed');
-    }
-}
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
@@ -197,7 +138,6 @@ window.fetchZaicoInventoryMaster = async function() {
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // ★ 新しいCloud FunctionsのURLに修正済み
         const URL_CREATE_SHIPMENT = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment";
 
         let uploadedFiles = [];
@@ -209,6 +149,7 @@ window.fetchZaicoInventoryMaster = async function() {
             initDropZone();
         });
 
+        // グローバルに公開する関数群
         window.switchTab = (tabId) => {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -219,6 +160,46 @@ window.fetchZaicoInventoryMaster = async function() {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('masterTab').classList.add('active');
                 loadMasterItems();
+            }
+        };
+
+        // zaicoから最新の在庫一覧を取得する関数
+        window.fetchZaicoInventoryMaster = async function() {
+            const statusEl = document.getElementById('zaicoFetchStatus');
+            const btnEl = document.getElementById('fetchZaicoBtn');
+            
+            statusEl.textContent = "zaicoから在庫一覧を取得中...";
+            statusEl.className = "mt-2 text-sm text-blue-600 font-medium";
+            btnEl.disabled = true;
+            btnEl.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const functionUrl = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiGetZaicoInventory";
+                
+                const response = await fetch(functionUrl, {
+                    method: "GET",
+                    headers: {
+                        "Content-Type": "application/json"
+                    }
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || "取得に失敗しました");
+                }
+
+                localStorage.setItem('zaico_inventories', JSON.stringify(data.inventories));
+                
+                statusEl.textContent = `✅ 取得成功！ 最新の在庫データ ${data.count} 件をキャッシュしました。`;
+                statusEl.className = "mt-2 text-sm text-green-600 font-medium";
+            } catch (error) {
+                console.error("zaico在庫取得エラー:", error);
+                statusEl.textContent = `❌ エラー: ${error.message}`;
+                statusEl.className = "mt-2 text-sm text-red-600 font-medium";
+            } finally {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-50', 'cursor-not-allowed');
             }
         };
 
@@ -588,7 +569,6 @@ window.fetchZaicoInventoryMaster = async function() {
             return s;
         }
 
-        // 佐川データ（e飛伝）専用の強固な沖縄判定：E列(4)とF列(5)のみを確実にチェック
         function isOkinawaFromSagawaRow(sagawaRow) {
             if (!sagawaRow) return false;
             let addrE = sagawaRow[4] ? String(sagawaRow[4]) : "";
@@ -597,7 +577,6 @@ window.fetchZaicoInventoryMaster = async function() {
             return combined.includes('沖縄') || combined.includes('おきなわ') || combined.includes('okinawa');
         }
 
-        // 受注データの住所付近からの沖縄判定フォールバック
         function isOkinawaFromOrderRow(orderRow) {
             if (!orderRow) return false;
             let combined = orderRow.slice(6, 16).join(' ').toLowerCase();
@@ -610,7 +589,6 @@ window.fetchZaicoInventoryMaster = async function() {
             return set;
         }
 
-        // ヤマトCSV出力（読み込まれたヤマトデータを処理するのみ）
         window.exportYamatoCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let yamatoRows = getAllYamatoRows();
@@ -645,7 +623,6 @@ window.fetchZaicoInventoryMaster = async function() {
             alert(`ヤマトCSVを出力しました。（対象件数: ${outputRows.length}件）`);
         };
 
-        // 佐川CSV出力（E列判断による完全除外）
         window.exportEhidenCsv = () => {
             let uniqueOrderNos = getOrderUniqueIds();
             let sagawaRows = getAllSagawaRows();
@@ -653,7 +630,6 @@ window.fetchZaicoInventoryMaster = async function() {
 
             if (sagawaRows.length === 0) { alert("佐川データが読み込まれていません。"); return; }
 
-            // 沖縄特定
             let okinawaOrderNos = new Set();
             sagawaRows.forEach(sRow => {
                 if (isOkinawaFromSagawaRow(sRow)) {
