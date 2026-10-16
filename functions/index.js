@@ -154,7 +154,7 @@ exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.s
     }
 });
 
-// zaico出庫指示受け付け用API（バーコードから在庫ID逆引き・v2 API対応版）
+// zaico出庫指示受け付け用API（バーコード直指定版）
 exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -172,61 +172,13 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             return;
         }
 
+        const slipNum = "SLIP-" + Date.now();
+        const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
         const companyId = "220891";
 
-        // 1. zaicoから在庫一覧を取得してバーコード(code)と inventory_id のマッピングを作成
-        logger.info("zaicoから在庫一覧を取得してバーコードを照合します...");
-        const inventoriesRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${companyId}/inventories.json`, {
-            method: "GET",
-            headers: {
-                "Authorization": `Bearer ${ZAICO_API_TOKEN}`
-            }
-        });
+        logger.info(`zaico v2へバーコード直指定で出庫データを送信します。伝票番号: ${slipNum}, 項目数: ${items.length}`);
 
-        if (!inventoriesRes.ok) {
-            const errText = await inventoriesRes.text();
-            throw new Error("zaico在庫一覧の取得に失敗しました: " + errText);
-        }
-
-        const inventoriesData = await inventoriesRes.json();
-        const inventoryList = inventoriesData.inventories || inventoriesData.data || [];
-
-        const codeToIdMap = {};
-        for (const inv of inventoryList) {
-            const code = String(inv.code || inv.qr_code || "").trim();
-            const id = inv.id;
-            if (code && id) {
-                codeToIdMap[code] = id;
-            }
-        }
-
-        // 2. 送信されたアイテムのバーコードから inventory_id を引き当て
-        const deliveriesPayload = [];
-        for (const item of items) {
-            const targetCode = String(item.barcode || "").trim();
-            const inventoryId = codeToIdMap[targetCode];
-
-            if (!inventoryId) {
-                logger.warn(`バーコード「${targetCode}」に対応する zaico の在庫IDが見つかりませんでした。`);
-                continue;
-            }
-
-            deliveriesPayload.push({
-                inventory_id: parseInt(inventoryId, 10),
-                quantity: String(item.pickCount),
-                estimated_delivery_date: new Date().toISOString().split('T')[0]
-            });
-        }
-
-        if (deliveriesPayload.length === 0) {
-            res.status(400).json({ success: false, error: "有効な在庫IDに紐づくアイテムが1件もありませんでした。" });
-            return;
-        }
-
-        const slipNum = "SLIP-" + Date.now();
-        const todayStr = new Date().toISOString().split('T')[0];
-
-        // 3. zaico v2 の出庫指示作成エンドポイントへ送信
+        // zaicoのAPI仕様に合わせて deliveries の中にバーコードと数量を直接渡す
         const zaicoPayload = {
             num: slipNum,
             customer_name: "受注一括出荷",
@@ -234,7 +186,10 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             delivery_date: todayStr,
             date_of_issue: todayStr,
             memo: "統合管理システムからの自動出庫指示",
-            deliveries: deliveriesPayload
+            deliveries: items.map(item => ({
+                code: String(item.barcode || "").trim(), // バーコードの値をそのままキーにする
+                quantity: String(item.pickCount)
+            }))
         };
 
         const zaicoRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${companyId}/packing_slips.json`, {
@@ -258,7 +213,7 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         res.json({
             success: true,
             slipNum: slipNum,
-            count: deliveriesPayload.length,
+            count: items.length,
             zaicoResponse: zaicoData
         });
     } catch (error) {
