@@ -125,6 +125,47 @@
     </div>
 
     <script type="module">
+        // zaicoから最新の在庫一覧を取得する関数
+async function fetchZaicoInventoryMaster() {
+    const statusEl = document.getElementById('zaicoFetchStatus');
+    const btnEl = document.getElementById('fetchZaicoBtn');
+    
+    statusEl.textContent = "zaicoから在庫一覧を取得中...";
+    statusEl.className = "mt-2 text-sm text-blue-600 font-medium";
+    btnEl.disabled = true;
+    btnEl.classList.add('opacity-50', 'cursor-not-allowed');
+
+    try {
+        // Firebase FunctionsのURL（環境に合わせて適宜書き換えてください）
+        const functionUrl = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiGetZaicoInventory";
+        
+        const response = await fetch(functionUrl, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json"
+            }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || "取得に失敗しました");
+        }
+
+        // 取得成功時の処理（localStorageに一時保存するなどのキャッシュ処理）
+        localStorage.setItem('zaico_inventories', JSON.stringify(data.inventories));
+        
+        statusEl.textContent = `✅ 取得成功！ 最新の在庫データ ${data.count} 件をキャッシュしました。`;
+        statusEl.className = "mt-2 text-sm text-green-600 font-medium";
+    } catch (error) {
+        console.error("zaico在庫取得エラー:", error);
+        statusEl.textContent = `❌ エラー: ${error.message}`;
+        statusEl.className = "mt-2 text-sm text-red-600 font-medium";
+    } finally {
+        btnEl.disabled = false;
+        btnEl.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+}
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
