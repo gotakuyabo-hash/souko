@@ -458,6 +458,11 @@
             const allOrders = getAllOrderRows();
             if (allOrders.length === 0) { alert('受注データがありません。'); return; }
 
+            // ★ 宛名（customer_name）をその都度ダイアログで入力を求める
+            let customerNameInput = prompt("zaicoに登録する宛先名（customer_name）を入力してください：", "受注一括出荷");
+            if (customerNameInput === null) return; // キャンセル時は中止
+            let customerName = customerNameInput.trim() || "受注一括出荷";
+
             const rawItemsMap = new Map();
             allOrders.forEach(cols => {
                 if (cols[6] === '1-0') return;
@@ -485,10 +490,17 @@
                 });
 
                 if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
-                if (!confirm(`棚番が登録されている ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
+                if (!confirm(`宛名: 「${customerName}」\n棚番登録済みの ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
 
                 showStatus("zaicoに出庫指示を送信中...");
-                const res = await fetch(URL_CREATE_SHIPMENT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: validItems }) });
+                const res = await fetch(URL_CREATE_SHIPMENT, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        items: validItems, 
+                        customerName: customerName 
+                    }) 
+                });
                 const data = await res.json();
                 if (data.success) {
                     alert(`zaicoへの出庫指示登録が完了しました！\n伝票番号: ${data.slipNum} (${data.count}明細)`);
