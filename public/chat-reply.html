@@ -76,9 +76,10 @@
         <!-- アカウント＆モード切替カード -->
         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <div class="flex items-center gap-2">
+                <!-- ★ ラクロジスタッフアカウントをデフォルトに設定 -->
                 <select id="accountSelect" onchange="changeAccount()" class="flex-1 border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50/50 font-bold text-indigo-950 focus:outline-none">
-                    <option value="5435a05ddd195c46ca688d021e45bbce">ラクロジスタッフアカウント</option>
-                    <option value="57d74ea2e63325c5306b594c3bb231af" selected>松下アカウント</option>
+                    <option value="5435a05ddd195c46ca688d021e45bbce" selected>ラクロジスタッフアカウント</option>
+                    <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント</option>
                 </select>
             </div>
             
@@ -284,7 +285,6 @@
 
                 let html = '';
                 for (const r of rooms) {
-                    // ルーム名などをキーにしてワンクリックでセラー情報を引けるボタンをカード内に設置
                     html += `
                         <div class="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm space-y-2">
                             <div class="flex justify-between items-start gap-2">
@@ -315,6 +315,79 @@
                     </div>
                 `;
                 document.getElementById('loadStatus').textContent = "エラー";
+            }
+        }
+
+        // 📁 通常個別ルーム一覧を取得
+        async function fetchNormalRooms() {
+            const select = document.getElementById('roomSelect');
+            if (select.options.length > 1) return; // すでに読み込み済みの場合はスキップ
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_rooms", token: getCurrentToken() })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error('ルーム一覧の取得に失敗しました');
+
+                allRoomsCache = data.rooms;
+                renderRoomSelect(allRoomsCache);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderRoomSelect(rooms) {
+            const select = document.getElementById('roomSelect');
+            let html = '<option value="">-- ルームを選択 --</option>';
+            rooms.forEach(r => {
+                html += `<option value="${r.room_id}">${r.name}</option>`;
+            });
+            select.innerHTML = html;
+        }
+
+        function filterNormalRooms() {
+            const keyword = document.getElementById('roomSearchInput').value.toLowerCase();
+            const filtered = allRoomsCache.filter(r => r.name.toLowerCase().includes(keyword));
+            renderRoomSelect(filtered);
+        }
+
+        function onNormalRoomSelected() {
+            // 必要に応じて個別ルーム選択時の処理
+        }
+
+        async function loadSingleRoomMessages() {
+            const roomId = document.getElementById('roomSelect').value;
+            const container = document.getElementById('singleRoomMessageContainer');
+            if (!roomId) {
+                alert("ルームを選択してください");
+                return;
+            }
+
+            container.innerHTML = `<div class="text-center text-xs text-slate-500 py-4">メッセージを読み込み中...</div>`;
+
+            try {
+                const res = await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "get_room_data", token: getCurrentToken(), room_id: roomId })
+                });
+                const data = await res.json();
+                if (data.status !== "success") throw new Error('メッセージ取得失敗');
+
+                let html = `<div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 space-y-2"><div class="text-xs font-bold text-indigo-600">最新メッセージ</div>`;
+                if (data.messages.length === 0) {
+                    html += `<div class="text-xs text-slate-500">メッセージはありません</div>`;
+                } else {
+                    data.messages.slice(-10).forEach(m => {
+                        html += `<div class="text-xs border-b border-slate-100 pb-1.5"><span class="font-bold text-slate-700">${m.account.name}:</span> ${m.body}</div>`;
+                    });
+                }
+                html += `</div>`;
+                container.innerHTML = html;
+
+            } catch (e) {
+                container.innerHTML = `<div class="text-xs text-red-500">エラー: ${e.message}</div>`;
             }
         }
 
