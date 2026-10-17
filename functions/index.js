@@ -15,7 +15,7 @@ const COMPANY_ID = "220891";
 // ==========================================
 // Slack Webhook設定
 // ==========================================
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
+const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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";
 
 // ==========================================
 // クールダウン管理（3と5のコレクション用）
