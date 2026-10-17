@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chatwork 未読バーストコックピット</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK (スタッフ間連絡アプリ連携用) -->
+    <!-- Firebase SDK (スタッフ間連絡アプリ連携用 ＆ AI学習ログ保存用) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -23,6 +23,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // 🚀 スタッフ間連絡アプリへの登録
         window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
             let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
             taskContent += `\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
@@ -50,6 +51,22 @@
             } finally {
                 btnEl.disabled = false;
                 btnEl.textContent = "🚀 スタッフ間連絡アプリに登録する";
+            }
+        };
+
+        // 🧠 AI学習ログ（受信文・AI案・最終送信文のペア）をFirebaseに自動保存
+        window.saveAiFeedbackLog = async function(receivedMessage, aiDraft, finalMessage) {
+            if (!receivedMessage || !finalMessage) return;
+            try {
+                await addDoc(collection(db, "ai_feedback_logs"), {
+                    receivedMessage: receivedMessage,
+                    aiDraft: aiDraft || "",
+                    finalMessage: finalMessage,
+                    createdAt: serverTimestamp()
+                });
+                console.log("✅ AI学習ログを正常に保存しました");
+            } catch (e) {
+                console.error("❌ AI学習ログの保存に失敗:", e);
             }
         };
     </script>
@@ -193,6 +210,9 @@
         let currentMode = 'burst';
         const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
         const LATER_KEY = "chatwork_later_rooms_v1";
+
+        // 🧠 AIが提案した内容を一時記憶しておくメモリ（key: textareaId）
+        let aiDraftMemory = {};
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -355,6 +375,11 @@
                 const textarea = document.getElementById(textareaId);
                 if (textarea) {
                     textarea.value = data.draft;
+                    // 🧠 AI案の生成結果を記憶
+                    aiDraftMemory[textareaId] = {
+                        receivedMessage: messageBody,
+                        aiDraft: data.draft
+                    };
                 }
             } catch (err) {
                 alert("AI返信案の作成に失敗しました: " + err.message);
@@ -791,6 +816,13 @@
             try {
                 await callGasApi("send_message", { room_id: roomId, body: bodyText });
 
+                // 🧠 AI学習ログの保存判定
+                const memory = aiDraftMemory[textareaId];
+                if (memory) {
+                    window.saveAiFeedbackLog(memory.receivedMessage, memory.aiDraft, bodyText);
+                    delete aiDraftMemory[textareaId];
+                }
+
                 let later = getLaterRooms();
                 const token = getCurrentToken();
                 if (later[token]) {
@@ -1021,6 +1053,13 @@
 
             try {
                 await callGasApi("send_message", { room_id: roomId, body: bodyText });
+
+                // 🧠 AI学習ログの保存判定
+                const memory = aiDraftMemory[textareaId];
+                if (memory) {
+                    window.saveAiFeedbackLog(memory.receivedMessage, memory.aiDraft, bodyText);
+                    delete aiDraftMemory[textareaId];
+                }
 
                 let later = getLaterRooms();
                 const token = getCurrentToken();
