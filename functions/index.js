@@ -15,8 +15,7 @@ const COMPANY_ID = "220891";
 // ==========================================
 // Slack Webhook設定
 // ==========================================
-// Firebaseの環境変数、またはコード直書きのWebhook URL
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "ここにSlackで発行したWebhook URLを貼り付けてください";
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
 
 // ==========================================
 // クールダウン管理（3と5のコレクション用）
@@ -38,7 +37,7 @@ function canSendNotification(uniqueKey) {
 // Webhookを使った確実な通知関数
 async function sendSlackNotification(text) {
     try {
-        if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL.includes("ここに")) {
+        if (!SLACK_WEBHOOK_URL) {
             logger.error("❌ SLACK_WEBHOOK_URL が設定されていません。");
             return;
         }
@@ -303,4 +302,33 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         };
 
         const zaicoRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/packing_slips.json`, {
-            // ... (省略なしでそのまま保持)
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${ZAICO_API_TOKEN}`
+            },
+            body: JSON.stringify(zaicoPayload)
+        });
+
+        const zaicoData = await zaicoRes.json();
+
+        if (!zaicoRes.ok) {
+            logger.error("zaico v2 API エラーレスポンス:", zaicoData);
+            res.status(500).json({ success: false, error: "zaico API Error: " + JSON.stringify(zaicoData) });
+            return;
+        }
+
+        logger.info("zaico v2 出庫登録成功:", zaicoData);
+        res.json({
+            success: true,
+            slipNum: slipNum,
+            count: deliveries.length,
+            missingCount: missingBarcodes.length,
+            zaicoResponse: zaicoData
+        });
+
+    } catch (error) {
+        logger.error("zaico出庫指示の送信でエラーが発生しました:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
