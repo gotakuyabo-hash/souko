@@ -214,8 +214,9 @@
         // 🧠 AIが提案した内容を一時記憶しておくメモリ（key: textareaId）
         let aiDraftMemory = {};
         
-        // 🎯 最後にフォーカスされていたテキストエリアのIDを保持
-        let lastFocusedTextareaId = null;
+        // 🎯 最後にアクティブだったテキストエリアとそのカーソル位置をリアルタイム保持
+        let activeTextareaId = null;
+        let activeCursorPos = 0;
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -678,7 +679,7 @@
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
-                            <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <textarea id="${uniqueTextareaId}" oninput="trackCursor(this)" onclick="trackCursor(this)" onkeyup="trackCursor(this)" onfocus="activeTextareaId = this.id; trackCursor(this);" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
                                 <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg && latestMsg.account ? escapeHtml(latestMsg.account.name) : '不明'}', '${escapedBodyForModal}', '', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
@@ -782,7 +783,7 @@
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
-                            <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <textarea id="${uniqueTextareaId}" oninput="trackCursor(this)" onclick="trackCursor(this)" onkeyup="trackCursor(this)" onfocus="activeTextareaId = this.id; trackCursor(this);" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
                                 <button onclick="completeLaterRoom('${item.roomId}')" class="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs px-3 py-2 rounded font-bold border border-emerald-300 shrink-0 transition">
@@ -1057,7 +1058,7 @@
                                             ✨ AI返信案を作成
                                         </button>
                                     </div>
-                                    <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                                    <textarea id="${uniqueTextareaId}" oninput="trackCursor(this)" onclick="trackCursor(this)" onkeyup="trackCursor(this)" onfocus="activeTextareaId = this.id; trackCursor(this);" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                                     
                                     <div class="flex gap-2">
                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
@@ -1120,25 +1121,32 @@
             }
         }
 
-        // 🎯 宛先メンション挿入の修正（最後にフォーカスされていたテキストエリアを確実にターゲットにする）
+        // 🎯 カーソル位置をリアルタイムに記憶
+        function trackCursor(textarea) {
+            activeTextareaId = textarea.id;
+            activeCursorPos = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
+        }
+
+        // 🎯 記憶したカーソル位置に正確にメンションを挿入
         function insertMention(selectEl, defaultTextareaId) {
             const val = selectEl.value;
             const name = selectEl.options[selectEl.selectedIndex].getAttribute('data-name');
             if (!val) return;
             
-            // 最後にフォーカスされていたテキストエリアがあればそこを優先、なければデフォルトを使用
-            const targetId = lastFocusedTextareaId || defaultTextareaId;
+            const targetId = activeTextareaId || defaultTextareaId;
             const txt = document.getElementById(targetId);
             if (!txt) return;
 
             const mentionText = `[To:${val}] ${name}さん\n`;
-            
-            const startPos = txt.selectionStart !== undefined ? txt.selectionStart : txt.value.length;
-            const endPos = txt.selectionEnd !== undefined ? txt.selectionEnd : txt.value.length;
             const currentVal = txt.value;
+            const pos = activeCursorPos !== null && activeCursorPos <= currentVal.length ? activeCursorPos : currentVal.length;
             
-            txt.value = currentVal.substring(0, startPos) + mentionText + currentVal.substring(endPos);
-            txt.selectionStart = txt.selectionEnd = startPos + mentionText.length;
+            txt.value = currentVal.substring(0, pos) + mentionText + currentVal.substring(pos);
+            
+            // カーソル位置を挿入されたテキストの直後に更新
+            const newPos = pos + mentionText.length;
+            activeCursorPos = newPos;
+            txt.setSelectionRange(newPos, newPos);
             txt.focus();
             
             selectEl.value = "";
