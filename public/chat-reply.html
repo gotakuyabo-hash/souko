@@ -466,17 +466,15 @@
             renderNormalRoomOptions(filtered);
         }
 
-        // メッセージ本文中のファイルタグを「クリックして表示するボタン」に変換する関数
+        // ファイルタグを「クリックして表示するボタン」に変換する関数
         function formatMessageBodyWithClickableFiles(roomId, bodyText) {
             if (!bodyText) return '';
             let parsed = escapeHtml(bodyText);
 
-            // [preview id=数字 ...] をクリックボタンに置換
             parsed = parsed.replace(/\[preview\s+id=(\d+)[^\]]*\]/g, (match, fileId) => {
                 return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📷 画像・ファイルを表示 (ID: ${fileId})</button></div>`;
             });
 
-            // [download:数字]filename[/download] をクリックボタンに置換
             parsed = parsed.replace(/\[download:(\d+)\]([\s\S]*?)\[\/download\]/g, (match, fileId, fileName) => {
                 return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📁 ${escapeHtml(fileName.trim())} を表示</button></div>`;
             });
@@ -491,7 +489,6 @@
             return parsed;
         }
 
-        // ユーザーがクリックした瞬間だけAPIを叩いて画像やファイルを表示する関数
         async function loadAndShowFile(roomId, fileId, btnEl) {
             btnEl.disabled = true;
             btnEl.textContent = "読み込み中...";
@@ -538,7 +535,10 @@
 
             try {
                 const roomData = await callGasApi("get_room_data", { room_id: roomId });
-                const messages = roomData.messages || [];
+                let messages = roomData.messages || [];
+                
+                // 通常個別は最新の20件に絞り込み
+                messages = messages.slice(-20);
 
                 const selectedOpt = document.getElementById('roomSelect').options[document.getElementById('roomSelect').selectedIndex];
                 const roomName = selectedOpt ? selectedOpt.textContent.split(' (未読:')[0] : '個別ルーム';
