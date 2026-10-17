@@ -362,14 +362,18 @@
             }
         }
 
-        async function generateAiDraft(roomName, messageBody, textareaId, btnEl) {
+        async function generateAiDraft(roomName, messageBody, textareaId, promptInputId, btnEl) {
+            const promptInput = document.getElementById(promptInputId);
+            const customInstruction = promptInput ? promptInput.value.trim() : "";
+
             btnEl.disabled = true;
             btnEl.textContent = "✨ AI作成中...";
 
             try {
                 const data = await callGasApi("generate_ai_draft", {
                     room_name: roomName,
-                    message_body: messageBody
+                    message_body: messageBody,
+                    custom_instruction: customInstruction // 追加の指示を送信
                 });
 
                 const textarea = document.getElementById(textareaId);
@@ -584,6 +588,7 @@
                 const selectedOpt = document.getElementById('roomSelect').options[document.getElementById('roomSelect').selectedIndex];
                 const roomName = selectedOpt ? selectedOpt.textContent.split(' (未読:')[0] : '個別ルーム';
                 const uniqueTextareaId = `normal_txt_${roomId}`;
+                const promptInputId = `normal_prompt_${roomId}`;
                 const latestMsg = messages.length > 0 ? messages[messages.length - 1] : null;
                 const latestBody = latestMsg ? latestMsg.body : '';
                 const latestMessageId = latestMsg ? latestMsg.message_id : '';
@@ -665,8 +670,9 @@
                                     ${membersOpts}
                                 </select>
                             </div>
-                            <div class="flex justify-between items-center">
-                                <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestBody ? escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                            <div class="flex gap-1.5 items-center">
+                                <input type="text" id="${promptInputId}" placeholder="AIへの指示（例: 納期を伝える）" class="flex-1 text-[11px] border border-slate-300 rounded p-1.5 bg-slate-50 focus:outline-none">
+                                <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestBody ? escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', '${promptInputId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded border border-indigo-200 transition shrink-0 shadow-sm">
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
@@ -713,6 +719,7 @@
 
             for (const item of list) {
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
+                const promptInputId = `later_prompt_${item.roomId}`;
                 const escapedBodyForModal = escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                 const formattedLaterBody = formatMessageBodyWithClickableFiles(item.roomId, item.messageBody || '');
 
@@ -767,8 +774,9 @@
                                     <option value="">👤 宛先(To)を追加</option>
                                 </select>
                             </div>
-                            <div class="flex justify-between items-center">
-                                <button onclick="generateAiDraft('${escapeHtml(item.roomName).replace(/'/g, "\\'")}', '${item.messageBody ? escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                            <div class="flex gap-1.5 items-center">
+                                <input type="text" id="${promptInputId}" placeholder="AIへの指示（例: 納期を伝える）" class="flex-1 text-[11px] border border-slate-300 rounded p-1.5 bg-slate-50 focus:outline-none">
+                                <button onclick="generateAiDraft('${escapeHtml(item.roomName).replace(/'/g, "\\'")}', '${item.messageBody ? escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', '${promptInputId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded border border-indigo-200 transition shrink-0 shadow-sm">
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
@@ -978,6 +986,7 @@
                         const msgTime = latestMsg.send_time || '';
                         let sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
+                        const promptInputId = `burst_prompt_${roomId}`;
                         const formattedLatestBody = formatMessageBodyWithClickableFiles(roomId, latestMsg.body || '');
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                         const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
@@ -1011,8 +1020,9 @@
                                             ${membersOpts}
                                        </select>
                                     </div>
-                                    <div class="flex justify-between items-center">
-                                        <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg.body ? escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                                    <div class="flex gap-1.5 items-center">
+                                        <input type="text" id="${promptInputId}" placeholder="AIへの指示（例: 納期を伝える）" class="flex-1 text-[11px] border border-slate-300 rounded p-1.5 bg-slate-50 focus:outline-none">
+                                        <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg.body ? escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', '${promptInputId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded border border-indigo-200 transition shrink-0 shadow-sm">
                                             ✨ AI返信案を作成
                                         </button>
                                     </div>
