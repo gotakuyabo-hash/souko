@@ -288,7 +288,6 @@
             window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
         }
 
-        // 既読にする機能
         async function markRoomAsRead(roomId, lastChatId, btnEl) {
             if (btnEl) {
                 btnEl.disabled = true;
@@ -486,12 +485,11 @@
             try {
                 const roomData = await callGasApi("get_room_data", { room_id: roomId });
                 const messages = roomData.messages || [];
-                messages.sort((a, b) => b.send_time - a.send_time);
 
                 const selectedOpt = document.getElementById('roomSelect').options[document.getElementById('roomSelect').selectedIndex];
                 const roomName = selectedOpt ? selectedOpt.textContent.split(' (未読:')[0] : '個別ルーム';
                 const uniqueTextareaId = `normal_txt_${roomId}`;
-                const latestMsg = messages.length > 0 ? messages[0] : null;
+                const latestMsg = messages.length > 0 ? messages[messages.length - 1] : null;
                 const latestBody = latestMsg ? latestMsg.body : '';
                 const latestMessageId = latestMsg ? latestMsg.message_id : '';
                 const escapedBodyForModal = escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
@@ -839,8 +837,6 @@
                         const roomData = await callGasApi("get_room_data", { room_id: roomId });
 
                         let messages = roomData.messages || [];
-                        messages.sort((a, b) => b.send_time - a.send_time);
-
                         const readBtn = document.getElementById(`read_btn_${roomId}`);
 
                         if (messages.length === 0) {
@@ -849,7 +845,7 @@
                             return;
                         }
 
-                        const latestMsg = messages[0];
+                        const latestMsg = messages[messages.length - 1];
                         const latestMessageId = latestMsg.message_id || '';
                         if (readBtn) {
                             readBtn.onclick = () => markRoomAsRead(roomId, latestMessageId, readBtn);
