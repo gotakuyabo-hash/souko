@@ -32,7 +32,7 @@ async function sendSlackNotification(text) {
     try {
         const messageWithMention = `<!channel>\n` + text;
         // 環境変数ではなく、ここに直接URLを直書きしてテスト
-        const webhookUrl = "https://hooks.slack.com/services/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";
+        const webhookUrl = "https://hooks.slack.com/services/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";
 
         await fetch(webhookUrl, {
             method: "POST",
