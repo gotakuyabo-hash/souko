@@ -1,7 +1,9 @@
 name: Deploy to Firebase
+
 on:
   push:
     branches: [ main ]
+
 jobs:
   deploy_all:
     runs-on: ubuntu-latest
@@ -14,7 +16,6 @@ jobs:
           node-version: '20'
 
       # ▼ Hosting（ウェブサイト）のデプロイ ▼
-      # 安定した firebase CLI を直接叩く方式に変更
       - name: Deploy Hosting
         uses: w9jds/firebase-action@v13.3.0
         with:
@@ -26,8 +27,11 @@ jobs:
         run: npm install
         working-directory: functions
           
+      # ▼ Functions用の環境変数（BotトークンとチャンネルID）をセット ▼
       - name: Create .env file
-        run: echo "SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}" > functions/.env
+        run: |
+          echo "SLACK_BOT_TOKEN=xoxb-12298738971271-12313997975426-cbVRtKRmTdAgoNW8iRG0dukB" > functions/.env
+          echo "SLACK_CHANNEL_ID=C0CA2ENCN1E" >> functions/.env
           
       - name: Deploy Functions
         uses: w9jds/firebase-action@v13.3.0
@@ -36,9 +40,11 @@ jobs:
         env:
           GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
 
+      # ▼ デプロイ完了後のSlack通知（Botトークン方式） ▼
       - name: Send Slack Notification
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN: "xoxb-12298738971271-12313997975426-cbVRtKRmTdAgoNW8iRG0dukB"
+          SLACK_CHANNEL_ID: "C0CA2ENCN1E"
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           node -e '
@@ -47,16 +53,27 @@ jobs:
             const firstLine = commitMsg.split("\n")[0];
             const text = `<!channel> アプリが更新されました: ${firstLine}`;
 
-            const data = JSON.stringify({ text });
-            const url = new URL(process.env.SLACK_WEBHOOK_URL);
-            const req = https.request({
-              hostname: url.hostname,
-              path: url.pathname + url.search,
-              method: "POST",
-              headers: { "Content-Type": "application/json" }
-            }, (res) => {
-              res.on("data", () => {});
+            const data = JSON.stringify({
+              channel: process.env.SLACK_CHANNEL_ID,
+              text: text
             });
+
+            const req = https.request({
+              hostname: "slack.com",
+              path: "/api/chat.postMessage",
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`
+              }
+            }, (res) => {
+              let body = "";
+              res.on("data", (chunk) => body += chunk);
+              res.on("end", () => {
+                console.log("Slack API Response:", body);
+              });
+            });
+
             req.write(data);
             req.end();
           '
