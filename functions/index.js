@@ -118,6 +118,33 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
+// 6. unreplied_rooms（定時未対応ルーム）に新規・未対応が追加されたときのSlack通知
+exports.notifyUnrepliedRooms = onDocumentWritten(
+    { document: "unreplied_rooms/{roomId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.after.exists) return;
+        
+        const data = snap.after.data();
+        const beforeData = snap.before.exists ? snap.before.data() : null;
+
+        // ステータスが新たに 'pending'（未対応）になった時だけ通知する（重複防止）
+        if (data.status === "pending" && (!beforeData || beforeData.status !== "pending")) {
+            const roomName = data.roomName || "名称不明";
+            const senderName = data.senderName || "相手";
+            const messageBody = data.lastMessageBody || "";
+
+            let messageText = `🚨 *【Chatwork未対応検知】新しい未対応ルームがあります*\n` +
+                              `>・ *ルーム名:* ${roomName}\n` +
+                              `>・ *発言者:* ${senderName}\n` +
+                              `>・ *メッセージ:* ${messageBody}`;
+
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
+            logger.info(`未対応ルーム検知のSlack通知を送信しました: ${roomName}`);
+        }
+    }
+);
+
 // ==========================================
 // 定時まとめ通知・チェック機能
 // ==========================================
