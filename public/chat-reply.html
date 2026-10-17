@@ -466,6 +466,60 @@
             renderNormalRoomOptions(filtered);
         }
 
+        // メッセージ本文中の Chatwork 独自タグ（[preview id=...] や [download:...]）を綺麗にパースして置換する関数
+        async function formatMessageBody(roomId, bodyText) {
+            if (!bodyText) return '';
+            let parsed = escapeHtml(bodyText);
+
+            // [preview id=数字 ...] の検出と置換
+            const previewRegex = /\[preview\s+id=(\d+)[^\]]*\]/g;
+            let match;
+            const fileIdsToFetch = new Set();
+            while ((match = previewRegex.exec(bodyText)) !== null) {
+                fileIdsToFetch.add(match[1]);
+            }
+
+            // [download:数字]filename[/download] の検出
+            const downloadRegex = /\[download:(\d+)\]([\s\S]*?)\[\/download\]/g;
+            while ((match = downloadRegex.exec(bodyText)) !== null) {
+                fileIdsToFetch.add(match[1]);
+            }
+
+            // 見つかったファイルIDごとにAPIからダウンロードURL等を取得してHTML要素に置き換える
+            for (const fileId of fileIdsToFetch) {
+                try {
+                    const fileRes = await callGasApi("get_room_file", { room_id: roomId, file_id: fileId });
+                    if (fileRes && fileRes.file && fileRes.file.download_url) {
+                        const fileInfo = fileRes.file;
+                        const fileUrl = fileInfo.download_url;
+                        const fileName = fileInfo.filename || `file_${fileId}`;
+                        const isImage = /\.(jpeg|jpg|png|gif|webp)$/i.test(fileName);
+
+                        let replacement = '';
+                        if (isImage) {
+                            replacement = `<div class="my-2"><a href="${fileUrl}" target="_blank"><img src="${fileUrl}" alt="${escapeHtml(fileName)}" class="max-h-48 rounded-lg border border-slate-200 object-contain bg-white shadow-sm hover:opacity-95 transition"></a><div class="text-[10px] text-slate-400 mt-1">${escapeHtml(fileName)}</div></div>`;
+                        } else {
+                            replacement = `<div class="my-2 p-2 bg-indigo-50 border border-indigo-200 rounded-lg flex items-center justify-between text-xs"><span class="font-bold text-indigo-900 truncate">📁 ${escapeHtml(fileName)}</span><a href="${fileUrl}" target="_blank" class="bg-indigo-600 text-white px-2.5 py-1 rounded font-bold shrink-0 hover:bg-indigo-700">ダウンロード</a></div>`;
+                        }
+
+                        // タグ文字列全体を置換
+                        parsed = parsed.replace(new RegExp(`\\[preview\\s+id=${fileId}[^\\]]*\\]`, 'g'), '');
+                        parsed = parsed.replace(new RegExp(`\\[download:${fileId}\\][\\s\\S]*?\\[\\/download\\]`, 'g'), replacement);
+                    }
+                } catch(e) {}
+            }
+
+            // 残った info / title タグなどの見栄えを整える
+            parsed = parsed
+                .replace(/[info]/g, '<div class="bg-indigo-50/40 border-l-2 border-indigo-500 p-2 my-1.5 rounded-r text-xs space-y-1">')
+                .replace(/\[\/info\]/g, '</div>')
+                .replace(/[title]/g, '<div class="font-bold text-indigo-900 text-[11px] border-b border-indigo-100 pb-0.5 mb-1">')
+                .replace(/\[\/title\]/g, '</div>')
+                .replace(/\n/g, '<br>');
+
+            return parsed;
+        }
+
         async function loadSingleRoomMessages() {
             const roomId = document.getElementById('roomSelect').value;
             const container = document.getElementById('singleRoomMessageContainer');
@@ -529,36 +583,10 @@
                             </div>
                         </div>
 
-                        <div class="space-y-1.5 max-h-[450px] overflow-y-auto pr-1">
-                `;
-
-                if (messages.length === 0) {
-                    msgHtml += `<div class="text-xs text-slate-400 text-center py-4 bg-slate-50 rounded p-2">メッセージがありません</div>`;
-                } else {
-                    messages.forEach(msg => {
-                        const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
-                        const timeStr = msg.send_time ? new Date(msg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-                        const escapedBody = escapeHtml(msg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
-                        
-                        msgHtml += `
-                            <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
-                                <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
-                                    <span>👤 ${escapeHtml(senderName)}</span>
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="text-slate-400 font-normal">${timeStr}</span>
-                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
-                                            🔗 連携
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(msg.body)}</div>
-                            </div>
-                        `;
-                    });
-                }
-
-                msgHtml += `
+                        <div id="msgListContainer_${roomId}" class="space-y-1.5 max-h-[450px] overflow-y-auto pr-1">
+                            <div class="text-center text-xs text-slate-400 py-4">メッセージをロード中...</div>
                         </div>
+
                         <div class="space-y-2 pt-1 border-t border-slate-100 mt-2">
                             <div class="flex gap-1.5">
                                 <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
@@ -580,6 +608,36 @@
                 `;
 
                 container.innerHTML = msgHtml;
+
+                // メッセージリストの描画とファイルタグのパース処理
+                const listEl = document.getElementById(`msgListContainer_${roomId}`);
+                if (messages.length === 0) {
+                    listEl.innerHTML = `<div class="text-xs text-slate-400 text-center py-4 bg-slate-50 rounded p-2">メッセージがありません</div>`;
+                } else {
+                    let innerListHtml = '';
+                    for (const msg of messages) {
+                        const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
+                        const timeStr = msg.send_time ? new Date(msg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                        const formattedBody = await formatMessageBody(roomId, msg.body || '');
+                        const escapedBodyForModal = escapeHtml(msg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        
+                        innerListHtml += `
+                            <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
+                                <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                    <span>👤 ${escapeHtml(senderName)}</span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-slate-400 font-normal">${timeStr}</span>
+                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                            🔗 連携
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-slate-700 whitespace-pre-wrap">${formattedBody}</div>
+                            </div>
+                        `;
+                    }
+                    listEl.innerHTML = innerListHtml;
+                }
 
             } catch (e) {
                 container.innerHTML = `<div class="text-xs text-red-500 text-center p-4">メッセージの取得に失敗しました: ${e.message}</div>`;
@@ -609,6 +667,7 @@
             for (const item of list) {
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
                 const escapedBodyForModal = escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                const formattedLaterBody = await formatMessageBody(item.roomId, item.messageBody || '');
 
                 html += `
                     <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
@@ -650,7 +709,7 @@
                                     </button>
                                 </div>
                             </div>
-                            <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(item.messageBody)}</div>
+                            <div class="text-xs text-slate-700 whitespace-pre-wrap">${formattedLaterBody}</div>
                         </div>
 
                         <div class="space-y-2 pt-1">
@@ -855,6 +914,7 @@
                         const msgTime = latestMsg.send_time || '';
                         let sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
+                        const formattedLatestBody = await formatMessageBody(roomId, latestMsg.body || '');
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                         const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
@@ -878,7 +938,7 @@
                                             </button>
                                        </div>
                                     </div>
-                                   <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(latestMsg.body)}</div>
+                                   <div class="text-xs text-slate-700 whitespace-pre-wrap">${formattedLatestBody}</div>
                                 </div>
 
                                 <div class="space-y-2 pt-1">
