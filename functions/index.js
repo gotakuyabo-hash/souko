@@ -28,22 +28,15 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
-// Slackへリクエストを送信する共通関数（GitHub Actionsの環境変数から取得、未設定時はフォールバック）
 async function sendSlackNotification(text) {
     try {
         const messageWithMention = `<!channel>\n` + text;
-        const webhookUrl = process.env.SLACK_WEBHOOK_URL || "https://hooks.slack.com/services/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";
-
-        if (!webhookUrl) {
-            logger.error("❌ SLACK_WEBHOOK_URL が設定されていません！");
-            return;
-        }
+        // 環境変数ではなく、ここに直接URLを直書きしてテスト
+        const webhookUrl = "https://hooks.slack.com/services/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";
 
         await fetch(webhookUrl, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: messageWithMention }),
         });
     } catch (error) {
