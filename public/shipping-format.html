@@ -37,7 +37,7 @@
 
         <div class="tab-buttons">
             <button class="tab-btn active" onclick="switchTab('allInOneTab')">🚀 一括処理・出荷連携</button>
-            <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（棚番・倍率）</button>
+            <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（SKU基準）</button>
         </div>
 
         <!-- 一括処理・出荷連携タブ -->
@@ -113,12 +113,12 @@
         <!-- 商品マスタ管理タブ -->
         <div id="masterTab" class="tab-content">
             <div class="card">
-                <h2>商品マスタ管理（棚番・倍率・商品名の修正）</h2>
-                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品の情報を直接変更・保存できます。</p>
+                <h2>商品マスタ管理（SKU基準：棚番・倍率・商品名の修正）</h2>
+                <p style="margin-top: 10px; font-size: 13px; color: #64748b;">登録されている商品情報（SKUコード基準）を直接変更・保存できます。</p>
                 
                 <div style="margin-top: 15px;">
                     <div class="filter-row">
-                        <input type="text" id="masterSearch" class="search-box" placeholder="商品名やバーコードで絞り込み検索..." oninput="filterMasterTable()">
+                        <input type="text" id="masterSearch" class="search-box" placeholder="商品名やSKUコードで絞り込み検索..." oninput="filterMasterTable()">
                         <input type="text" id="shelfFilter" class="search-box" placeholder="棚番で絞り込み (例: A-1, 空欄=未設定)" oninput="filterMasterTable()" style="max-width: 250px;">
                         <button onclick="filterUnassignedShelf()" class="bg-slate-500 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs font-bold">棚番未設定のみ</button>
                     </div>
@@ -401,6 +401,7 @@
                 <thead><tr>
                     <th>受注番号 (F列)</th>
                     <th>顧客名 (O列等)</th>
+                    <th>SKUコード (EE列/30)</th>
                     <th>AB列 (メモ1等)</th>
                     <th>AF列 (商品名)</th>
                     <th>数量</th>
@@ -410,12 +411,14 @@
             previewRows.forEach(r => {
                 let orderNo = r[5] || '';
                 let customerName = r[40] || r[14] || '';
+                let skuCode = r[30] || '';
                 let abVal = r[27] || '';
                 let afVal = r[31] || '';
                 let qty = r[34] || '1';
                 html += `<tr>
                     <td><code>${escapeHtml(orderNo)}</code></td>
                     <td>${escapeHtml(customerName)}</td>
+                    <td><code>${escapeHtml(skuCode)}</code></td>
                     <td>${escapeHtml(abVal)}</td>
                     <td>${escapeHtml(afVal)}</td>
                     <td>${escapeHtml(qty)}</td>
@@ -445,16 +448,20 @@
                 if (itemNo === '1-0') return;
 
                 if (cols.length > 31 && cols[31]) {
+                    const skuCode = cols[30] ? String(cols[30]).trim() : '';
                     const productName = cols[31];
                     const quantity = cols[34] ? Number(cols[34]) : 1;
+                    
+                    // バーコード抽出
                     const parts = productName.trim().split(/\s+/);
                     const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
-                    const key = extractedBarcode || productName;
+
+                    const key = skuCode || productName;
 
                     if (rawItemsMap.has(key)) {
                         rawItemsMap.get(key).quantity += quantity;
                     } else {
-                        rawItemsMap.set(key, { productName, quantity, barcode: extractedBarcode });
+                        rawItemsMap.set(key, { skuCode, productName, quantity, barcode: extractedBarcode });
                     }
                 }
             });
@@ -471,21 +478,22 @@
 
                 const aggregatedMap = new Map();
                 for (const item of items) {
-                    const barcode = item.barcode;
-                    const mData = masterMap.get(barcode);
+                    const skuCode = item.skuCode;
+                    const mData = masterMap.get(skuCode);
 
                     let multiplier = mData ? (mData.multiplier || 1) : 1;
                     let shelfNumber = mData ? (mData.shelfNumber || mData.shelf_number || "") : "";
                     let status = mData ? "REGISTERED" : "UNREGISTERED";
                     let finalProductName = mData ? (mData.productName || mData.product_name || item.productName) : item.productName;
+                    let barcode = mData && mData.barcode ? mData.barcode : item.barcode;
 
-                    const key = barcode || item.productName;
+                    const key = skuCode || item.productName;
                     if (aggregatedMap.has(key)) {
                         const existing = aggregatedMap.get(key);
                         existing.orderQty += item.quantity;
                         existing.pickCount = existing.orderQty * existing.multiplier;
                     } else {
-                        aggregatedMap.set(key, { barcode, productName: finalProductName, orderQty: item.quantity, multiplier, shelfNumber, status, pickCount: item.quantity * multiplier });
+                        aggregatedMap.set(key, { skuCode, barcode, productName: finalProductName, orderQty: item.quantity, multiplier, shelfNumber, status, pickCount: item.quantity * multiplier });
                     }
                 }
 
@@ -537,10 +545,11 @@
             let html = `
                 <div class="flex justify-between items-center mt-4 mb-2">
                     <p><b>全 ${results.length} 件の明細を検出しました（行をドラッグして順番を入れ替え可能）</b></p>
-                    <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更した明細を一括保存して計算</button>
+                    <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更したマスタを一括保存して計算</button>
                 </div>
                 <table><thead><tr>
                 <th style="width: 30px; text-align: center;">☰</th>
+                <th onclick="sortTable('skuCode')">SKUコード${getArrow('skuCode')}</th>
                 <th onclick="sortTable('productName')">商品名${getArrow('productName')}</th>
                 <th onclick="sortTable('barcode')">バーコード${getArrow('barcode')}</th>
                 <th onclick="sortTable('orderQty')">注文数${getArrow('orderQty')}</th>
@@ -551,16 +560,17 @@
                 </tr></thead><tbody id="pickTableBody">`;
 
             results.forEach((item, index) => {
-                const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
+                const isUnreg = item.status === "UNREGISTERED" || !item.skuCode;
                 html += `<tr id="row_${index}" class="draggable-row ${isUnreg ? 'unregistered' : ''}" draggable="true" ondragstart="onDragStart(event, ${index})" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event, ${index})" ondragend="onDragEnd(event)">
                     <td style="text-align: center; color: #94a3b8; cursor: grab; font-weight: bold;">≡</td>
+                    <td><code>${escapeHtml(item.skuCode || '')}</code></td>
                     <td>${escapeHtml(item.productName)}</td>
                     <td><input type="text" id="barcode_${index}" value="${escapeHtml(item.barcode || '')}" style="width: 120px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td>${item.orderQty}</td>
                     <td><input type="number" id="mult_${index}" value="${item.multiplier || 1}" style="width: 50px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td><input type="text" id="shelf_${index}" value="${escapeHtml(item.shelfNumber || '')}" style="width: 80px;" placeholder="例: A-1-2" onkeydown="handleKeydown(event, ${index})"></td>
                     <td id="pick_cell_${index}"><b>${isUnreg ? '-' : item.pickCount}</b></td>
-                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存</button></td>
+                    <td><button onclick="registerItem(${index}, ${item.orderQty}, \`${escapeHtml(item.productName)}\`, \`${escapeHtml(item.skuCode || '')}\`)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded font-bold">保存</button></td>
                 </tr>`;
             });
             html += `</tbody></table>`;
@@ -630,24 +640,24 @@
                 event.preventDefault();
                 syncCurrentInputsToMemory();
                 const item = currentPickResults[index];
-                if (item) registerItem(index, item.orderQty, item.productName, true);
+                if (item) registerItem(index, item.orderQty, item.productName, item.skuCode, true);
             }
         };
 
-        window.registerItem = async (index, orderQty, productName, isSilent = false) => {
+        window.registerItem = async (index, orderQty, productName, skuCode, isSilent = false) => {
             syncCurrentInputsToMemory();
             const item = currentPickResults[index];
             const barcode = item.barcode;
             const multiplier = item.multiplier;
             const shelfNumber = item.shelfNumber;
 
-            if (!barcode || !shelfNumber) {
-                if (!isSilent) alert('バーコードと棚番を入力してください。');
+            if (!skuCode || !shelfNumber) {
+                if (!isSilent) alert('SKUコード（または商品コード）と棚番が必要です。');
                 return;
             }
 
             try {
-                await setDoc(doc(db, "product_masters", barcode), { barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
+                await setDoc(doc(db, "product_masters", skuCode), { skuCode, barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
                 currentPickResults[index] = { ...item, status: "REGISTERED", pickCount: orderQty * multiplier };
                 renderPickTable(currentPickResults);
                 if (!isSilent) alert('保存しました！');
@@ -658,16 +668,16 @@
         };
 
         window.saveAllOrderPickItems = async () => {
-            if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
+            if (!confirm('画面に表示されている明細のうち、SKUコードと棚番が入力されているものを一括保存して計算しますか？')) return;
             syncCurrentInputsToMemory();
             let successCount = 0, skippedCount = 0;
 
             for (let index = 0; index < currentPickResults.length; index++) {
                 const item = currentPickResults[index];
-                if (!item.barcode || !item.shelfNumber) { skippedCount++; continue; }
+                if (!item.skuCode || !item.shelfNumber) { skippedCount++; continue; }
 
                 try {
-                    await setDoc(doc(db, "product_masters", item.barcode), { barcode: item.barcode, productName: item.productName, multiplier: item.multiplier, shelfNumber: item.shelfNumber, updatedAt: new Date() }, { merge: true });
+                    await setDoc(doc(db, "product_masters", item.skuCode), { skuCode: item.skuCode, barcode: item.barcode, productName: item.productName, multiplier: item.multiplier, shelfNumber: item.shelfNumber, updatedAt: new Date() }, { merge: true });
                     successCount++;
                     item.status = "REGISTERED";
                     item.pickCount = item.orderQty * item.multiplier;
@@ -701,7 +711,7 @@
                 }
             });
 
-            if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
+            if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（バーコードと棚番が登録済みの明細）がありません。'); return; }
             if (!confirm(`取引先: 「${customerName}」\n画面の並び順通りに ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
 
             showStatus("zaicoに出庫指示を送信中...");
@@ -937,21 +947,22 @@
             if (!masterArea) return;
             
             let html = `<p style="margin-top:15px;"><b>全 ${items.length} 件のマスタを表示中</b></p>
-                <table><thead><tr><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>操作</th></tr></thead><tbody>`;
+                <table><thead><tr><th>商品名</th><th>SKUコード</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>操作</th></tr></thead><tbody>`;
 
             if (!items || items.length === 0) {
-                html += `<tr><td colspan="5" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
+                html += `<tr><td colspan="6" style="text-align:center;">該当するマスタデータはありません。</td></tr>`;
             } else {
                 items.forEach((item, i) => {
-                    let name = item.productName || item.product_name || '', shelf = item.shelfNumber || item.shelf_number || '', barcode = item.barcode || item.id || '', mult = item.multiplier || 1;
+                    let name = item.productName || item.product_name || '', skuCode = item.skuCode || item.id || '', barcode = item.barcode || '', shelf = item.shelfNumber || item.shelf_number || '', mult = item.multiplier || 1;
                     html += `<tr>
                         <td><input type="text" id="master_name_${i}" value="${escapeHtml(name)}" style="width:100%;padding:4px;"></td>
-                        <td><code>${escapeHtml(barcode)}</code></td>
+                        <td><code>${escapeHtml(skuCode)}</code></td>
+                        <td><input type="text" id="master_bc_${i}" value="${escapeHtml(barcode)}" style="width:120px;padding:4px;" placeholder="バーコード"></td>
                         <td><input type="number" id="master_mult_${i}" value="${mult}" style="width:60px;padding:4px;"></td>
                         <td><input type="text" id="master_shelf_${i}" value="${escapeHtml(shelf)}" style="width:100px;padding:4px;"></td>
                         <td>
-                            <button onclick="updateMaster('${escapeHtml(barcode)}', ${i})" class="bg-emerald-600 text-white px-2 py-1 rounded text-xs font-bold">更新</button>
-                            <button onclick="deleteMaster('${escapeHtml(barcode)}', \`${escapeHtml(name)}\`)" class="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold">削除</button>
+                            <button onclick="updateMaster('${escapeHtml(skuCode)}', ${i})" class="bg-emerald-600 text-white px-2 py-1 rounded text-xs font-bold">更新</button>
+                            <button onclick="deleteMaster('${escapeHtml(skuCode)}', \`${escapeHtml(name)}\`)" class="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold">削除</button>
                         </td>
                     </tr>`;
                 });
@@ -964,8 +975,8 @@
             const kw = document.getElementById('masterSearch') ? document.getElementById('masterSearch').value.toLowerCase() : '';
             const skw = document.getElementById('shelfFilter') ? document.getElementById('shelfFilter').value.toLowerCase() : '';
             const filtered = masterItemsCache.filter(item => {
-                let name = (item.productName || item.product_name || '').toLowerCase(), bc = (item.barcode || item.id || '').toLowerCase(), sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
-                let mKw = name.includes(kw) || bc.includes(kw) || sh.includes(kw);
+                let name = (item.productName || item.product_name || '').toLowerCase(), sku = (item.skuCode || item.id || '').toLowerCase(), bc = (item.barcode || '').toLowerCase(), sh = (item.shelfNumber || item.shelf_number || '').toLowerCase();
+                let mKw = name.includes(kw) || sku.includes(kw) || bc.includes(kw) || sh.includes(kw);
                 let mSh = (skw === '' || skw === '空欄' || skw === '未設定') ? (sh === '') : sh.includes(skw);
                 return mKw && mSh;
             });
@@ -984,20 +995,23 @@
             alert('画面上の棚番に一括適用しました。「変更したマスタを一括保存」を押すと保存されます。');
         };
 
-        window.updateMaster = async (barcode, i) => {
-            let pName = document.getElementById(`master_name_${i}`).value.trim(), mult = Number(document.getElementById(`master_mult_${i}`).value) || 1, sh = document.getElementById(`master_shelf_${i}`).value.trim();
+        window.updateMaster = async (skuCode, i) => {
+            let pName = document.getElementById(`master_name_${i}`).value.trim();
+            let barcode = document.getElementById(`master_bc_${i}`).value.trim();
+            let mult = Number(document.getElementById(`master_mult_${i}`).value) || 1;
+            let sh = document.getElementById(`master_shelf_${i}`).value.trim();
             if (!sh) { alert('棚番を入力してください。'); return; }
             try {
-                await setDoc(doc(db, "product_masters", barcode), { barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
+                await setDoc(doc(db, "product_masters", skuCode), { skuCode, barcode, productName: pName, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true });
                 alert('マスタを更新しました！'); loadMasterItems();
             } catch(e) { alert('エラー: ' + e.message); }
         };
 
-        window.deleteMaster = async (barcode, name) => {
-            if (!confirm(`「${name} (${barcode})」を削除しますか？`)) return;
+        window.deleteMaster = async (skuCode, name) => {
+            if (!confirm(`「${name} (${skuCode})」を削除しますか？`)) return;
             try {
-                await deleteDoc(doc(db, "product_masters", barcode));
-                masterItemsCache = masterItemsCache.filter(item => (item.barcode || item.id) !== barcode);
+                await deleteDoc(doc(db, "product_masters", skuCode));
+                masterItemsCache = masterItemsCache.filter(item => (item.skuCode || item.id) !== skuCode);
                 renderMasterTable(masterItemsCache); alert('削除しました。');
             } catch(e) { alert('削除エラー: ' + e.message); }
         };
@@ -1006,10 +1020,14 @@
             if (!confirm('画面に表示されているマスタのうち、棚番が入力されているものを一括保存しますか？')) return;
             let rows = document.querySelectorAll('#masterResultArea tbody tr'), count = 0;
             for (let i = 0; i < rows.length; i++) {
-                let nIn = rows[i].querySelector('input[id^="master_name_"]'), mIn = rows[i].querySelector('input[id^="master_mult_"]'), sIn = rows[i].querySelector('input[id^="master_shelf_"]'), cEl = rows[i].querySelector('code');
-                if (nIn && mIn && sIn && cEl) {
-                    let bc = cEl.textContent.trim(), name = nIn.value.trim(), mult = Number(mIn.value) || 1, sh = sIn.value.trim();
-                    if (sh) { await setDoc(doc(db, "product_masters", bc), { barcode: bc, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true }); count++; }
+                let nIn = rows[i].querySelector('input[id^="master_name_"]');
+                let bIn = rows[i].querySelector('input[id^="master_bc_"]');
+                let mIn = rows[i].querySelector('input[id^="master_mult_"]');
+                let sIn = rows[i].querySelector('input[id^="master_shelf_"]');
+                let cEl = rows[i].querySelector('code');
+                if (nIn && bIn && mIn && sIn && cEl) {
+                    let skuCode = cEl.textContent.trim(), name = nIn.value.trim(), barcode = bIn.value.trim(), mult = Number(mIn.value) || 1, sh = sIn.value.trim();
+                    if (sh) { await setDoc(doc(db, "product_masters", skuCode), { skuCode, barcode, productName: name, multiplier: mult, shelfNumber: sh, updatedAt: new Date() }, { merge: true }); count++; }
                 }
             }
             alert(`${count}件のマスタを保存しました！`); loadMasterItems();
