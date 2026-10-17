@@ -296,16 +296,22 @@
             window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
         }
 
-        // 既読にする機能
-        async function markRoomAsRead(roomId) {
-            if (!confirm('このルームの未読をすべて既読にしますか？')) return;
+        // 既読にする機能（確認ポップアップを削除し、確実に動作するように修正）
+        async function markRoomAsRead(roomId, btnEl) {
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.textContent = "処理中...";
+            }
 
             try {
                 await callGasApi("mark_read", { room_id: roomId });
-                alert('既読にしました！');
                 refreshCurrentView();
             } catch (e) {
                 alert('既読化失敗: ' + e.message);
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.textContent = "📖 既読";
+                }
             }
         }
 
@@ -431,8 +437,6 @@
         }
 
         function completeLaterRoom(roomId) {
-            if (!confirm('このルームの対応を完了し、「後で対応」リストから削除しますか？')) return;
-
             let later = getLaterRooms();
             const token = getCurrentToken();
             if (later[token]) {
@@ -529,7 +533,7 @@
                                 <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
                                     📁 ファイル
                                 </button>
-                                <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                <button onclick="markRoomAsRead('${roomId}', this)" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
                                     📖 既読
                                 </button>
                                 <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
@@ -637,7 +641,7 @@
                                 <button onclick="triggerFileUpload('${item.roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
                                     📁 ファイル
                                 </button>
-                                <button onclick="markRoomAsRead('${item.roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                <button onclick="markRoomAsRead('${item.roomId}', this)" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
                                     📖 既読
                                 </button>
                                 <button onclick="openChatworkOfficial('${item.roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
@@ -818,7 +822,7 @@
                                     <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
                                         📁 ファイル
                                     </button>
-                                    <button onclick="markRoomAsRead('${roomId}')" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
+                                    <button onclick="markRoomAsRead('${roomId}', this)" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
                                         📖 既読
                                     </button>
                                     <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
@@ -883,19 +887,19 @@
 
                                 <div class="space-y-2 pt-1">
                                     <div class="flex gap-1.5">
-                                      <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                                     <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                             ${membersOpts}
-                                      </select>
+                                     </select>
                                     </div>
                                     <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                                     
                                     <div class="flex gap-2">
-                                      <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                     <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
                                             ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
-                                      </button>
-                                      <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                     </button>
+                                     <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
                                             📤 このルームに返信する
-                                      </button>
+                                     </button>
                                     </div>
                                 </div>
                             </div>
