@@ -466,10 +466,51 @@
             renderNormalRoomOptions(filtered);
         }
 
-        function formatSimpleMessageBody(bodyText) {
+        // 💡 プレビュータグやダウンロードタグを「タップして表示するボタン」に変換（自動読み込みなし・爆速）
+        function formatMessageBodyWithClickableFiles(roomId, bodyText) {
             if (!bodyText) return '';
-            return escapeHtml(bodyText)
-                .replace(/\n/g, '<br>');
+            let parsed = escapeHtml(bodyText);
+
+            // [preview id=〇〇] タグをボタンに置換
+            parsed = parsed.replace(/\[preview\s+id=(\d+)[^\]]*\]/g, (match, fileId) => {
+                return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📷 画像・ファイルを表示 (ID: ${fileId})</button></div>`;
+            });
+
+            // [download:〇〇] タグをボタンに置換
+            parsed = parsed.replace(/\[download:(\d+)\]([\s\S]*?)\[\/download\]/g, (match, fileId, fileName) => {
+                return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📁 ${escapeHtml(fileName.trim())} を表示</button></div>`;
+            });
+
+            return parsed.replace(/\n/g, '<br>');
+        }
+
+        // 💡 ユーザーがボタンを押したときだけ、該当の画像ファイルだけを非同期取得して表示
+        async function loadAndShowFile(roomId, fileId, btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = "読み込み中...";
+
+            try {
+                const res = await callGasApi("get_room_file", { room_id: roomId, file_id: fileId });
+                if (!res || !res.file || !res.file.download_url) {
+                    throw new Error("ファイル情報の取得に失敗しました");
+                }
+
+                const fileInfo = res.file;
+                const fileUrl = fileInfo.download_url;
+                const fileName = fileInfo.filename || `file_${fileId}`;
+                const isImage = /\.(jpeg|jpg|png|gif|webp)$/i.test(fileName);
+
+                const container = document.getElementById(`file_container_${roomId}_${fileId}`);
+                if (isImage) {
+                    container.innerHTML = `<div class="my-2"><a href="${fileUrl}" target="_blank"><img src="${fileUrl}" alt="${escapeHtml(fileName)}" class="max-h-48 rounded-lg border border-slate-200 object-contain bg-white shadow-sm hover:opacity-95 transition"></a><div class="text-[10px] text-slate-400 mt-1">${escapeHtml(fileName)}</div></div>`;
+                } else {
+                    container.innerHTML = `<div class="my-2 p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg flex items-center justify-between text-xs"><span class="font-bold text-indigo-900 truncate">📁 ${escapeHtml(fileName)}</span><a href="${fileUrl}" target="_blank" class="bg-indigo-600 text-white px-3 py-1.5 rounded font-bold shrink-0 hover:bg-indigo-700 shadow-sm">ダウンロード</a></div>`;
+                }
+            } catch (err) {
+                alert("ファイルの取得に失敗しました: " + err.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📷 画像・ファイルを表示 (ID: " + fileId + ")";
+            }
         }
 
         async function loadSingleRoomMessages() {
@@ -544,7 +585,7 @@
                     messages.forEach(msg => {
                         const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
                         const timeStr = msg.send_time ? new Date(msg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-                        const formattedBody = formatSimpleMessageBody(msg.body || '');
+                        const formattedBody = formatMessageBodyWithClickableFiles(roomId, msg.body || '');
                         const escapedBodyForModal = escapeHtml(msg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                         
                         msgHtml += `
@@ -616,7 +657,7 @@
             for (const item of list) {
                 const uniqueTextareaId = `later_txt_${item.roomId}`;
                 const escapedBodyForModal = escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n');
-                const formattedLaterBody = formatSimpleMessageBody(item.messageBody || '');
+                const formattedLaterBody = formatMessageBodyWithClickableFiles(item.roomId, item.messageBody || '');
 
                 html += `
                     <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
@@ -863,7 +904,7 @@
                         const msgTime = latestMsg.send_time || '';
                         let sendDateStr = msgTime ? new Date(msgTime * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                         const uniqueTextareaId = `burst_txt_${roomId}`;
-                        const formattedLatestBody = formatSimpleMessageBody(latestMsg.body || '');
+                        const formattedLatestBody = formatMessageBodyWithClickableFiles(roomId, latestMsg.body || '');
                         const escapedBodyForModal = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
                         const escapedBodyForLater = escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
