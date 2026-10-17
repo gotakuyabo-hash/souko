@@ -213,6 +213,9 @@
 
         // 🧠 AIが提案した内容を一時記憶しておくメモリ（key: textareaId）
         let aiDraftMemory = {};
+        
+        // 🎯 最後にフォーカスされていたテキストエリアのIDを保持
+        let lastFocusedTextareaId = null;
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -675,7 +678,7 @@
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
-                            <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
                                 <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg && latestMsg.account ? escapeHtml(latestMsg.account.name) : '不明'}', '${escapedBodyForModal}', '', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
@@ -779,7 +782,7 @@
                                     ✨ AI返信案を作成
                                 </button>
                             </div>
-                            <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                            <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
                                 <button onclick="completeLaterRoom('${item.roomId}')" class="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs px-3 py-2 rounded font-bold border border-emerald-300 shrink-0 transition">
@@ -832,7 +835,7 @@
 
                 btnEl.textContent = "✅ 送信完了！";
                 setTimeout(() => {
-                    loadSingleRoomMessages(); // メッセージ一覧と入力欄をリフレッシュ
+                    loadSingleRoomMessages();
                 }, 800);
             } catch (e) {
                 alert('送信失敗: ' + e.message);
@@ -1054,7 +1057,7 @@
                                             ✨ AI返信案を作成
                                         </button>
                                     </div>
-                                    <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
+                                    <textarea id="${uniqueTextareaId}" onfocus="lastFocusedTextareaId = this.id" onblur="lastFocusedTextareaId = this.id" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                                     
                                     <div class="flex gap-2">
                                        <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
@@ -1117,17 +1120,21 @@
             }
         }
 
-        // 🎯 宛先メンションを現在のカーソル位置（または先頭）に挿入する修正版
-        function insertMention(selectEl, textareaId) {
+        // 🎯 宛先メンション挿入の修正（最後にフォーカスされていたテキストエリアを確実にターゲットにする）
+        function insertMention(selectEl, defaultTextareaId) {
             const val = selectEl.value;
             const name = selectEl.options[selectEl.selectedIndex].getAttribute('data-name');
             if (!val) return;
             
-            const txt = document.getElementById(textareaId);
+            // 最後にフォーカスされていたテキストエリアがあればそこを優先、なければデフォルトを使用
+            const targetId = lastFocusedTextareaId || defaultTextareaId;
+            const txt = document.getElementById(targetId);
+            if (!txt) return;
+
             const mentionText = `[To:${val}] ${name}さん\n`;
             
-            const startPos = txt.selectionStart;
-            const endPos = txt.selectionEnd;
+            const startPos = txt.selectionStart !== undefined ? txt.selectionStart : txt.value.length;
+            const endPos = txt.selectionEnd !== undefined ? txt.selectionEnd : txt.value.length;
             const currentVal = txt.value;
             
             txt.value = currentVal.substring(0, startPos) + mentionText + currentVal.substring(endPos);
