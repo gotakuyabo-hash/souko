@@ -342,6 +342,28 @@
             }
         }
 
+        async function generateAiDraft(roomName, messageBody, textareaId, btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = "✨ AI作成中...";
+
+            try {
+                const data = await callGasApi("generate_ai_draft", {
+                    room_name: roomName,
+                    message_body: messageBody
+                });
+
+                const textarea = document.getElementById(textareaId);
+                if (textarea) {
+                    textarea.value = data.draft;
+                }
+            } catch (err) {
+                alert("AI返信案の作成に失敗しました: " + err.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ AI返信案を作成";
+            }
+        }
+
         function triggerCameraUpload(roomId) {
             const fileInput = document.getElementById(`camera_input_${roomId}`);
             if (fileInput) fileInput.click();
@@ -618,6 +640,11 @@
                                     ${membersOpts}
                                 </select>
                             </div>
+                            <div class="flex justify-between items-center">
+                                <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestBody ? escapeHtml(latestBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                                    ✨ AI返信案を作成
+                                </button>
+                            </div>
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
@@ -714,6 +741,11 @@
                                 <select id="later_members_${item.roomId}" onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                     <option value="">👤 宛先(To)を追加</option>
                                 </select>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <button onclick="generateAiDraft('${escapeHtml(item.roomName).replace(/'/g, "\\'")}', '${item.messageBody ? escapeHtml(item.messageBody).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                                    ✨ AI返信案を作成
+                                </button>
                             </div>
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
@@ -943,19 +975,24 @@
 
                                 <div class="space-y-2 pt-1">
                                     <div class="flex gap-1.5">
-                                     <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
+                                       <select onchange="insertMention(this, '${uniqueTextareaId}')" class="flex-1 text-xs border border-slate-300 rounded p-1.5 bg-white font-bold focus:outline-none">
                                             ${membersOpts}
-                                     </select>
+                                       </select>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <button onclick="generateAiDraft('${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg.body ? escapeHtml(latestMsg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n') : ''}', '${uniqueTextareaId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-200 transition flex items-center gap-1 shadow-sm">
+                                            ✨ AI返信案を作成
+                                        </button>
                                     </div>
                                     <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                                     
                                     <div class="flex gap-2">
-                                     <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                       <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForLater}', '${sendDateStr}', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
                                             ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
-                                     </button>
-                                     <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                       </button>
+                                       <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
                                             📤 このルームに返信する
-                                     </button>
+                                       </button>
                                     </div>
                                 </div>
                             </div>
