@@ -28,6 +28,29 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
+// Slackへリクエストを送信する共通関数（GitHub Actionsの環境変数から取得、未設定時はフォールバック）
+async function sendSlackNotification(text) {
+    try {
+        const messageWithMention = `<!channel>\n` + text;
+        const webhookUrl = process.env.SLACK_WEBHOOK_URL || "https://hooks.slack.com/services/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";
+
+        if (!webhookUrl) {
+            logger.error("❌ SLACK_WEBHOOK_URL が設定されていません！");
+            return;
+        }
+
+        await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ text: messageWithMention }),
+        });
+    } catch (error) {
+        logger.error("Slack通知の送信に失敗しました:", error);
+    }
+}
+
 // 1. material_orders（資材発注など）の更新通知
 exports.notifyMaterialOrders = onDocumentWritten(
     { document: "material_orders/{docId}", region: "asia-northeast1" },
@@ -155,7 +178,7 @@ exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.s
     }
 });
 
-// zaico出庫指示用API（ピンポイント逆引き・宛名指定・memo削除・before_delivery対応）
+// zaico出庫指示用API（ピンポイント逆引き・宛名指定・before_delivery対応）
 exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -287,156 +310,4 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
         logger.error("zaico出庫指示の送信でエラーが発生しました:", error);
         res.status(500).json({ success: false, error: error.message });
     }
-});
-
-// Slackへリクエストを送信する共通関数
-async function sendSlackNotification(text) {
-    try {
-        const messageWithMention = `<!channel>\n` + text;
-        const webhookUrl = "https://hooks.slack.com/services/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";
-
-        await fetch(webhookUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ text: messageWithMention }),
-        });
-    } catch (error) {
-        logger.error("Slack通知の送信に失敗しました:", error);
-    }
-}
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const functions = require("firebase-functions");
-const { logger } = require("firebase-functions");
-const admin = require("firebase-admin");
-
-if (!admin.apps.length) {
-    admin.initializeApp();
-}
-
-const ZAICO_API_TOKEN = "JrUbGqtdGSndDtF3K8VsNtVwHZnSQKxW";
-const COMPANY_ID = "220891";
-
-const notificationCooldowns = {};
-const COOLDOWN_TIME_MS = 15 * 60 * 1000;
-
-function canSendNotification(uniqueKey) {
-    const now = Date.now();
-    const lastTime = notificationCooldowns[uniqueKey] || 0;
-    if (now - lastTime < COOLDOWN_TIME_MS) return false;
-    notificationCooldowns[uniqueKey] = now;
-    return true;
-}
-
-// 【超詳細デバッグログ付き】Slack通知関数
-async function sendSlackNotification(text) {
-    logger.info("👉 [DEBUG] sendSlackNotification が呼ばれました。メッセージ:", text);
-    try {
-        const messageWithMention = `<!channel>\n` + text;
-        const webhookUrl = "https://hooks.slack.com/services/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";
-
-        logger.info("👉 [DEBUG] Slackへfetchリクエストを送信します...");
-        const res = await fetch(webhookUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: messageWithMention }),
-        });
-
-        const resText = await res.text();
-        logger.info(`👉 [DEBUG] Slackからのレスポンス: ステータス=${res.status}, ボディ=${resText}`);
-    } catch (error) {
-        logger.error("❌ [DEBUG] Slack通知の送信中に例外エラーが発生しました:", error);
-    }
-}
-
-exports.notifyMaterialOrders = onDocumentWritten(
-    { document: "material_orders/{docId}", region: "asia-northeast1" },
-    async (event) => {
-        logger.info("👉 [DEBUG] notifyMaterialOrders トリガーが発火しました！");
-        const snap = event.data;
-        if (!snap || !snap.after.exists) {
-            logger.info("👉 [DEBUG] データが存在しないためスキップします。");
-            return;
-        }
-        const docId = event.params.docId;
-        let messageText = `📦 *資材発注データが更新されました！*\n>・ *ID/日付:* ${docId}`;
-        await sendSlackNotification(messageText);
-    }
-);
-
-exports.notifySharedNotes = onDocumentWritten(
-    { document: "shared_notes/{docId}", region: "asia-northeast1" },
-    async (event) => {
-        logger.info("👉 [DEBUG] notifySharedNotes トリガーが発火しました！");
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const docId = event.params.docId;
-        const data = snap.after.data();
-        const title = data.title || data.name || "無題";
-        let messageText = `📝 *共有ノートが更新されました！*\n>・ *タイトル:* ${title}\n>・ *ID:* ${docId}`;
-        await sendSlackNotification(messageText);
-    }
-);
-
-exports.notifyShukkaRecords = onDocumentWritten(
-    { document: "shukka_records/{dateId}", region: "asia-northeast1" },
-    async (event) => {
-        logger.info("👉 [DEBUG] notifyShukkaRecords トリガーが発火しました！");
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const dateId = event.params.dateId;
-        if (!canSendNotification(`shukka_records_${dateId}`)) {
-            logger.info("👉 [DEBUG] shukka_records クールダウン中のためスキップします。");
-            return;
-        }
-        const afterData = snap.after.data();
-        let totalCount = 0;
-        Object.values(afterData).forEach(val => {
-            const num = parseInt(val, 10);
-            if (!isNaN(num)) totalCount += num;
-        });
-        let messageText = `📊 *出荷件数データが更新されました！*\n>・ *対象日:* ${dateId}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
-        await sendSlackNotification(messageText);
-    }
-);
-
-exports.notifyStaffRequests = onDocumentWritten(
-    { document: "staff_requests/{docId}", region: "asia-northeast1" },
-    async (event) => {
-        logger.info("👉 [DEBUG] notifyStaffRequests トリガーが発火しました！");
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const docId = event.params.docId;
-        const data = snap.after.data();
-        const staffName = data.name || data.staffName || "スタッフ";
-        let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *担当/氏名:* ${staffName}\n>・ *ID:* ${docId}`;
-        await sendSlackNotification(messageText);
-    }
-);
-
-exports.notifyWarehouseReports = onDocumentWritten(
-    { document: "warehouse_reports/{dateId}", region: "asia-northeast1" },
-    async (event) => {
-        logger.info("👉 [DEBUG] notifyWarehouseReports トリガーが発火しました！");
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const dateId = event.params.dateId;
-        if (!canSendNotification(`warehouse_reports_${dateId}`)) {
-            logger.info("👉 [DEBUG] warehouse_reports クールダウン中のためスキップします。");
-            return;
-        }
-        const data = snap.after.data();
-        const reporterName = data.name || "未設定";
-        let messageText = `📋 *日次報告チェックリストが更新されました！*\n>・ *対象日:* ${dateId}\n>・ *管理者:* ${reporterName}`;
-        await sendSlackNotification(messageText);
-    }
-);
-
-exports.checkDailyIncompleteTasks = functions.region("asia-northeast1").pubsub.schedule("30 17 * * *").timeZone("Asia/Tokyo").onRun(async (context) => {
-    // 省略（必要に応じて当時のものを保持）
-});
-
-exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onRequest(async (req, res) => {
-    // 省略（zaico部分）
 });
