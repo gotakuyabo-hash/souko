@@ -1,8 +1,8 @@
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onRequest } = require("firebase-functions/v2/https"); // v2のonRequestに変更
+const { onRequest } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { defineSecret } = require("firebase-functions/params"); // 追加
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
@@ -19,7 +19,7 @@ const COMPANY_ID = "220891";
 const slackWebhookUrlSecret = defineSecret("SLACK_WEBHOOK_URL");
 
 // ==========================================
-// クールダウン管理（3と5のコレクション用）
+// クールダウン管理（他のコレクション等でも必要に応じて使用）
 // ==========================================
 const notificationCooldowns = {};
 const COOLDOWN_TIME_MS = 15 * 60 * 1000; // 15分間
@@ -66,18 +66,7 @@ async function sendSlackNotification(text, webhookUrl) {
     }
 }
 
-// 1. material_orders（資材発注など）の更新通知
-exports.notifyMaterialOrders = onDocumentWritten(
-    { document: "material_orders/{docId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
-    async (event) => {
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const docId = event.params.docId;
-
-        let messageText = `📦 *資材発注データが更新されました！*\n>・ *ID/日付:* ${docId}`;
-        await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
-    }
-);
+// 1. material_orders の都度通知は廃止（定時まとめ通知に変更）
 
 // 2. shared_notes（共有ノートなど）の更新通知
 exports.notifySharedNotes = onDocumentWritten(
@@ -94,27 +83,7 @@ exports.notifySharedNotes = onDocumentWritten(
     }
 );
 
-// 3. shukka_records（出荷件数）の更新通知 ★15分クールダウンあり
-exports.notifyShukkaRecords = onDocumentWritten(
-    { document: "shukka_records/{dateId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
-    async (event) => {
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        const dateId = event.params.dateId;
-
-        if (!canSendNotification(`shukka_records_${dateId}`)) return;
-
-        const afterData = snap.after.data();
-        let totalCount = 0;
-        Object.values(afterData).forEach(val => {
-            const num = parseInt(val, 10);
-            if (!isNaN(num)) totalCount += num;
-        });
-
-        let messageText = `📊 *出荷件数データが更新されました！*\n>・ *対象日:* ${dateId}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
-        await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
-    }
-);
+// 3. shukka_records の都度通知は廃止（定時まとめ通知に変更）
 
 // 4. staff_requests（スタッフからの要望・依頼など）の更新通知
 exports.notifyStaffRequests = onDocumentWritten(
@@ -149,7 +118,87 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 定時チェック機能（v2の仕組みに変更）
+// ==========================================
+// 定時まとめ通知・チェック機能
+// ==========================================
+
+// A. 未発注の資材発注通知（毎日 12:00, 15:00）
+exports.checkUnorderedMaterials = onSchedule(
+    {
+        schedule: "0 12,15 * * *",
+        timeZone: "Asia/Tokyo",
+        region: "asia-northeast1",
+        secrets: [slackWebhookUrlSecret]
+    },
+    async (event) => {
+        const db = admin.firestore();
+
+        try {
+            const snapshot = await db.collection("material_orders")
+                .where("status", "==", "未発注")
+                .get();
+
+            if (snapshot.empty) {
+                logger.info("未発注の資材はありません。");
+                return;
+            }
+
+            let messageText = `📦 *【定期通知】未発注の資材一覧*\n`;
+            
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                const itemName = data.itemName || data.title || data.name || "品名不明";
+                const quantity = data.quantity || "数量不明";
+                messageText += `>・ *${itemName}* （数量: ${quantity}） [ID: ${doc.id}]\n`;
+            });
+
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
+            logger.info("未発注資材の定期通知を送信しました。");
+        } catch (error) {
+            logger.error("未発注資材の定期チェックでエラーが発生しました:", error);
+        }
+    }
+);
+
+// B. 総出荷件数の定期通知（毎日 12:00, 15:00, 17:00）
+exports.reportTotalShukkaCounts = onSchedule(
+    {
+        schedule: "0 12,15,17 * * *",
+        timeZone: "Asia/Tokyo",
+        region: "asia-northeast1",
+        secrets: [slackWebhookUrlSecret]
+    },
+    async (event) => {
+        const db = admin.firestore();
+
+        try {
+            const todayStr = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+            const docRef = db.collection("shukka_records").doc(todayStr);
+            const docSnap = await docRef.get();
+
+            if (!docSnap.exists) {
+                logger.info(`本日の出荷件数データ (${todayStr}) はまだ存在しません。`);
+                return;
+            }
+
+            const data = docSnap.data();
+            let totalCount = 0;
+            Object.values(data).forEach(val => {
+                const num = parseInt(val, 10);
+                if (!isNaN(num)) totalCount += num;
+            });
+
+            let messageText = `📊 *【定期通知】本日の総出荷件数*\n>・ *対象日:* ${todayStr}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
+
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
+            logger.info("総出荷件数の定期通知を送信しました。");
+        } catch (error) {
+            logger.error("総出荷件数の定期通知でエラーが発生しました:", error);
+        }
+    }
+);
+
+// C. 日次報告チェックリストの定時未完了チェック（毎日 17:30）
 exports.checkDailyIncompleteTasks = onSchedule(
     {
         schedule: "30 17 * * *",
