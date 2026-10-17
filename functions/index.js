@@ -291,8 +291,31 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
             deliveries: deliveries
         };
 
-        const zaicoRes = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/packing_slips.json`;
-        // ... (省略なしでそのままデプロイしてください)
+        const zaicoRes = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/packing_slips.json`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${ZAICO_API_TOKEN}`
+            },
+            body: JSON.stringify(zaicoPayload)
+        });
+
+        const zaicoData = await zaicoRes.json();
+
+        if (!zaicoRes.ok) {
+            logger.error("zaico v2 API エラーレスポンス:", zaicoData);
+            res.status(500).json({ success: false, error: "zaico API Error: " + JSON.stringify(zaicoData) });
+            return;
+        }
+
+        logger.info("zaico v2 出庫登録成功:", zaicoData);
+        res.json({
+            success: true,
+            slipNum: slipNum,
+            count: deliveries.length,
+            missingCount: missingBarcodes.length,
+            zaicoResponse: zaicoData
+        });
 
     } catch (error) {
         logger.error("zaico出庫指示の送信でエラーが発生しました:", error);
