@@ -373,13 +373,12 @@
                 const data = await callGasApi("generate_ai_draft", {
                     room_name: roomName,
                     message_body: messageBody,
-                    custom_instruction: customInstruction // 追加の指示を送信
+                    custom_instruction: customInstruction
                 });
 
                 const textarea = document.getElementById(textareaId);
                 if (textarea) {
                     textarea.value = data.draft;
-                    // 🧠 AI案の生成結果を記憶
                     aiDraftMemory[textareaId] = {
                         receivedMessage: messageBody,
                         aiDraft: data.draft
@@ -682,7 +681,7 @@
                                 <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg && latestMsg.account ? escapeHtml(latestMsg.account.name) : '不明'}', '${escapedBodyForModal}', '', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
                                     ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
                                 </button>
-                                <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
+                                <button onclick="sendNormalReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
                                     📤 このルームに返信する
                                 </button>
                             </div>
@@ -811,6 +810,35 @@
                     }
                 } catch(e) {}
             });
+        }
+
+        async function sendNormalReply(roomId, textareaId, btnEl) {
+            const bodyText = document.getElementById(textareaId).value.trim();
+            if (!bodyText) { alert('メッセージが空です。'); return; }
+            if (!confirm('この内容で送信しますか？')) return;
+
+            btnEl.disabled = true;
+            btnEl.textContent = "送信中...";
+
+            try {
+                await callGasApi("send_message", { room_id: roomId, body: bodyText });
+
+                // 🧠 AI学習ログの保存判定
+                const memory = aiDraftMemory[textareaId];
+                if (memory) {
+                    window.saveAiFeedbackLog(memory.receivedMessage, memory.aiDraft, bodyText);
+                    delete aiDraftMemory[textareaId];
+                }
+
+                btnEl.textContent = "✅ 送信完了！";
+                setTimeout(() => {
+                    loadSingleRoomMessages(); // メッセージ一覧と入力欄をリフレッシュ
+                }, 800);
+            } catch (e) {
+                alert('送信失敗: ' + e.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📤 このルームに返信する";
+            }
         }
 
         async function sendLaterReply(roomId, textareaId, btnEl) {
@@ -1089,12 +1117,23 @@
             }
         }
 
+        // 🎯 宛先メンションを現在のカーソル位置（または先頭）に挿入する修正版
         function insertMention(selectEl, textareaId) {
             const val = selectEl.value;
             const name = selectEl.options[selectEl.selectedIndex].getAttribute('data-name');
             if (!val) return;
+            
             const txt = document.getElementById(textareaId);
-            txt.value += `[To:${val}] ${name}さん\n`;
+            const mentionText = `[To:${val}] ${name}さん\n`;
+            
+            const startPos = txt.selectionStart;
+            const endPos = txt.selectionEnd;
+            const currentVal = txt.value;
+            
+            txt.value = currentVal.substring(0, startPos) + mentionText + currentVal.substring(endPos);
+            txt.selectionStart = txt.selectionEnd = startPos + mentionText.length;
+            txt.focus();
+            
             selectEl.value = "";
         }
     </script>
