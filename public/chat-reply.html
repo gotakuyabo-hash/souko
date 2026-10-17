@@ -466,20 +466,17 @@
             renderNormalRoomOptions(filtered);
         }
 
-        // 💡 同じファイルIDに対する重複ボタンを防ぐように修正
         function formatMessageBodyWithClickableFiles(roomId, bodyText) {
             if (!bodyText) return '';
             let parsed = escapeHtml(bodyText);
             const processedFileIds = new Set();
 
-            // [preview id=〇〇] タグ
             parsed = parsed.replace(/\[preview\s+id=(\d+)[^\]]*\]/g, (match, fileId) => {
                 if (processedFileIds.has(fileId)) return '';
                 processedFileIds.add(fileId);
                 return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📷 画像・ファイルを表示 (ID: ${fileId})</button></div>`;
             });
 
-            // [download:〇〇] タグ
             parsed = parsed.replace(/\[download:(\d+)\]([\s\S]*?)\[\/download\]/g, (match, fileId, fileName) => {
                 if (processedFileIds.has(fileId)) return '';
                 processedFileIds.add(fileId);
@@ -554,30 +551,34 @@
                 });
 
                 let msgHtml = `
-                    <div class="bg-white border-2 border-slate-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
-                        <div class="flex justify-between items-start gap-2">
-                            <div>
-                                <h3 class="font-bold text-sm text-slate-800">${escapeHtml(roomName)}</h3>
+                    <div class="bg-white border-2 border-slate-200 rounded-xl p-3.5 shadow-sm space-y-3">
+                        <!-- ルーム名 ＆ セラー情報ボタン -->
+                        <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <h3 class="font-bold text-sm text-slate-900">${escapeHtml(roomName)}</h3>
                             </div>
-                            <div class="flex gap-1 shrink-0 flex-wrap justify-end">
-                                <button onclick="fetchSellerInfo('${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
-                                    🔑 セラー
-                                </button>
-                                <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
-                                <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
-                                <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
-                                    📷 写真
-                                </button>
-                                <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
-                                    📁 ファイル
-                                </button>
-                                <button onclick="markRoomAsRead('${roomId}', '${latestMessageId}', this)" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
-                                    📖 既読
-                                </button>
-                                <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
-                                    🌐 公式
-                                </button>
-                            </div>
+                            <button onclick="fetchSellerInfo('${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                                🔑 セラー情報を確認する
+                            </button>
+                        </div>
+
+                        <!-- アクションボタン群（写真、ファイル、既読、公式） -->
+                        <div class="grid grid-cols-4 gap-1">
+                            <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                            <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                            
+                            <button onclick="triggerCameraUpload('${roomId}')" class="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-1.5 px-1 rounded border border-emerald-200 font-bold text-center transition">
+                                📷 写真
+                            </button>
+                            <button onclick="triggerFileUpload('${roomId}')" class="text-[11px] bg-cyan-50 hover:bg-cyan-100 text-cyan-800 py-1.5 px-1 rounded border border-cyan-200 font-bold text-center transition">
+                                📁 ファイル
+                            </button>
+                            <button onclick="markRoomAsRead('${roomId}', '${latestMessageId}', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-800 py-1.5 px-1 rounded border border-indigo-200 font-bold text-center transition">
+                                📖 既読
+                            </button>
+                            <button onclick="openChatworkOfficial('${roomId}')" class="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-800 py-1.5 px-1 rounded border border-sky-200 font-bold text-center transition">
+                                🌐 公式
+                            </button>
                         </div>
 
                         <div class="space-y-1.5 max-h-[450px] overflow-y-auto pr-1">
@@ -664,33 +665,35 @@
                 const formattedLaterBody = formatMessageBodyWithClickableFiles(item.roomId, item.messageBody || '');
 
                 html += `
-                    <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-2.5">
-                        <div class="flex justify-between items-start gap-2">
-                            <div>
-                                <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">⏳ 後で対応</span>
-                                    <h3 class="font-bold text-sm text-slate-800">${escapeHtml(item.roomName)}</h3>
-                                </div>
+                    <div id="later_card_${item.roomId}" class="bg-white border-2 border-amber-200 rounded-xl p-3.5 shadow-sm space-y-3">
+                        <!-- ルーム名 ＆ セラー情報ボタン -->
+                        <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">⏳ 後で対応</span>
+                                <h3 class="font-bold text-sm text-slate-900">${escapeHtml(item.roomName)}</h3>
                             </div>
-                            <div class="flex gap-1 shrink-0 flex-wrap justify-end">
-                                <button onclick="fetchSellerInfo('${escapeHtml(item.roomName).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
-                                    🔑 セラー
-                                </button>
-                                <input type="file" id="camera_input_${item.roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
-                                <input type="file" id="file_input_${item.roomId}" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
-                                <button onclick="triggerCameraUpload('${item.roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
-                                    📷 写真
-                                </button>
-                                <button onclick="triggerFileUpload('${item.roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
-                                    📁 ファイル
-                                </button>
-                                <button onclick="markRoomAsRead('${item.roomId}', '', this)" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
-                                    📖 既読
-                                </button>
-                                <button onclick="openChatworkOfficial('${item.roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
-                                    🌐 公式
-                                </button>
-                            </div>
+                            <button onclick="fetchSellerInfo('${escapeHtml(item.roomName).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                                🔑 セラー情報を確認する
+                            </button>
+                        </div>
+
+                        <!-- アクションボタン群 -->
+                        <div class="grid grid-cols-4 gap-1">
+                            <input type="file" id="camera_input_${item.roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                            <input type="file" id="file_input_${item.roomId}" class="hidden" onchange="handleFileSelected('${item.roomId}', this)">
+                            
+                            <button onclick="triggerCameraUpload('${item.roomId}')" class="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-1.5 px-1 rounded border border-emerald-200 font-bold text-center transition">
+                                📷 写真
+                            </button>
+                            <button onclick="triggerFileUpload('${item.roomId}')" class="text-[11px] bg-cyan-50 hover:bg-cyan-100 text-cyan-800 py-1.5 px-1 rounded border border-cyan-200 font-bold text-center transition">
+                                📁 ファイル
+                            </button>
+                            <button onclick="markRoomAsRead('${item.roomId}', '', this)" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-800 py-1.5 px-1 rounded border border-indigo-200 font-bold text-center transition">
+                                📖 既読
+                            </button>
+                            <button onclick="openChatworkOfficial('${item.roomId}')" class="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-800 py-1.5 px-1 rounded border border-sky-200 font-bold text-center transition">
+                                🌐 公式
+                            </button>
                         </div>
                         
                         <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
@@ -845,34 +848,37 @@
                     const cardId = `burst_card_${roomId}`;
 
                     let cardHtml = `
-                        <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-2.5">
-                            <div class="flex justify-between items-start gap-2">
-                                <div>
-                                    <div class="flex items-center gap-1.5 flex-wrap">
-                                        <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
-                                        <h3 class="font-bold text-sm text-slate-800">${escapeHtml(room.name)}</h3>
-                                    </div>
+                        <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-3">
+                            <!-- ルーム名 ＆ セラー情報ボタン -->
+                            <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
+                                    <h3 class="font-bold text-sm text-slate-900">${escapeHtml(room.name)}</h3>
                                 </div>
-                                <div class="flex gap-1 shrink-0 flex-wrap justify-end">
-                                    <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-bold">
-                                        🔑 セラー
-                                    </button>
-                                    <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
-                                    <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
-                                    <button onclick="triggerCameraUpload('${roomId}')" class="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2 py-1 rounded border border-emerald-300 font-bold">
-                                        📷 写真
-                                    </button>
-                                    <button onclick="triggerFileUpload('${roomId}')" class="text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-800 px-2 py-1 rounded border border-cyan-300 font-bold">
-                                        📁 ファイル
-                                    </button>
-                                    <button id="read_btn_${roomId}" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1 rounded border border-indigo-300 font-bold">
-                                        📖 既読
-                                    </button>
-                                    <button onclick="openChatworkOfficial('${roomId}')" class="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-2 py-1 rounded border border-sky-300 font-bold">
-                                        🌐 公式
-                                    </button>
-                                </div>
+                                <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                                    🔑 セラー情報を確認する
+                                </button>
                             </div>
+
+                            <!-- アクションボタン群 -->
+                            <div class="grid grid-cols-4 gap-1">
+                                <input type="file" id="camera_input_${roomId}" accept="image/*" capture="environment" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                <input type="file" id="file_input_${roomId}" class="hidden" onchange="handleFileSelected('${roomId}', this)">
+                                
+                                <button onclick="triggerCameraUpload('${roomId}')" class="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-1.5 px-1 rounded border border-emerald-200 font-bold text-center transition">
+                                    📷 写真
+                                </button>
+                                <button onclick="triggerFileUpload('${roomId}')" class="text-[11px] bg-cyan-50 hover:bg-cyan-100 text-cyan-800 py-1.5 px-1 rounded border border-cyan-200 font-bold text-center transition">
+                                    📁 ファイル
+                                </button>
+                                <button id="read_btn_${roomId}" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-800 py-1.5 px-1 rounded border border-indigo-200 font-bold text-center transition">
+                                    📖 既読
+                                </button>
+                                <button onclick="openChatworkOfficial('${roomId}')" class="text-[11px] bg-sky-50 hover:bg-sky-100 text-sky-800 py-1.5 px-1 rounded border border-sky-200 font-bold text-center transition">
+                                    🌐 公式
+                                </button>
+                            </div>
+
                             <div class="burst-msg-area text-xs text-slate-500 p-2 bg-slate-50 rounded">メッセージを読み込み中...</div>
                         </div>
                     `;
