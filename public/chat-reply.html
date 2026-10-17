@@ -466,25 +466,29 @@
             renderNormalRoomOptions(filtered);
         }
 
-        // 💡 プレビュータグやダウンロードタグを「タップして表示するボタン」に変換（自動読み込みなし・爆速）
+        // 💡 同じファイルIDに対する重複ボタンを防ぐように修正
         function formatMessageBodyWithClickableFiles(roomId, bodyText) {
             if (!bodyText) return '';
             let parsed = escapeHtml(bodyText);
+            const processedFileIds = new Set();
 
-            // [preview id=〇〇] タグをボタンに置換
+            // [preview id=〇〇] タグ
             parsed = parsed.replace(/\[preview\s+id=(\d+)[^\]]*\]/g, (match, fileId) => {
+                if (processedFileIds.has(fileId)) return '';
+                processedFileIds.add(fileId);
                 return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📷 画像・ファイルを表示 (ID: ${fileId})</button></div>`;
             });
 
-            // [download:〇〇] タグをボタンに置換
+            // [download:〇〇] タグ
             parsed = parsed.replace(/\[download:(\d+)\]([\s\S]*?)\[\/download\]/g, (match, fileId, fileName) => {
+                if (processedFileIds.has(fileId)) return '';
+                processedFileIds.add(fileId);
                 return `<div id="file_container_${roomId}_${fileId}" class="my-1.5"><button onclick="loadAndShowFile('${roomId}', '${fileId}', this)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-bold transition flex items-center gap-1.5 shadow-sm">📁 ${escapeHtml(fileName.trim())} を表示</button></div>`;
             });
 
             return parsed.replace(/\n/g, '<br>');
         }
 
-        // 💡 ユーザーがボタンを押したときだけ、該当の画像ファイルだけを非同期取得して表示
         async function loadAndShowFile(roomId, fileId, btnEl) {
             btnEl.disabled = true;
             btnEl.textContent = "読み込み中...";
