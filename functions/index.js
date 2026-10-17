@@ -14,7 +14,7 @@ const COMPANY_ID = "220891";
 // ==========================================
 // Slack Bot設定（API方式：xoxbトークン）
 // ==========================================
-const SLACK_BOT_TOKEN = "xoxb-12298738971271-12313997975426-cbVRtKRmTdAgoNW8iRG0dukB";
+const SLACK_BOT_TOKEN = "xoxb-12298738971271-12313997975426-7d381BAYiLNiIqqAwfCiIKJP";
 const SLACK_CHANNEL_ID = "C0CA2ENCN1E";
 
 // ==========================================
