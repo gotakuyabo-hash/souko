@@ -22,6 +22,10 @@
         .search-box { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
         .filter-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
         .filter-row input { flex: 1; min-width: 200px; }
+        .draggable-row { cursor: grab; }
+        .draggable-row:active { cursor: grabbing; }
+        .dragging { opacity: 0.4; background: #e2e8f0 !important; }
+        .drag-over { border-top: 2px solid #2563eb !important; }
     </style>
 </head>
 <body>
@@ -347,7 +351,6 @@
                 orderSortState.asc = true;
             }
 
-            // 受注データをグループ化（受注番号: index 5 をキーにしてセット品がバラけないようにする）
             orderFiles.forEach(file => {
                 let groups = new Map();
                 file.rows.forEach(row => {
@@ -358,7 +361,6 @@
                     groups.get(orderNo).push(row);
                 });
 
-                // グループごとにソートキーを決定（グループ内代表行の指定列の値）
                 let groupArray = Array.from(groups.entries());
                 groupArray.sort((a, b) => {
                     let rowsA = a[1], rowsB = b[1];
@@ -369,7 +371,6 @@
                     return orderSortState.asc ? comp : -comp;
                 });
 
-                // 並び替えたグループを平坦化してファイル行に戻す
                 let sortedRows = [];
                 groupArray.forEach(([orderNo, rows]) => {
                     sortedRows.push(...rows);
@@ -390,7 +391,6 @@
                 return;
             }
 
-            // プレビューとして最大50件を表示
             let previewRows = allOrders.slice(0, 50);
             let html = `
                 <div class="mt-4 mb-2">
@@ -536,10 +536,11 @@
 
             let html = `
                 <div class="flex justify-between items-center mt-4 mb-2">
-                    <p><b>全 ${results.length} 件の明細を検出しました（ヘッダーをクリックして並び替え可能）</b></p>
+                    <p><b>全 ${results.length} 件の明細を検出しました（行をドラッグして順番を入れ替え可能）</b></p>
                     <button onclick="saveAllOrderPickItems()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-bold shadow transition">💾 変更した明細を一括保存して計算</button>
                 </div>
                 <table><thead><tr>
+                <th style="width: 30px; text-align: center;">☰</th>
                 <th onclick="sortTable('productName')">商品名${getArrow('productName')}</th>
                 <th onclick="sortTable('barcode')">バーコード${getArrow('barcode')}</th>
                 <th onclick="sortTable('orderQty')">注文数${getArrow('orderQty')}</th>
@@ -547,11 +548,12 @@
                 <th onclick="sortTable('shelfNumber')">棚番${getArrow('shelfNumber')}</th>
                 <th onclick="sortTable('pickCount')">ピック数${getArrow('pickCount')}</th>
                 <th>操作</th>
-                </tr></thead><tbody>`;
+                </tr></thead><tbody id="pickTableBody">`;
 
             results.forEach((item, index) => {
                 const isUnreg = item.status === "UNREGISTERED" || !item.barcode;
-                html += `<tr id="row_${index}" class="${isUnreg ? 'unregistered' : ''}">
+                html += `<tr id="row_${index}" class="draggable-row ${isUnreg ? 'unregistered' : ''}" draggable="true" ondragstart="onDragStart(event, ${index})" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event, ${index})" ondragend="onDragEnd(event)">
+                    <td style="text-align: center; color: #94a3b8; cursor: grab; font-weight: bold;">≡</td>
                     <td>${escapeHtml(item.productName)}</td>
                     <td><input type="text" id="barcode_${index}" value="${escapeHtml(item.barcode || '')}" style="width: 120px;" onkeydown="handleKeydown(event, ${index})"></td>
                     <td>${item.orderQty}</td>
@@ -565,6 +567,60 @@
             document.getElementById('pickResultArea').innerHTML = html;
         }
 
+        // ==================== ドラッグ＆ドロップ並び替えのロジック ====================
+        let draggedIndex = null;
+
+        window.onDragStart = (e, index) => {
+            draggedIndex = index;
+            e.target.classList.add('dragging');
+        };
+
+        window.onDragOver = (e) => {
+            e.preventDefault();
+            const tr = e.target.closest('tr');
+            if (tr) tr.classList.add('drag-over');
+        };
+
+        window.onDragLeave = (e) => {
+            const tr = e.target.closest('tr');
+            if (tr) tr.classList.remove('drag-over');
+        };
+
+        window.onDrop = (e, targetIndex) => {
+            e.preventDefault();
+            const tr = e.target.closest('tr');
+            if (tr) tr.classList.remove('drag-over');
+
+            if (draggedIndex === null || draggedIndex === targetIndex) return;
+
+            // DOMから入力中の最新データを一旦回収してから並び替える
+            syncCurrentInputsToMemory();
+
+            const movedItem = currentPickResults.splice(draggedIndex, 1)[0];
+            currentPickResults.splice(targetIndex, 0, movedItem);
+
+            renderPickTable(currentPickResults);
+        };
+
+        window.onDragEnd = (e) => {
+            document.querySelectorAll('.draggable-row').forEach(row => {
+                row.classList.remove('dragging', 'drag-over');
+            });
+            draggedIndex = null;
+        };
+
+        function syncCurrentInputsToMemory() {
+            currentPickResults.forEach((item, index) => {
+                const bcInput = document.getElementById(`barcode_${index}`);
+                const multInput = document.getElementById(`mult_${index}`);
+                const shelfInput = document.getElementById(`shelf_${index}`);
+                if (bcInput) item.barcode = bcInput.value.trim();
+                if (multInput) item.multiplier = Number(multInput.value) || 1;
+                if (shelfInput) item.shelfNumber = shelfInput.value.trim();
+                item.pickCount = item.orderQty * item.multiplier;
+            });
+        }
+
         function escapeHtml(str) {
             if(!str) return '';
             return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -573,15 +629,18 @@
         window.handleKeydown = (event, index) => {
             if (event.key === 'Enter') {
                 event.preventDefault();
+                syncCurrentInputsToMemory();
                 const item = currentPickResults[index];
                 if (item) registerItem(index, item.orderQty, item.productName, true);
             }
         };
 
         window.registerItem = async (index, orderQty, productName, isSilent = false) => {
-            const barcode = document.getElementById(`barcode_${index}`).value.trim();
-            const multiplier = Number(document.getElementById(`mult_${index}`).value) || 1;
-            const shelfNumber = document.getElementById(`shelf_${index}`).value.trim();
+            syncCurrentInputsToMemory();
+            const item = currentPickResults[index];
+            const barcode = item.barcode;
+            const multiplier = item.multiplier;
+            const shelfNumber = item.shelfNumber;
 
             if (!barcode || !shelfNumber) {
                 if (!isSilent) alert('バーコードと棚番を入力してください。');
@@ -590,8 +649,8 @@
 
             try {
                 await setDoc(doc(db, "product_masters", barcode), { barcode, productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
-                currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: orderQty * multiplier };
-                sortPickResults(currentSortColumn, currentSortAsc);
+                currentPickResults[index] = { ...item, status: "REGISTERED", pickCount: orderQty * multiplier };
+                renderPickTable(currentPickResults);
                 if (!isSilent) alert('保存しました！');
             } catch (err) {
                 console.error(err);
@@ -601,27 +660,21 @@
 
         window.saveAllOrderPickItems = async () => {
             if (!confirm('画面に表示されている明細のうち、バーコードと棚番が入力されているものを一括保存して計算しますか？')) return;
+            syncCurrentInputsToMemory();
             let successCount = 0, skippedCount = 0;
 
             for (let index = 0; index < currentPickResults.length; index++) {
-                const bcInput = document.getElementById(`barcode_${index}`);
-                const multInput = document.getElementById(`mult_${index}`);
-                const shelfInput = document.getElementById(`shelf_${index}`);
+                const item = currentPickResults[index];
+                if (!item.barcode || !item.shelfNumber) { skippedCount++; continue; }
 
-                if (bcInput && multInput && shelfInput) {
-                    const barcode = bcInput.value.trim();
-                    const multiplier = Number(multInput.value) || 1;
-                    const shelfNumber = shelfInput.value.trim();
-                    if (!barcode || !shelfNumber) { skippedCount++; continue; }
-
-                    try {
-                        await setDoc(doc(db, "product_masters", barcode), { barcode, productName: currentPickResults[index].productName, multiplier, shelfNumber, updatedAt: new Date() }, { merge: true });
-                        successCount++;
-                        currentPickResults[index] = { ...currentPickResults[index], barcode, multiplier, shelfNumber, status: "REGISTERED", pickCount: currentPickResults[index].orderQty * multiplier };
-                    } catch (err) { console.error(err); }
-                }
+                try {
+                    await setDoc(doc(db, "product_masters", item.barcode), { barcode: item.barcode, productName: item.productName, multiplier: item.multiplier, shelfNumber: item.shelfNumber, updatedAt: new Date() }, { merge: true });
+                    successCount++;
+                    item.status = "REGISTERED";
+                    item.pickCount = item.orderQty * item.multiplier;
+                } catch (err) { console.error(err); }
             }
-            sortPickResults(currentSortColumn, currentSortAsc);
+            renderPickTable(currentPickResults);
             alert(`一括保存が完了しました。\n成功: ${successCount} 件\nスキップ(未入力あり): ${skippedCount} 件`);
         };
 
@@ -633,36 +686,28 @@
             let customerName = customerNameInput ? customerNameInput.value.trim() : "";
             if (!customerName) customerName = "受注一括出荷";
 
-            const rawItemsMap = new Map();
-            allOrders.forEach(cols => {
-                if (cols[6] === '1-0') return;
-                if (cols.length > 31 && cols[31]) {
-                    let pName = cols[31], qty = cols[34] ? Number(cols[34]) : 1;
-                    let parts = pName.trim().split(/\s+/), bc = parts.length > 0 ? parts[parts.length - 1] : '';
-                    let k = bc || pName;
-                    if (rawItemsMap.has(k)) { rawItemsMap.get(k).quantity += qty; }
-                    else { rawItemsMap.set(k, { productName: pName, quantity: qty, barcode: bc }); }
+            // 現在の画面上の並び順（currentPickResults）に従って出庫指示を作成する
+            syncCurrentInputsToMemory();
+            let validItems = [];
+            currentPickResults.forEach(item => {
+                if (item.barcode && item.shelfNumber) {
+                    validItems.push({
+                        barcode: item.barcode,
+                        productName: item.productName,
+                        orderQty: item.orderQty,
+                        multiplier: item.multiplier,
+                        shelfNumber: item.shelfNumber,
+                        pickCount: item.pickCount,
+                        status: "REGISTERED"
+                    });
                 }
             });
 
+            if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
+            if (!confirm(`取引先: 「${customerName}」\n画面の並び順通りに ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
+
+            showStatus("zaicoに出庫指示を送信中...");
             try {
-                const querySnapshot = await getDocs(collection(db, "product_masters"));
-                const masterMap = new Map();
-                querySnapshot.forEach(docSnap => masterMap.set(docSnap.id, docSnap.data()));
-
-                let validItems = [];
-                rawItemsMap.forEach((val) => {
-                    let mData = masterMap.get(val.barcode);
-                    if (mData && mData.shelfNumber && val.barcode) {
-                        let mult = mData.multiplier || 1;
-                        validItems.push({ barcode: val.barcode, productName: mData.productName || val.productName, orderQty: val.quantity, multiplier: mult, shelfNumber: mData.shelfNumber, pickCount: val.quantity * mult, status: "REGISTERED" });
-                    }
-                });
-
-                if (validItems.length === 0) { alert('zaicoに送信できる有効な商品（棚番が登録済みの明細）がありません。'); return; }
-                if (!confirm(`取引先: 「${customerName}」\n棚番登録済みの ${validItems.length} 件の明細でzaicoに出庫指示を送信しますか？`)) return;
-
-                showStatus("zaicoに出庫指示を送信中...");
                 const res = await fetch(URL_CREATE_SHIPMENT, { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json' }, 
