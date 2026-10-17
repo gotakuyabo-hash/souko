@@ -531,29 +531,32 @@
                             </div>
                         </div>
 
-                        <div class="space-y-1">
+                        <div class="space-y-1.5 max-h-96 overflow-y-auto pr-1">
                 `;
 
                 if (messages.length === 0) {
                     msgHtml += `<div class="text-xs text-slate-400 text-center py-4 bg-slate-50 rounded p-2">メッセージがありません</div>`;
                 } else {
-                    const latest = messages[0];
-                    const senderName = latest.account && latest.account.name ? latest.account.name : '不明';
-                    const timeStr = latest.send_time ? new Date(latest.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-                    msgHtml += `
-                        <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
-                            <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
-                                <span>👤 ${escapeHtml(senderName)}</span>
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-slate-400 font-normal">${timeStr}</span>
-                                    <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBodyForModal}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
-                                        🔗 連携
-                                    </button>
+                    messages.forEach(msg => {
+                        const senderName = msg.account && msg.account.name ? msg.account.name : '不明';
+                        const timeStr = msg.send_time ? new Date(msg.send_time * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                        const escapedBody = escapeHtml(msg.body).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                        
+                        msgHtml += `
+                            <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg space-y-1">
+                                <div class="text-[11px] text-indigo-600 font-bold flex justify-between items-center">
+                                    <span>👤 ${escapeHtml(senderName)}</span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-slate-400 font-normal">${timeStr}</span>
+                                        <button onclick="openLinkCopyModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', '${escapedBody}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold border border-indigo-200">
+                                            🔗 連携
+                                        </button>
+                                    </div>
                                 </div>
+                                <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(msg.body)}</div>
                             </div>
-                            <div class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(latest.body)}</div>
-                        </div>
-                    `;
+                        `;
+                    });
                 }
 
                 msgHtml += `
@@ -567,7 +570,7 @@
                             <textarea id="${uniqueTextareaId}" class="w-full h-20 text-xs p-2 border border-slate-300 rounded bg-white focus:outline-none" placeholder="返信内容を入力..."></textarea>
                             
                             <div class="flex gap-2">
-                                <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg ? escapeHtml(latestMsg.account.name) : '不明'}', '${escapedBodyForModal}', '', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
+                                <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${latestMsg && latestMsg.account ? escapeHtml(latestMsg.account.name) : '不明'}', '${escapedBodyForModal}', '', this)" class="${isLater ? 'bg-amber-600 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'} text-xs px-3 py-2 rounded font-bold shrink-0 transition">
                                     ${isLater ? '⏳ 後で対応中' : '⏳ 後で対応する'}
                                 </button>
                                 <button onclick="sendBurstReply('${roomId}', '${uniqueTextareaId}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 rounded font-bold shadow-sm active:scale-95 transition">
