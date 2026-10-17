@@ -293,7 +293,7 @@ exports.apiCreateZaicoShipment = functions.region("asia-northeast1").https.onReq
 async function sendSlackNotification(text) {
     try {
         const messageWithMention = `<!channel>\n` + text;
-        const webhookUrl = "https://hooks.slack.com/services/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";
+        const webhookUrl = "https://hooks.slack.com/services/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";
 
         await fetch(webhookUrl, {
             method: "POST",
