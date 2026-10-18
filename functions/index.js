@@ -95,7 +95,7 @@ async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionB
     }
 }
 
-// 2. shared_notes（共有ノートなど）の更新通知 -> 【修正】 notes.html へ飛ぶように設定
+// 2. 共有ノートの更新通知 -> notes.html
 exports.notifySharedNotes = onDocumentWritten(
     { document: "shared_notes/{docId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
@@ -110,7 +110,7 @@ exports.notifySharedNotes = onDocumentWritten(
     }
 );
 
-// 4. staff_requests（スタッフからの要望・依頼など）の更新通知 -> checklist.html へ飛ぶ
+// 4. スタッフからの要望・依頼の更新通知 -> request.html
 exports.notifyStaffRequests = onDocumentWritten(
     { document: "staff_requests/{docId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
@@ -121,11 +121,11 @@ exports.notifyStaffRequests = onDocumentWritten(
         const staffName = data.name || data.staffName || "スタッフ";
 
         let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *担当/氏名:* ${staffName}\n>・ *ID:* ${docId}`;
-        await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/checklist.html", "チェックリストを開く");
+        await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/request.html", "要望を確認する");
     }
 );
 
-// 5. warehouse_reports（日次報告チェックリスト）の更新通知 ★15分クールダウンあり -> checklist.html へ飛ぶ
+// 5. 日次報告チェックリストの更新通知 -> checklist.html
 exports.notifyWarehouseReports = onDocumentWritten(
     { document: "warehouse_reports/{dateId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
@@ -143,40 +143,11 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 6. unreplied_rooms（定時未対応ルーム）の更新通知 ★15分クールダウンあり -> checklist.html へ飛ぶ
-exports.notifyUnrepliedRooms = onDocumentWritten(
-    { document: "unreplied_rooms/{roomId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
-    async (event) => {
-        const snap = event.data;
-        if (!snap || !snap.after.exists) return;
-        
-        const roomId = event.params.roomId;
-        
-        if (!canSendNotification(`unreplied_rooms_${roomId}`)) {
-            logger.info(`未対応ルーム ${roomId} の通知はクールダウン中のためスキップします。`);
-            return;
-        }
-
-        const data = snap.after.data();
-        const roomName = data.roomName || "名称不明";
-        const senderName = data.senderName || "相手";
-        const messageBody = data.lastMessageBody || "";
-
-        let messageText = `🚨 *【Chatwork未対応検知】未対応ルームが更新されました*\n` +
-                          `>・ *ルーム名:* ${roomName}\n` +
-                          `>・ *発言者:* ${senderName}\n` +
-                          `>・ *メッセージ:* ${messageBody}`;
-
-        await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/checklist.html", "チェックリストを開く");
-        logger.info(`未対応ルーム更新のSlack通知を送信しました: ${roomName}`);
-    }
-);
-
 // ==========================================
 // 定時まとめ通知・チェック機能
 // ==========================================
 
-// A. 未発注の資材発注通知（毎日 12:00, 15:00） -> checklist.html へ飛ぶ
+// A. 未発注の資材発注通知 -> material.html
 exports.checkUnorderedMaterials = onSchedule(
     {
         schedule: "0 12,15 * * *",
@@ -206,7 +177,7 @@ exports.checkUnorderedMaterials = onSchedule(
                 messageText += `>・ *${itemName}* （数量: ${quantity}） [ID: ${doc.id}]\n`;
             });
 
-            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/checklist.html", "チェックリストを開く");
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/material.html", "資材発注を確認する");
             logger.info("未発注資材の定期通知を送信しました。");
         } catch (error) {
             logger.error("未発注資材の定期チェックでエラーが発生しました:", error);
@@ -214,7 +185,7 @@ exports.checkUnorderedMaterials = onSchedule(
     }
 );
 
-// B. 総出荷件数の定期通知（毎日 12:00, 15:00, 17:00） -> checklist.html へ飛ぶ
+// B. 総出荷件数の定期通知 -> shukka.html
 exports.reportTotalShukkaCounts = onSchedule(
     {
         schedule: "0 12,15,17 * * *",
@@ -244,7 +215,7 @@ exports.reportTotalShukkaCounts = onSchedule(
 
             let messageText = `📊 *【定期通知】本日の総出荷件数*\n>・ *対象日:* ${todayStr}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
 
-            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/checklist.html", "チェックリストを開く");
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/shukka.html", "出荷集計を開く");
             logger.info("総出荷件数の定期通知を送信しました。");
         } catch (error) {
             logger.error("総出荷件数の定期通知でエラーが発生しました:", error);
@@ -252,7 +223,7 @@ exports.reportTotalShukkaCounts = onSchedule(
     }
 );
 
-// C. 日次報告チェックリストの定時未完了チェック（毎日 17:30） -> checklist.html へ飛ぶ
+// C. 日次報告チェックリストの定時未完了チェック -> checklist.html
 exports.checkDailyIncompleteTasks = onSchedule(
     {
         schedule: "30 17 * * *",
@@ -376,7 +347,7 @@ exports.apiCreateZaicoShipment = onRequest(
                 const bc = String(item.barcode).trim();
                 const inventoryId = codeToInventoryIdMap.get(bc);
 
-                if (inventoryId) {
+            if (inventoryId) {
                     deliveries.push({
                         inventory_id: String(inventoryId),
                         quantity: String(item.pickCount)
