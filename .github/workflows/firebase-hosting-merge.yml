@@ -1,4 +1,4 @@
-Name: Deploy to Firebase
+name: Deploy to Firebase
 
 on:
   push:
@@ -19,13 +19,11 @@ jobs:
         run: npm ci
         working-directory: functions
 
-      # ▼ Hosting & Functions のデプロイ（最新のfirebase-toolsを直接使用） ▼
+      # ▼ Hosting & Functions のデプロイ（最新ツールでエラー回避） ▼
       - name: Deploy to Firebase
         run: npx firebase-tools@latest deploy --project souko-2de57 --force
         env:
-          FIREBASE_TOKEN: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
-          # ※もしサービスアカウントのJSONをそのまま入れている場合は GCP_SA_KEY にしてください
-          # GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+          GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
 
       # ▼ シンプルなWebhookを使ったSlack通知 ▼
       - name: Send Slack Notification
@@ -38,7 +36,6 @@ jobs:
             const commitMsg = process.env.COMMIT_MSG || "更新";
             const firstLine = commitMsg.split("\n")[0];
             const text = `<!channel> アプリが更新されました: ${firstLine}`;
-
             const data = JSON.stringify({ text });
             const url = new URL(process.env.SLACK_WEBHOOK_URL);
             const req = https.request({
