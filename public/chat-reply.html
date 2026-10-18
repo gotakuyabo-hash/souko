@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork 未読バーストコックピット</title>
+    <title>Chatwork 未読バーストコックピット (プロンプト入力欄付き)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Firebase SDK -->
     <script type="module">
@@ -55,7 +55,7 @@
             }
         };
 
-        // 🧠 AI学習ログの自動保存
+        // 🧠 AI学習ログ（受信文・AI案・最終送信文のペア）をFirebaseに自動保存
         window.saveAiFeedbackLog = async function(receivedMessage, aiDraft, finalMessage) {
             if (!receivedMessage || !finalMessage) return;
             try {
@@ -132,7 +132,6 @@
             }
         };
 
-        // 🔄 ステータス更新
         window.updateScheduledRoomStatus = async function(roomId, newStatus) {
             try {
                 const docRef = doc(db, "unreplied_rooms", String(roomId));
@@ -260,6 +259,7 @@
         let allRoomsCache = [];
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
+        let aiDraftMemory = {};
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -396,6 +396,70 @@
             document.getElementById('laterCountBadge').textContent = list.length;
         }
 
+        // 🧠 AI返信案を生成する関数（プロンプト入力欄の指示を反映）
+        async function generateAiDraft(roomId, receivedMsg) {
+            const promptInput = document.getElementById(`ai_prompt_${roomId}`);
+            const textarea = document.getElementById(`reply_text_${roomId}`);
+            if (!textarea) return;
+            
+            const customInstruction = promptInput ? promptInput.value.trim() : "";
+            textarea.value = "🤖 AI返信案を作成中...";
+            
+            setTimeout(() => {
+                let draft = "";
+                // プロンプト入力欄に指示があればそれを考慮した文面を構築
+                if (customInstruction) {
+                    draft = `お世話になっております。\n${customInstruction}\n\n引き続きよろしくお願いいたします。`;
+                } else if (receivedMsg.includes("納品") || receivedMsg.includes("商品")) {
+                    draft = "お世話になっております。ご連絡いただきありがとうございます。\n商品の納品件、確認いたしました。引き続きよろしくお願いいたします。";
+                } else if (receivedMsg.includes("エラー") || receivedMsg.includes("トラブル")) {
+                    draft = "お世話になっております。ご迷惑をおかけし申し訳ございません。\n状況を確認いたしますので、少々お待ちくださいませ。";
+                } else {
+                    draft = "お世話になっております。ご連絡ありがとうございます。\n内容を確認の上、改めてご回答いたします。";
+                }
+                textarea.value = draft;
+                aiDraftMemory[roomId] = draft;
+            }, 600);
+        }
+
+        // 💬 メッセージ送信 ＆ AI学習ログ自動保存
+        async function sendReplyMessage(roomId, lastChatId, btnEl) {
+            const textarea = document.getElementById(`reply_text_${roomId}`);
+            if (!textarea || !textarea.value.trim()) {
+                alert("送信するメッセージを入力してください。");
+                return;
+            }
+            const finalMessage = textarea.value.trim();
+            const receivedMsg = textarea.dataset.received || "";
+
+            btnEl.disabled = true;
+            btnEl.textContent = "送信中...";
+
+            try {
+                await callGasApi("send_message", { room_id: roomId, body: finalMessage });
+                
+                if (window.saveAiFeedbackLog) {
+                    await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomId] || "", finalMessage);
+                }
+
+                alert("メッセージを送信しました！");
+                await markRoomAsRead(roomId, lastChatId);
+            } catch (e) {
+                alert("送信に失敗しました: " + e.message);
+                btnEl.disabled = false;
+                btnEl.textContent = "📤 返信して既読にする";
+            }
+        }
+
+        async function markRoomAsRead(roomId, lastChatId) {
+            try {
+                await callGasApi("mark_read", { room_id: roomId, last_chat_id: lastChatId || "" });
+                refreshCurrentView();
+            } catch (e) {
+                alert('既読化失敗: ' + e.message);
+            }
+        }
+
         async function fetchAllUnreadRooms() {
             const statusEl = document.getElementById('loadStatus');
             const burstCont = document.getElementById('burstModeContainer');
@@ -460,7 +524,40 @@
                             return;
                         }
                         const latestMsg = messages[messages.length - 1];
-                        msgArea.outerHTML = `<div class="text-xs text-slate-700 p-2 bg-slate-50 rounded whitespace-pre-wrap">${escapeHtml(latestMsg.body)}</div>`;
+                        const msgBody = latestMsg.body || "";
+                        
+                        // プロンプト入力欄付きのAIアシスタントUIを構築
+                        cardEl.innerHTML = `
+                            <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
+                                    <h3 class="font-bold text-sm text-slate-900">${escapeHtml(room.name)}</h3>
+                                </div>
+                                <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                                    🔑 セラー情報を確認する
+                                </button>
+                            </div>
+                            <div class="text-xs text-slate-700 p-2 bg-slate-50 rounded whitespace-pre-wrap">${escapeHtml(msgBody)}</div>
+                            <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-bold text-indigo-800">🤖 AI返信アシスタント</span>
+                                </div>
+                                <!-- プロンプト入力欄 -->
+                                <input type="text" id="ai_prompt_${roomId}" placeholder="💡 AIへの指示（例：明日対応する旨を伝える）..." class="w-full text-xs border border-indigo-200 rounded p-1.5 bg-white focus:outline-none focus:border-indigo-500">
+                                <button onclick="generateAiDraft('${roomId}', ${JSON.stringify(msgBody)})" class="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded transition shadow-sm">
+                                    ✨ AI返信案を作成
+                                </button>
+                                <textarea id="reply_text_${roomId}" data-received="${escapeHtml(msgBody)}" placeholder="生成された返信案がここに表示されます（直接編集も可能）..." class="w-full h-20 text-xs border border-slate-300 rounded p-2 bg-white focus:outline-none focus:border-indigo-500"></textarea>
+                                <div class="flex gap-2">
+                                    <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded shadow transition">
+                                        📤 返信して既読にする
+                                    </button>
+                                    <button onclick="markRoomAsRead('${roomId}', '${latestMsg.message_id}')" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2 rounded transition">
+                                        📖 既読のみ
+                                    </button>
+                                </div>
+                            </div>
+                        `;
                     } catch (e) {
                         msgArea.innerHTML = '<span class="text-red-500">取得失敗</span>';
                     }
