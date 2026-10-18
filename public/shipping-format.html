@@ -785,6 +785,22 @@
                         if (valStr.startsWith('+81')) newRow[c] = cleanPhone(valStr);
                     }
 
+                    // M列 (インデックス12) が16文字以上の場合、溢れた分をN列 (インデックス13) にセットする
+                    let mCol = 12; // M列
+                    if (mCol < newRow.length) {
+                        let mStr = String(newRow[mCol] || '');
+                        if (mStr.length >= 16) {
+                            let firstPart = mStr.substring(0, 15);
+                            let overflowPart = mStr.substring(15);
+                            newRow[mCol] = firstPart;
+                            let targetCol = 13; // N列
+                            if (targetCol < newRow.length) {
+                                let existingNext = String(newRow[targetCol] || '');
+                                newRow[targetCol] = existingNext ? (overflowPart + ' ' + existingNext) : overflowPart;
+                            }
+                        }
+                    }
+
                     if (newRow.length > 27) {
                         let valStr = String(newRow[27] || '');
                         if (valStr.length > 16) {
