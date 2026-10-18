@@ -56,10 +56,10 @@
         }
         .summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 15px;
             margin-bottom: 20px;
-            font-size: 15px;
+            font-size: 14px;
         }
         .summary-box {
             background: #eef2f7;
@@ -70,6 +70,13 @@
             background: #d4edda;
             font-weight: bold;
             color: #155724;
+            font-size: 15px;
+        }
+        .summary-detail {
+            font-size: 12px;
+            color: #555;
+            margin-top: 4px;
+            white-space: pre-line;
         }
         table {
             width: 100%;
@@ -88,7 +95,7 @@
         .not-found {
             color: red;
         }
-        .number-input {
+        .size-select, .number-input {
             padding: 4px 6px;
             font-size: 13px;
             width: 70px;
@@ -130,11 +137,6 @@
         .btn-danger:hover {
             background-color: #bd2130;
         }
-        #loadingStatus {
-            font-size: 12px;
-            color: #007bff;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -145,28 +147,39 @@
     <!-- 履歴・保存パネル -->
     <div class="history-panel">
         <div>
-            <label for="historySelect">Firestore保存済み履歴: </label>
-            <select id="historySelect" onchange="loadHistoryFromFirestore()">
+            <label for="historySelect">保存済み履歴 (Firestore): </label>
+            <select id="historySelect" onchange="loadHistory()">
                 <option value="">-- 履歴から選択して読み込む --</option>
             </select>
         </div>
         <div>
             <input type="text" id="historyTitleInput" placeholder="保存名 (例: 1次リターン分)" style="width: 180px;">
         </div>
-        <button class="btn btn-success" onclick="saveHistoryToFirestore()">Firestoreに保存</button>
-        <button class="btn btn-danger" onclick="deleteHistoryFromFirestore()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
-        <span id="loadingStatus"></span>
+        <button class="btn btn-success" onclick="saveHistory()">クラウドに保存</button>
+        <button class="btn btn-danger" onclick="deleteHistory()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
     </div>
 
     <!-- ご依頼主（出荷人）情報パネル -->
     <div class="sender-panel">
         <span style="font-weight: bold; color: #333;">ご依頼主（出荷人）設定:</span>
-        <div><label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label></div>
-        <div><label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label></div>
-        <div><label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label></div>
-        <div><label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label></div>
-        <div><label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label></div>
-        <div><label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label></div>
+        <div>
+            <label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label>
+        </div>
+        <div>
+            <label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label>
+        </div>
+        <div>
+            <label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label>
+        </div>
+        <div>
+            <label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label>
+        </div>
+        <div>
+            <label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label>
+        </div>
+        <div>
+            <label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label>
+        </div>
     </div>
 
     <!-- 送り状データ出力パネル -->
@@ -217,11 +230,25 @@
     </div>
 
     <div class="summary">
-        <div class="summary-box">表示件数: <span id="totalCount">0</span> 件</div>
-        <div class="summary-box">送料合計: <span id="totalShipping">0</span> 円</div>
-        <div class="summary-box">出荷手数料(300円×件): <span id="totalFee">0</span> 円</div>
-        <div class="summary-box">資材費合計: <span id="totalMaterial">0</span> 円</div>
-        <div class="summary-box">同梱費合計(30円×点): <span id="totalBundle">0</span> 円</div>
+        <div class="summary-box">
+            表示件数: <span id="totalCount">0</span> 件
+            <div class="summary-detail" id="detailCount"></div>
+        </div>
+        <div class="summary-box">
+            送料合計: <span id="totalShipping">0</span> 円
+        </div>
+        <div class="summary-box">
+            出荷手数料(300円×件): <span id="totalFee">0</span> 円
+            <div class="summary-detail" id="detailFee"></div>
+        </div>
+        <div class="summary-box">
+            資材費合計: <span id="totalMaterial">0</span> 円
+            <div class="summary-detail" id="detailMaterial"></div>
+        </div>
+        <div class="summary-box">
+            同梱費合計(30円×点): <span id="totalBundle">0</span> 円
+            <div class="summary-detail" id="detailBundle"></div>
+        </div>
         <div class="summary-box">小計(税抜): <span id="subtotalPrice">0</span> 円</div>
         <div class="summary-box">消費税(10%): <span id="taxPrice">0</span> 円</div>
         <div class="summary-box total-box">総合計(税込): <span id="grandTotalPrice">0</span> 円</div>
@@ -255,115 +282,38 @@
     </table>
 </div>
 
-<!-- Firebase SDK (Modular CDN) -->
+<!-- Firebase SDKs -->
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
+    import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-    authDomain: "souko-2de57.firebaseapp.com",
-    projectId: "souko-2de57",
-    storageBucket: "souko-2de57.firebasestorage.app",
-    messagingSenderId: "642116656086",
-    appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-    measurementId: "G-8WG8GWQGCR"
-  };
+    const firebaseConfig = {
+        apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+        authDomain: "souko-2de57.firebaseapp.com",
+        projectId: "souko-2de57",
+        storageBucket: "souko-2de57.firebasestorage.app",
+        messagingSenderId: "642116656086",
+        appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+        measurementId: "G-8WG8GWQGCR"
+    };
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db = getFirestore(app);
 
-  // グローバルに関数を公開してHTMLイベントから呼び出せるようにする
-  window.saveHistoryToFirestore = async function() {
-      const title = document.getElementById('historyTitleInput').value.trim();
-      if (!title) {
-          alert("保存名を入力してください。");
-          return;
-      }
+    window.db = db;
+    window.collection = collection;
+    window.doc = doc;
+    window.setDoc = setDoc;
+    window.getDoc = getDoc;
+    window.getDocs = getDocs;
+    window.deleteDoc = deleteDoc;
 
-      const rows = document.querySelectorAll('#resultBody tr');
-      if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
-          alert("保存するデータがありません。");
-          return;
-      }
-
-      document.getElementById('loadingStatus').textContent = "保存中...";
-
-      let senderInfo = {
-          name: document.getElementById('senderName').value,
-          postal: document.getElementById('senderPostal').value,
-          address: document.getElementById('senderAddress').value,
-          building: document.getElementById('senderBuilding').value,
-          phone: document.getElementById('senderPhone').value,
-          date: document.getElementById('shippingDate').value
-      };
-
-      let rowDataList = [];
-      rows.forEach(row => {
-          const orderId = row.querySelector('.orderid-input')?.value || "";
-          const name = row.querySelector('.name-input')?.value || "";
-          const itemName = row.querySelector('.itemname-input')?.value || "";
-          const postal = row.querySelector('.postal-input')?.value || "";
-          const phone = row.querySelector('.phone-input')?.value || "";
-          const address = row.querySelector('.address-input')?.value || "";
-          const size = row.querySelector('.size-select')?.value || "60";
-          const material = row.querySelector('.material-input')?.value || "40";
-          const itemCount = row.querySelector('.itemcount-input')?.value || "0";
-
-          rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
-      });
-
-      try {
-          await setDoc(doc(db, "shipping_histories", title), {
-              sender: senderInfo,
-              rows: rowDataList,
-              updatedAt: new Date()
-          });
-          alert(`「${title}」をFirestoreに保存しました。`);
-          updateHistoryDropdown();
-      } catch (e) {
-          console.error("保存エラー: ", e);
-          alert("保存に失敗しました。コンソールを確認してください。");
-      } finally {
-          document.getElementById('loadingStatus').textContent = "";
-      }
-  };
-
-  window.updateHistoryDropdown = async function() {
-      const select = document.getElementById('historySelect');
-      select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
-      
-      try {
-          const querySnapshot = await getDocs(collection(db, "shipping_histories"));
-          querySnapshot.forEach((docSnap) => {
-              const opt = document.createElement('option');
-              opt.value = docSnap.id;
-              opt.textContent = docSnap.id;
-              select.appendChild(opt);
-          });
-      } catch (e) {
-          console.error("履歴取得エラー: ", e);
-      }
-  };
-
-  window.loadHistoryFromFirestore = async function() {
-      const title = document.getElementById('historySelect').value;
-      if (!title) return;
-
-      document.getElementById('loadingStatus').textContent = "読み込み中...";
-
-      try {
-          const docRef = doc(db, "shipping_histories", title);
-          const docSnap = await getDocs(collection(db, "shipping_histories")); // 或者直接 getDoc
-          // 簡易的にキャッシュか個別取得
-          // 実際には getDoc を使います
-      } catch (e) {
-          console.error(e);
-      }
-  };
-
-  // 起動時の履歴ドロップダウン初期化
-  window.updateHistoryDropdown();
+    // 初期化時にFirestoreから履歴リストを読み込む
+    window.addEventListener('DOMContentLoaded', () => {
+        updateHistoryDropdown();
+    });
 </script>
 
 <script>
@@ -437,7 +387,9 @@ function initPrefectureFilter() {
 
 function extractPrefecture(text) {
     for (let pref of prefectures) {
-        if (text.includes(pref)) return pref;
+        if (text.includes(pref)) {
+            return pref;
+        }
     }
     if (text.includes("東京")) return "東京都";
     if (text.includes("大阪")) return "大阪府";
@@ -463,20 +415,40 @@ function initRows() {
     const defaultItemCount = document.getElementById('defaultItemCount').value;
 
     lines.forEach((line, index) => {
-        let orderId = "", name = "", itemName = "", postal = "", phone = "", address = line;
+        let orderId = "";
+        let name = "";
+        let itemName = "";
+        let postal = "";
+        let phone = "";
+        let address = line;
 
         if (line.includes('\t')) {
             const parts = line.split('\t').map(p => p.trim());
             if (parts.length >= 6) {
-                orderId = parts[0]; name = parts[1]; itemName = parts[2]; postal = parts[3]; phone = parts[4]; address = parts[5];
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                postal = parts[3];
+                phone = parts[4];
+                address = parts[5];
             } else if (parts.length === 5) {
-                orderId = parts[0]; name = parts[1]; itemName = parts[2]; phone = parts[3]; address = parts[4];
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                phone = parts[3];
+                address = parts[4];
             } else if (parts.length === 4) {
-                orderId = parts[0]; name = parts[1]; itemName = parts[2]; address = parts[3];
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                address = parts[3];
             } else if (parts.length === 3) {
-                name = parts[0]; itemName = parts[1]; address = parts[2];
+                name = parts[0];
+                itemName = parts[1];
+                address = parts[2];
             } else if (parts.length === 2) {
-                name = parts[0]; address = parts[1];
+                name = parts[0];
+                address = parts[1];
             }
         }
 
@@ -537,7 +509,8 @@ function updateRowAddress(input) {
 }
 
 function deleteRow(btn) {
-    btn.closest('tr').remove();
+    const tr = btn.closest('tr');
+    tr.remove();
     calculate();
 }
 
@@ -570,7 +543,10 @@ function applyDefaultItemCount() {
 
 function filterTable() {
     const selectedPref = document.getElementById('filterPref').value;
-    document.querySelectorAll('#resultBody tr').forEach(row => {
+    const rows = document.querySelectorAll('#resultBody tr');
+
+    rows.forEach(row => {
+        if (!row.dataset.pref && row.style.display !== 'none') {}
         const pref = row.dataset.pref;
         if (!selectedPref || pref === selectedPref) {
             row.style.display = '';
@@ -583,9 +559,31 @@ function filterTable() {
 
 function calculate() {
     const rows = document.querySelectorAll('#resultBody tr');
-    let totalCount = 0, totalShipping = 0, totalFee = 0, totalMaterial = 0, totalBundle = 0;
+    let totalCount = 0;
+    let totalShipping = 0;
+    let totalFee = 0;
+    let totalMaterial = 0;
+    let totalBundle = 0;
+    let totalItemsCount = 0;
 
-    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) return;
+    let sizeCounts = {};
+    let materialSizeCounts = {};
+
+    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) {
+        document.getElementById('totalCount').textContent = 0;
+        document.getElementById('totalShipping').textContent = 0;
+        document.getElementById('totalFee').textContent = 0;
+        document.getElementById('totalMaterial').textContent = 0;
+        document.getElementById('totalBundle').textContent = 0;
+        document.getElementById('subtotalPrice').textContent = 0;
+        document.getElementById('taxPrice').textContent = 0;
+        document.getElementById('grandTotalPrice').textContent = 0;
+        document.getElementById('detailCount').textContent = '';
+        document.getElementById('detailFee').textContent = '';
+        document.getElementById('detailMaterial').textContent = '';
+        document.getElementById('detailBundle').textContent = '';
+        return;
+    }
 
     rows.forEach(row => {
         if (row.style.display === 'none') return;
@@ -605,6 +603,8 @@ function calculate() {
         const pref = prefCell.dataset.pref;
         const size = sizeSelect.value;
         
+        sizeCounts[size] = (sizeCounts[size] || 0) + 1;
+
         let shipping = 0;
         if (pref && rateTable[pref] && rateTable[pref][size] !== undefined) {
             shipping = rateTable[pref][size];
@@ -617,7 +617,12 @@ function calculate() {
         feeCell.textContent = fee.toLocaleString() + ' 円';
 
         const material = parseInt(materialInput.value) || 0;
+        if (material > 0) {
+            materialSizeCounts[size] = (materialSizeCounts[size] || 0) + 1;
+        }
+
         const itemCount = parseInt(itemcountInput.value) || 0;
+        totalItemsCount += itemCount;
         const bundle = itemCount * 30;
         bundleCell.textContent = bundle.toLocaleString() + ' 円';
 
@@ -642,8 +647,171 @@ function calculate() {
     document.getElementById('subtotalPrice').textContent = subtotal.toLocaleString();
     document.getElementById('taxPrice').textContent = tax.toLocaleString();
     document.getElementById('grandTotalPrice').textContent = grandTotal.toLocaleString();
+
+    // 内訳表示の生成
+    let countDetailText = Object.entries(sizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
+    document.getElementById('detailCount').textContent = countDetailText ? `(${countDetailText})` : '';
+
+    let feeDetailText = `${totalCount}件`;
+    document.getElementById('detailFee').textContent = `(${feeDetailText})`;
+
+    let materialDetailText = Object.entries(materialSizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
+    document.getElementById('detailMaterial').textContent = materialDetailText ? `(${materialDetailText})` : '';
+
+    document.getElementById('detailBundle').textContent = `(総点数: ${totalItemsCount}点)`;
 }
 
+// -------------------------------------------------------------
+// Firestoreを用いた保存・読み込み・削除関数
+// -------------------------------------------------------------
+async function saveHistory() {
+    const title = document.getElementById('historyTitleInput').value.trim();
+    if (!title) {
+        alert("保存名を入力してください。");
+        return;
+    }
+
+    const rows = document.querySelectorAll('#resultBody tr');
+    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
+        alert("保存するデータがありません。");
+        return;
+    }
+
+    let senderInfo = {
+        name: document.getElementById('senderName').value,
+        postal: document.getElementById('senderPostal').value,
+        address: document.getElementById('senderAddress').value,
+        building: document.getElementById('senderBuilding').value,
+        phone: document.getElementById('senderPhone').value,
+        date: document.getElementById('shippingDate').value
+    };
+
+    let rowDataList = [];
+    rows.forEach(row => {
+        const orderId = row.querySelector('.orderid-input') ? row.querySelector('.orderid-input').value : "";
+        const name = row.querySelector('.name-input') ? row.querySelector('.name-input').value : "";
+        const itemName = row.querySelector('.itemname-input') ? row.querySelector('.itemname-input').value : "";
+        const postal = row.querySelector('.postal-input') ? row.querySelector('.postal-input').value : "";
+        const phone = row.querySelector('.phone-input') ? row.querySelector('.phone-input').value : "";
+        const address = row.querySelector('.address-input') ? row.querySelector('.address-input').value : "";
+        const size = row.querySelector('.size-select') ? row.querySelector('.size-select').value : "60";
+        const material = row.querySelector('.material-input') ? row.querySelector('.material-input').value : "40";
+        const itemCount = row.querySelector('.itemcount-input') ? row.querySelector('.itemcount-input').value : "0";
+
+        rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
+    });
+
+    try {
+        const docRef = window.doc(window.db, "shipping_histories", title);
+        await window.setDoc(docRef, {
+            sender: senderInfo,
+            rows: rowDataList,
+            updatedAt: new Date().toISOString()
+        });
+        alert(`「${title}」をFirestoreに保存しました。`);
+        updateHistoryDropdown();
+    } catch (e) {
+        console.error("保存エラー: ", e);
+        alert("保存に失敗しました。コンソールを確認してください。");
+    }
+}
+
+async function updateHistoryDropdown() {
+    const select = document.getElementById('historySelect');
+    select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
+    
+    try {
+        const querySnapshot = await window.getDocs(window.collection(window.db, "shipping_histories"));
+        querySnapshot.forEach((docSnap) => {
+            const title = docSnap.id;
+            const opt = document.createElement('option');
+            opt.value = title;
+            opt.textContent = title;
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        console.error("履歴リスト取得エラー: ", e);
+    }
+}
+
+async function loadHistory() {
+    const title = document.getElementById('historySelect').value;
+    if (!title) return;
+
+    try {
+        const docRef = window.doc(window.db, "shipping_histories", title);
+        const docSnap = await window.getDoc(docRef);
+
+        if (!docSnap.exists()) {
+            alert("該当する履歴が見つかりませんでした。");
+            return;
+        }
+
+        const historyData = docSnap.data();
+        document.getElementById('historyTitleInput').value = title;
+
+        if (historyData.sender) {
+            document.getElementById('senderName').value = historyData.sender.name || "";
+            document.getElementById('senderPostal').value = historyData.sender.postal || "";
+            document.getElementById('senderAddress').value = historyData.sender.address || "";
+            document.getElementById('senderBuilding').value = historyData.sender.building || "";
+            document.getElementById('senderPhone').value = historyData.sender.phone || "";
+            if (historyData.sender.date) {
+                document.getElementById('shippingDate').value = historyData.sender.date;
+            }
+        }
+
+        let rowDataList = historyData.rows || [];
+        let textLines = [];
+        rowDataList.forEach(item => {
+            textLines.push(`${item.orderId}\t${item.name}\t${item.itemName}\t${item.postal}\t${item.phone}\t${item.address}`);
+        });
+        document.getElementById('addressInput').value = textLines.join('\n');
+        initRows();
+
+        const rows = document.querySelectorAll('#resultBody tr');
+        rows.forEach((row, i) => {
+            if (rowDataList[i]) {
+                const sizeSel = row.querySelector('.size-select');
+                const matIn = row.querySelector('.material-input');
+                const itemIn = row.querySelector('.itemcount-input');
+                if (sizeSel) sizeSel.value = rowDataList[i].size;
+                if (matIn) matIn.value = rowDataList[i].material;
+                if (itemIn) itemIn.value = rowDataList[i].itemCount;
+            }
+        });
+        calculate();
+    } catch (e) {
+        console.error("読み込みエラー: ", e);
+        alert("読み込みに失敗しました。");
+    }
+}
+
+async function deleteHistory() {
+    const title = document.getElementById('historySelect').value;
+    if (!title) {
+        alert("削除する履歴を選択してください。");
+        return;
+    }
+
+    if (!confirm(`履歴「${title}」をFirestoreから削除してもよろしいですか？`)) return;
+
+    try {
+        const docRef = window.doc(window.db, "shipping_histories", title);
+        await window.deleteDoc(docRef);
+
+        updateHistoryDropdown();
+        document.getElementById('historyTitleInput').value = "";
+        alert("削除しました。");
+    } catch (e) {
+        console.error("削除エラー: ", e);
+        alert("削除に失敗しました。");
+    }
+}
+
+// -------------------------------------------------------------
+// 佐川急便 送り状データ出力
+// -------------------------------------------------------------
 function exportSagawa() {
     const rows = document.querySelectorAll('#resultBody tr');
     if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
@@ -658,7 +826,7 @@ function exportSagawa() {
     const sPhone = document.getElementById('senderPhone').value;
     let sDate = document.getElementById('shippingDate').value.replace(/-/g, '');
 
-    let csvContent = "\uFEFF";
+    let csvContent = "\uFEFF"; // BOM
     const header = [
         "お届け先コード取得区分", "お届け先コード", "お届け先電話番号", "お届け先郵便番号", 
         "お届け先住所１", "お届け先住所２", "お届け先住所３", "お届け先名称１", "お届け先名称２", 
@@ -681,7 +849,9 @@ function exportSagawa() {
         const orderId = row.querySelector('.orderid-input')?.value || "";
         const name = row.querySelector('.name-input')?.value || "";
         let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 16) itemName = itemName.substring(0, 16);
+        if (itemName.length > 16) {
+            itemName = itemName.substring(0, 16);
+        }
 
         const postal = row.querySelector('.postal-input')?.value || "";
         const phone = row.querySelector('.phone-input')?.value || "";
@@ -699,9 +869,9 @@ function exportSagawa() {
         lineData[20] = sBuilding;
         lineData[21] = sName;
         lineData[24] = itemName;
-        lineData[28] = orderId;
+        lineData[28] = orderId; 
         lineData[41] = "1";
-        lineData[60] = sDate;
+        lineData[60] = sDate;    
 
         const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
         csvContent += escaped.join(",") + "\n";
@@ -710,6 +880,9 @@ function exportSagawa() {
     downloadFile(csvContent, "sagawa_okurijo_data.csv", "text/csv;charset=utf-8;");
 }
 
+// -------------------------------------------------------------
+// ヤマト運輸(B2) 送り状データ出力
+// -------------------------------------------------------------
 function exportYamato() {
     const rows = document.querySelectorAll('#resultBody tr');
     if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
@@ -725,7 +898,7 @@ function exportYamato() {
     const rawDate = document.getElementById('shippingDate').value;
     const sDateYamato = rawDate ? rawDate.replace(/-/g, '/') : "";
 
-    let csvContent = "\uFEFF";
+    let csvContent = "\uFEFF"; // BOM
     const header = [
         "お客様管理番号(旧0)", "送り状種類", "クール区分", "伝票番号", "出荷予定日", "お届け予定日", "配達時間帯",
         "お届け先コード", "お届け先電話番号", "お届け先電話番号枝番", "お届け先郵便番号", "お届け先住所",
@@ -755,35 +928,41 @@ function exportYamato() {
         const orderId = row.querySelector('.orderid-input')?.value || "";
         const name = row.querySelector('.name-input')?.value || "";
         let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 25) itemName = itemName.substring(0, 25);
+        if (itemName.length > 25) {
+            itemName = itemName.substring(0, 25);
+        }
 
         const postal = row.querySelector('.postal-input')?.value || "";
         const phone = row.querySelector('.phone-input')?.value || "";
         let address = row.querySelector('.address-input')?.value || "";
 
-        let addr1 = address, company1 = "";
+        let addr1 = address;
+        let company1 = ""; 
         if (address.length >= 26) {
             addr1 = address.substring(0, 26);
             company1 = address.substring(26);
         }
 
         let lineData = new Array(header.length).fill("");
-        lineData[1] = "0";
-        lineData[4] = sDateYamato;
-        lineData[8] = phone;
-        lineData[10] = postal;
-        lineData[11] = addr1;
-        lineData[13] = company1;
-        lineData[15] = name;
-        lineData[19] = sPhone;
-        lineData[21] = sPostal;
-        lineData[22] = sAddress;
-        lineData[23] = sBuilding;
-        lineData[24] = sName;
-        lineData[26] = orderId;
-        lineData[27] = itemName;
-        lineData[39] = "09050540672";
-        lineData[41] = "01";
+        lineData[1] = "0";           
+        lineData[4] = sDateYamato;   
+        lineData[8] = phone;         
+        lineData[10] = postal;       
+        lineData[11] = addr1;        
+        lineData[13] = company1;     
+        lineData[15] = name;         
+
+        lineData[19] = sPhone;       
+        lineData[21] = sPostal;      
+        lineData[22] = sAddress;     
+        lineData[23] = sBuilding;    
+        lineData[24] = sName;        
+
+        lineData[26] = orderId;      
+        lineData[27] = itemName;     
+
+        lineData[39] = "09050540672"; 
+        lineData[41] = "01";         
 
         const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
         csvContent += escaped.join(",") + "\n";
