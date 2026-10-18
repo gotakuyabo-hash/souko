@@ -19,14 +19,25 @@ jobs:
         run: npm install
         working-directory: functions
 
-      # ▼ サービスアカウント認証を通してからデプロイ ▼
-      - name: Deploy to Firebase
+      # ▼ サービスアカウントのファイルを作成し、認証を通す準備 ▼
+      - name: Setup Service Account
         run: |
           echo "$GCP_SA_KEY" > ./service-account.json
-          export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
-          npx firebase-tools@latest deploy --project souko-2de57 --force --token "$GCP_SA_KEY"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=./service-account.json" >> $GITHUB_ENV
         env:
           GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
+
+      # ▼ Hostingのデプロイ ▼
+      - name: Deploy Hosting
+        run: npx firebase-tools@latest deploy --only hosting --project souko-2de57
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ./service-account.json
+
+      # ▼ Functionsのデプロイ ▼
+      - name: Deploy Functions
+        run: npx firebase-tools@latest deploy --only functions --project souko-2de57
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ./service-account.json
 
       # ▼ デプロイ完了時のSlack通知 ▼
       - name: Send Slack Notification
