@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Firebase SDK (Modular v10) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -123,7 +122,6 @@
 
     <main class="max-w-7xl mx-auto px-4 py-8 flex-grow w-full space-y-6">
         
-        <!-- 受注処理タブ -->
         <div id="tabContentOrders" class="space-y-6">
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center">
@@ -166,7 +164,6 @@
                 <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
                         <span id="rowCountBadge" class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium"></span>
-                        <button onclick="sortRowsByProduct()" class="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg"><i class="fa-solid fa-arrow-down-a-z mr-1"></i>商品名順ソート</button>
                     </div>
                     <div class="overflow-x-auto max-h-[600px]">
                         <table class="w-full text-left border-collapse text-sm">
@@ -190,12 +187,12 @@
             </div>
         </div>
 
-        <!-- マスタ管理タブ -->
         <div id="tabContentMaster" class="hidden space-y-6">
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center flex-wrap gap-2">
                     <h2 class="text-lg font-semibold"><i class="fa-solid fa-database text-indigo-600 mr-2"></i>Firestore商品マスタ管理</h2>
                     <div class="flex space-x-2 text-xs">
+                        <button onclick="openBulkMasterModal()" class="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg border border-emerald-200 font-medium"><i class="fa-solid fa-file-csv mr-1"></i>CSV・コピペ一括登録</button>
                         <button onclick="loadDefaultPresets()" class="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-lg border border-indigo-200 font-medium">初期プリセット一括登録</button>
                         <button onclick="clearMasterFirestore()" class="text-rose-600 px-3 py-2 rounded-lg border border-rose-200 hover:bg-rose-50 font-medium">全クリア</button>
                     </div>
@@ -224,7 +221,6 @@
 
     </main>
 
-    <!-- マスタ登録・編集モーダル -->
     <div id="masterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
@@ -254,7 +250,26 @@
         </div>
     </div>
 
-    <!-- シート貼り付け用コピモーダル -->
+    <div id="bulkMasterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-file-csv text-emerald-600 mr-2"></i>CSV・コピペマスタ一括登録</h3>
+                <button onclick="closeBulkMasterModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-slate-500">
+                以下の形式（CSVまたはタブ区切り）で入力してください。<br>
+                フォーマット: <code>SKUコード, 商品名, 棚番, 数量</code> (複数行可)
+            </p>
+            <div>
+                <textarea id="bulkMasterTextarea" rows="10" placeholder="SKU001, 商品A, 1-A, 1&#10;SKU002, 商品B, 1-B, 2" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50"></textarea>
+            </div>
+            <div class="flex justify-end space-x-2 pt-2 border-t">
+                <button onclick="closeBulkMasterModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">キャンセル</button>
+                <button onclick="saveBulkMasterToFirestore()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-xs font-medium">一括登録を実行</button>
+            </div>
+        </div>
+    </div>
+
     <div id="sheetCopyModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -272,7 +287,6 @@
         </div>
     </div>
 
-    <!-- 検品書モーダル -->
     <div id="inspectionModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3 no-print">
@@ -286,11 +300,10 @@
         </div>
     </div>
 
-    <!-- トータルピックリストモーダル -->
     <div id="totalPickingModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3 no-print">
-                <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト</h3>
+                <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs font-normal text-slate-500">(行をドラッグして並び替え可能)</span></h3>
                 <div class="flex space-x-2">
                     <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
                     <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
@@ -299,7 +312,7 @@
             <div class="overflow-x-auto border rounded-xl">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead class="bg-slate-100 border-b">
-                        <tr><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
+                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
                 </table>
@@ -307,7 +320,6 @@
         </div>
     </div>
 
-    <!-- コピー成功トースト通知 -->
     <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white text-xs px-4 py-2 rounded-lg shadow-lg hidden z-50 transition-all">
         コピーしました！
     </div>
@@ -381,6 +393,7 @@
         let multiplierMaster = [];
         let allFilesRawData = [];
         let processedDataRows = [];
+        let draggedRowIndex = null;
 
         window.initFirestoreMaster = async function() {
             try {
@@ -501,7 +514,7 @@
                     <td class="px-4 py-3 text-right space-x-1 w-24">
                         <button onclick="openMasterEditModal(${idx})" class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
                         <button onclick="deleteMasterRule('${rule.key}')" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
-                    </td>`;
+                    `;
                 tbody.appendChild(tr);
             });
         }
@@ -527,6 +540,54 @@
                 document.getElementById('modalKey').value = '';
                 document.getElementById('modalKey').readOnly = false;
                 addModalItemRow();
+            }
+        }
+
+        function openBulkMasterModal() {
+            document.getElementById('bulkMasterTextarea').value = '';
+            document.getElementById('bulkMasterModal').classList.remove('hidden');
+        }
+
+        function closeBulkMasterModal() {
+            document.getElementById('bulkMasterModal').classList.add('hidden');
+        }
+
+        async function saveBulkMasterToFirestore() {
+            const text = document.getElementById('bulkMasterTextarea').value.trim();
+            if (!text) { alert('テキストを入力してください'); return; }
+
+            const lines = text.split(/\r?\n/);
+            let map = {};
+
+            lines.forEach(line => {
+                if (!line.trim()) return;
+                let cols = line.includes('\t') ? line.split('\t') : line.split(',');
+                if (cols.length >= 2) {
+                    let key = cols[0].trim();
+                    let jpName = cols[1].trim();
+                    let shelf = cols[2] ? cols[2].trim() : '';
+                    let multiplier = cols[3] ? parseInt(cols[3].trim(), 10) || 1 : 1;
+
+                    if (!key || !jpName) return;
+                    if (!map[key]) map[key] = [];
+                    map[key].push({ jpName, shelf, multiplier });
+                }
+            });
+
+            let keys = Object.keys(map);
+            if (keys.length === 0) { alert('有効なデータが見つかりませんでした'); return; }
+
+            try {
+                for (let key of keys) {
+                    let newData = { key, items: map[key] };
+                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), newData);
+                }
+                await window.initFirestoreMaster();
+                closeBulkMasterModal();
+                alert(`${keys.length}件のマスタを一括登録しました`);
+            } catch (e) {
+                console.error(e);
+                alert('一括登録に失敗しました');
             }
         }
 
@@ -641,7 +702,6 @@
         function processItemText(trackingNum, orderSn, productInfo) {
             const sku = extractSku(productInfo);
             
-            // 完全一致のみでマスタを検索
             let matched = multiplierMaster.find(r => r.key.toLowerCase() === sku.toLowerCase());
 
             let results = [];
@@ -789,11 +849,6 @@
             }
         }
 
-        function sortRowsByProduct() {
-            processedDataRows.sort((a, b) => a.jpName.localeCompare(b.jpName));
-            renderResults();
-        }
-
         function openSheetCopyModal() {
             if (!processedDataRows.length) return;
             let lines = ["order_sn\tproduct_name_jp\ttotal_quantity"];
@@ -883,8 +938,44 @@
                 map[k].total += r.baseQty * r.multiplier;
             });
             let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf));
-            document.getElementById('totalPickingBody').innerHTML = sorted.map(x => `<tr class="hover:bg-slate-50"><td class="px-4 py-2 font-bold text-indigo-700">${x.shelf}</td><td class="px-4 py-2 font-semibold">${x.name}</td><td class="px-4 py-2 text-center font-bold text-emerald-600 text-base">${x.total}</td></tr>`).join('');
+            renderTotalPickingTable(sorted);
             document.getElementById('totalPickingModal').classList.remove('hidden');
+        }
+
+        function renderTotalPickingTable(data) {
+            const tbody = document.getElementById('totalPickingBody');
+            tbody.innerHTML = '';
+            data.forEach((x, index) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 cursor-grab';
+                tr.draggable = true;
+                tr.dataset.index = index;
+
+                tr.addEventListener('dragstart', (e) => {
+                    draggedRowIndex = index;
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                tr.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                });
+                tr.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    if (draggedRowIndex === null || draggedRowIndex === index) return;
+                    const movedItem = data.splice(draggedRowIndex, 1)[0];
+                    data.splice(index, 0, movedItem);
+                    draggedRowIndex = null;
+                    renderTotalPickingTable(data);
+                });
+
+                tr.innerHTML = `
+                    <td class="px-4 py-2 text-center text-slate-400"><i class="fa-solid fa-grip-vertical"></i></td>
+                    <td class="px-4 py-2 font-bold text-indigo-700">${x.shelf}</td>
+                    <td class="px-4 py-2 font-semibold">${x.name}</td>
+                    <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base">${x.total}</td>
+                `;
+                tbody.appendChild(tr);
+            });
         }
 
         function closeTotalPickingModal() { document.getElementById('totalPickingModal').classList.add('hidden'); }
