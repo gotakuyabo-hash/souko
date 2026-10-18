@@ -19,7 +19,7 @@ const COMPANY_ID = "220891";
 const slackWebhookUrlSecret = defineSecret("SLACK_WEBHOOK_URL");
 
 // ==========================================
-// クールダウン管理（他のコレクション等でも必要に応じて使用）
+// クールダウン管理
 // ==========================================
 const notificationCooldowns = {};
 const COOLDOWN_TIME_MS = 15 * 60 * 1000; // 15分間
@@ -35,7 +35,7 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
-// Webhookを使った確実な通知関数（ボタンを確実に表示させる修正版）
+// Webhookを使った通知関数（ボタン付き）
 async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionButtonText = "アプリを開く") {
     try {
         if (!webhookUrl) {
@@ -95,9 +95,7 @@ async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionB
     }
 }
 
-// 1. material_orders の都度通知は廃止（定時まとめ通知に変更）
-
-// 2. shared_notes（共有ノートなど）の更新通知 -> notes.html へ飛ぶ
+// 2. shared_notes（共有ノートなど）の更新通知 -> 【修正】 notes.html へ飛ぶように設定
 exports.notifySharedNotes = onDocumentWritten(
     { document: "shared_notes/{docId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
@@ -111,8 +109,6 @@ exports.notifySharedNotes = onDocumentWritten(
         await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/notes.html", "ノートを開く");
     }
 );
-
-// 3. shukka_records の都度通知は廃止（定時まとめ通知に変更）
 
 // 4. staff_requests（スタッフからの要望・依頼など）の更新通知 -> checklist.html へ飛ぶ
 exports.notifyStaffRequests = onDocumentWritten(
@@ -156,7 +152,6 @@ exports.notifyUnrepliedRooms = onDocumentWritten(
         
         const roomId = event.params.roomId;
         
-        // 15分間のクールダウンを適用（同じルームからの連続通知を防ぐ）
         if (!canSendNotification(`unreplied_rooms_${roomId}`)) {
             logger.info(`未対応ルーム ${roomId} の通知はクールダウン中のためスキップします。`);
             return;
@@ -309,7 +304,7 @@ exports.checkDailyIncompleteTasks = onSchedule(
     }
 );
 
-// zaico出庫指示用API（ピンポイント逆引き・宛名指定・before_delivery対応）
+// zaico出庫指示用API
 exports.apiCreateZaicoShipment = onRequest(
     { region: "asia-northeast1" },
     async (req, res) => {
