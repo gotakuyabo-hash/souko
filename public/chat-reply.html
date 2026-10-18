@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chatwork 未読バーストコックピット (完全修正版)</title>
+    <title>Chatwork 未読バーストコックピット (BBCodeプレビュー対応版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Firebase SDK -->
     <script type="module">
@@ -25,7 +25,15 @@
         window.db = db;
 
         // 🚀 スタッフ間連絡アプリへの登録
-        window.registerToStaffApp = async function(roomId, roomName, senderName, messageBody, fromVal, toVal, memoVal, btnEl) {
+        window.registerToStaffApp = async function(btnEl) {
+            const roomId = document.getElementById('linkRoomId').value;
+            const roomName = document.getElementById('linkRoomName').value;
+            const senderName = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
+            const fromVal = document.getElementById('linkFromInput').value;
+            const toVal = document.getElementById('linkToInput').value;
+            const memoVal = document.getElementById('linkMemoInput').value;
+
             let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}`;
             taskContent += `\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
             
@@ -55,7 +63,7 @@
             }
         };
 
-        // 🧠 AI学習ログ（受信文・AI案・最終送信文のペア）をFirebaseに自動保存
+        // 🧠 AI学習ログの自動保存
         window.saveAiFeedbackLog = async function(receivedMessage, aiDraft, finalMessage) {
             if (!receivedMessage || !finalMessage) return;
             try {
@@ -71,7 +79,7 @@
             }
         };
 
-        // 📋 Firestoreから定時スキャンの「未対応（pending）」ルーム一覧を取得
+        // 📋 Firestoreから定時スキャンの未対応一覧を取得
         window.fetchScheduledUnrepliedRoomsFromFirebase = async function() {
             const container = document.getElementById('scheduledModeContainer');
             container.innerHTML = `
@@ -203,7 +211,6 @@
         <div id="scheduledModeContainer" class="space-y-3" style="display:none;"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
 
-        <!-- 【モードB】通常ルーム個別選択エリア -->
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
                 <input type="text" id="roomSearchInput" oninput="filterNormalRooms()" placeholder="🔍 ルーム名検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:outline-none">
@@ -215,7 +222,7 @@
         </div>
     </div>
 
-    <!-- モーダル -->
+    <!-- ================= モーダル ================= -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
     <!-- 🔑 セラー情報表示モーダル -->
@@ -253,6 +260,36 @@
         </div>
     </div>
 
+    <!-- 🔗 スタッフ間連絡 直接登録モーダル -->
+    <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-indigo-50 rounded-t-xl">
+            <h2 class="font-bold text-indigo-900">🔗 スタッフ間連絡アプリに登録</h2>
+            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <input type="hidden" id="linkRoomId">
+            <input type="hidden" id="linkRoomName">
+            <input type="hidden" id="linkSenderName">
+            <input type="hidden" id="linkMessageBody">
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">👤 From (依頼者・担当者など)</label>
+                <input type="text" id="linkFromInput" placeholder="例：松下" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">🎯 To (宛先スタッフなど)</label>
+                <input type="text" id="linkToInput" placeholder="例：スタッフ全員 / 〇〇さん" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">📝 軽いメモ (自由記述)</label>
+                <textarea id="linkMemoInput" placeholder="依頼内容や補足事項など..." class="w-full h-20 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
+            </div>
+            <button onclick="registerToStaffApp(this)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
+                🚀 スタッフ間連絡アプリに登録する
+            </button>
+        </div>
+    </div>
+    <!-- ========================================================= -->
+
     <!-- メインスクリプト -->
     <script>
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
@@ -285,6 +322,7 @@
         function closeAllModals() {
             document.getElementById('modalOverlay').style.display = 'none';
             document.getElementById('modalSellerInfo').style.display = 'none';
+            document.getElementById('modalLinkCopy').style.display = 'none';
         }
 
         async function callGasApi(action, params = {}) {
@@ -357,7 +395,36 @@
             }
         }
 
-        // ⏳ 後で対応タブの描画関数
+        // ⏳ 後で対応関連
+        function getLaterRooms() {
+            try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; }
+        }
+
+        function updateLaterBadge() {
+            const later = getLaterRooms();
+            const token = getCurrentToken();
+            const list = later[token] || [];
+            document.getElementById('laterCountBadge').textContent = list.length;
+        }
+
+        window.toggleLaterRoom = function(roomId, roomName) {
+            const later = getLaterRooms();
+            const token = getCurrentToken();
+            if (!later[token]) later[token] = [];
+            
+            const idx = later[token].indexOf(String(roomId));
+            if (idx > -1) {
+                later[token].splice(idx, 1);
+                alert("「後で対応」から外しました。");
+            } else {
+                later[token].push(String(roomId));
+                alert("「後で対応」に追加しました！");
+            }
+            localStorage.setItem(LATER_KEY, JSON.stringify(later));
+            updateLaterBadge();
+            if (currentMode === 'later') renderLaterRooms();
+        };
+
         function renderLaterRooms() {
             const container = document.getElementById('laterModeContainer');
             const later = getLaterRooms();
@@ -376,23 +443,66 @@
 
             let html = '';
             list.forEach(roomId => {
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
+                const name = roomObj ? roomObj.name : `ルームID: ${roomId}`;
                 html += `
                     <div class="bg-white border-2 border-amber-100 rounded-xl p-3.5 shadow-sm flex items-center justify-between">
-                        <div class="font-bold text-sm text-slate-800">ルームID: ${roomId}</div>
-                        <button onclick="openChatworkOfficial('${roomId}')" class="bg-sky-500 hover:bg-sky-600 text-white text-xs px-3 py-1.5 rounded font-bold">
-                            🌐 公式で開く
-                        </button>
+                        <div class="font-bold text-sm text-slate-800 truncate mr-2">${escapeHtml(name)}</div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                            <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="bg-sky-500 text-white text-xs px-2.5 py-1.5 rounded font-bold">🌐 公式</a>
+                            <button onclick="toggleLaterRoom('${roomId}')" class="bg-rose-500 text-white text-xs px-2.5 py-1.5 rounded font-bold">❌ 解除</button>
+                        </div>
                     </div>
                 `;
             });
             container.innerHTML = html;
         }
 
-        function openChatworkOfficial(roomId) {
-            window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
+        // 🔗 スタッフ間連絡モーダルを開く
+        window.openStaffAppModal = function(roomId, roomName, senderName, messageBody) {
+            document.getElementById('linkRoomId').value = roomId;
+            document.getElementById('linkRoomName').value = roomName;
+            document.getElementById('linkSenderName').value = senderName;
+            document.getElementById('linkMessageBody').value = messageBody;
+            document.getElementById('linkFromInput').value = "松下";
+            document.getElementById('linkToInput').value = "スタッフ全員";
+            document.getElementById('linkMemoInput').value = "";
+
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('modalLinkCopy').style.display = 'flex';
+        };
+
+        // 🔑 セラー情報取得
+        async function fetchSellerInfo(keyword) {
+            if (!keyword) { alert("キーワードが見つかりません"); return; }
+            document.getElementById('sellerModalKanriNo').textContent = "読み込み中...";
+            document.getElementById('sellerModalName').textContent = "-";
+            document.getElementById('sellerModalShopName').textContent = "-";
+            document.getElementById('sellerModalId').textContent = "-";
+            document.getElementById('sellerModalPass').textContent = "-";
+            
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('modalSellerInfo').style.display = 'flex';
+
+            try {
+                const data = await callGasApi("get_seller_info", { chatwork_id: keyword });
+                if (!data.seller || data.seller.error) {
+                    document.getElementById('sellerModalKanriNo').textContent = "見つかりませんでした";
+                    return;
+                }
+                const seller = data.seller;
+                document.getElementById('sellerModalKanriNo').textContent = seller.kanriNo || 'なし';
+                document.getElementById('sellerModalName').textContent = seller.name || 'なし';
+                document.getElementById('sellerModalShopName').textContent = seller.shopName || 'なし';
+                document.getElementById('sellerModalId').textContent = seller.id || '未登録';
+                document.getElementById('sellerModalPass').textContent = seller.pass || '未登録';
+            } catch (e) {
+                alert("セラー情報の取得に失敗しました: " + e.message);
+                closeAllModals();
+            }
         }
 
-        // 📁 通常ルーム一覧を取得してセレクトボックスに描画する関数
+        // 📁 通常ルーム管理
         async function fetchNormalRooms() {
             const selectEl = document.getElementById('roomSelect');
             selectEl.innerHTML = '<option value="">-- ルーム一覧を読み込み中... --</option>';
@@ -444,91 +554,155 @@
                 const messages = roomData.messages || [];
                 
                 if (messages.length === 0) {
-                    container.innerHTML = `
-                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 text-center text-xs text-slate-500">
-                            メッセージはありません
-                        </div>
-                    `;
+                    container.innerHTML = `<div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 text-center text-xs text-slate-500">メッセージはありません</div>`;
                     return;
                 }
 
                 const latestMsg = messages[messages.length - 1];
-                const msgBody = latestMsg.body || "";
-                const roomName = allRoomsCache.find(r => String(r.room_id) === String(roomId))?.name || "ルーム";
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
+                const roomName = roomObj ? roomObj.name : "ルーム";
 
-                container.innerHTML = `
-                    <div class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-3">
-                        <div class="space-y-1.5 pb-2 border-b border-slate-100">
-                            <h3 class="font-bold text-sm text-slate-900">${escapeHtml(roomName)}</h3>
-                            <button onclick="fetchSellerInfo('${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
-                                🔑 セラー情報を確認する
-                            </button>
-                        </div>
-                        <div class="text-xs text-slate-700 p-2 bg-slate-50 rounded whitespace-pre-wrap">${escapeHtml(msgBody)}</div>
-                        <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[11px] font-bold text-indigo-800">🤖 AI返信アシスタント</span>
-                            </div>
-                            <input type="text" id="ai_prompt_${roomId}" placeholder="💡 AIへの指示（例：明日対応する旨を伝える）..." class="w-full text-xs border border-indigo-200 rounded p-1.5 bg-white focus:outline-none focus:border-indigo-500">
-                            <button onclick="generateAiDraft('${roomId}', ${JSON.stringify(msgBody)})" class="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded transition shadow-sm">
-                                ✨ AI返信案を作成
-                            </button>
-                            <textarea id="reply_text_${roomId}" data-received="${escapeHtml(msgBody)}" placeholder="生成された返信案がここに表示されます..." class="w-full h-20 text-xs border border-slate-300 rounded p-2 bg-white focus:outline-none focus:border-indigo-500"></textarea>
-                            <div class="flex gap-2">
-                                <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded shadow transition">
-                                    📤 返信して既読にする
-                                </button>
-                                <button onclick="markRoomAsRead('${roomId}', '${latestMsg.message_id}')" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2 rounded transition">
-                                    📖 既読のみ
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
+                container.innerHTML = buildMessageCardHtml(roomId, roomName, latestMsg, roomObj?.unread_num || 0);
             } catch (e) {
                 container.innerHTML = `<div class="text-xs text-red-500 text-center p-4">メッセージ取得エラー: ${e.message}</div>`;
             }
         }
 
-        async function fetchSellerInfo(keyword) {
-            if (!keyword) { alert("キーワードが見つかりません"); return; }
-            document.getElementById('sellerModalKanriNo').textContent = "読み込み中...";
-            document.getElementById('sellerModalName').textContent = "-";
-            document.getElementById('sellerModalShopName').textContent = "-";
-            document.getElementById('sellerModalId').textContent = "-";
-            document.getElementById('sellerModalPass').textContent = "-";
-            
-            document.getElementById('modalOverlay').style.display = 'block';
-            document.getElementById('modalSellerInfo').style.display = 'flex';
+        // 🖼️ Chatworkの添付ファイルやBBCode形式のファイルアップロード情報を綺麗にパースして表示する関数
+        function parseChatworkFilesAndBody(msgBody, files) {
+            let renderedBody = escapeHtml(msgBody);
 
-            try {
-                const data = await callGasApi("get_seller_info", { chatwork_id: keyword });
-                if (!data.seller || data.seller.error) {
-                    document.getElementById('sellerModalKanriNo').textContent = "見つかりませんでした";
-                    return;
-                }
-                const seller = data.seller;
-                document.getElementById('sellerModalKanriNo').textContent = seller.kanriNo || 'なし';
-                document.getElementById('sellerModalName').textContent = seller.name || 'なし';
-                document.getElementById('sellerModalShopName').textContent = seller.shopName || 'なし';
-                document.getElementById('sellerModalId').textContent = seller.id || '未登録';
-                document.getElementById('sellerModalPass').textContent = seller.pass || '未登録';
-            } catch (e) {
-                alert("セラー情報の取得に失敗しました: " + e.message);
-                closeAllModals();
+            // ChatworkのファイルアップロードBBCode ([info][title]...[/title][preview id=... ht=...][download:...]...[/download][/info]) をパース
+            renderedBody = renderedBody.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
+                let title = "";
+                const titleMatch = inner.match(/[title]([\s\S]*?)\[\/title\]/);
+                if (titleMatch) title = titleMatch[1].trim();
+
+                let fileId = "";
+                const dlMatch = inner.match(/\[download:(\d+)\]/);
+                if (dlMatch) fileId = dlMatch[1];
+
+                let fileName = "添付ファイル";
+                const textMatch = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/);
+                if (textMatch) fileName = textMatch[1].trim();
+
+                return `
+                    <div class="my-2 p-2.5 bg-indigo-50/60 rounded-lg border border-indigo-200 space-y-1.5">
+                        <div class="text-[11px] font-bold text-indigo-900">📎 ${escapeHtml(title || 'ファイルアップロード')}</div>
+                        <div class="text-xs font-semibold text-slate-700">${escapeHtml(fileName)}</div>
+                        ${fileId ? `<div class="text-[10px] text-slate-400">File ID: ${fileId}</div>` : ''}
+                    </div>
+                `;
+            });
+
+            // API経由で取得した files 配列がある場合
+            let apiFilesHtml = "";
+            if (files && files.length > 0) {
+                files.forEach(file => {
+                    const isImage = file.filename && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.filename);
+                    if (isImage && file.download_url) {
+                        apiFilesHtml += `
+                            <div class="mt-2 space-y-1">
+                                <a href="${file.download_url}" target="_blank" class="block">
+                                    <img src="${file.download_url}" alt="${escapeHtml(file.filename)}" class="max-h-40 rounded border border-slate-200 object-cover shadow-sm">
+                                </a>
+                                <div class="text-[10px] text-slate-400">📷 ${escapeHtml(file.filename)}</div>
+                            </div>
+                        `;
+                    } else if (file.download_url) {
+                        apiFilesHtml += `
+                            <div class="mt-2 p-2 bg-white rounded border border-slate-200 flex items-center justify-between">
+                                <span class="text-xs font-bold text-slate-700">📎 ${escapeHtml(file.filename || '添付ファイル')}</span>
+                                <a href="${file.download_url}" target="_blank" class="text-xs bg-sky-500 text-white px-2 py-1 rounded font-bold shadow-sm">ダウンロード</a>
+                            </div>
+                        `;
+                    }
+                });
             }
+
+            return `<div class="whitespace-pre-wrap">${renderedBody}</div>${apiFilesHtml}`;
         }
 
-        function getLaterRooms() {
-            try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; }
+        function buildMessageCardHtml(roomId, roomName, latestMsg, unreadNum) {
+            const msgBody = latestMsg.body || "";
+            const senderName = latestMsg.account ? latestMsg.account.name : "相手";
+            const files = latestMsg.files || [];
+            const parsedContent = parseChatworkFilesAndBody(msgBody, files);
+
+            return `
+                <div id="card_${roomId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-3">
+                    <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                ${unreadNum > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${unreadNum}件</span>` : ''}
+                                <h3 class="font-bold text-sm text-slate-900">${escapeHtml(roomName)}</h3>
+                            </div>
+                            <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 px-2.5 py-1 rounded font-bold transition">
+                                ⏳ 後で対応
+                            </button>
+                        </div>
+                        <button onclick="fetchSellerInfo('${escapeHtml(roomName).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                            🔑 セラー情報を確認する
+                        </button>
+                    </div>
+
+                    <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1">
+                        <div class="font-bold text-[11px] text-indigo-900">👤 ${escapeHtml(senderName)} の発言:</div>
+                        ${parsedContent}
+                    </div>
+
+                    <!-- スタッフ間連絡アプリ連携ボタン -->
+                    <button onclick="openStaffAppModal('${roomId}', '${escapeHtml(roomName).replace(/'/g, "\\'")}', '${escapeHtml(senderName).replace(/'/g, "\\'")}', ${JSON.stringify(msgBody)})" class="w-full text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-2 px-3 rounded-lg border border-emerald-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                        🚀 スタッフ間連絡アプリに登録する
+                    </button>
+
+                    <!-- AIアシスタント ＆ 返信欄 -->
+                    <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-indigo-800">🤖 AI返信アシスタント</span>
+                        </div>
+                        <input type="text" id="ai_prompt_${roomId}" placeholder="💡 AIへの指示（例：明日対応する旨を伝える）..." class="w-full text-xs border border-indigo-200 rounded p-1.5 bg-white focus:outline-none focus:border-indigo-500">
+                        <button onclick="generateAiDraft('${roomId}', ${JSON.stringify(msgBody)})" class="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded transition shadow-sm">
+                            ✨ AI返信案を作成
+                        </button>
+                        <textarea id="reply_text_${roomId}" data-received="${escapeHtml(msgBody)}" placeholder="生成された返信案がここに表示されます..." class="w-full h-20 text-xs border border-slate-300 rounded p-2 bg-white focus:outline-none focus:border-indigo-500"></textarea>
+                        
+                        <!-- 📷 カメラ撮影 ＆ 📁 ファイル添付コントロール -->
+                        <div class="grid grid-cols-2 gap-2 pt-1">
+                            <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-2 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
+                                <span>📷 カメラ撮影</span>
+                                <input type="file" accept="image/*" capture="environment" id="reply_camera_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
+                            </label>
+                            <label class="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white text-[11px] font-bold py-2 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
+                                <span>📁 ファイル選択</span>
+                                <input type="file" id="reply_file_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
+                            </label>
+                        </div>
+                        <div id="file_preview_${roomId}" class="text-[11px] text-indigo-700 font-bold bg-white p-2 rounded border border-indigo-200 hidden"></div>
+
+                        <div class="flex gap-2 pt-1">
+                            <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded shadow transition">
+                                📤 返信して既読にする
+                            </button>
+                            <button onclick="markRoomAsRead('${roomId}', '${latestMsg.message_id || ''}')" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2 rounded transition">
+                                📖 既読のみ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
-        function updateLaterBadge() {
-            const later = getLaterRooms();
-            const token = getCurrentToken();
-            const list = later[token] || [];
-            document.getElementById('laterCountBadge').textContent = list.length;
-        }
+        window.handleFileSelect = function(roomId, inputEl) {
+            const previewEl = document.getElementById(`file_preview_${roomId}`);
+            if (inputEl.files && inputEl.files[0]) {
+                const file = inputEl.files[0];
+                previewEl.textContent = `📎 添付予定: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+                previewEl.style.display = 'block';
+            } else {
+                previewEl.style.display = 'none';
+            }
+        };
 
         async function generateAiDraft(roomId, receivedMsg) {
             const promptInput = document.getElementById(`ai_prompt_${roomId}`);
@@ -556,8 +730,14 @@
 
         async function sendReplyMessage(roomId, lastChatId, btnEl) {
             const textarea = document.getElementById(`reply_text_${roomId}`);
-            if (!textarea || !textarea.value.trim()) {
-                alert("送信するメッセージを入力してください。");
+            const cameraInput = document.getElementById(`reply_camera_${roomId}`);
+            const fileInput = document.getElementById(`reply_file_${roomId}`);
+            
+            const hasText = textarea && textarea.value.trim();
+            const hasFile = (cameraInput && cameraInput.files.length > 0) || (fileInput && fileInput.files.length > 0);
+
+            if (!hasText && !hasFile) {
+                alert("送信するメッセージまたはファイルを入力・選択してください。");
                 return;
             }
             const finalMessage = textarea.value.trim();
@@ -567,7 +747,9 @@
             btnEl.textContent = "送信中...";
 
             try {
-                await callGasApi("send_message", { room_id: roomId, body: finalMessage });
+                if (finalMessage) {
+                    await callGasApi("send_message", { room_id: roomId, body: finalMessage });
+                }
                 
                 if (window.saveAiFeedbackLog) {
                     await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomId] || "", finalMessage);
@@ -629,9 +811,14 @@
                     burstCont.innerHTML += `
                         <div id="${cardId}" class="bg-white border-2 border-indigo-100 rounded-xl p-3.5 shadow-sm space-y-3">
                             <div class="space-y-1.5 pb-2 border-b border-slate-100">
-                                <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
-                                    <h3 class="font-bold text-sm text-slate-900">${escapeHtml(room.name)}</h3>
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                        <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
+                                        <h3 class="font-bold text-sm text-slate-900">${escapeHtml(room.name)}</h3>
+                                    </div>
+                                    <button onclick="toggleLaterRoom('${roomId}', '${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 px-2.5 py-1 rounded font-bold transition">
+                                        ⏳ 後で対応
+                                    </button>
                                 </div>
                                 <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
                                     🔑 セラー情報を確認する
@@ -646,49 +833,17 @@
                     const roomId = room.room_id;
                     const cardEl = document.getElementById(`burst_card_${roomId}`);
                     if (!cardEl) return;
-                    const msgArea = cardEl.querySelector('.burst-msg-area');
                     try {
                         const roomData = await callGasApi("get_room_data", { room_id: roomId });
                         const messages = roomData.messages || [];
                         if (messages.length === 0) {
-                            msgArea.innerHTML = '<span class="text-slate-400">メッセージなし</span>';
+                            cardEl.querySelector('.burst-msg-area').innerHTML = '<span class="text-slate-400">メッセージなし</span>';
                             return;
                         }
                         const latestMsg = messages[messages.length - 1];
-                        const msgBody = latestMsg.body || "";
-                        
-                        cardEl.innerHTML = `
-                            <div class="space-y-1.5 pb-2 border-b border-slate-100">
-                                <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">未読 ${room.unread_num}件</span>
-                                    <h3 class="font-bold text-sm text-slate-900">${escapeHtml(room.name)}</h3>
-                                </div>
-                                <button onclick="fetchSellerInfo('${escapeHtml(room.name).replace(/'/g, "\\'")}')" class="w-full text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg border border-indigo-200 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
-                                    🔑 セラー情報を確認する
-                                </button>
-                            </div>
-                            <div class="text-xs text-slate-700 p-2 bg-slate-50 rounded whitespace-pre-wrap">${escapeHtml(msgBody)}</div>
-                            <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-[11px] font-bold text-indigo-800">🤖 AI返信アシスタント</span>
-                                </div>
-                                <input type="text" id="ai_prompt_${roomId}" placeholder="💡 AIへの指示（例：明日対応する旨を伝える）..." class="w-full text-xs border border-indigo-200 rounded p-1.5 bg-white focus:outline-none focus:border-indigo-500">
-                                <button onclick="generateAiDraft('${roomId}', ${JSON.stringify(msgBody)})" class="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded transition shadow-sm">
-                                    ✨ AI返信案を作成
-                                </button>
-                                <textarea id="reply_text_${roomId}" data-received="${escapeHtml(msgBody)}" placeholder="生成された返信案がここに表示されます..." class="w-full h-20 text-xs border border-slate-300 rounded p-2 bg-white focus:outline-none focus:border-indigo-500"></textarea>
-                                <div class="flex gap-2">
-                                    <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id}', this)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded shadow transition">
-                                        📤 返信して既読にする
-                                    </button>
-                                    <button onclick="markRoomAsRead('${roomId}', '${latestMsg.message_id}')" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2 rounded transition">
-                                        📖 既読のみ
-                                    </button>
-                                </div>
-                            </div>
-                        `;
+                        cardEl.outerHTML = buildMessageCardHtml(roomId, room.name, latestMsg, room.unread_num);
                     } catch (e) {
-                        msgArea.innerHTML = '<span class="text-red-500">取得失敗</span>';
+                        cardEl.querySelector('.burst-msg-area').innerHTML = '<span class="text-red-500">取得失敗</span>';
                     }
                 });
 
