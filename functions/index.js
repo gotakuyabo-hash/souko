@@ -35,7 +35,7 @@ function canSendNotification(uniqueKey) {
     return true;
 }
 
-// Webhookを使った確実な通知関数（ボタン付きリンク対応版）
+// Webhookを使った確実な通知関数（ボタンを確実に表示させる修正版）
 async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionButtonText = "アプリを開く") {
     try {
         if (!webhookUrl) {
@@ -45,7 +45,6 @@ async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionB
 
         const messageWithMention = `<!channel>\n` + text;
 
-        // 基本のBlocks（テキスト）
         const blocks = [
             {
                 "type": "section",
@@ -56,7 +55,6 @@ async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionB
             }
         ];
 
-        // actionUrlが指定されている場合はボタンを追加
         if (actionUrl) {
             blocks.push({
                 "type": "actions",
@@ -74,15 +72,16 @@ async function sendSlackNotification(text, webhookUrl, actionUrl = null, actionB
             });
         }
 
+        const payload = {
+            blocks: blocks
+        };
+
         const res = await fetch(webhookUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                blocks: blocks,
-                text: messageWithMention // Slackのプッシュ通知用フォールバック
-            }),
+            body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
@@ -424,7 +423,7 @@ exports.apiCreateZaicoShipment = onRequest(
 
             const zaicoData = await zaicoRes.json();
 
-            @if (!zaicoRes.ok) {
+            if (!zaicoRes.ok) {
                 logger.error("zaico v2 API エラーレスポンス:", zaicoData);
                 res.status(500).json({ success: false, error: "zaico API Error: " + JSON.stringify(zaicoData) });
                 return;
