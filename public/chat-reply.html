@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chatwork 未読バーストコックピット</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK (スタッフ間連絡アプリ連携用 ＆ AI学習ログ保存用 ＆ 定時未対応リスト連携用) -->
+    <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, doc, updateLink, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -22,8 +22,6 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-
-        // グローバルにFirestoreインスタンスと関数を公開
         window.db = db;
 
         // 🚀 スタッフ間連絡アプリへの登録
@@ -57,7 +55,7 @@
             }
         };
 
-        // 🧠 AI学習ログ（受信文・AI案・最終送信文のペア）をFirebaseに自動保存
+        // 🧠 AI学習ログの自動保存
         window.saveAiFeedbackLog = async function(receivedMessage, aiDraft, finalMessage) {
             if (!receivedMessage || !finalMessage) return;
             try {
@@ -90,7 +88,6 @@
 
                 querySnapshot.forEach((document) => {
                     const data = document.data();
-                    // ステータスが pending（未対応）のものだけを表示
                     if (data.status === 'pending') {
                         count++;
                         const roomId = data.roomId;
@@ -135,7 +132,7 @@
             }
         };
 
-        // 🔄 ステータス更新（対応済み 'done' または 次回除外 'dismissed'）
+        // 🔄 ステータス更新
         window.updateScheduledRoomStatus = async function(roomId, newStatus) {
             try {
                 const docRef = doc(db, "unreplied_rooms", String(roomId));
@@ -143,26 +140,13 @@
                     status: newStatus,
                     updatedAt: serverTimestamp()
                 });
-                // 画面から該当カードをサクッと消す
                 const card = document.getElementById(`scheduled_card_${roomId}`);
                 if (card) card.remove();
-                
-                // バッジの数を更新
                 window.fetchScheduledUnrepliedRoomsFromFirebase();
             } catch (e) {
                 alert("ステータスの更新に失敗しました: " + e.message);
             }
         };
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
-        }
     </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16">
@@ -209,7 +193,7 @@
             </div>
         </div>
 
-        <!-- 【モードA】未読バーストフィード表示エリア -->
+        <!-- 各種モード表示エリア -->
         <div id="burstModeContainer" class="space-y-3">
             <div class="text-center text-xs text-slate-500 py-8">
                 <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
@@ -217,13 +201,9 @@
             </div>
         </div>
 
-        <!-- 【モードD】定時未対応タブ表示エリア -->
         <div id="scheduledModeContainer" class="space-y-3" style="display:none;"></div>
-
-        <!-- 【モードC】後で対応タブ表示エリア -->
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
 
-        <!-- 【モードB】通常ルーム個別選択エリア -->
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
                 <input type="text" id="roomSearchInput" oninput="filterNormalRooms()" placeholder="🔍 ルーム名検索..." class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-slate-50 focus:outline-none">
@@ -235,7 +215,7 @@
         </div>
     </div>
 
-    <!-- ================= モーダル ================= -->
+    <!-- モーダル -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
     <!-- 🔑 セラー情報表示モーダル -->
@@ -273,47 +253,13 @@
         </div>
     </div>
 
-    <!-- スタッフ間連絡 直接登録モーダル -->
-    <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
-        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-indigo-50 rounded-t-xl">
-            <h2 class="font-bold text-indigo-900">🔗 スタッフ間連絡アプリに登録</h2>
-            <button onclick="closeAllModals()" class="text-slate-500 hover:text-slate-800 font-bold text-xl px-2">&times;</button>
-        </div>
-        <div class="p-4 space-y-3">
-            <input type="hidden" id="linkRoomId">
-            <input type="hidden" id="linkRoomName">
-            <input type="hidden" id="linkSenderName">
-            <input type="hidden" id="linkMessageBody">
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">👤 From (依頼者・担当者など)</label>
-                <input type="text" id="linkFromInput" placeholder="例：松下" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
-            </div>
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">🎯 To (宛先スタッフなど)</label>
-                <input type="text" id="linkToInput" placeholder="例：スタッフ全員 / 〇〇さん" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none">
-            </div>
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">📝 軽いメモ (自由記述)</label>
-                <textarea id="linkMemoInput" placeholder="依頼内容や補足事項など..." class="w-full h-20 border border-slate-300 rounded p-2 text-sm focus:outline-none"></textarea>
-            </div>
-            <button onclick="submitToStaffApp(this)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg shadow mt-2 active:scale-95 transition">
-                🚀 スタッフ間連絡アプリに登録する
-            </button>
-        </div>
-    </div>
-    <!-- ========================================================= -->
-
+    <!-- メインスクリプト -->
     <script>
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
         
         let allRoomsCache = [];
         let currentMode = 'burst';
-        const FROM_NAME_KEY = "chatwork_staff_from_name_v1";
         const LATER_KEY = "chatwork_later_rooms_v1";
-
-        let aiDraftMemory = {};
-        let activeTextareaId = null;
-        let activeCursorPos = 0;
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -338,7 +284,6 @@
         function closeAllModals() {
             document.getElementById('modalOverlay').style.display = 'none';
             document.getElementById('modalSellerInfo').style.display = 'none';
-            document.getElementById('modalLinkCopy').style.display = 'none';
         }
 
         async function callGasApi(action, params = {}) {
@@ -347,17 +292,13 @@
             const query = new URLSearchParams(params).toString();
             const targetUrl = `${GAS_WEB_APP_URL}?${query}`;
 
-            try {
-                const res = await fetch(targetUrl);
-                const text = await res.text();
-                const data = JSON.parse(text);
-                if (data.status !== "success") {
-                    throw new Error(data.message || "GAS通信エラー");
-                }
-                return data;
-            } catch (err) {
-                throw err;
+            const res = await fetch(targetUrl);
+            const text = await res.text();
+            const data = JSON.parse(text);
+            if (data.status !== "success") {
+                throw new Error(data.message || "GAS通信エラー");
             }
+            return data;
         }
 
         function changeAccount() {
@@ -415,27 +356,6 @@
             }
         }
 
-        function openChatworkOfficial(roomId) {
-            window.open(`https://www.chatwork.com/#!rid${roomId}`, '_blank');
-        }
-
-        async function markRoomAsRead(roomId, lastChatId, btnEl) {
-            if (btnEl) {
-                btnEl.disabled = true;
-                btnEl.textContent = "処理中...";
-            }
-            try {
-                await callGasApi("mark_read", { room_id: roomId, last_chat_id: lastChatId || "" });
-                refreshCurrentView();
-            } catch (e) {
-                alert('既読化失敗: ' + e.message);
-                if (btnEl) {
-                    btnEl.disabled = false;
-                    btnEl.textContent = "📖 既読";
-                }
-            }
-        }
-
         async function fetchSellerInfo(keyword) {
             if (!keyword) { alert("キーワードが見つかりません"); return; }
             document.getElementById('sellerModalKanriNo').textContent = "読み込み中...";
@@ -476,7 +396,6 @@
             document.getElementById('laterCountBadge').textContent = list.length;
         }
 
-        // --- (既存の各種バースト・個別ルーム・ファイル・AI返信関連の関数はそのまま維持) ---
         async function fetchAllUnreadRooms() {
             const statusEl = document.getElementById('loadStatus');
             const burstCont = document.getElementById('burstModeContainer');
