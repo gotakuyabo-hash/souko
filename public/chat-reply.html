@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatwork 未読バーストコックピット (調整版)</title>
+    <title>Chatwork 未読バーストコックピット (完全安定版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -165,6 +165,7 @@
         let allRoomsCache = [];
         let unreadRoomsCache = [];
         let roomMembersCache = {};
+        let messageCache = {}; // 💡 メッセージ本文を安全に保持するキャッシュ用オブジェクト
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
         let aiDraftMemory = {};
@@ -402,11 +403,13 @@
             }
         };
 
-        window.openStaffAppModal = function(roomId, roomName, senderName, messageBody) {
+        // 🚀 スタッフ間連絡モーダルを安全に開く（メッセージ本文はメモリキャッシュから取得）
+        window.openStaffAppModal = function(roomId, roomName, senderName) {
+            const msgBody = messageCache[roomId] || "";
             document.getElementById('linkRoomId').value = roomId;
             document.getElementById('linkRoomName').value = roomName;
             document.getElementById('linkSenderName').value = senderName;
-            document.getElementById('linkMessageBody').value = messageBody;
+            document.getElementById('linkMessageBody').value = msgBody;
             document.getElementById('modalOverlay').style.display = 'block';
             document.getElementById('modalLinkCopy').style.display = 'flex';
         };
@@ -540,7 +543,7 @@
             if (btn) btn.textContent = '👁️ ファイルを開く / プレビュー';
         };
 
-        // 📎 ファイルタグパーサー（横幅が広がらないよう max-w-full と overflow-hidden を適用）
+        // 📎 ファイルタグパーサー
         function parseFiles(body, files, roomId) {
             let rendered = esc(body);
             rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
@@ -634,13 +637,12 @@
             }
         }
 
-        // カード内部のHTML生成（isSingle為 true の場合は直近1件のみ表示）
+        // カード内部のHTML生成
         function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
 
             if (isSingle) {
-                // 未読タブ用：直近1件のみ
                 latestMsg = messages[messages.length - 1] || {};
                 const sender = latestMsg.account ? latestMsg.account.name : "相手";
                 const body = latestMsg.body || "";
@@ -652,7 +654,6 @@
                     </div>
                 `;
             } else {
-                // 未対応・通常個別タブ用：直近10件
                 const chatCount = Math.min(messages.length, 10);
                 const recentMsgs = messages.slice(messages.length - chatCount);
                 latestMsg = messages[messages.length - 1] || {};
@@ -676,7 +677,9 @@
                 `;
             }
 
-            const safeBody = JSON.stringify(latestMsg.body || "");
+            // 💡 メッセージ本文をキャッシュに安全に保存（特殊文字によるエラーを完全回避）
+            messageCache[roomId] = latestMsg.body || "";
+            const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
 
             let memberOptions = '<option value="">-- メンバーを選択してTo追加 --</option>';
             if (Array.isArray(members)) {
@@ -693,7 +696,7 @@
                 
                 ${chatHistoryHtml}
 
-                <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '担当者', ${safeBody})" class="w-full text-xs bg-emerald-50 text-emerald-800 py-2 rounded-lg border border-emerald-200 font-bold cursor-pointer">🚀 スタッフ間連絡アプリに登録する</button>
+                <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="w-full text-xs bg-emerald-50 text-emerald-800 py-2 rounded-lg border border-emerald-200 font-bold cursor-pointer">🚀 スタッフ間連絡アプリに登録する</button>
                 
                 <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
                     <input type="text" id="ai_prompt_${roomId}" placeholder="AIへの指示（例：明日返信する）..." class="w-full text-xs border rounded p-1.5 bg-white">
@@ -786,16 +789,17 @@
 
         // 📤 返信送信 ＆ 既読化
         window.sendReplyMessage = async function(roomId, lastChatId, btn) {
-            const textarea = document.getElementById(`reply_text_${roomId}`);
+            const roomIdStr = String(roomId);
+            const textarea = document.getElementById(`reply_text_${roomIdStr}`);
             if (!textarea || !textarea.value.trim()) { alert("返信文を入力してください。"); return; }
             const finalMsg = textarea.value.trim();
             const receivedMsg = textarea.dataset.received || "";
             btn.disabled = true; btn.textContent = "送信中...";
             try {
-                await callApi("send_message", { room_id: roomId, body: finalMsg });
-                if (window.saveAiFeedbackLog) await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomId] || "", finalMsg);
-                await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId || "" });
-                await callApi("update_room_status", { room_id: roomId, status: "done" });
+                await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
+                if (window.saveAiFeedbackLog) await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomIdStr] || "", finalMsg);
+                await callApi("mark_read", { room_id: roomIdStr, last_chat_id: lastChatId || "" });
+                await callApi("update_room_status", { room_id: roomIdStr, status: "done" });
 
                 alert("送信しました！");
                 refreshCurrentView();
@@ -807,9 +811,10 @@
 
         // 📖 既読のみボタン
         window.markRead = async function(roomId, lastChatId) {
+            const roomIdStr = String(roomId);
             try {
-                await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId || "" });
-                await callApi("update_room_status", { room_id: roomId, status: "done" });
+                await callApi("mark_read", { room_id: roomIdStr, last_chat_id: lastChatId || "" });
+                await callApi("update_room_status", { room_id: roomIdStr, status: "done" });
                 alert("既読にしました！");
                 refreshCurrentView();
             } catch (e) { alert("既読化失敗: " + e.message); }
