@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>クラウドファンディング見積＆送り状データ出力ツール（住所26文字以上・会社部門１移行版）</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        h1 {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+        .container {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 1450px;
+        }
+        .controls, .history-panel, .export-panel, .sender-panel {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            background: #f1f3f5;
+            padding: 10px 15px;
+            border-radius: 6px;
+        }
+        label {
+            font-weight: bold;
+            font-size: 13px;
+        }
+        select, button, input[type="number"], input[type="text"], input[type="date"] {
+            padding: 6px 10px;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 10px;
+            box-sizing: border-box;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+            font-size: 15px;
+        }
+        .summary-box {
+            background: #eef2f7;
+            padding: 12px 15px;
+            border-radius: 4px;
+        }
+        .summary-box.total-box {
+            background: #d4edda;
+            font-weight: bold;
+            color: #155724;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px 10px;
+            text-align: left;
+            font-size: 13px;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        .not-found {
+            color: red;
+        }
+        .size-select, .number-input {
+            padding: 4px 6px;
+            font-size: 13px;
+            width: 70px;
+        }
+        .btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 16px;
+            font-weight: bold;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        .btn-success {
+            background-color: #28a745;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+        }
+        .btn-warning {
+            background-color: #fd7e14;
+            color: white;
+        }
+        .btn-warning:hover {
+            background-color: #e86902;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            padding: 4px 8px;
+            font-size: 12px;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>クラウドファンディング見積＆送り状データ出力ツール</h1>
+
+    <!-- 履歴・保存パネル -->
+    <div class="history-panel">
+        <div>
+            <label for="historySelect">保存済み履歴: </label>
+            <select id="historySelect" onchange="loadHistory()">
+                <option value="">-- 履歴から選択して読み込む --</option>
+            </select>
+        </div>
+        <div>
+            <input type="text" id="historyTitleInput" placeholder="保存名 (例: 1次リターン分)" style="width: 180px;">
+        </div>
+        <button class="btn btn-success" onclick="saveHistory()">現在の内容を保存</button>
+        <button class="btn btn-danger" onclick="deleteHistory()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
+    </div>
+
+    <!-- ご依頼主（出荷人）情報パネル -->
+    <div class="sender-panel">
+        <span style="font-weight: bold; color: #333;">ご依頼主（出荷人）設定:</span>
+        <div>
+            <label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label>
+        </div>
+        <div>
+            <label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label>
+        </div>
+        <div>
+            <label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label>
+        </div>
+        <div>
+            <label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label>
+        </div>
+        <div>
+            <label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label>
+        </div>
+        <div>
+            <label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label>
+        </div>
+    </div>
+
+    <!-- 送り状データ出力パネル -->
+    <div class="export-panel">
+        <span style="font-weight: bold; color: #333;">送り状データ出力:</span>
+        <button class="btn btn-warning" onclick="exportSagawa()">佐川急便 送り状CSVを出力</button>
+        <button class="btn btn-warning" onclick="exportYamato()">ヤマト(B2) 送り状CSVを出力</button>
+    </div>
+    
+    <div class="controls">
+        <div>
+            <label for="defaultSizeSelect">一括サイズ設定: </label>
+            <select id="defaultSizeSelect" onchange="applyDefaultSize()">
+                <option value="ss">SS</option>
+                <option value="compact">コンパクト</option>
+                <option value="60" selected>60</option>
+                <option value="80">80</option>
+                <option value="100">100</option>
+                <option value="120">120</option>
+                <option value="140">140</option>
+                <option value="160">160</option>
+                <option value="180">180</option>
+                <option value="200">200</option>
+                <option value="240">240</option>
+            </select>
+        </div>
+        <div>
+            <label for="defaultMaterialCost">一括資材費(円): </label>
+            <input type="number" id="defaultMaterialCost" class="number-input" value="40" min="0" onchange="applyDefaultMaterial()" style="width: 60px;">
+        </div>
+        <div>
+            <label for="defaultItemCount">一括商品点数: </label>
+            <input type="number" id="defaultItemCount" class="number-input" value="0" min="0" onchange="applyDefaultItemCount()" style="width: 50px;">
+        </div>
+        <div>
+            <label for="filterPref">都道府県フィルター: </label>
+            <select id="filterPref" onchange="filterTable()">
+                <option value="">すべて表示</option>
+            </select>
+        </div>
+        <button class="btn" onclick="initRows()">入力データ反映</button>
+    </div>
+
+    <div>
+        <label for="addressInput">データ貼り付け (スプレッドシート等から「注文ID」「名前」「品名」「郵便番号」「電話番号」「住所」の順にコピー):</label>
+        <textarea id="addressInput" placeholder="例:&#10;ORD-001	山田 太郎	特製Tシャツ	105-0014	03-1234-5678	東京都港区芝4-16-2&#10;ORD-002	鈴木 花子	限定マグカップ	593-8312	072-987-6543	大阪府堺市南区槇塚台3-37-17"></textarea>
+        <div class="help-text">※タブ区切りで最大6列（注文ID、名前、品名、郵便番号、電話番号、住所）まで自動認識します。</div>
+    </div>
+
+    <div class="summary">
+        <div class="summary-box">表示件数: <span id="totalCount">0</span> 件</div>
+        <div class="summary-box">送料合計: <span id="totalShipping">0</span> 円</div>
+        <div class="summary-box">出荷手数料(300円×件): <span id="totalFee">0</span> 円</div>
+        <div class="summary-box">資材費合計: <span id="totalMaterial">0</span> 円</div>
+        <div class="summary-box">同梱費合計(30円×点): <span id="totalBundle">0</span> 円</div>
+        <div class="summary-box">小計(税抜): <span id="subtotalPrice">0</span> 円</div>
+        <div class="summary-box">消費税(10%): <span id="taxPrice">0</span> 円</div>
+        <div class="summary-box total-box">総合計(税込): <span id="grandTotalPrice">0</span> 円</div>
+    </div>
+
+    <h3>内訳一覧</h3>
+    <table id="resultTable">
+        <thead>
+            <tr>
+                <th>No.</th>
+                <th>注文ID</th>
+                <th>名前</th>
+                <th>品名</th>
+                <th>郵便番号</th>
+                <th>電話番号</th>
+                <th>住所</th>
+                <th>都道府県</th>
+                <th>サイズ</th>
+                <th>送料</th>
+                <th>出荷手数料</th>
+                <th>資材費</th>
+                <th>点数</th>
+                <th>同梱費</th>
+                <th>行合計</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="resultBody">
+            <tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+const rateTable = {
+    "北海道": { "ss": 250, "compact": 650, "60": 720, "80": 1090, "100": 1270, "120": 1310, "140": 1460, "160": 1780, "180": 3560, "200": 4428, "240": 7016 },
+    "青森県": { "ss": 250, "compact": 480, "60": 530, "80": 770, "100": 1000, "120": 960, "140": 1070, "160": 1530, "180": 2867, "200": 3502, "240": 5397 },
+    "岩手県": { "ss": 250, "compact": 480, "60": 530, "80": 770, "100": 1000, "120": 960, "140": 1070, "160": 1530, "180": 2867, "200": 3502, "240": 5397 },
+    "秋田県": { "ss": 250, "compact": 480, "60": 530, "80": 770, "100": 1000, "120": 960, "140": 1070, "160": 1530, "180": 2867, "200": 3502, "240": 5397 },
+    "宮城県": { "ss": 250, "compact": 480, "60": 530, "80": 730, "100": 820, "120": 870, "140": 1020, "160": 1580, "180": 2826, "200": 3448, "240": 5301 },
+    "山形県": { "ss": 250, "compact": 480, "60": 530, "80": 730, "100": 820, "120": 870, "140": 1020, "160": 1580, "180": 2826, "200": 3448, "240": 5301 },
+    "福島県": { "ss": 250, "compact": 480, "60": 530, "80": 730, "100": 820, "120": 870, "140": 1020, "160": 1580, "180": 2826, "200": 3448, "240": 5301 },
+    "茨城県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "栃木県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "群馬県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "埼玉県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "千葉県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "東京都": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "神奈川県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "山梨県": { "ss": 250, "compact": 460, "60": 490, "80": 690, "100": 790, "120": 870, "140": 1020, "160": 1480, "180": 2038, "200": 2396, "240": 3463 },
+    "新潟県": { "ss": 250, "compact": 480, "60": 540, "80": 690, "100": 790, "120": 920, "140": 1070, "160": 1480, "180": 2217, "200": 2635, "240": 3879 },
+    "長野県": { "ss": 250, "compact": 480, "60": 540, "80": 690, "100": 790, "120": 920, "140": 1070, "160": 1480, "180": 2217, "200": 2635, "240": 3879 },
+    "富山県": { "ss": 250, "compact": 480, "60": 540, "80": 700, "100": 790, "120": 920, "140": 1070, "160": 1480, "180": 2511, "200": 3030, "240": 4568 },
+    "石川県": { "ss": 250, "compact": 480, "60": 540, "80": 700, "100": 790, "120": 920, "140": 1070, "160": 1480, "180": 2511, "200": 3030, "240": 4568 },
+    "福井県": { "ss": 250, "compact": 480, "60": 540, "80": 700, "100": 790, "120": 920, "140": 1070, "160": 1480, "180": 2511, "200": 3030, "240": 4568 },
+    "岐阜県": { "ss": 250, "compact": 480, "60": 580, "80": 690, "100": 790, "120": 980, "140": 1190, "160": 1480, "180": 2360, "200": 2825, "240": 4214 },
+    "静岡県": { "ss": 250, "compact": 480, "60": 580, "80": 690, "100": 790, "120": 980, "140": 1190, "160": 1480, "180": 2360, "200": 2825, "240": 4214 },
+    "愛知県": { "ss": 250, "compact": 480, "60": 580, "80": 690, "100": 790, "120": 980, "140": 1190, "160": 1480, "180": 2360, "200": 2825, "240": 4214 },
+    "三重県": { "ss": 250, "compact": 480, "60": 580, "80": 690, "100": 790, "120": 980, "140": 1190, "160": 1480, "180": 2360, "200": 2825, "240": 4214 },
+    "滋賀県": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "京都府": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "大阪府": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "兵庫県": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "奈良県": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "和歌山県": { "ss": 250, "compact": 490, "60": 580, "80": 710, "100": 800, "120": 980, "140": 1190, "160": 1480, "180": 2693, "200": 3270, "240": 4991 },
+    "鳥取県": { "ss": 250, "compact": 490, "60": 680, "80": 730, "100": 840, "120": 1080, "140": 1360, "160": 1680, "180": 2989, "200": 3663, "240": 5680 },
+    "島根県": { "ss": 250, "compact": 490, "60": 680, "80": 730, "100": 840, "120": 1080, "140": 1360, "160": 1680, "180": 2989, "200": 3663, "240": 5680 },
+    "岡山県": { "ss": 250, "compact": 490, "60": 680, "80": 730, "100": 840, "120": 1080, "140": 1360, "160": 1680, "180": 2989, "200": 3663, "240": 5680 },
+    "広島県": { "ss": 250, "compact": 490, "60": 680, "80": 730, "100": 840, "120": 1080, "140": 1360, "160": 1680, "180": 2989, "200": 3663, "240": 5680 },
+    "山口県": { "ss": 250, "compact": 490, "60": 680, "80": 730, "100": 840, "120": 1080, "140": 1360, "160": 1680, "180": 2989, "200": 3663, "240": 5680 },
+    "徳島県": { "ss": 250, "compact": 490, "60": 680, "80": 870, "100": 1090, "120": 1080, "140": 1360, "160": 1680, "180": 2876, "200": 3514, "240": 5416 },
+    "香川県": { "ss": 250, "compact": 490, "60": 680, "80": 870, "100": 1090, "120": 1080, "140": 1360, "160": 1680, "180": 2876, "200": 3514, "240": 5416 },
+    "愛媛県": { "ss": 250, "compact": 490, "60": 680, "80": 870, "100": 1090, "120": 1080, "140": 1360, "160": 1680, "180": 2876, "200": 3514, "240": 5416 },
+    "高知県": { "ss": 250, "compact": 490, "60": 680, "80": 870, "100": 1090, "120": 1080, "140": 1360, "160": 1680, "180": 2876, "200": 3514, "240": 5416 },
+    "福岡県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3176, "200": 3914, "240": 6115 },
+    "佐賀県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3176, "200": 3914, "240": 6115 },
+    "長崎県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3176, "200": 3914, "240": 6115 },
+    "熊本県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3311, "200": 4094, "240": 6429 },
+    "大分県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3176, "200": 3914, "240": 6115 },
+    "宮崎県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3311, "200": 4094, "240": 6429 },
+    "鹿児島県": { "ss": 250, "compact": 550, "60": 720, "80": 1090, "100": 1270, "120": 1100, "140": 1460, "160": 1800, "180": 3311, "200": 4094, "240": 6429 },
+    "沖縄県": { "ss": 250, "compact": 850, "60": 1340, "80": 2180, "100": 2760, "120": 3140, "140": 3540, "160": 4200, "180": 6850, "200": 8350, "240": 25000 }
+};
+
+const prefectures = Object.keys(rateTable);
+
+window.onload = function() {
+    initPrefectureFilter();
+    updateHistoryDropdown();
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('shippingDate').value = today;
+};
+
+function initPrefectureFilter() {
+    const filterSelect = document.getElementById('filterPref');
+    prefectures.forEach(pref => {
+        const opt = document.createElement('option');
+        opt.value = pref;
+        opt.textContent = pref;
+        filterSelect.appendChild(opt);
+    });
+}
+
+function extractPrefecture(text) {
+    for (let pref of prefectures) {
+        if (text.includes(pref)) {
+            return pref;
+        }
+    }
+    if (text.includes("東京")) return "東京都";
+    if (text.includes("大阪")) return "大阪府";
+    if (text.includes("京都")) return "京都府";
+    if (text.includes("北海道")) return "北海道";
+    return null;
+}
+
+function initRows() {
+    const rawText = document.getElementById('addressInput').value;
+    const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+
+    if (lines.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>';
+        calculate();
+        return;
+    }
+
+    const defaultSize = document.getElementById('defaultSizeSelect').value;
+    const defaultMaterial = document.getElementById('defaultMaterialCost').value;
+    const defaultItemCount = document.getElementById('defaultItemCount').value;
+
+    lines.forEach((line, index) => {
+        let orderId = "";
+        let name = "";
+        let itemName = "";
+        let postal = "";
+        let phone = "";
+        let address = line;
+
+        if (line.includes('\t')) {
+            const parts = line.split('\t').map(p => p.trim());
+            if (parts.length >= 6) {
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                postal = parts[3];
+                phone = parts[4];
+                address = parts[5];
+            } else if (parts.length === 5) {
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                phone = parts[3];
+                address = parts[4];
+            } else if (parts.length === 4) {
+                orderId = parts[0];
+                name = parts[1];
+                itemName = parts[2];
+                address = parts[3];
+            } else if (parts.length === 3) {
+                name = parts[0];
+                itemName = parts[1];
+                address = parts[2];
+            } else if (parts.length === 2) {
+                name = parts[0];
+                address = parts[1];
+            }
+        }
+
+        const pref = extractPrefecture(address);
+        const tr = document.createElement('tr');
+        tr.dataset.index = index;
+        tr.dataset.pref = pref || "";
+
+        let prefDisplay = pref ? pref : '<span class="not-found">都道府県不明</span>';
+
+        tr.innerHTML = `
+            <td>${index + 1}</td>
+            <td><input type="text" class="orderid-input" value="${orderId}" placeholder="注文ID" style="width: 80px; padding: 4px;"></td>
+            <td><input type="text" class="name-input" value="${name}" placeholder="名前" style="width: 80px; padding: 4px;"></td>
+            <td><input type="text" class="itemname-input" value="${itemName}" placeholder="品名" style="width: 90px; padding: 4px;"></td>
+            <td><input type="text" class="postal-input" value="${postal}" placeholder="郵便番号" style="width: 80px; padding: 4px;"></td>
+            <td><input type="text" class="phone-input" value="${phone}" placeholder="電話番号" style="width: 95px; padding: 4px;"></td>
+            <td><input type="text" class="address-input" value="${address}" placeholder="住所" style="width: 150px; padding: 4px;" oninput="updateRowAddress(this)"></td>
+            <td class="pref-cell" data-pref="${pref || ''}">${prefDisplay}</td>
+            <td>
+                <select class="size-select" onchange="calculate()">
+                    <option value="ss" ${defaultSize === 'ss' ? 'selected' : ''}>SS</option>
+                    <option value="compact" ${defaultSize === 'compact' ? 'selected' : ''}>コンパクト</option>
+                    <option value="60" ${defaultSize === '60' ? 'selected' : ''}>60</option>
+                    <option value="80" ${defaultSize === '80' ? 'selected' : ''}>80</option>
+                    <option value="100" ${defaultSize === '100' ? 'selected' : ''}>100</option>
+                    <option value="120" ${defaultSize === '120' ? 'selected' : ''}>120</option>
+                    <option value="140" ${defaultSize === '140' ? 'selected' : ''}>140</option>
+                    <option value="160" ${defaultSize === '160' ? 'selected' : ''}>160</option>
+                    <option value="180" ${defaultSize === '180' ? 'selected' : ''}>180</option>
+                    <option value="200" ${defaultSize === '200' ? 'selected' : ''}>200</option>
+                    <option value="240" ${defaultSize === '240' ? 'selected' : ''}>240</option>
+                </select>
+            </td>
+            <td class="shipping-cell">0 円</td>
+            <td class="fee-cell">300 円</td>
+            <td><input type="number" class="number-input material-input" value="${defaultMaterial}" min="0" oninput="calculate()"></td>
+            <td><input type="number" class="number-input itemcount-input" value="${defaultItemCount}" min="0" oninput="calculate()"></td>
+            <td class="bundle-cell">0 円</td>
+            <td class="rowtotal-cell">0 円</td>
+            <td><button class="btn btn-danger" onclick="deleteRow(this)">削除</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    filterTable();
+}
+
+function updateRowAddress(input) {
+    const tr = input.closest('tr');
+    const address = input.value;
+    const pref = extractPrefecture(address);
+    tr.dataset.pref = pref || "";
+    const prefCell = tr.querySelector('.pref-cell');
+    prefCell.dataset.pref = pref || "";
+    prefCell.innerHTML = pref ? pref : '<span class="not-found">都道府県不明</span>';
+    calculate();
+}
+
+function deleteRow(btn) {
+    const tr = btn.closest('tr');
+    tr.remove();
+    calculate();
+}
+
+function applyDefaultSize() {
+    const defaultSize = document.getElementById('defaultSizeSelect').value;
+    document.querySelectorAll('#resultBody tr').forEach(row => {
+        const select = row.querySelector('.size-select');
+        if (select) select.value = defaultSize;
+    });
+    calculate();
+}
+
+function applyDefaultMaterial() {
+    const val = document.getElementById('defaultMaterialCost').value;
+    document.querySelectorAll('#resultBody tr').forEach(row => {
+        const input = row.querySelector('.material-input');
+        if (input) input.value = val;
+    });
+    calculate();
+}
+
+function applyDefaultItemCount() {
+    const val = document.getElementById('defaultItemCount').value;
+    document.querySelectorAll('#resultBody tr').forEach(row => {
+        const input = row.querySelector('.itemcount-input');
+        if (input) input.value = val;
+    });
+    calculate();
+}
+
+function filterTable() {
+    const selectedPref = document.getElementById('filterPref').value;
+    const rows = document.querySelectorAll('#resultBody tr');
+
+    rows.forEach(row => {
+        if (!row.dataset.pref && row.style.display !== 'none') {}
+        const pref = row.dataset.pref;
+        if (!selectedPref || pref === selectedPref) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+    calculate();
+}
+
+function calculate() {
+    const rows = document.querySelectorAll('#resultBody tr');
+    let totalCount = 0;
+    let totalShipping = 0;
+    let totalFee = 0;
+    let totalMaterial = 0;
+    let totalBundle = 0;
+
+    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) {
+        return;
+    }
+
+    rows.forEach(row => {
+        if (row.style.display === 'none') return;
+
+        const prefCell = row.querySelector('.pref-cell');
+        const sizeSelect = row.querySelector('.size-select');
+        const shippingCell = row.querySelector('.shipping-cell');
+        const feeCell = row.querySelector('.fee-cell');
+        const materialInput = row.querySelector('.material-input');
+        const itemcountInput = row.querySelector('.itemcount-input');
+        const bundleCell = row.querySelector('.bundle-cell');
+        const rowtotalCell = row.querySelector('.rowtotal-cell');
+
+        if (!prefCell || !sizeSelect) return;
+
+        totalCount++;
+        const pref = prefCell.dataset.pref;
+        const size = sizeSelect.value;
+        
+        let shipping = 0;
+        if (pref && rateTable[pref] && rateTable[pref][size] !== undefined) {
+            shipping = rateTable[pref][size];
+            shippingCell.textContent = shipping.toLocaleString() + ' 円';
+        } else {
+            shippingCell.textContent = '-';
+        }
+
+        const fee = 300;
+        feeCell.textContent = fee.toLocaleString() + ' 円';
+
+        const material = parseInt(materialInput.value) || 0;
+        const itemCount = parseInt(itemcountInput.value) || 0;
+        const bundle = itemCount * 30;
+        bundleCell.textContent = bundle.toLocaleString() + ' 円';
+
+        const rowTotal = shipping + fee + material + bundle;
+        rowtotalCell.textContent = rowTotal.toLocaleString() + ' 円';
+
+        totalShipping += shipping;
+        totalFee += fee;
+        totalMaterial += material;
+        totalBundle += bundle;
+    });
+
+    const subtotal = totalShipping + totalFee + totalMaterial + totalBundle;
+    const tax = Math.floor(subtotal * 0.1);
+    const grandTotal = subtotal + tax;
+
+    document.getElementById('totalCount').textContent = totalCount;
+    document.getElementById('totalShipping').textContent = totalShipping.toLocaleString();
+    document.getElementById('totalFee').textContent = totalFee.toLocaleString();
+    document.getElementById('totalMaterial').textContent = totalMaterial.toLocaleString();
+    document.getElementById('totalBundle').textContent = totalBundle.toLocaleString();
+    document.getElementById('subtotalPrice').textContent = subtotal.toLocaleString();
+    document.getElementById('taxPrice').textContent = tax.toLocaleString();
+    document.getElementById('grandTotalPrice').textContent = grandTotal.toLocaleString();
+}
+
+function saveHistory() {
+    const title = document.getElementById('historyTitleInput').value.trim();
+    if (!title) {
+        alert("保存名を入力してください。");
+        return;
+    }
+
+    const rows = document.querySelectorAll('#resultBody tr');
+    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
+        alert("保存するデータがありません。");
+        return;
+    }
+
+    let senderInfo = {
+        name: document.getElementById('senderName').value,
+        postal: document.getElementById('senderPostal').value,
+        address: document.getElementById('senderAddress').value,
+        building: document.getElementById('senderBuilding').value,
+        phone: document.getElementById('senderPhone').value,
+        date: document.getElementById('shippingDate').value
+    };
+
+    let rowDataList = [];
+    rows.forEach(row => {
+        const orderId = row.querySelector('.orderid-input') ? row.querySelector('.orderid-input').value : "";
+        const name = row.querySelector('.name-input') ? row.querySelector('.name-input').value : "";
+        const itemName = row.querySelector('.itemname-input') ? row.querySelector('.itemname-input').value : "";
+        const postal = row.querySelector('.postal-input') ? row.querySelector('.postal-input').value : "";
+        const phone = row.querySelector('.phone-input') ? row.querySelector('.phone-input').value : "";
+        const address = row.querySelector('.address-input') ? row.querySelector('.address-input').value : "";
+        const size = row.querySelector('.size-select') ? row.querySelector('.size-select').value : "60";
+        const material = row.querySelector('.material-input') ? row.querySelector('.material-input').value : "40";
+        const itemCount = row.querySelector('.itemcount-input') ? row.querySelector('.itemcount-input').value : "0";
+
+        rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
+    });
+
+    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
+    histories[title] = { sender: senderInfo, rows: rowDataList };
+    localStorage.setItem('cf_shipping_histories', JSON.stringify(histories));
+
+    alert(`「${title}」として保存しました。`);
+    updateHistoryDropdown();
+}
+
+function updateHistoryDropdown() {
+    const select = document.getElementById('historySelect');
+    select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
+    
+    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
+    for (let title in histories) {
+        const opt = document.createElement('option');
+        opt.value = title;
+        opt.textContent = title;
+        select.appendChild(opt);
+    }
+}
+
+function loadHistory() {
+    const title = document.getElementById('historySelect').value;
+    if (!title) return;
+
+    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
+    let historyData = histories[title];
+    if (!historyData) return;
+
+    document.getElementById('historyTitleInput').value = title;
+
+    if (historyData.sender) {
+        document.getElementById('senderName').value = historyData.sender.name || "";
+        document.getElementById('senderPostal').value = historyData.sender.postal || "";
+        document.getElementById('senderAddress').value = historyData.sender.address || "";
+        document.getElementById('senderBuilding').value = historyData.sender.building || "";
+        document.getElementById('senderPhone').value = historyData.sender.phone || "";
+        if (historyData.sender.date) {
+            document.getElementById('shippingDate').value = historyData.sender.date;
+        }
+    }
+
+    let rowDataList = historyData.rows || historyData;
+    let textLines = [];
+    rowDataList.forEach(item => {
+        textLines.push(`${item.orderId}\t${item.name}\t${item.itemName}\t${item.postal}\t${item.phone}\t${item.address}`);
+    });
+    document.getElementById('addressInput').value = textLines.join('\n');
+    initRows();
+
+    const rows = document.querySelectorAll('#resultBody tr');
+    rows.forEach((row, i) => {
+        if (rowDataList[i]) {
+            const sizeSel = row.querySelector('.size-select');
+            const matIn = row.querySelector('.material-input');
+            const itemIn = row.querySelector('.itemcount-input');
+            if (sizeSel) sizeSel.value = rowDataList[i].size;
+            if (matIn) matIn.value = rowDataList[i].material;
+            if (itemIn) itemIn.value = rowDataList[i].itemCount;
+        }
+    });
+    calculate();
+}
+
+function deleteHistory() {
+    const title = document.getElementById('historySelect').value;
+    if (!title) {
+        alert("削除する履歴を選択してください。");
+        return;
+    }
+
+    if (!confirm(`履歴「${title}」を削除してもよろしいですか？`)) return;
+
+    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
+    delete histories[title];
+    localStorage.setItem('cf_shipping_histories', JSON.stringify(histories));
+
+    updateHistoryDropdown();
+    document.getElementById('historyTitleInput').value = "";
+    alert("削除しました。");
+}
+
+// -------------------------------------------------------------
+// 佐川急便 送り状データ出力 (品名16文字制限)
+// -------------------------------------------------------------
+function exportSagawa() {
+    const rows = document.querySelectorAll('#resultBody tr');
+    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
+        alert("出力するデータがありません。");
+        return;
+    }
+
+    const sName = document.getElementById('senderName').value;
+    const sPostal = document.getElementById('senderPostal').value;
+    const sAddress = document.getElementById('senderAddress').value;
+    const sBuilding = document.getElementById('senderBuilding').value;
+    const sPhone = document.getElementById('senderPhone').value;
+    let sDate = document.getElementById('shippingDate').value.replace(/-/g, '');
+
+    let csvContent = "\uFEFF"; // BOM
+    const header = [
+        "お届け先コード取得区分", "お届け先コード", "お届け先電話番号", "お届け先郵便番号", 
+        "お届け先住所１", "お届け先住所２", "お届け先住所３", "お届け先名称１", "お届け先名称２", 
+        "お客様管理番号", "お客様コード", "部署ご担当者コード取得区分", "部署ご担当者コード", "部署ご担当者名称", 
+        "荷送人電話番号", "ご依頼主コード取得区分", "ご依頼主コード", "ご依頼主電話番号", "ご依頼主郵便番号", 
+        "ご依頼主住所１", "ご依頼主住所２", "ご依頼主名称１", "ご依頼主名称２", "荷姿", "品名１", 
+        "品名２", "品名３", "品名４", "品名５", "荷札荷姿", "荷札品名１", "荷札品名２", "荷札品名３", 
+        "荷札品名４", "荷札品名５", "荷札品名６", "荷札品名７", "荷札品名８", "荷札品名９", "荷札品名１０", 
+        "荷札品名１１", "出荷個数", "スピード指定", "クール便指定", "配達日", "配達指定時間帯", "配達指定時間（時分）", 
+        "代引金額", "消費税", "決済種別", "保険金額", "指定シール１", "指定シール２", "指定シール３", 
+        "営業所受取", "SRC区分", "営業所受取営業所コード", "元着区分", "メールアドレス", "ご不在時連絡先", 
+        "出荷日", "お問い合せ送り状No.", "出荷場印字区分", "集約解除指定", "編集０１", "編集０２", 
+        "編集０３", "編集０４", "編集０５", "編集０６", "編集０７", "編集０８", "編集０９", "編集１０"
+    ];
+    csvContent += header.join(",") + "\n";
+
+    rows.forEach(row => {
+        if (row.style.display === 'none') return;
+
+        const orderId = row.querySelector('.orderid-input')?.value || "";
+        const name = row.querySelector('.name-input')?.value || "";
+        let itemName = row.querySelector('.itemname-input')?.value || "";
+        if (itemName.length > 16) {
+            itemName = itemName.substring(0, 16);
+        }
+
+        const postal = row.querySelector('.postal-input')?.value || "";
+        const phone = row.querySelector('.phone-input')?.value || "";
+        const address = row.querySelector('.address-input')?.value || "";
+
+        const lineData = [
+            "", "", phone, postal, address, "", "", name, "", orderId, "", "", "", "",
+            sPhone, "", "", sPhone, sPostal, sAddress, sBuilding, sName, "", "", itemName, "", "", "", "",
+            "", "", "", "", "", "", "", "", "", "", "", "", "1", "", "", "", "", "",
+            "", "", "", "", "", "", "", "", "", "", "", "", sDate, "", "", "", "",
+            "", "", "", "", "", "", "", "", "", ""
+        ];
+
+        const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
+        csvContent += escaped.join(",") + "\n";
+    });
+
+    downloadFile(csvContent, "sagawa_okurijo_data.csv", "text/csv;charset=utf-8;");
+}
+
+// -------------------------------------------------------------
+// ヤマト運輸(B2) 送り状データ出力
+// （品名25文字制限・住所26文字以上の場合に26文字までを住所欄、超過分をお届け先会社・部門１に入力）
+// -------------------------------------------------------------
+function exportYamato() {
+    const rows = document.querySelectorAll('#resultBody tr');
+    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
+        alert("出力するデータがありません。");
+        return;
+    }
+
+    const sName = document.getElementById('senderName').value;
+    const sPostal = document.getElementById('senderPostal').value;
+    const sAddress = document.getElementById('senderAddress').value;
+    const sBuilding = document.getElementById('senderBuilding').value;
+    const sPhone = document.getElementById('senderPhone').value;
+    const rawDate = document.getElementById('shippingDate').value;
+    const sDateYamato = rawDate ? rawDate.replace(/-/g, '/') : "";
+
+    let csvContent = "\uFEFF"; // BOM
+    const header = [
+        "お客様管理番号", "送り状種類", "クール区分", "伝票番号", "出荷予定日", "お届け予定日", "配達時間帯",
+        "お届け先コード", "お届け先電話番号", "お届け先電話番号枝番", "お届け先郵便番号", "お届け先住所",
+        "お届け先アパートマンション名", "お届け先会社・部門１", "お届け先会社・部門２", "お届け先名", "お届け先名(ｶﾅ)", "敬称",
+        "ご依頼主コード", "ご依頼主電話番号", "ご依頼主電話番号枝番", "ご依頼主郵便番号", "ご依頼主住所",
+        "ご依頼主アパートマンション", "ご依頼主名", "ご依頼主名(ｶﾅ)", "品名コード１", "品名１",
+        "品名コード２", "品名２", "荷扱い１", "荷扱い２", "記事", "ｺﾚｸﾄ代金引換額（税込)", "内消費税額等",
+        "止置き", "営業所コード", "発行枚数", "個数口表示フラグ", "請求先顧客コード", "請求先分類コード", "運賃管理番号",
+        "クロネコwebコレクトデータ登録", "クロネコwebコレクト加盟店番号", "クロネコwebコレクト申込受付番号１", "クロネコwebコレクト申込受付番号２",
+        "クロネコwebコレクト申込受付番号３", "お届け予定ｅメール利用区分", "お届け予定ｅメールe-mailアドレス", "入力機種",
+        "お届け予定ｅメールメッセージ", "お届け完了ｅメール利用区分", "お届け完了ｅメールe-mailアドレス", "お届け完了ｅメールメッセージ",
+        "クロネコ収納代行利用区分", "予備", "収納代行請求金額(税込)", "収納代行内消費税額等", "収納代行請求先郵便番号",
+        "収納代行請求先住所", "収納代行請求先住所（アパートマンション名）", "収納代行請求先会社・部門名１", "収納代行請求先会社・部門名２",
+        "収納代行請求先名(漢字)", "収納代行請求先名(カナ)", "収納代行問合せ先名(漢字)", "収納代行問合せ先郵便番号",
+        "収納代行問合せ先住所", "収納代行問合せ先住所（アパートマンション名）", "収納代行問合せ先電話番号", "収納代行管理番号",
+        "収納代行品名", "収納代行備考", "複数口くくりキー", "検索キータイトル1", "検索キー1", "検索キータイトル2", "検索キー2",
+        "検索キータイトル3", "検索キー3", "検索キータイトル4", "検索キー4", "検索キータイトル5", "検索キー5", "予備", "予備",
+        "投函予定メール利用区分", "投函予定メールe-mailアドレス", "投函予定メールメッセージ",
+        "投函完了メール（お届け先宛）利用区分", "投函完了メール（お届け先宛）e-mailアドレス", "投函完了メール（お届け先宛）メールメッセージ",
+        "投函完了メール（ご依頼主宛）利用区分", "投函完了メール（ご依頼主宛）e-mailアドレス", "投函完了メール（ご依頼主宛）メールメッセージ"
+    ];
+    csvContent += header.join(",") + "\n";
+
+    rows.forEach(row => {
+        if (row.style.display === 'none') return;
+
+        const orderId = row.querySelector('.orderid-input')?.value || "";
+        const name = row.querySelector('.name-input')?.value || "";
+        let itemName = row.querySelector('.itemname-input')?.value || "";
+        if (itemName.length > 25) {
+            itemName = itemName.substring(0, 25);
+        }
+
+        const postal = row.querySelector('.postal-input')?.value || "";
+        const phone = row.querySelector('.phone-input')?.value || "";
+        let address = row.querySelector('.address-input')?.value || "";
+
+        let addr1 = address;
+        let company1 = ""; // 26文字以上の場合の超過分（お届け先会社・部門１に入力）
+        if (address.length >= 26) {
+            addr1 = address.substring(0, 26);
+            company1 = address.substring(26);
+        }
+
+        let lineData = new Array(header.length).fill("");
+        lineData[0] = orderId;       // お客様管理番号
+        lineData[1] = "0";           // 送り状種類 (0:発払い)
+        lineData[4] = sDateYamato;   // 出荷予定日
+        lineData[8] = phone;         // お届け先電話番号
+        lineData[10] = postal;       // お届け先郵便番号
+        lineData[11] = addr1;        // お届け先住所（26文字まで）
+        lineData[13] = company1;     // お届け先会社・部門１（26文字以上の超過分）
+        lineData[15] = name;         // お届け先名
+
+        // ご依頼主情報
+        lineData[19] = sPhone;       // ご依頼主電話番号
+        lineData[21] = sPostal;      // ご依頼主郵便番号
+        lineData[22] = sAddress;     // ご依頼主住所
+        lineData[23] = sBuilding;    // ご依頼主アパートマンション名
+        lineData[24] = sName;        // ご依頼主名
+
+        lineData[27] = itemName;     // 品名１
+        lineData[39] = "09050540672"; // 請求先顧客コード
+        lineData[41] = "01";         // 運賃管理番号
+
+        const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
+        csvContent += escaped.join(",") + "\n";
+    });
+
+    downloadFile(csvContent, "yamato_b2_okurijo_data.csv", "text/csv;charset=utf-8;");
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
