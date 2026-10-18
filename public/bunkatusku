@@ -26,11 +26,9 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // グローバルにFirebase関数を公開してアプリから使えるようにする
         window.db = db;
         window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc };
         
-        // 初期化実行
         window.initFirestoreMaster();
     </script>
 
@@ -246,7 +244,6 @@
                         <button onclick="addModalItemRow()" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2.5 py-1 rounded font-medium"><i class="fa-solid fa-plus mr-1"></i>商品を追加</button>
                     </div>
                     <div id="modalItemsContainer" class="space-y-2 border p-3 rounded-xl bg-slate-50/50 max-h-60 overflow-y-auto">
-                        <!-- 動的に商品行が追加されます -->
                     </div>
                 </div>
             </div>
@@ -385,7 +382,6 @@
         let allFilesRawData = [];
         let processedDataRows = [];
 
-        // Firestoreからマスタを読み込む初期化関数
         window.initFirestoreMaster = async function() {
             try {
                 const querySnapshot = await window.firebaseFns.getDocs(window.firebaseFns.collection(window.db, "products_master"));
@@ -394,7 +390,6 @@
                     multiplierMaster.push(docSnap.data());
                 });
 
-                // Firestoreが空の場合、デフォルトプリセットを自動登録する
                 if (multiplierMaster.length === 0) {
                     for (let preset of DEFAULT_PRESETS) {
                         await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", preset.key), preset);
@@ -646,10 +641,8 @@
         function processItemText(trackingNum, orderSn, productInfo) {
             const sku = extractSku(productInfo);
             
+            // 完全一致のみでマスタを検索
             let matched = multiplierMaster.find(r => r.key.toLowerCase() === sku.toLowerCase());
-            if (!matched && sku) {
-                matched = multiplierMaster.find(r => productInfo.includes(r.key) || sku.includes(r.key));
-            }
 
             let results = [];
             if (matched && matched.items && matched.items.length > 0) {
