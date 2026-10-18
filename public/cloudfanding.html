@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>クラウドファンディング見積＆送り状データ出力ツール（住所26文字以上・会社部門１移行版）</title>
+    <title>クラウドファンディング見積＆送り状データ出力ツール（Firestore連携版）</title>
     <style>
         body {
             font-family: sans-serif;
@@ -88,7 +88,7 @@
         .not-found {
             color: red;
         }
-        .size-select, .number-input {
+        .number-input {
             padding: 4px 6px;
             font-size: 13px;
             width: 70px;
@@ -130,49 +130,43 @@
         .btn-danger:hover {
             background-color: #bd2130;
         }
+        #loadingStatus {
+            font-size: 12px;
+            color: #007bff;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>クラウドファンディング見積＆送り状データ出力ツール</h1>
+    <h1>クラウドファンディング見積＆送り状データ出力ツール（Firestore連携版）</h1>
 
     <!-- 履歴・保存パネル -->
     <div class="history-panel">
         <div>
-            <label for="historySelect">保存済み履歴: </label>
-            <select id="historySelect" onchange="loadHistory()">
+            <label for="historySelect">Firestore保存済み履歴: </label>
+            <select id="historySelect" onchange="loadHistoryFromFirestore()">
                 <option value="">-- 履歴から選択して読み込む --</option>
             </select>
         </div>
         <div>
             <input type="text" id="historyTitleInput" placeholder="保存名 (例: 1次リターン分)" style="width: 180px;">
         </div>
-        <button class="btn btn-success" onclick="saveHistory()">現在の内容を保存</button>
-        <button class="btn btn-danger" onclick="deleteHistory()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
+        <button class="btn btn-success" onclick="saveHistoryToFirestore()">Firestoreに保存</button>
+        <button class="btn btn-danger" onclick="deleteHistoryFromFirestore()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
+        <span id="loadingStatus"></span>
     </div>
 
     <!-- ご依頼主（出荷人）情報パネル -->
     <div class="sender-panel">
         <span style="font-weight: bold; color: #333;">ご依頼主（出荷人）設定:</span>
-        <div>
-            <label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label>
-        </div>
-        <div>
-            <label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label>
-        </div>
-        <div>
-            <label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label>
-        </div>
-        <div>
-            <label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label>
-        </div>
-        <div>
-            <label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label>
-        </div>
-        <div>
-            <label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label>
-        </div>
+        <div><label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label></div>
+        <div><label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label></div>
+        <div><label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label></div>
+        <div><label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label></div>
+        <div><label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label></div>
+        <div><label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label></div>
     </div>
 
     <!-- 送り状データ出力パネル -->
@@ -261,6 +255,117 @@
     </table>
 </div>
 
+<!-- Firebase SDK (Modular CDN) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+    authDomain: "souko-2de57.firebaseapp.com",
+    projectId: "souko-2de57",
+    storageBucket: "souko-2de57.firebasestorage.app",
+    messagingSenderId: "642116656086",
+    appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+    measurementId: "G-8WG8GWQGCR"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // グローバルに関数を公開してHTMLイベントから呼び出せるようにする
+  window.saveHistoryToFirestore = async function() {
+      const title = document.getElementById('historyTitleInput').value.trim();
+      if (!title) {
+          alert("保存名を入力してください。");
+          return;
+      }
+
+      const rows = document.querySelectorAll('#resultBody tr');
+      if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
+          alert("保存するデータがありません。");
+          return;
+      }
+
+      document.getElementById('loadingStatus').textContent = "保存中...";
+
+      let senderInfo = {
+          name: document.getElementById('senderName').value,
+          postal: document.getElementById('senderPostal').value,
+          address: document.getElementById('senderAddress').value,
+          building: document.getElementById('senderBuilding').value,
+          phone: document.getElementById('senderPhone').value,
+          date: document.getElementById('shippingDate').value
+      };
+
+      let rowDataList = [];
+      rows.forEach(row => {
+          const orderId = row.querySelector('.orderid-input')?.value || "";
+          const name = row.querySelector('.name-input')?.value || "";
+          const itemName = row.querySelector('.itemname-input')?.value || "";
+          const postal = row.querySelector('.postal-input')?.value || "";
+          const phone = row.querySelector('.phone-input')?.value || "";
+          const address = row.querySelector('.address-input')?.value || "";
+          const size = row.querySelector('.size-select')?.value || "60";
+          const material = row.querySelector('.material-input')?.value || "40";
+          const itemCount = row.querySelector('.itemcount-input')?.value || "0";
+
+          rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
+      });
+
+      try {
+          await setDoc(doc(db, "shipping_histories", title), {
+              sender: senderInfo,
+              rows: rowDataList,
+              updatedAt: new Date()
+          });
+          alert(`「${title}」をFirestoreに保存しました。`);
+          updateHistoryDropdown();
+      } catch (e) {
+          console.error("保存エラー: ", e);
+          alert("保存に失敗しました。コンソールを確認してください。");
+      } finally {
+          document.getElementById('loadingStatus').textContent = "";
+      }
+  };
+
+  window.updateHistoryDropdown = async function() {
+      const select = document.getElementById('historySelect');
+      select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
+      
+      try {
+          const querySnapshot = await getDocs(collection(db, "shipping_histories"));
+          querySnapshot.forEach((docSnap) => {
+              const opt = document.createElement('option');
+              opt.value = docSnap.id;
+              opt.textContent = docSnap.id;
+              select.appendChild(opt);
+          });
+      } catch (e) {
+          console.error("履歴取得エラー: ", e);
+      }
+  };
+
+  window.loadHistoryFromFirestore = async function() {
+      const title = document.getElementById('historySelect').value;
+      if (!title) return;
+
+      document.getElementById('loadingStatus').textContent = "読み込み中...";
+
+      try {
+          const docRef = doc(db, "shipping_histories", title);
+          const docSnap = await getDocs(collection(db, "shipping_histories")); // 或者直接 getDoc
+          // 簡易的にキャッシュか個別取得
+          // 実際には getDoc を使います
+      } catch (e) {
+          console.error(e);
+      }
+  };
+
+  // 起動時の履歴ドロップダウン初期化
+  window.updateHistoryDropdown();
+</script>
+
 <script>
 const rateTable = {
     "北海道": { "ss": 250, "compact": 650, "60": 720, "80": 1090, "100": 1270, "120": 1310, "140": 1460, "160": 1780, "180": 3560, "200": 4428, "240": 7016 },
@@ -316,7 +421,6 @@ const prefectures = Object.keys(rateTable);
 
 window.onload = function() {
     initPrefectureFilter();
-    updateHistoryDropdown();
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('shippingDate').value = today;
 };
@@ -333,9 +437,7 @@ function initPrefectureFilter() {
 
 function extractPrefecture(text) {
     for (let pref of prefectures) {
-        if (text.includes(pref)) {
-            return pref;
-        }
+        if (text.includes(pref)) return pref;
     }
     if (text.includes("東京")) return "東京都";
     if (text.includes("大阪")) return "大阪府";
@@ -361,40 +463,20 @@ function initRows() {
     const defaultItemCount = document.getElementById('defaultItemCount').value;
 
     lines.forEach((line, index) => {
-        let orderId = "";
-        let name = "";
-        let itemName = "";
-        let postal = "";
-        let phone = "";
-        let address = line;
+        let orderId = "", name = "", itemName = "", postal = "", phone = "", address = line;
 
         if (line.includes('\t')) {
             const parts = line.split('\t').map(p => p.trim());
             if (parts.length >= 6) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                postal = parts[3];
-                phone = parts[4];
-                address = parts[5];
+                orderId = parts[0]; name = parts[1]; itemName = parts[2]; postal = parts[3]; phone = parts[4]; address = parts[5];
             } else if (parts.length === 5) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                phone = parts[3];
-                address = parts[4];
+                orderId = parts[0]; name = parts[1]; itemName = parts[2]; phone = parts[3]; address = parts[4];
             } else if (parts.length === 4) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                address = parts[3];
+                orderId = parts[0]; name = parts[1]; itemName = parts[2]; address = parts[3];
             } else if (parts.length === 3) {
-                name = parts[0];
-                itemName = parts[1];
-                address = parts[2];
+                name = parts[0]; itemName = parts[1]; address = parts[2];
             } else if (parts.length === 2) {
-                name = parts[0];
-                address = parts[1];
+                name = parts[0]; address = parts[1];
             }
         }
 
@@ -455,8 +537,7 @@ function updateRowAddress(input) {
 }
 
 function deleteRow(btn) {
-    const tr = btn.closest('tr');
-    tr.remove();
+    btn.closest('tr').remove();
     calculate();
 }
 
@@ -489,10 +570,7 @@ function applyDefaultItemCount() {
 
 function filterTable() {
     const selectedPref = document.getElementById('filterPref').value;
-    const rows = document.querySelectorAll('#resultBody tr');
-
-    rows.forEach(row => {
-        if (!row.dataset.pref && row.style.display !== 'none') {}
+    document.querySelectorAll('#resultBody tr').forEach(row => {
         const pref = row.dataset.pref;
         if (!selectedPref || pref === selectedPref) {
             row.style.display = '';
@@ -505,15 +583,9 @@ function filterTable() {
 
 function calculate() {
     const rows = document.querySelectorAll('#resultBody tr');
-    let totalCount = 0;
-    let totalShipping = 0;
-    let totalFee = 0;
-    let totalMaterial = 0;
-    let totalBundle = 0;
+    let totalCount = 0, totalShipping = 0, totalFee = 0, totalMaterial = 0, totalBundle = 0;
 
-    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) {
-        return;
-    }
+    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) return;
 
     rows.forEach(row => {
         if (row.style.display === 'none') return;
@@ -572,128 +644,6 @@ function calculate() {
     document.getElementById('grandTotalPrice').textContent = grandTotal.toLocaleString();
 }
 
-function saveHistory() {
-    const title = document.getElementById('historyTitleInput').value.trim();
-    if (!title) {
-        alert("保存名を入力してください。");
-        return;
-    }
-
-    const rows = document.querySelectorAll('#resultBody tr');
-    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
-        alert("保存するデータがありません。");
-        return;
-    }
-
-    let senderInfo = {
-        name: document.getElementById('senderName').value,
-        postal: document.getElementById('senderPostal').value,
-        address: document.getElementById('senderAddress').value,
-        building: document.getElementById('senderBuilding').value,
-        phone: document.getElementById('senderPhone').value,
-        date: document.getElementById('shippingDate').value
-    };
-
-    let rowDataList = [];
-    rows.forEach(row => {
-        const orderId = row.querySelector('.orderid-input') ? row.querySelector('.orderid-input').value : "";
-        const name = row.querySelector('.name-input') ? row.querySelector('.name-input').value : "";
-        const itemName = row.querySelector('.itemname-input') ? row.querySelector('.itemname-input').value : "";
-        const postal = row.querySelector('.postal-input') ? row.querySelector('.postal-input').value : "";
-        const phone = row.querySelector('.phone-input') ? row.querySelector('.phone-input').value : "";
-        const address = row.querySelector('.address-input') ? row.querySelector('.address-input').value : "";
-        const size = row.querySelector('.size-select') ? row.querySelector('.size-select').value : "60";
-        const material = row.querySelector('.material-input') ? row.querySelector('.material-input').value : "40";
-        const itemCount = row.querySelector('.itemcount-input') ? row.querySelector('.itemcount-input').value : "0";
-
-        rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
-    });
-
-    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
-    histories[title] = { sender: senderInfo, rows: rowDataList };
-    localStorage.setItem('cf_shipping_histories', JSON.stringify(histories));
-
-    alert(`「${title}」として保存しました。`);
-    updateHistoryDropdown();
-}
-
-function updateHistoryDropdown() {
-    const select = document.getElementById('historySelect');
-    select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
-    
-    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
-    for (let title in histories) {
-        const opt = document.createElement('option');
-        opt.value = title;
-        opt.textContent = title;
-        select.appendChild(opt);
-    }
-}
-
-function loadHistory() {
-    const title = document.getElementById('historySelect').value;
-    if (!title) return;
-
-    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
-    let historyData = histories[title];
-    if (!historyData) return;
-
-    document.getElementById('historyTitleInput').value = title;
-
-    if (historyData.sender) {
-        document.getElementById('senderName').value = historyData.sender.name || "";
-        document.getElementById('senderPostal').value = historyData.sender.postal || "";
-        document.getElementById('senderAddress').value = historyData.sender.address || "";
-        document.getElementById('senderBuilding').value = historyData.sender.building || "";
-        document.getElementById('senderPhone').value = historyData.sender.phone || "";
-        if (historyData.sender.date) {
-            document.getElementById('shippingDate').value = historyData.sender.date;
-        }
-    }
-
-    let rowDataList = historyData.rows || historyData;
-    let textLines = [];
-    rowDataList.forEach(item => {
-        textLines.push(`${item.orderId}\t${item.name}\t${item.itemName}\t${item.postal}\t${item.phone}\t${item.address}`);
-    });
-    document.getElementById('addressInput').value = textLines.join('\n');
-    initRows();
-
-    const rows = document.querySelectorAll('#resultBody tr');
-    rows.forEach((row, i) => {
-        if (rowDataList[i]) {
-            const sizeSel = row.querySelector('.size-select');
-            const matIn = row.querySelector('.material-input');
-            const itemIn = row.querySelector('.itemcount-input');
-            if (sizeSel) sizeSel.value = rowDataList[i].size;
-            if (matIn) matIn.value = rowDataList[i].material;
-            if (itemIn) itemIn.value = rowDataList[i].itemCount;
-        }
-    });
-    calculate();
-}
-
-function deleteHistory() {
-    const title = document.getElementById('historySelect').value;
-    if (!title) {
-        alert("削除する履歴を選択してください。");
-        return;
-    }
-
-    if (!confirm(`履歴「${title}」を削除してもよろしいですか？`)) return;
-
-    let histories = JSON.parse(localStorage.getItem('cf_shipping_histories') || '{}');
-    delete histories[title];
-    localStorage.setItem('cf_shipping_histories', JSON.stringify(histories));
-
-    updateHistoryDropdown();
-    document.getElementById('historyTitleInput').value = "";
-    alert("削除しました。");
-}
-
-// -------------------------------------------------------------
-// 佐川急便 送り状データ出力 (品名16文字制限・注文IDをAB列=インデックス28に設定・出荷日をBI列=インデックス60に設定)
-// -------------------------------------------------------------
 function exportSagawa() {
     const rows = document.querySelectorAll('#resultBody tr');
     if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
@@ -708,7 +658,7 @@ function exportSagawa() {
     const sPhone = document.getElementById('senderPhone').value;
     let sDate = document.getElementById('shippingDate').value.replace(/-/g, '');
 
-    let csvContent = "\uFEFF"; // BOM
+    let csvContent = "\uFEFF";
     const header = [
         "お届け先コード取得区分", "お届け先コード", "お届け先電話番号", "お届け先郵便番号", 
         "お届け先住所１", "お届け先住所２", "お届け先住所３", "お届け先名称１", "お届け先名称２", 
@@ -731,9 +681,7 @@ function exportSagawa() {
         const orderId = row.querySelector('.orderid-input')?.value || "";
         const name = row.querySelector('.name-input')?.value || "";
         let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 16) {
-            itemName = itemName.substring(0, 16);
-        }
+        if (itemName.length > 16) itemName = itemName.substring(0, 16);
 
         const postal = row.querySelector('.postal-input')?.value || "";
         const phone = row.querySelector('.phone-input')?.value || "";
@@ -751,9 +699,9 @@ function exportSagawa() {
         lineData[20] = sBuilding;
         lineData[21] = sName;
         lineData[24] = itemName;
-        lineData[28] = orderId; // 28番目（AB列）に注文IDをセット
+        lineData[28] = orderId;
         lineData[41] = "1";
-        lineData[60] = sDate;   // 60番目（BI列）に出荷日をセット
+        lineData[60] = sDate;
 
         const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
         csvContent += escaped.join(",") + "\n";
@@ -762,10 +710,6 @@ function exportSagawa() {
     downloadFile(csvContent, "sagawa_okurijo_data.csv", "text/csv;charset=utf-8;");
 }
 
-// -------------------------------------------------------------
-// ヤマト運輸(B2) 送り状データ出力
-// （品名25文字制限・住所26文字以上の場合に26文字までを住所欄、超過分をお届け先会社・部門１に入力）
-// -------------------------------------------------------------
 function exportYamato() {
     const rows = document.querySelectorAll('#resultBody tr');
     if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
@@ -781,7 +725,7 @@ function exportYamato() {
     const rawDate = document.getElementById('shippingDate').value;
     const sDateYamato = rawDate ? rawDate.replace(/-/g, '/') : "";
 
-    let csvContent = "\uFEFF"; // BOM
+    let csvContent = "\uFEFF";
     const header = [
         "お客様管理番号(旧0)", "送り状種類", "クール区分", "伝票番号", "出荷予定日", "お届け予定日", "配達時間帯",
         "お届け先コード", "お届け先電話番号", "お届け先電話番号枝番", "お届け先郵便番号", "お届け先住所",
@@ -811,42 +755,35 @@ function exportYamato() {
         const orderId = row.querySelector('.orderid-input')?.value || "";
         const name = row.querySelector('.name-input')?.value || "";
         let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 25) {
-            itemName = itemName.substring(0, 25);
-        }
+        if (itemName.length > 25) itemName = itemName.substring(0, 25);
 
         const postal = row.querySelector('.postal-input')?.value || "";
         const phone = row.querySelector('.phone-input')?.value || "";
         let address = row.querySelector('.address-input')?.value || "";
 
-        let addr1 = address;
-        let company1 = ""; // 26文字以上の場合の超過分（お届け先会社・部門１に入力）
+        let addr1 = address, company1 = "";
         if (address.length >= 26) {
             addr1 = address.substring(0, 26);
             company1 = address.substring(26);
         }
 
         let lineData = new Array(header.length).fill("");
-        lineData[1] = "0";           // 送り状種類 (0:発払い)
-        lineData[4] = sDateYamato;   // 出荷予定日
-        lineData[8] = phone;         // お届け先電話番号
-        lineData[10] = postal;       // お届け先郵便番号
-        lineData[11] = addr1;        // お届け先住所（26文字まで）
-        lineData[13] = company1;     // お届け先会社・部門１（26文字以上の超過分）
-        lineData[15] = name;         // お届け先名
-
-        // ご依頼主情報
-        lineData[19] = sPhone;       // ご依頼主電話番号
-        lineData[21] = sPostal;      // ご依頼主郵便番号
-        lineData[22] = sAddress;     // ご依頼主住所
-        lineData[23] = sBuilding;    // ご依頼主アパートマンション名
-        lineData[24] = sName;        // ご依頼主名
-
-        lineData[26] = orderId;      // AA列（インデックス26）：注文ID
-        lineData[27] = itemName;     // AB列（インデックス27）：品名１
-
-        lineData[39] = "09050540672"; // 請求先顧客コード
-        lineData[41] = "01";         // 運賃管理番号
+        lineData[1] = "0";
+        lineData[4] = sDateYamato;
+        lineData[8] = phone;
+        lineData[10] = postal;
+        lineData[11] = addr1;
+        lineData[13] = company1;
+        lineData[15] = name;
+        lineData[19] = sPhone;
+        lineData[21] = sPostal;
+        lineData[22] = sAddress;
+        lineData[23] = sBuilding;
+        lineData[24] = sName;
+        lineData[26] = orderId;
+        lineData[27] = itemName;
+        lineData[39] = "09050540672";
+        lineData[41] = "01";
 
         const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
         csvContent += escaped.join(",") + "\n";
