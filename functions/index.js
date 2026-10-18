@@ -118,30 +118,33 @@ exports.notifyWarehouseReports = onDocumentWritten(
     }
 );
 
-// 6. unreplied_rooms（定時未対応ルーム）に新規・未対応が追加されたときのSlack通知
+// 6. unreplied_rooms（定時未対応ルーム）の更新通知 ★15分クールダウンあり
 exports.notifyUnrepliedRooms = onDocumentWritten(
     { document: "unreplied_rooms/{roomId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
         const snap = event.data;
         if (!snap || !snap.after.exists) return;
         
-        const data = snap.after.data();
-        const beforeData = snap.before.exists ? snap.before.data() : null;
-
-        // ステータスが新たに 'pending'（未対応）になった時だけ通知する（重複防止）
-        if (data.status === "pending" && (!beforeData || beforeData.status !== "pending")) {
-            const roomName = data.roomName || "名称不明";
-            const senderName = data.senderName || "相手";
-            const messageBody = data.lastMessageBody || "";
-
-            let messageText = `🚨 *【Chatwork未対応検知】新しい未対応ルームがあります*\n` +
-                              `>・ *ルーム名:* ${roomName}\n` +
-                              `>・ *発言者:* ${senderName}\n` +
-                              `>・ *メッセージ:* ${messageBody}`;
-
-            await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
-            logger.info(`未対応ルーム検知のSlack通知を送信しました: ${roomName}`);
+        const roomId = event.params.roomId;
+        
+        // 15分間のクールダウンを適用（同じルームからの連続通知を防ぐ）
+        if (!canSendNotification(`unreplied_rooms_${roomId}`)) {
+            logger.info(`未対応ルーム ${roomId} の通知はクールダウン中のためスキップします。`);
+            return;
         }
+
+        const data = snap.after.data();
+        const roomName = data.roomName || "名称不明";
+        const senderName = data.senderName || "相手";
+        const messageBody = data.lastMessageBody || "";
+
+        let messageText = `🚨 *【Chatwork未対応検知】未対応ルームが更新されました*\n` +
+                          `>・ *ルーム名:* ${roomName}\n` +
+                          `>・ *発言者:* ${senderName}\n` +
+                          `>・ *メッセージ:* ${messageBody}`;
+
+        await sendSlackNotification(messageText, slackWebhookUrlSecret.value());
+        logger.info(`未対応ルーム更新のSlack通知を送信しました: ${roomName}`);
     }
 );
 
@@ -335,13 +338,11 @@ exports.apiCreateZaicoShipment = onRequest(
                     }
                 }
 
-                if (inventoryList.length < perPage) {
+                if (inventoryList.length < perPage || page >= 30) {
                     hasMore = false;
                 } else {
                     page++;
                 }
-
-                if (page > 30) break;
             }
 
             const deliveries = [];
@@ -364,7 +365,8 @@ exports.apiCreateZaicoShipment = onRequest(
             if (deliveries.length === 0) {
                 res.status(400).json({ 
                     success: false, 
-                    error: "zaico側に対応する在庫ID（inventory_id）が見つかりませんでした。バーコードを確認してください。" 
+                    error: "zaico側に対応する在庫ID（inventory_id）が見つかりませんでした。バーコードを確認してください。",
+                    missingBarcodes: missingBarcodes
                 });
                 return;
             }
@@ -404,6 +406,7 @@ exports.apiCreateZaicoShipment = onRequest(
                 slipNum: slipNum,
                 count: deliveries.length,
                 missingCount: missingBarcodes.length,
+                missingBarcodes: missingBarcodes,
                 zaicoResponse: zaicoData
             });
 
