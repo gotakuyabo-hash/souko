@@ -40,7 +40,6 @@
             <button class="tab-btn" onclick="switchTab('masterTab')">📝 商品マスタ管理（SKU基準）</button>
         </div>
 
-        <!-- 一括処理・出荷連携タブ -->
         <div id="allInOneTab" class="tab-content active">
             <div class="card">
                 <h2 class="text-lg font-bold text-slate-800 mb-2">📥 CSVファイル ドロップ＆蓄積エリア</h2>
@@ -53,20 +52,17 @@
                     <input type="file" id="fileInput" class="hidden" multiple accept=".csv">
                 </div>
 
-                <!-- 読み込み済みファイル一覧 -->
                 <div id="fileListSection" class="hidden mb-4 p-3 bg-slate-50 border border-slate-200 rounded">
                     <div class="text-xs font-bold text-slate-700 mb-2">📋 読み込み済みファイル一覧</div>
                     <div id="fileListContainer" class="space-y-1.5 text-xs"></div>
                 </div>
 
-                <!-- ステータス表示 -->
                 <div class="bg-slate-50 p-3 rounded mb-4 font-mono text-xs text-slate-600 space-y-1.5 border border-slate-200">
                     <div id="statusOrder">📦 受注データ: <span class="text-slate-400">（未読み込み）</span></div>
                     <div id="statusYamato">🐱 ヤマトデータ: <span class="text-slate-400">（未読み込み）</span></div>
                     <div id="statusSagawa">飛 佐川データ: <span class="text-slate-400">（未読み込み）</span></div>
                 </div>
 
-                <!-- 受注データのソートコントロール（AB列 / AF列） -->
                 <div id="orderSortBar" class="hidden bg-slate-50 border border-slate-200 p-3 rounded mb-4 flex items-center gap-3 flex-wrap">
                     <span class="text-xs font-bold text-slate-700">📑 受注データ並び替え（セット品維持）:</span>
                     <button onclick="sortOrderRowsByCol(27)" class="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3 py-1.5 rounded font-bold transition">AB列（メモ1等）でソート</button>
@@ -76,7 +72,6 @@
 
                 <div id="orderPreviewArea"></div>
 
-                <!-- 送り状・検品アクション（受注データプレビュー直下に配置） -->
                 <div class="mt-4 pt-4 border-t border-slate-200 space-y-4">
                     <div>
                         <div class="text-xs font-bold text-slate-700 mb-2">🖨️ 送り状出力・検品シート（沖縄宛ては佐川出力時に自動除外されます）</div>
@@ -87,11 +82,9 @@
                         </div>
                     </div>
 
-                    <!-- zaico・ピック計算アクション（送り状出力の直下に配置） -->
                     <div>
                         <div class="text-xs font-bold text-slate-700 mb-2">📦 ピック数・zaico出庫連携</div>
                         
-                        <!-- 取引先（zaico出庫先）入力欄 -->
                         <div class="bg-emerald-50 border border-emerald-200 p-3 rounded mb-3 flex items-center gap-3">
                             <label for="customerNameInput" class="text-xs font-bold text-emerald-800 whitespace-nowrap">☁️ 取引先 (customer_name):</label>
                             <input type="text" id="customerNameInput" class="search-box bg-white" placeholder="例: 自社出荷 / Amazon / 等" style="max-width: 300px;">
@@ -109,7 +102,6 @@
             </div>
         </div>
 
-        <!-- 商品マスタ管理タブ -->
         <div id="masterTab" class="tab-content">
             <div class="card">
                 <h2>商品マスタ管理（SKU基準：棚番・倍率・商品名の修正）</h2>
@@ -339,7 +331,6 @@
             document.getElementById('ehidenBtn').disabled = !(hasOrder && sagawaRowsCount > 0);
         }
 
-        // ==================== 受注データのソート機能（セット品維持） ====================
         window.sortOrderRowsByCol = (colIndex) => {
             let orderFiles = uploadedFiles.filter(f => f.type === 'order');
             if (orderFiles.length === 0) return;
@@ -451,7 +442,6 @@
                     const productName = cols[31];
                     const quantity = cols[34] ? Number(cols[34]) : 1;
                     
-                    // バーコード抽出
                     const parts = productName.trim().split(/\s+/);
                     const extractedBarcode = parts.length > 0 ? parts[parts.length - 1] : '';
 
@@ -576,7 +566,6 @@
             document.getElementById('pickResultArea').innerHTML = html;
         }
 
-        // ==================== ドラッグ＆ドロップ並び替えのロジック ====================
         let draggedIndex = null;
 
         window.onDragStart = (e, index) => {
@@ -794,8 +783,31 @@
                     for (let c = 0; c < newRow.length; c++) {
                         let valStr = String(newRow[c]);
                         if (valStr.startsWith('+81')) newRow[c] = cleanPhone(valStr);
-                        if (c >= 24 && c <= 30 && newRow[c].length > 25) newRow[c] = newRow[c].substring(0, 25);
                     }
+
+                    if (newRow.length > 27) {
+                        let valStr = String(newRow[27] || '');
+                        if (valStr.length > 16) {
+                            newRow[27] = valStr.substring(0, 16);
+                        }
+                    }
+
+                    for (let c = 24; c <= 30; c += 2) {
+                        if (c < newRow.length) {
+                            let valStr = String(newRow[c] || '');
+                            if (valStr.length > 25) {
+                                let firstPart = valStr.substring(0, 25);
+                                let overflowPart = valStr.substring(25);
+                                newRow[c] = firstPart;
+                                let targetCol = c + 2;
+                                if (targetCol < newRow.length) {
+                                    let existingNext = String(newRow[targetCol] || '');
+                                    newRow[targetCol] = existingNext ? (overflowPart + ' ' + existingNext) : overflowPart;
+                                }
+                            }
+                        }
+                    }
+
                     outputRows.push(newRow);
                 }
             });
