@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>受注データ自動分割・和名変換・Firestoreマスタ管理ツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDK (Modular v10) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc };
+        
+        window.initFirestoreMaster();
+    </script>
+
+    <style>
+        @media print {
+            body { background: white !important; }
+            body > *:not(#inspectionModal):not(#totalPickingModal) { display: none !important; }
+            
+            body.printing-inspection #inspectionModal {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+                max-height: none !important;
+                overflow: visible !important;
+                display: block !important;
+                z-index: 99999 !important;
+            }
+            body.printing-inspection #inspectionModal * { visibility: visible !important; }
+            body.printing-inspection #inspectionModal > div {
+                max-height: none !important;
+                overflow: visible !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                width: 100% !important;
+            }
+            body.printing-inspection #totalPickingModal { display: none !important; }
+
+            body.printing-picking #totalPickingModal {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+                max-height: none !important;
+                overflow: visible !important;
+                display: block !important;
+                z-index: 99999 !important;
+            }
+            body.printing-picking #totalPickingModal * { visibility: visible !important; }
+            body.printing-picking #totalPickingModal > div {
+                max-height: none !important;
+                overflow: visible !important;
+                box-shadow: none !important;
+                padding: 20px !important;
+                margin: 0 !important;
+                width: 100% !important;
+            }
+            body.printing-picking #inspectionModal { display: none !important; }
+
+            .no-print { display: none !important; }
+            
+            .inspection-slip {
+                page-break-after: always !important; 
+                break-after: page !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                margin: 0 auto 10mm auto !important; 
+                border: 2px solid #000 !important;
+                background: white !important;
+                width: 100mm !important;
+                min-height: 150mm !important;
+                box-sizing: border-box !important;
+            }
+        }
+        .draggable-row {
+            cursor: grab;
+        }
+        .draggable-row:active {
+            cursor: grabbing;
+        }
+        .draggable-row.dragging {
+            opacity: 0.4;
+            background: #e2e8f0;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans">
+
+    <header class="bg-indigo-700 text-white shadow-md no-print">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                <h1 class="text-xl font-bold">受注データ自動分割 ＆ Firestoreマスタ管理ツール (Medicarry)</h1>
+            </div>
+            <div class="flex bg-indigo-900/60 p-1 rounded-xl">
+                <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
+                <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 flex-grow w-full space-y-6">
+        
+        <!-- 受注処理タブ -->
+        <div id="tabContentOrders" class="space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-file-excel text-emerald-600 mr-2"></i>パッキングリスト（複数Excel一括）</h2>
+                    <button onclick="resetApp()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg"><i class="fa-solid fa-rotate-right mr-1"></i>リセット</button>
+                </div>
+                <label id="dropZone" for="fileInput" class="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50 rounded-xl p-8 text-center cursor-pointer block">
+                    <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" multiple class="hidden">
+                    <div class="flex flex-col items-center space-y-2">
+                        <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center text-lg"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                        <p class="text-sm font-semibold text-slate-700">Excelファイルをここにドラッグ＆ドロップ、またはクリックして選択</p>
+                    </div>
+                </label>
+                <div id="fileListContainer" class="hidden space-y-1">
+                    <h4 class="text-xs font-semibold text-slate-600">読み込み済みファイル:</h4>
+                    <ul id="fileList" class="text-xs text-slate-700 space-y-1"></ul>
+                </div>
+            </div>
+
+            <div id="loadingState" class="hidden bg-white rounded-xl p-12 text-center">
+                <i class="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-600"></i>
+                <p class="text-sm text-slate-600 mt-2">処理中...</p>
+            </div>
+
+            <div id="resultSection" class="hidden space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+                    <div>
+                        <h3 class="text-lg font-bold" id="resultTitle">処理完了</h3>
+                        <p class="text-sm text-slate-500" id="resultSubtitle">合計 0 行</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2 text-xs">
+                        <button onclick="registerAllToMaster()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-database mr-1"></i>Firestore一括登録</button>
+                        <button onclick="openSheetCopyModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paste mr-1"></i>シート用データコピー</button>
+                        <button onclick="openInspectionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-print mr-1"></i>検品書(100×150)印刷</button>
+                        <button onclick="openTotalPickingModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-clipboard-list mr-1"></i>トータルピック</button>
+                        <button onclick="downloadExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-excel mr-1"></i>Excel保存</button>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                        <span id="rowCountBadge" class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium"></span>
+                    </div>
+                    <div class="overflow-x-auto max-h-[600px]">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead class="bg-slate-50 text-slate-600 text-xs uppercase sticky top-0 border-b z-10">
+                                <tr>
+                                    <th class="px-2 py-3 text-center w-10">#</th>
+                                    <th class="px-4 py-3">追跡番号</th>
+                                    <th class="px-4 py-3">注文番号</th>
+                                    <th class="px-4 py-3">SKUコード (コピー可)</th>
+                                    <th class="px-4 py-3 min-w-[320px]">商品情報（和名・元情報）</th>
+                                    <th class="px-4 py-3 text-center">基準</th>
+                                    <th class="px-4 py-3 text-center">倍率</th>
+                                    <th class="px-4 py-3 text-center">総数</th>
+                                    <th class="px-4 py-3 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previewBody" class="divide-y divide-slate-100 text-slate-700"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- マスタ管理タブ -->
+        <div id="tabContentMaster" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-database text-indigo-600 mr-2"></i>Firestore商品マスタ管理 (medicarry_products_master)</h2>
+                    <div class="flex space-x-2 text-xs">
+                        <button onclick="openMasterImportModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg font-medium"><i class="fa-solid fa-file-import mr-1"></i>CSV・コピペ一括インポート</button>
+                        <button onclick="clearMasterFirestore()" class="text-rose-600 px-3 py-2 rounded-lg border border-rose-200 hover:bg-rose-50 font-medium">全クリア</button>
+                    </div>
+                </div>
+                <div class="flex gap-3 bg-slate-50 p-4 rounded-xl border items-center">
+                    <div class="relative flex-grow">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400"></i>
+                        <input type="text" id="masterSearchInput" oninput="renderMasterTable()" placeholder="SKU、商品名で検索..." class="w-full text-sm border rounded-lg pl-9 pr-3 py-2 bg-white">
+                    </div>
+                    <button onclick="openMasterEditModal(-1)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-plus mr-1"></i>新規登録</button>
+                </div>
+                <div class="overflow-x-auto max-h-[600px] border rounded-xl">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead class="bg-slate-100 text-slate-600 sticky top-0 border-b">
+                            <tr>
+                                <th class="px-4 py-3">SKUコード (コピー可)</th>
+                                <th class="px-4 py-3">紐付く商品・棚番・数量構成</th>
+                                <th class="px-4 py-3 text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="masterTableBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- マスタ一括インポートモーダル -->
+    <div id="masterImportModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-file-import text-emerald-600 mr-2"></i>商品マスタ一括インポート</h3>
+                <button onclick="closeMasterImportModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="space-y-4 text-xs">
+                <div>
+                    <label class="font-semibold block mb-1">1. CSVファイルをアップロード</label>
+                    <input type="file" id="masterCsvInput" accept=".csv, .xlsx, .xls" class="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer border rounded-lg p-1">
+                </div>
+                <div class="relative flex py-2 items-center">
+                    <div class="flex-grow border-t border-slate-200"></div>
+                    <span class="flex-shrink mx-4 text-slate-400 font-semibold text-[11px]">または、表計算ソフトの列をそのまま貼り付け</span>
+                    <div class="flex-grow border-t border-slate-200"></div>
+                </div>
+                <div>
+                    <label class="font-semibold block mb-1">2. タブ区切りテキストを貼り付け（商品名 tab SKU）</label>
+                    <textarea id="masterPasteTextarea" rows="6" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50" placeholder="例: Hoyuカラーシャンプー ... [Tab] 4987205825040"></textarea>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 pt-3 border-t">
+                <button onclick="closeMasterImportModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">キャンセル</button>
+                <button onclick="executeMasterImport()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-xs font-medium">一括インポートを実行</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- マスタ登録・編集モーダル -->
+    <div id="masterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="masterModalTitle" class="font-bold text-sm">マスタ登録・編集 (Firestore)</h3>
+                <button onclick="closeMasterModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <input type="hidden" id="editMasterIndex" value="-1">
+            <div class="space-y-4 text-xs">
+                <div>
+                    <label class="font-semibold block mb-1">SKUコード（枝番なしのベースコード）</label>
+                    <input type="text" id="modalKey" class="w-full border rounded px-3 py-2 font-mono bg-slate-50" placeholder="例: 4901275063782">
+                </div>
+                
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="font-semibold">紐付く商品構成（複数登録可）</label>
+                        <button onclick="addModalItemRow()" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2.5 py-1 rounded font-medium"><i class="fa-solid fa-plus mr-1"></i>商品を追加</button>
+                    </div>
+                    <div id="modalItemsContainer" class="space-y-2 border p-3 rounded-xl bg-slate-50/50 max-h-60 overflow-y-auto">
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 pt-3 border-t">
+                <button onclick="closeMasterModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">キャンセル</button>
+                <button onclick="saveMasterToFirestore()" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs font-medium">Firestoreに保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- シート貼り付け用コピモーダル -->
+    <div id="sheetCopyModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (注文番号, 商品名和名, 総数量)</h3>
+                <button onclick="closeSheetCopyModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。</p>
+            <div>
+                <textarea id="sheetCopyTextarea" rows="10" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50 select-all" readonly></textarea>
+            </div>
+            <div class="flex justify-end space-x-2 pt-2 border-t">
+                <button onclick="closeSheetCopyModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">閉じる</button>
+                <button onclick="copySheetDataToClipboard()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-regular fa-copy mr-1"></i>一括コピーする</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 検品書モーダル -->
+    <div id="inspectionModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3 no-print">
+                <h3 class="font-bold"><i class="fa-solid fa-print text-amber-600 mr-2"></i>検品書プレビュー (100mm×150mm)</h3>
+                <div class="flex space-x-2">
+                    <button onclick="printInspection()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>検品書を印刷</button>
+                    <button onclick="closeInspectionModal()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div id="inspectionPrintArea" class="space-y-6"></div>
+        </div>
+    </div>
+
+    <!-- トータルピックリストモーダル -->
+    <div id="totalPickingModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3 no-print">
+                <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs text-slate-400 font-normal ml-2">※行をドラッグして並び替えできます</span></h3>
+                <div class="flex space-x-2">
+                    <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
+                    <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div class="overflow-x-auto border rounded-xl">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-slate-100 border-b">
+                        <tr>
+                            <th class="px-2 py-3 text-center w-8"><i class="fa-solid fa-grip-vertical text-slate-400"></i></th>
+                            <th class="px-4 py-3">棚番</th>
+                            <th class="px-4 py-3">商品名</th>
+                            <th class="px-4 py-3 text-center">必要総数量</th>
+                        </tr>
+                    </thead>
+                    <tbody id="totalPickingBody" class="divide-y"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- コピー成功トースト通知 -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white text-xs px-4 py-2 rounded-lg shadow-lg hidden z-50 transition-all">
+        コピーしました！
+    </div>
+
+    <script>
+        const COLLECTION_NAME = "medicarry_products_master";
+
+        let multiplierMaster = [];
+        let allFilesRawData = [];
+        let processedDataRows = [];
+
+        window.initFirestoreMaster = async function() {
+            try {
+                const querySnapshot = await window.firebaseFns.getDocs(window.firebaseFns.collection(window.db, COLLECTION_NAME));
+                multiplierMaster = [];
+                querySnapshot.forEach((docSnap) => {
+                    multiplierMaster.push(docSnap.data());
+                });
+
+                updateMasterCountBadge();
+                renderMasterTable();
+            } catch (err) {
+                console.error("Firestore読み込みエラー:", err);
+                alert("Firestoreからのマスタ読み込みに失敗しました。インターネット接続やFirebase設定を確認してください。");
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            setupFileHandlers();
+        });
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById('toast');
+                toast.classList.remove('hidden');
+                setTimeout(() => { toast.classList.add('hidden'); }, 1500);
+            }).catch(err => { alert('コピーに失敗しました'); });
+        }
+
+        function switchTab(tabName) {
+            const isOrders = tabName === 'orders';
+            document.getElementById('tabBtnOrders').className = isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
+            document.getElementById('tabBtnMaster').className = !isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
+            document.getElementById('tabContentOrders').classList.toggle('hidden', !isOrders);
+            document.getElementById('tabContentMaster').classList.toggle('hidden', isOrders);
+            if (!isOrders) renderMasterTable();
+        }
+
+        function updateMasterCountBadge() {
+            document.getElementById('masterCountBadge').innerText = multiplierMaster.length;
+        }
+
+        function openMasterImportModal() {
+            document.getElementById('masterCsvInput').value = '';
+            document.getElementById('masterPasteTextarea').value = '';
+            document.getElementById('masterImportModal').classList.remove('hidden');
+        }
+
+        function closeMasterImportModal() {
+            document.getElementById('masterImportModal').classList.add('hidden');
+        }
+
+        async function executeMasterImport() {
+            const csvFileInput = document.getElementById('masterCsvInput');
+            const pasteText = document.getElementById('masterPasteTextarea').value.trim();
+
+            let rowsToImport = [];
+
+            if (csvFileInput.files.length > 0) {
+                const file = csvFileInput.files[0];
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    try {
+                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                        for (let i = 1; i < rows.length; i++) {
+                            let r = rows[i];
+                            if (r && r.length >= 2) {
+                                let name = String(r[0] || "").trim();
+                                let sku = String(r[1] || "").trim();
+                                if (/^\d{8,15}$/.test(name) && !/^\d{8,15}$/.test(sku)) {
+                                    let tmp = name; name = sku; sku = tmp;
+                                }
+                                if (sku && name) {
+                                    rowsToImport.push({ key: sku, jpName: name });
+                                }
+                            }
+                        }
+                        await saveImportedRows(rowsToImport);
+                    } catch (err) {
+                        console.error(err);
+                        alert('ファイルの読み込みに失敗しました');
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } else if (pasteText) {
+                const lines = pasteText.split(/\r?\n/);
+                lines.forEach(line => {
+                    const cols = line.split('\t');
+                    if (cols.length >= 2) {
+                        let name = cols[0].trim();
+                        let sku = cols[1].trim();
+                        if (/^\d{8,15}$/.test(name) && !/^\d{8,15}$/.test(sku)) {
+                            let tmp = name; name = sku; sku = tmp;
+                        }
+                        if (sku && name) {
+                            rowsToImport.push({ key: sku, jpName: name });
+                        }
+                    }
+                });
+                await saveImportedRows(rowsToImport);
+            } else {
+                alert('ファイルを選択するか、テキストを貼り付けてください。');
+            }
+        }
+
+        async function saveImportedRows(rows) {
+            if (rows.length === 0) {
+                alert('有効なデータが見つかりませんでした。');
+                return;
+            }
+            try {
+                for (let r of rows) {
+                    const newData = {
+                        key: r.key,
+                        items: [{ jpName: r.jpName, shelf: "未設定", multiplier: 1 }]
+                    };
+                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.key), newData);
+                }
+                await window.initFirestoreMaster();
+                closeMasterImportModal();
+                alert(`${rows.length}件のマスタをインポートしました！`);
+            } catch (e) {
+                console.error(e);
+                alert('インポート中にエラーが発生しました');
+            }
+        }
+
+        async function clearMasterFirestore() {
+            if (confirm('Firestore上のマスタをすべて削除しますか？')) {
+                try {
+                    for (let m of multiplierMaster) {
+                        await window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, m.key));
+                    }
+                    multiplierMaster = [];
+                    updateMasterCountBadge();
+                    renderMasterTable();
+                    alert('すべて削除しました');
+                } catch (e) {
+                    console.error(e);
+                    alert('削除に失敗しました');
+                }
+            }
+        }
+
+        function renderMasterTable() {
+            const tbody = document.getElementById('masterTableBody');
+            const query = (document.getElementById('masterSearchInput')?.value || "").toLowerCase();
+            tbody.innerHTML = '';
+            const filtered = multiplierMaster.filter(r => {
+                let matchKey = r.key.toLowerCase().includes(query);
+                let matchItem = r.items.some(it => it.jpName.toLowerCase().includes(query) || (it.shelf && it.shelf.toLowerCase().includes(query)));
+                return matchKey || matchItem;
+            });
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" class="px-4 py-4 text-center text-slate-400">マスタがありません</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(rule => {
+                const idx = multiplierMaster.findIndex(m => m.key === rule.key);
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 align-top';
+                
+                let itemsHtml = rule.items.map(it => `
+                    <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
+                        <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${it.shelf || '未設定'}</span>
+                        <span class="font-semibold text-slate-800 flex-grow">${it.jpName}</span>
+                        <span class="text-indigo-600 font-bold">× ${it.multiplier}</span>
+                    </div>
+                `).join('');
+
+                tr.innerHTML = `
+                    <td class="px-4 py-3 font-mono font-medium w-48">
+                        <button onclick="copyToClipboard('${rule.key}')" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
+                            <span>${rule.key}</span>
+                            <i class="fa-regular fa-copy text-[10px]"></i>
+                        </button>
+                    </td>
+                    <td class="px-4 py-3">${itemsHtml}</td>
+                    <td class="px-4 py-3 text-right space-x-1 w-24">
+                        <button onclick="openMasterEditModal(${idx})" class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
+                        <button onclick="deleteMasterRule('${rule.key}')" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
+                    </td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function openMasterEditModal(idx) {
+            document.getElementById('masterModal').classList.remove('hidden');
+            const container = document.getElementById('modalItemsContainer');
+            container.innerHTML = '';
+
+            if (idx >= 0) {
+                const r = multiplierMaster[idx];
+                document.getElementById('editMasterIndex').value = idx;
+                document.getElementById('modalKey').value = r.key;
+                document.getElementById('modalKey').readOnly = true;
+                
+                if (r.items && r.items.length > 0) {
+                    r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier));
+                } else {
+                    addModalItemRow();
+                }
+            } else {
+                document.getElementById('editMasterIndex').value = -1;
+                document.getElementById('modalKey').value = '';
+                document.getElementById('modalKey').readOnly = false;
+                addModalItemRow();
+            }
+        }
+
+        function addModalItemRow(jpName = '', shelf = '', multiplier = 1) {
+            const container = document.getElementById('modalItemsContainer');
+            const div = document.createElement('div');
+            div.className = "flex gap-2 items-center bg-white p-2.5 rounded-lg border shadow-sm";
+            div.innerHTML = `
+                <div class="flex-grow space-y-1">
+                    <input type="text" placeholder="正式商品名" value="${jpName}" class="modal-jpname w-full border rounded px-2 py-1 text-xs font-semibold">
+                </div>
+                <div class="w-24">
+                    <input type="text" placeholder="棚番" value="${shelf}" class="modal-shelf w-full border rounded px-2 py-1 text-xs text-center font-bold">
+                </div>
+                <div class="w-20">
+                    <input type="number" placeholder="数量" min="1" value="${multiplier}" class="modal-mult w-full border rounded px-2 py-1 text-xs text-center font-bold text-indigo-600">
+                </div>
+                <button onclick="this.parentElement.remove()" class="text-rose-500 hover:text-rose-700 px-2 py-1 text-xs"><i class="fa-solid fa-trash"></i></button>
+            `;
+            container.appendChild(div);
+        }
+
+        function closeMasterModal() { document.getElementById('masterModal').classList.add('hidden'); }
+
+        async function saveMasterToFirestore() {
+            const key = document.getElementById('modalKey').value.trim();
+            if (!key) { alert('SKUコードを入力してください'); return; }
+
+            const rows = document.querySelectorAll('#modalItemsContainer > div');
+            if (rows.length === 0) { alert('最低1つ以上の商品を登録してください'); return; }
+
+            let items = [];
+            rows.forEach(r => {
+                let jpName = r.querySelector('.modal-jpname').value.trim();
+                let shelf = r.querySelector('.modal-shelf').value.trim();
+                let multiplier = parseInt(r.querySelector('.modal-mult').value, 10) || 1;
+                if (jpName) {
+                    items.push({ jpName, shelf, multiplier });
+                }
+            });
+
+            if (items.length === 0) { alert('有効な商品名を入力してください'); return; }
+
+            const newData = { key, items };
+
+            try {
+                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, key), newData);
+                await window.initFirestoreMaster();
+                closeMasterModal();
+                if (allFilesRawData.length > 0) processAllData();
+                alert('Firestoreに保存しました');
+            } catch (e) {
+                console.error(e);
+                alert('保存に失敗しました');
+            }
+        }
+
+        async function deleteMasterRule(key) {
+            if (confirm(`SKU「${key}」を削除しますか？`)) {
+                try {
+                    await window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, key));
+                    await window.initFirestoreMaster();
+                } catch (e) {
+                    console.error(e);
+                    alert('削除に失敗しました');
+                }
+            }
+        }
+
+        function setupFileHandlers() {
+            const drop = document.getElementById('dropZone');
+            const input = document.getElementById('fileInput');
+            drop.addEventListener('dragover', e => e.preventDefault());
+            drop.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+            input.addEventListener('change', e => { if (e.target.files.length) handleFiles(e.target.files); });
+        }
+
+        function handleFiles(files) {
+            document.getElementById('loadingState').classList.remove('hidden');
+            let loaded = 0;
+            const listEl = document.getElementById('fileList');
+            document.getElementById('fileListContainer').classList.remove('hidden');
+
+            Array.from(files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    try {
+                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                        if (rows.length) {
+                            allFilesRawData.push({ name: file.name, rows });
+                            const li = document.createElement('li');
+                            li.innerHTML = `<i class="fa-solid fa-file-excel text-emerald-600 mr-1"></i>${file.name} (${rows.length - 1}行)`;
+                            listEl.appendChild(li);
+                        }
+                    } catch (err) { alert('読込失敗'); }
+                    if (++loaded === files.length) {
+                        document.getElementById('loadingState').classList.add('hidden');
+                        processAllData();
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function extractSku(text) {
+            if (!text) return "";
+            let m = text.match(/SKU\s*Reference\s*No\.?:\s*([^;]+)/i) || text.match(/商品選項貨號:\s*([^;]+)/i);
+            return m ? m[1].trim() : "";
+        }
+
+        function parseSkuAndMultiplier(rawSku) {
+            if (!rawSku) return { baseSku: "", suffixMult: 1 };
+            const lastUnderscoreIdx = rawSku.lastIndexOf('_');
+            if (lastUnderscoreIdx !== -1) {
+                const potentialNum = parseInt(rawSku.substring(lastUnderscoreIdx + 1), 10);
+                if (!isNaN(potentialNum)) {
+                    return {
+                        baseSku: rawSku.substring(0, lastUnderscoreIdx),
+                        suffixMult: potentialNum
+                    };
+                }
+            }
+            return { baseSku: rawSku, suffixMult: 1 };
+        }
+
+        function processItemText(trackingNum, orderSn, productInfo) {
+            const rawSku = extractSku(productInfo);
+            const { baseSku, suffixMult } = parseSkuAndMultiplier(rawSku);
+            
+            let matched = multiplierMaster.find(r => r.key.toLowerCase() === baseSku.toLowerCase());
+
+            let results = [];
+            if (matched && matched.items && matched.items.length > 0) {
+                matched.items.forEach(it => {
+                    results.push({
+                        trackingNum,
+                        orderSn,
+                        sku: rawSku,
+                        baseSku,
+                        item: productInfo,
+                        jpName: it.jpName,
+                        shelf: it.shelf || '',
+                        baseQty: 1,
+                        multiplier: (it.multiplier || 1) * suffixMult
+                    });
+                });
+            } else {
+                results.push({
+                    trackingNum,
+                    orderSn,
+                    sku: rawSku,
+                    baseSku,
+                    item: productInfo,
+                    jpName: productInfo,
+                    shelf: '',
+                    baseQty: 1,
+                    multiplier: suffixMult
+                });
+            }
+
+            return results;
+        }
+
+        function processAllData() {
+            processedDataRows = [];
+            allFilesRawData.forEach(fileObj => {
+                fileObj.rows.slice(1).forEach(row => {
+                    const trackingNum = row[0] !== undefined ? row[0] : "";
+                    const orderSn = row[1] !== undefined ? row[1] : "";
+                    const productInfo = row[2] !== undefined ? String(row[2]) : "";
+                    if (!productInfo.trim()) return;
+
+                    productInfo.split(/\r?\n/).forEach(item => {
+                        if (item.trim()) processedDataRows.push(...processItemText(trackingNum, orderSn, item.trim()));
+                    });
+                });
+            });
+            renderResults();
+        }
+
+        function renderResults() {
+            document.getElementById('resultSection').classList.remove('hidden');
+            document.getElementById('resultSubtitle').innerText = `合計 ${processedDataRows.length} 行`;
+            document.getElementById('rowCountBadge').innerText = `全 ${processedDataRows.length} 行`;
+            
+            const tbody = document.getElementById('previewBody');
+            tbody.innerHTML = '';
+
+            processedDataRows.forEach((row, i) => {
+                const total = row.baseQty * row.multiplier;
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50';
+                
+                let skuCellHtml = row.sku ? `
+                    <button onclick="copyToClipboard('${row.sku}')" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
+                        <span class="font-mono text-xs">${row.sku}</span>
+                        <i class="fa-regular fa-copy text-[10px]"></i>
+                    </button>
+                ` : '<span class="text-slate-400">-</span>';
+
+                tr.innerHTML = `
+                    <td class="px-2 py-2 text-center text-slate-400">${i+1}</td>
+                    <td class="px-4 py-2 font-mono text-xs">${row.trackingNum}</td>
+                    <td class="px-4 py-2 font-mono text-xs">${row.orderSn}</td>
+                    <td class="px-4 py-2">${skuCellHtml}</td>
+                    <td class="px-4 py-2 space-y-1">
+                        <div class="flex items-center space-x-2">
+                            <span class="bg-indigo-50 text-indigo-700 font-bold text-[10px] px-2 py-0.5 rounded">棚: ${row.shelf || '未設定'}</span>
+                            <input type="text" value="${row.jpName}" onchange="processedDataRows[${i}].jpName=this.value" class="border rounded px-2 py-1 w-full text-xs font-bold bg-white">
+                        </div>
+                        <div class="text-[11px] text-slate-500 whitespace-normal break-all"><b>元情報:</b> ${row.item}</div>
+                    </td>
+                    <td class="px-4 py-2 text-center">${row.baseQty}</td>
+                    <td class="px-4 py-2 text-center"><input type="number" value="${row.multiplier}" min="1" onchange="updateMult(${i}, this.value)" class="border rounded w-16 text-center font-semibold text-indigo-600">x</td>
+                    <td class="px-4 py-2 text-center font-bold text-emerald-600" id="total-${i}">${total}</td>
+                    <td class="px-4 py-2 text-center"><button onclick="registerRowFromPreview(${i})" class="bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-xs">登録</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateMult(i, val) {
+            processedDataRows[i].multiplier = parseInt(val, 10) || 1;
+            document.getElementById(`total-${i}`).innerText = processedDataRows[i].baseQty * processedDataRows[i].multiplier;
+        }
+
+        async function registerRowFromPreview(i) {
+            const r = processedDataRows[i];
+            if (!r.baseSku) { alert('SKUがありません'); return; }
+            
+            let m = multiplierMaster.find(x => x.key.toLowerCase() === r.baseSku.toLowerCase());
+            let items = m ? [...m.items] : [];
+            let existingItem = items.find(it => it.jpName === r.jpName);
+            
+            if (existingItem) {
+                existingItem.multiplier = r.multiplier;
+                existingItem.shelf = r.shelf;
+            } else {
+                items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: r.multiplier });
+            }
+
+            const newData = { key: r.baseSku, items };
+            try {
+                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.baseSku), newData);
+                await window.initFirestoreMaster();
+                alert('Firestoreのマスタに登録しました');
+            } catch (e) {
+                console.error(e);
+                alert('登録に失敗しました');
+            }
+        }
+
+        async function registerAllToMaster() {
+            try {
+                for (let r of processedDataRows) {
+                    if (!r.baseSku) continue;
+                    let m = multiplierMaster.find(x => x.key.toLowerCase() === r.baseSku.toLowerCase());
+                    let items = m ? [...m.items] : [];
+                    let existingItem = items.find(it => it.jpName === r.jpName);
+                    
+                    if (existingItem) {
+                        existingItem.multiplier = r.multiplier;
+                        existingItem.shelf = r.shelf;
+                    } else {
+                        items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: r.multiplier });
+                    }
+
+                    const newData = { key: r.baseSku, items };
+                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.baseSku), newData);
+                }
+                await window.initFirestoreMaster();
+                alert('すべての行をFirestoreのマスタに一括登録しました');
+            } catch (e) {
+                console.error(e);
+                alert('一括登録に失敗しました');
+            }
+        }
+
+        function openSheetCopyModal() {
+            if (!processedDataRows.length) return;
+            let lines = ["注文番号\t商品名和名\t総数量"];
+            processedDataRows.forEach(r => {
+                let total = r.baseQty * r.multiplier;
+                lines.push(`${r.orderSn}\t${r.jpName}\t${total}`);
+            });
+            document.getElementById('sheetCopyTextarea').value = lines.join('\n');
+            document.getElementById('sheetCopyModal').classList.remove('hidden');
+        }
+
+        function closeSheetCopyModal() {
+            document.getElementById('sheetCopyModal').classList.add('hidden');
+        }
+
+        function copySheetDataToClipboard() {
+            const textarea = document.getElementById('sheetCopyTextarea');
+            textarea.select();
+            textarea.setSelectionRange(0, 999999);
+            navigator.clipboard.writeText(textarea.value).then(() => {
+                const toast = document.getElementById('toast');
+                toast.classList.remove('hidden');
+                setTimeout(() => { toast.classList.add('hidden'); }, 1500);
+            }).catch(err => { alert('コピーに失敗しました'); });
+        }
+
+        function openInspectionModal() {
+            if (!processedDataRows.length) return;
+            const area = document.getElementById('inspectionPrintArea');
+            area.innerHTML = '';
+            let map = {};
+            processedDataRows.forEach(r => {
+                let sn = r.orderSn || "UNKNOWN";
+                if (!map[sn]) map[sn] = { tracking: r.trackingNum, items: [] };
+                map[sn].items.push(r);
+            });
+
+            Object.keys(map).forEach(sn => {
+                let o = map[sn];
+                let slip = document.createElement('div');
+                slip.className = "inspection-slip bg-white border-2 border-slate-800 p-4 rounded-xl mx-auto mb-6 shadow-sm";
+                slip.style.width = "100mm"; 
+                slip.style.minHeight = "150mm";
+                
+                let itemsHtml = o.items.map(it => `
+                    <tr class="border-b text-xs">
+                        <td class="py-2.5 px-1 font-bold">${it.jpName}<br><span class="text-[9px] text-slate-500 font-normal">棚: ${it.shelf||'-'} | SKU: ${it.sku||'-'}</span></td>
+                        <td class="py-2.5 px-1 text-center font-bold text-indigo-600 text-sm">${it.baseQty*it.multiplier}</td>
+                    </tr>
+                `).join('');
+
+                slip.innerHTML = `
+                    <div class="flex justify-between border-b-2 border-slate-800 pb-2 mb-3">
+                        <div><div class="text-[10px] text-slate-500 font-bold">注文番号</div><div class="text-xs font-mono font-bold">${sn}</div></div>
+                        <div class="text-right"><div class="text-[10px] text-slate-500 font-bold">追跡番号</div><div class="text-xs font-mono font-bold">${o.tracking}</div></div>
+                    </div>
+                    <table class="w-full text-left border-collapse mb-4">
+                        <thead>
+                            <tr class="bg-slate-100 text-[10px] text-slate-600 border-b">
+                                <th class="py-1.5 px-1">商品名</th>
+                                <th class="py-1.5 px-1 text-center w-12">数量</th>
+                            </tr>
+                        </thead>
+                        <tbody>${itemsHtml}</tbody>
+                    </table>
+                    <div class="text-center pt-4 border-t border-dashed text-[10px] text-slate-400 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
+                `;
+                area.appendChild(slip);
+            });
+            document.getElementById('inspectionModal').classList.remove('hidden');
+        }
+
+        function closeInspectionModal() { document.getElementById('inspectionModal').classList.add('hidden'); }
+
+        function printInspection() {
+            document.body.classList.add('printing-inspection');
+            window.print();
+            document.body.classList.remove('printing-inspection');
+        }
+
+        function openTotalPickingModal() {
+            if (!processedDataRows.length) return;
+            let map = {};
+            processedDataRows.forEach(r => {
+                let k = (r.shelf || '未設定') + "_" + r.jpName;
+                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, total: 0 };
+                map[k].total += r.baseQty * r.multiplier;
+            });
+            let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf));
+            
+            const tbody = document.getElementById('totalPickingBody');
+            tbody.innerHTML = '';
+            
+            sorted.forEach((x, index) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 draggable-row';
+                tr.draggable = true;
+                tr.dataset.index = index;
+                tr.innerHTML = `
+                    <td class="px-2 py-2 text-center cursor-grab text-slate-400"><i class="fa-solid fa-grip-vertical"></i></td>
+                    <td class="px-4 py-2 font-bold text-indigo-700 shelf-col">${x.shelf}</td>
+                    <td class="px-4 py-2 font-semibold name-col">${x.name}</td>
+                    <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base total-col">${x.total}</td>
+                `;
+                
+                // ドラッグ＆ドロップイベントの設定
+                tr.addEventListener('dragstart', e => {
+                    tr.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', index);
+                });
+                tr.addEventListener('dragend', () => {
+                    tr.classList.remove('dragging');
+                });
+                tr.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    const draggingEl = tbody.querySelector('.dragging');
+                    const afterElement = getDragAfterElement(tbody, e.clientY);
+                    if (afterElement == null) {
+                        tbody.appendChild(draggingEl);
+                    } else {
+                        tbody.insertBefore(draggingEl, afterElement);
+                    }
+                });
+
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('totalPickingModal').classList.remove('hidden');
+        }
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.draggable-row:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        function closeTotalPickingModal() { document.getElementById('totalPickingModal').classList.add('hidden'); }
+
+        function printPicking() {
+            document.body.classList.add('printing-picking');
+            window.print();
+            document.body.classList.remove('printing-picking');
+        }
+
+        function downloadExcel() {
+            if (!processedDataRows.length) return;
+            let data = [['tracking_number', 'order_sn', 'sku_code', 'product_name_jp', 'original_product_info', 'base_quantity', 'multiplier', 'total_quantity']];
+            processedDataRows.forEach(r => data.push([r.trackingNum, r.orderSn, r.sku, r.jpName, r.item, r.baseQty, r.multiplier, r.baseQty*r.multiplier]));
+            let ws = XLSX.utils.aoa_to_sheet(data);
+            let wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "処理結果");
+            XLSX.writeFile(wb, `受注データ_処理結果_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }
+
+        function resetApp() {
+            allFilesRawData = []; processedDataRows = [];
+            document.getElementById('fileInput').value = '';
+            document.getElementById('fileList').innerHTML = '';
+            document.getElementById('fileListContainer').classList.add('hidden');
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
