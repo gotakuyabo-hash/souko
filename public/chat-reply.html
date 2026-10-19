@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatwork 未読バーストコックピット (爆速キャッシュ版)</title>
+    <title>Chatwork 未読バーストコックピット (完全安定版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -157,7 +157,7 @@
         let unreadRoomsCache = [];
         let roomMembersCache = {};
         let messageCache = {};
-        let roomDataCache = {}; // 💡 高速化のためのメモリキャッシュ
+        let roomDataCache = {};
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
         let aiDraftMemory = {};
@@ -185,12 +185,12 @@
         }
 
         function onAccountChange() {
-            roomDataCache = {}; // アカウント切替時はキャッシュクリア
+            roomDataCache = {};
             refreshCurrentView();
         }
 
         function refreshCurrentView() {
-            roomDataCache = {}; // 🔄 更新時はキャッシュをクリアして最新を取得
+            roomDataCache = {};
             if (currentMode === 'burst') fetchAllUnreadRooms();
             else if (currentMode === 'unreplied') fetchUnrepliedRooms();
             else if (currentMode === 'later') renderLaterRooms();
@@ -277,6 +277,7 @@
             });
         }
 
+        // ⚠️ 未対応ルーム取得（アコーディオン方式）
         async function fetchUnrepliedRooms() {
             const container = document.getElementById('unrepliedModeContainer');
             const statusEl = document.getElementById('loadStatus');
@@ -296,7 +297,7 @@
 
                 container.innerHTML = '';
                 unrepliedList.forEach(r => {
-                    renderBurstCard(container, r.roomId, r.roomName, `⚠️ 未対応 (${r.senderName})`, "border-rose-200");
+                    renderUnrepliedAccordionCard(container, r.roomId, r.roomName, `⚠️ 未対応 (${r.senderName})`, "border-rose-200");
                 });
 
                 statusEl.textContent = `未対応 ${unrepliedList.length}件`;
@@ -306,6 +307,80 @@
                 statusEl.textContent = "エラー";
             }
         }
+
+        function renderUnrepliedAccordionCard(container, roomId, roomName, badgeText, borderColor) {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl shadow-sm overflow-hidden transition`;
+            cardDiv.innerHTML = `
+                <div class="p-3.5 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition">
+                    <div onclick="toggleUnrepliedAccordion('${roomId}', '${container.id}')" class="flex items-center gap-2 min-w-0 mr-2 flex-1 cursor-pointer">
+                        <span class="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${badgeText}</span>
+                        <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button onclick="dismissUnrepliedRoom('${roomId}', event)" class="bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-700 text-[10px] font-bold px-2 py-1 rounded shadow-sm cursor-pointer" title="退会済みセラーなどを一覧から除外">🚫 除外</button>
+                        <div onclick="toggleUnrepliedAccordion('${roomId}', '${container.id}')" class="text-indigo-600 font-bold text-xs cursor-pointer">
+                            <span id="accordion_icon_${container.id}_${roomId}">▼ 開く</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="accordion_body_${container.id}_${roomId}" class="p-3.5 border-t border-slate-100 space-y-3" style="display:none;" data-loaded="false">
+                    <div class="text-center text-xs text-slate-400 py-4">メッセージを読み込み中...</div>
+                </div>
+            `;
+            container.appendChild(cardDiv);
+        }
+
+        window.dismissUnrepliedRoom = async function(roomId, event) {
+            event.stopPropagation();
+            if (!confirm("このルームを未対応リストから除外しますか？")) return;
+            try {
+                await callApi("update_room_status", { room_id: roomId, status: "dismissed" });
+                alert("未対応リストから除外しました。");
+                fetchUnrepliedRooms();
+            } catch (e) {
+                alert("除外失敗: " + e.message);
+            }
+        };
+
+        window.toggleUnrepliedAccordion = async function(roomId, containerId) {
+            const bodyEl = document.getElementById(`accordion_body_${containerId}_${roomId}`);
+            const iconEl = document.getElementById(`accordion_icon_${containerId}_${roomId}`);
+            
+            if (bodyEl.style.display === 'none') {
+                bodyEl.style.display = 'block';
+                iconEl.textContent = '▲ 閉じる';
+
+                if (bodyEl.getAttribute('data-loaded') === 'false') {
+                    try {
+                        let roomData;
+                        if (roomDataCache[roomId]) {
+                            roomData = roomDataCache[roomId];
+                        } else {
+                            roomData = await callApi("get_room_data", { room_id: roomId });
+                            roomDataCache[roomId] = roomData;
+                        }
+                        const msgs = roomData.messages || [];
+                        roomMembersCache[roomId] = roomData.members || [];
+                        const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
+                        const roomName = roomObj ? roomObj.name : "ルーム";
+
+                        if (msgs.length === 0) {
+                            bodyEl.innerHTML = '<div class="text-xs text-slate-500 text-center py-4">メッセージはありません</div>';
+                            return;
+                        }
+
+                        bodyEl.innerHTML = buildCardContent(roomId, roomName, msgs, roomData.members || [], false, 10);
+                        bodyEl.setAttribute('data-loaded', 'true');
+                    } catch (e) {
+                        bodyEl.innerHTML = `<div class="text-xs text-red-500 text-center py-4">メッセージ取得失敗: ${e.message}</div>`;
+                    }
+                }
+            } else {
+                bodyEl.style.display = 'none';
+                iconEl.textContent = '▼ 開く';
+            }
+        };
 
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
@@ -324,7 +399,7 @@
             try {
                 let roomData;
                 if (roomDataCache[roomId]) {
-                    roomData = roomDataCache[roomId]; // 💡 キャッシュがあればAPIを叩かない
+                    roomData = roomDataCache[roomId];
                 } else {
                     roomData = await callApi("get_room_data", { room_id: roomId });
                     roomDataCache[roomId] = roomData;
@@ -344,7 +419,7 @@
                             <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
                     </div>
-                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true)}
+                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true, 1)}
                 `;
             } catch (e) {
                 cardDiv.querySelector('.msg-loading').innerHTML = '<span class="text-red-500">メッセージ取得失敗</span>';
@@ -428,7 +503,8 @@
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], true);
+                // 💡 通常個別はチャット10件表示
+                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], false, 10);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
@@ -576,7 +652,6 @@
 
                 container.innerHTML = '';
                 
-                // 🚀 並列（Promise.all）処理で高速一括ロード
                 await Promise.all(unreadRoomsCache.map(room => {
                     const unread = Number(room.unread_num !== undefined ? room.unread_num : (room.unread_count || 0));
                     return renderBurstCard(container, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`);
@@ -591,19 +666,43 @@
             }
         }
 
-        function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
+        // 表示件数を指定できるカード内容生成関数 (limitCount: 1なら最新1件、10なら直近10件)
+        function buildCardContent(roomId, roomName, messages, members, isSingle = false, limitCount = 1) {
             let chatHistoryHtml = '';
             let latestMsg = messages[messages.length - 1] || {};
-            const sender = latestMsg.account ? latestMsg.account.name : "相手";
-            const body = latestMsg.body || "";
-            const parsed = parseFiles(body, latestMsg.files, roomId);
 
-            chatHistoryHtml = `
-                <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1.5 max-w-full overflow-hidden">
-                    <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
-                    ${parsed}
-                </div>
-            `;
+            if (limitCount === 1) {
+                const sender = latestMsg.account ? latestMsg.account.name : "相手";
+                const body = latestMsg.body || "";
+                const parsed = parseFiles(body, latestMsg.files, roomId);
+                chatHistoryHtml = `
+                    <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1.5 max-w-full overflow-hidden">
+                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
+                        ${parsed}
+                    </div>
+                `;
+            } else {
+                const chatCount = Math.min(messages.length, limitCount);
+                const recentMsgs = messages.slice(messages.length - chatCount);
+
+                recentMsgs.forEach(m => {
+                    const sender = m.account ? m.account.name : "相手";
+                    const body = m.body || "";
+                    const parsed = parseFiles(body, m.files, roomId);
+                    chatHistoryHtml += `
+                        <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
+                            <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
+                            ${parsed}
+                        </div>
+                    `;
+                });
+                chatHistoryHtml = `
+                    <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                        <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ履歴 (${chatCount}件)</div>
+                        ${chatHistoryHtml}
+                    </div>
+                `;
+            }
 
             messageCache[roomId] = latestMsg.body || "";
             const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
