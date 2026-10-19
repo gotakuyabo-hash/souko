@@ -464,6 +464,19 @@
 
         document.getElementById('staff-search').addEventListener('input', () => renderStaff());
 
+        // 長文の折りたたみ・展開切り替え関数
+        window.toggleTask = (id) => {
+            const container = document.getElementById(`task_container_${id}`);
+            const btn = document.getElementById(`btn_${id}`);
+            if (container.classList.contains('max-h-20')) {
+                container.classList.remove('max-h-20', 'overflow-hidden');
+                btn.textContent = '折りたたむ ▴';
+            } else {
+                container.classList.add('max-h-20', 'overflow-hidden');
+                btn.textContent = '続きを読む ▾';
+            }
+        };
+
         function renderStaff() {
             const kw = document.getElementById('staff-search').value.toLowerCase();
             const now = Date.now();
@@ -479,6 +492,11 @@
             list.innerHTML = filtered.map(s => {
                 const imgs = (s.imageUrls || []).map(url => `<img src="${url}" onclick="openImage('${url}')" class="h-16 w-16 object-cover rounded cursor-pointer border">`).join('');
                 const isComp = s.status === 'completed';
+                
+                const taskText = escapeHtml(s.task);
+                // 80文字超 または 改行が3行以上の場合に折りたたみの対象にする
+                const isLong = s.task.length > 80 || s.task.split('\n').length >= 3;
+
                 return `
                 <div class="card !mb-2 !p-3 ${isComp?'bg-gray-50':''}">
                     <div class="flex justify-between items-center text-xs mb-2">
@@ -488,7 +506,12 @@
                         </div>
                         <span class="text-gray-400">${s.createdAt ? new Date(s.createdAt.toDate()).toLocaleDateString() : ''}</span>
                     </div>
-                    <div class="text-sm whitespace-pre-wrap mb-2 text-gray-800">${escapeHtml(s.task)}</div>
+                    
+                    <div class="relative mb-2">
+                        <div id="task_container_${s.id}" class="text-sm text-gray-800 whitespace-pre-wrap ${isLong ? 'max-h-20 overflow-hidden' : ''}">${taskText}</div>
+                        ${isLong ? `<button type="button" id="btn_${s.id}" onclick="toggleTask('${s.id}')" class="text-xs text-blue-600 font-bold mt-1 block">続きを読む ▾</button>` : ''}
+                    </div>
+
                     <div class="flex gap-2 mb-2">${imgs}</div>
                     
                     ${isComp ? `
@@ -594,7 +617,6 @@
             const list = document.getElementById('mat-list');
             list.innerHTML = filtered.map(m => {
                 const isDone = m.status === "発注済み";
-                // 過去データに requester が残っている場合のフォールバックとして warehouse または requester を表示
                 const warehouseDisplay = m.warehouse || m.requester || '未設定';
                 return `
                 <div class="p-3 border rounded text-sm ${isDone?'bg-gray-100 opacity-75':''}">
