@@ -169,13 +169,26 @@ exports.checkUnorderedMaterials = onSchedule(
             }
 
             let messageText = `📦 *【定期通知】未発注の資材一覧*\n`;
+            let hasUnordered = false;
             
             snapshot.forEach(doc => {
                 const data = doc.data();
-                const itemName = data.itemName || data.title || data.name || "品名不明";
-                const quantity = data.quantity || "数量不明";
-                messageText += `>・ *${itemName}* （数量: ${quantity}） [ID: ${doc.id}]\n`;
+                const items = data.itemsData || [];
+
+                items.forEach(item => {
+                    if (item.status === "未発注") {
+                        hasUnordered = true;
+                        const itemName = item.name || item.itemName || item.title || "品名不明";
+                        const quantity = item.qty || item.quantity || "数量不明";
+                        messageText += `>・ *${itemName}* （数量: ${quantity}） [ID: ${doc.id}]\n`;
+                    }
+                });
             });
+
+            if (!hasUnordered) {
+                logger.info("未発注の資材はありません。");
+                return;
+            }
 
             await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/material.html", "資材発注を確認する");
             logger.info("未発注資材の定期通知を送信しました。");
@@ -347,7 +360,7 @@ exports.apiCreateZaicoShipment = onRequest(
                 const bc = String(item.barcode).trim();
                 const inventoryId = codeToInventoryIdMap.get(bc);
 
-            if (inventoryId) {
+                if (inventoryId) {
                     deliveries.push({
                         inventory_id: String(inventoryId),
                         quantity: String(item.pickCount)
@@ -368,7 +381,6 @@ exports.apiCreateZaicoShipment = onRequest(
 
             const slipNum = "SLIP-" + Date.now();
             
-            // 修正：日本時間（Asia/Tokyo）の当日の日付を "YYYY-MM-DD" 形式で取得
             const todayStr = new Date().toLocaleDateString('ja-JP', { 
                 timeZone: 'Asia/Tokyo', 
                 year: 'numeric', 
