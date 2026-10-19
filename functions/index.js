@@ -103,9 +103,12 @@ exports.notifySharedNotes = onDocumentWritten(
         if (!snap || !snap.after.exists) return;
         const docId = event.params.docId;
         const data = snap.after.data();
+        
         const title = data.title || data.name || "無題";
+        const category = data.category || "未分類";
+        const content = data.content ? (data.content.length > 50 ? data.content.substring(0, 50) + "..." : data.content) : "内容なし";
 
-        let messageText = `📝 *共有ノートが更新されました！*\n>・ *タイトル:* ${title}\n>・ *ID:* ${docId}`;
+        let messageText = `📝 *共有ノートが更新されました！*\n>・ *タイトル:* ${title}\n>・ *カテゴリ:* ${category}\n>・ *内容:* ${content}\n>・ *ID:* ${docId}`;
         await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/notes.html", "ノートを開く");
     }
 );
@@ -118,9 +121,13 @@ exports.notifyStaffRequests = onDocumentWritten(
         if (!snap || !snap.after.exists) return;
         const docId = event.params.docId;
         const data = snap.after.data();
-        const staffName = data.name || data.staffName || "スタッフ";
+        
+        const fromUser = data.from || "スタッフ";
+        const toUser = data.to || "未設定";
+        const taskContent = data.task || "内容なし";
+        const status = data.status || "pending";
 
-        let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *担当/氏名:* ${staffName}\n>・ *ID:* ${docId}`;
+        let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *依頼者:* ${fromUser}\n>・ *宛先:* ${toUser}\n>・ *内容:* ${taskContent}\n>・ *ステータス:* ${status}\n>・ *ID:* ${docId}`;
         await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/request.html", "要望を確認する");
     }
 );
