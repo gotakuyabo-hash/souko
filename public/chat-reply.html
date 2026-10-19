@@ -22,10 +22,11 @@
 
         // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
-            const roomId = document.getElementById('linkRoomId').value;
-            const roomName = document.getElementById('linkRoomName').value;
-            const senderName = document.getElementById('linkSenderName').value;
-            const messageBody = document.getElementById('linkMessageBody').value;
+            const roomId = btnEl.getAttribute('data-room-id');
+            const roomName = btnEl.getAttribute('data-room-name');
+            const senderName = btnEl.getAttribute('data-sender-name');
+            const messageBody = btnEl.getAttribute('data-message-body');
+            
             const fromVal = document.getElementById('linkFromInput').value;
             const toVal = document.getElementById('linkToInput').value;
             const memoVal = document.getElementById('linkMemoInput').value;
@@ -150,7 +151,6 @@
         let allRoomsCache = [];
         let unreadRoomsCache = [];
         let roomMembersCache = {};
-        let messageCache = {};
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
 
@@ -244,7 +244,7 @@
             });
         }
 
-        // ⚡ 未読タブ用カード描画
+        // ⚡ 未読タブ用カード描画（1件のみ表示）
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
@@ -275,20 +275,19 @@
                             <h3 class="font-bold text-xs text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
                     </div>
-                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true)}
+                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], 1)}
                 `;
             } catch (e) {
                 cardDiv.querySelector('.msg-loading').innerHTML = '<span class="text-red-500">メッセージ取得失敗</span>';
             }
         }
 
-        // 🚀 スタッフ間連絡モーダルを安全に開く
-        window.openStaffAppModal = function(roomId, roomName, senderName) {
-            const msgBody = messageCache[roomId] || "";
+        // 🚀 スタッフ間連絡モーダルを開く
+        window.openStaffAppModal = function(roomId, roomName, senderName, messageBody) {
             document.getElementById('linkRoomId').value = roomId;
             document.getElementById('linkRoomName').value = roomName;
             document.getElementById('linkSenderName').value = senderName;
-            document.getElementById('linkMessageBody').value = msgBody;
+            document.getElementById('linkMessageBody').value = messageBody;
             document.getElementById('modalOverlay').style.display = 'block';
             document.getElementById('modalLinkCopy').style.display = 'flex';
         };
@@ -352,11 +351,10 @@
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], false);
+                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], 10);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
-        // メッセージ本文のシンプル表示（ファイル取得機能を完全に排除）
         function parseMessageBody(body) {
             return `<div class="whitespace-pre-wrap break-all text-xs">${esc(body)}</div>`;
         }
@@ -401,36 +399,48 @@
             }
         }
 
-        // カード内部のHTML生成（直近2件表示、スクロール対応）
-        function buildCardContent(roomId, roomName, messages, members, isBurst = false) {
+        // カード内部のHTML生成（displayCount: 未読は1件、通常は10件）
+        function buildCardContent(roomId, roomName, messages, members, displayCount = 1) {
             let chatHistoryHtml = '';
             let latestMsg = {};
 
-            const chatCount = Math.min(messages.length, 2);
+            const chatCount = Math.min(messages.length, displayCount);
             const recentMsgs = messages.slice(messages.length - chatCount);
             latestMsg = messages[messages.length - 1] || {};
+            const lastChatId = latestMsg.message_id || "";
+            const chatworkRoomUrl = `https://www.chatwork.com/#!rid${roomId}`;
 
             recentMsgs.forEach(m => {
                 const sender = m.account ? m.account.name : "相手";
                 const body = m.body || "";
                 const parsed = parseMessageBody(body);
+                const msgId = m.message_id || "";
+                const safeBody = esc(body).replace(/'/g, "&#39;");
+
                 chatHistoryHtml += `
-                    <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 w-full box-border">
-                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
+                    <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2 w-full box-border">
+                        <div class="flex items-center justify-between">
+                            <span class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</span>
+                        </div>
                         ${parsed}
+                        <div class="grid grid-cols-2 gap-1.5 pt-1">
+                            <a href="${chatworkRoomUrl}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1 px-2 rounded text-center transition block truncate">
+                                🌐 公式ルーム
+                            </a>
+                            <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(sender)}', '${safeBody}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1 px-2 rounded shadow-sm transition cursor-pointer truncate">
+                                🚀 スタッフ連絡
+                            </button>
+                        </div>
                     </div>
                 `;
             });
+
             chatHistoryHtml = `
-                <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1 w-full box-border">
-                    <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ (${chatCount}件)</div>
+                <div class="space-y-2 max-h-60 overflow-y-auto pr-1 w-full box-border">
+                    <div class="text-[10px] font-bold text-slate-400">💬 メッセージ (${chatCount}件)</div>
                     ${chatHistoryHtml}
                 </div>
             `;
-
-            messageCache[roomId] = latestMsg.body || "";
-            const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
-            const chatworkRoomUrl = `https://www.chatwork.com/#!rid${roomId}`;
 
             let memberOptions = '<option value="">-- メンバーを選択してTo追加 --</option>';
             if (Array.isArray(members)) {
@@ -447,15 +457,6 @@
                 
                 ${chatHistoryHtml}
 
-                <div class="grid grid-cols-2 gap-2">
-                    <a href="${chatworkRoomUrl}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold py-1.5 px-2 rounded-lg text-center shadow-sm transition block truncate">
-                        🌐 公式ルームを開く
-                    </a>
-                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-2 rounded-lg shadow-sm transition cursor-pointer truncate">
-                        🚀 スタッフ連絡
-                    </button>
-                </div>
-                
                 <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100 w-full box-border">
                     <div class="flex items-center gap-1.5 pt-1">
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
@@ -466,8 +467,9 @@
 
                     <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-2 bg-white box-border"></textarea>
 
-                    <div class="pt-1">
-                        <button onclick="sendReplyMessage('${roomId}', this)" class="w-full bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 メッセージを送信</button>
+                    <div class="flex gap-2 pt-1">
+                        <button onclick="sendReplyMessage('${roomId}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 メッセージ送信</button>
+                        <button onclick="markAsRead('${roomId}', '${lastChatId}', this)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-1.5 px-3 rounded cursor-pointer">📖 既読にする</button>
                     </div>
                 </div>
             `;
@@ -491,6 +493,21 @@
             textarea.focus();
         };
 
+        // 📖 既読にする機能
+        window.markAsRead = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            btn.textContent = "処理中...";
+            try {
+                await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId });
+                alert("既読にしました！");
+                refreshCurrentView();
+            } catch (e) {
+                alert("既読エラー: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "📖 既読にする";
+            }
+        };
+
         // 📤 メッセージ送信
         window.sendReplyMessage = async function(roomId, btn) {
             const roomIdStr = String(roomId);
@@ -501,10 +518,10 @@
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
                 alert("送信しました！");
-                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
+                btn.disabled = false; btn.textContent = "📤 メッセージ送信";
             } catch (e) {
                 alert("送信失敗: " + e.message);
-                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
+                btn.disabled = false; btn.textContent = "📤 メッセージ送信";
             }
         };
     </script>
