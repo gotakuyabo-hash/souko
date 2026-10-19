@@ -244,10 +244,10 @@
             });
         }
 
-        // ⚡ 未読タブ用カード描画（1件のみ表示）
+        // ⚡ 未読タブ用カード描画
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
-            cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3`;
+            cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
             cardDiv.innerHTML = `
                 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                     <div class="flex items-center gap-2 min-w-0 mr-2">
@@ -356,118 +356,9 @@
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
-        // 📎 ファイル軽量プレビュー
-        window.fetchAndPreviewFile = async function(roomId, fileId, btnEl) {
-            const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
-            if (!container) return;
-
-            if (container.style.display !== 'none') {
-                container.style.display = 'none';
-                btnEl.textContent = '👁️ 表示';
-                return;
-            }
-
-            btnEl.disabled = true;
-            btnEl.textContent = '読込中...';
-
-            try {
-                const data = await callApi("get_room_file", { room_id: roomId, file_id: fileId });
-                const f = data.file;
-                if (!f || f.error || !f.download_url) {
-                    throw new Error("ダウンロードURLの取得に失敗しました");
-                }
-
-                const downloadUrl = f.download_url;
-                const filename = f.filename || `file_${fileId}`;
-                const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filename);
-
-                if (isImage) {
-                    container.innerHTML = `
-                        <div class="space-y-1.5">
-                            <div class="font-bold text-slate-700 truncate text-xs">${esc(filename)}</div>
-                            <img src="${downloadUrl}" alt="${esc(filename)}" class="max-h-36 rounded border object-contain mx-auto bg-slate-900">
-                            <div class="flex gap-1.5">
-                                <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-1 px-2 rounded text-center transition block">
-                                    📥 ダウンロード
-                                </a>
-                                <button onclick="closeFilePreview('${roomId}', '${fileId}')" class="bg-slate-300 text-slate-700 text-[11px] font-bold px-2 py-1 rounded cursor-pointer">閉じる</button>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    container.innerHTML = `
-                        <div class="space-y-1.5">
-                            <div class="font-bold text-slate-700 truncate text-xs">📎 ${esc(filename)}</div>
-                            <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1 px-2 rounded text-center transition block shadow">
-                                📥 直接ダウンロード
-                            </a>
-                        </div>
-                    `;
-                }
-
-                container.style.display = 'block';
-                btnEl.textContent = '🔼 隠す';
-            } catch (e) {
-                alert("ファイル取得エラー: " + e.message);
-                btnEl.textContent = '👁️ 表示';
-            } finally {
-                btnEl.disabled = false;
-            }
-        };
-
-        window.closeFilePreview = function(roomId, fileId) {
-            const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
-            const btn = document.getElementById(`file_btn_${roomId}_${fileId}`);
-            if (container) container.style.display = 'none';
-            if (btn) btn.textContent = '👁️ 表示';
-        };
-
-        // 📎 ファイルタグパーサー
-        function parseFiles(body, files, roomId) {
-            let rendered = esc(body);
-            rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
-                let fileId = "";
-                const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/);
-                if (fm) fileId = fm[1];
-
-                let rawFileName = "添付ファイル"; 
-                const dm = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/); 
-                if (dm) rawFileName = dm[1].trim();
-
-                let fileName = rawFileName;
-                let fileSize = "";
-                const sizeMatch = rawFileName.match(/^(.+?)\s*(\([\d\.]+\s*[KMG]B\))$/i);
-                if (sizeMatch) {
-                    fileName = sizeMatch[1].trim();
-                    fileSize = sizeMatch[2].trim();
-                }
-
-                const uniqueKey = `${roomId}_${fileId || Math.random().toString(36).substr(2, 5)}`;
-                const fileButtonId = `file_btn_${uniqueKey}`;
-                const previewContainerId = `file_inline_preview_${uniqueKey}`;
-
-                return `<div class="my-1.5 p-2 bg-indigo-50/80 rounded-lg border border-indigo-200 space-y-1 text-xs">
-                    <div class="flex items-center justify-between">
-                        <span class="font-bold text-indigo-900 text-[11px]">📎 添付ファイル</span>
-                        ${fileSize ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded-full font-bold">${fileSize}</span>` : ''}
-                    </div>
-                    <div class="font-semibold text-slate-800 break-all text-xs">${esc(fileName)}</div>
-                    ${fileId ? `
-                        <div class="flex items-center gap-1 pt-0.5">
-                            <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1 px-2.5 rounded text-center shadow-sm transition cursor-pointer">
-                                👁️ 表示
-                            </button>
-                        </div>
-                        <div id="${previewContainerId}" class="p-1.5 bg-white rounded border border-indigo-200 mt-1 text-xs" style="display:none;"></div>
-                    ` : `
-                        <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="inline-block bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1 px-2.5 rounded text-center shadow-sm transition">
-                            🌐 Chatworkで確認
-                        </a>
-                    `}
-                </div>`;
-            });
-
-            return `<div class="whitespace-pre-wrap break-words overflow-hidden text-xs">${rendered}</div>`;
+        // メッセージ本文のシンプル表示（ファイル取得機能を完全に排除）
+        function parseMessageBody(body) {
+            return `<div class="whitespace-pre-wrap break-all text-xs">${esc(body)}</div>`;
         }
 
         // ⚡ 未読ルーム一覧スキャン
@@ -510,45 +401,32 @@
             }
         }
 
-        // カード内部のHTML生成
-        function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
+        // カード内部のHTML生成（直近2件表示、スクロール対応）
+        function buildCardContent(roomId, roomName, messages, members, isBurst = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
 
-            if (isSingle) {
-                latestMsg = messages[messages.length - 1] || {};
-                const sender = latestMsg.account ? latestMsg.account.name : "相手";
-                const body = latestMsg.body || "";
-                const parsed = parseFiles(body, latestMsg.files, roomId);
-                chatHistoryHtml = `
-                    <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1.5 max-w-full overflow-hidden">
-                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
+            const chatCount = Math.min(messages.length, 2);
+            const recentMsgs = messages.slice(messages.length - chatCount);
+            latestMsg = messages[messages.length - 1] || {};
+
+            recentMsgs.forEach(m => {
+                const sender = m.account ? m.account.name : "相手";
+                const body = m.body || "";
+                const parsed = parseMessageBody(body);
+                chatHistoryHtml += `
+                    <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 w-full box-border">
+                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
                         ${parsed}
                     </div>
                 `;
-            } else {
-                const chatCount = Math.min(messages.length, 10);
-                const recentMsgs = messages.slice(messages.length - chatCount);
-                latestMsg = messages[messages.length - 1] || {};
-
-                recentMsgs.forEach(m => {
-                    const sender = m.account ? m.account.name : "相手";
-                    const body = m.body || "";
-                    const parsed = parseFiles(body, m.files, roomId);
-                    chatHistoryHtml += `
-                        <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
-                            <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
-                            ${parsed}
-                        </div>
-                    `;
-                });
-                chatHistoryHtml = `
-                    <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
-                        <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ履歴 (${chatCount}件)</div>
-                        ${chatHistoryHtml}
-                    </div>
-                `;
-            }
+            });
+            chatHistoryHtml = `
+                <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1 w-full box-border">
+                    <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ (${chatCount}件)</div>
+                    ${chatHistoryHtml}
+                </div>
+            `;
 
             messageCache[roomId] = latestMsg.body || "";
             const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
@@ -563,22 +441,22 @@
 
             return `
                 <div class="space-y-2 pb-2 border-b border-slate-100 flex items-center gap-2">
-                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-xs bg-indigo-50 text-indigo-700 py-2 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
-                    <button onclick="toggleLaterRoom('${roomId}')" class="text-xs bg-amber-100 text-amber-900 px-3 py-2 rounded-lg font-bold cursor-pointer">⏳ 後で対応</button>
+                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-xs bg-indigo-50 text-indigo-700 py-1.5 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
+                    <button onclick="toggleLaterRoom('${roomId}')" class="text-xs bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-bold cursor-pointer">⏳ 後で対応</button>
                 </div>
                 
                 ${chatHistoryHtml}
 
                 <div class="grid grid-cols-2 gap-2">
-                    <a href="${chatworkRoomUrl}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold py-2 px-2 rounded-lg text-center shadow-sm transition block truncate">
+                    <a href="${chatworkRoomUrl}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold py-1.5 px-2 rounded-lg text-center shadow-sm transition block truncate">
                         🌐 公式ルームを開く
                     </a>
-                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-2 rounded-lg shadow-sm transition cursor-pointer truncate">
+                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-2 rounded-lg shadow-sm transition cursor-pointer truncate">
                         🚀 スタッフ連絡
                     </button>
                 </div>
                 
-                <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
+                <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100 w-full box-border">
                     <div class="flex items-center gap-1.5 pt-1">
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
                             ${memberOptions}
@@ -586,10 +464,10 @@
                         <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded shrink-0 cursor-pointer">💬 To追加</button>
                     </div>
 
-                    <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-20 text-xs border rounded p-2 bg-white"></textarea>
+                    <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-2 bg-white box-border"></textarea>
 
                     <div class="pt-1">
-                        <button onclick="sendReplyMessage('${roomId}', this)" class="w-full bg-emerald-600 text-white text-xs font-bold py-2 rounded cursor-pointer">📤 メッセージを送信</button>
+                        <button onclick="sendReplyMessage('${roomId}', this)" class="w-full bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 メッセージを送信</button>
                     </div>
                 </div>
             `;
