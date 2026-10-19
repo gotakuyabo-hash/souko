@@ -614,6 +614,7 @@
 
         function parseFilesCustom(body, roomId, roomName, senderName) {
             let rendered = esc(body);
+            // 💡 [info]ブロック（ファイル・プレビュー等）をさらに極小テキスト化・余白最小化
             rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
                 let fileId = "";
                 const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/) || inner.match(/file id=(\d+)/);
@@ -635,32 +636,26 @@
                 const fileButtonId = `file_btn_${uniqueKey}`;
                 const previewContainerId = `file_inline_preview_${uniqueKey}`;
 
-                return `<div class="my-1 p-1.5 bg-indigo-50/80 rounded border border-indigo-200 space-y-0.5 shadow-sm max-w-full overflow-hidden text-[9px]">
-                    <div class="flex items-center justify-between">
-                        <span class="font-bold text-indigo-900 truncate">📎 ${esc(fileName)}</span>
-                        ${fileSize ? `<span class="text-[8px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded font-bold shrink-0">${fileSize}</span>` : ''}
-                    </div>
+                return `<span class="inline-block my-0.5 px-1.5 py-0.5 bg-indigo-50 rounded border border-indigo-200 text-[9px] max-w-full">
+                    <span class="font-bold text-indigo-900">📎 ${esc(fileName)}</span>
+                    ${fileSize ? `<span class="text-[8px] text-slate-500">(${fileSize})</span>` : ''}
                     ${fileId ? `
-                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="w-full bg-sky-500 hover:bg-sky-600 text-white text-[9px] font-bold py-0.5 px-1.5 rounded text-center shadow-sm transition block cursor-pointer">
-                            👁️ ファイル
+                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="ml-1 bg-sky-500 hover:bg-sky-600 text-white text-[8px] font-bold px-1 py-0.2 rounded cursor-pointer inline-block">
+                            👁️表示
                         </button>
-                        <div id="${previewContainerId}" class="p-1.5 bg-white rounded border border-indigo-200 mt-1 max-w-full overflow-hidden" style="display:none;"></div>
-                    ` : `
-                        <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[9px] font-bold py-0.5 px-1.5 rounded text-center transition block">
-                            🌐 Chatworkで確認
-                        </a>
-                    `}
-                </div>`;
+                        <div id="${previewContainerId}" class="p-1 bg-white rounded border border-indigo-200 mt-1" style="display:none;"></div>
+                    ` : ''}
+                </span>`;
             });
 
             const chatworkRoomUrl = `https://www.chatwork.com/#!rid${roomId}`;
             return `
                 <div class="whitespace-pre-wrap break-words overflow-hidden">${rendered}</div>
-                <div class="pt-1 flex gap-1">
-                    <a href="${chatworkRoomUrl}" target="_blank" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-[9px] font-bold py-0.5 px-1.5 rounded shadow-sm transition text-center block leading-tight">
+                <div class="pt-2 flex gap-2">
+                    <a href="${chatworkRoomUrl}" target="_blank" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition text-center block leading-tight">
                         🌐 公式ルーム
                     </a>
-                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold py-0.5 px-1.5 rounded shadow-sm transition text-center cursor-pointer leading-tight">
+                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition text-center cursor-pointer leading-tight">
                         🚀 スタッフ間連絡
                     </button>
                 </div>
@@ -771,7 +766,7 @@
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
                             ${memberOptions}
                         </select>
-                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-2 py-1 rounded shrink-0 cursor-pointer">💬 To</button>
+                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-2.5 py-1 rounded shrink-0 cursor-pointer">💬 To</button>
                     </div>
 
                     <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信文を入力..." class="w-full h-16 text-xs border rounded p-1.5 bg-white"></textarea>
