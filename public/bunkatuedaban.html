@@ -186,7 +186,7 @@
                                     <th class="px-4 py-3">注文番号</th>
                                     <th class="px-4 py-3">SKUコード (コピー可)</th>
                                     <th class="px-4 py-3 min-w-[320px]">商品情報（和名・元情報）</th>
-                                    <th class="px-4 py-3 text-center">基準</th>
+                                    <th class="px-4 py-3 text-center">数量</th>
                                     <th class="px-4 py-3 text-center">倍率</th>
                                     <th class="px-4 py-3 text-center">総数</th>
                                     <th class="px-4 py-3 text-center">操作</th>
@@ -296,7 +296,7 @@
     <div id="sheetCopyModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (注文番号, 商品名和名, 総数量)</h3>
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (注文番号, 商品名和名, 総數量)</h3>
                 <button onclick="closeSheetCopyModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。</p>
@@ -341,7 +341,7 @@
                             <th class="px-2 py-3 text-center w-8"><i class="fa-solid fa-grip-vertical text-slate-400"></i></th>
                             <th class="px-4 py-3">棚番</th>
                             <th class="px-4 py-3">商品名</th>
-                            <th class="px-4 py-3 text-center">必要総数量</th>
+                            <th class="px-4 py-3 text-center">必要総數量</th>
                         </tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
@@ -526,7 +526,7 @@
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 align-top';
                 
-                let itemsHtml = rule.items.map(it => `
+                let itemsHtml = rule.items.items ? rule.items.map(it => ``).join('') : rule.items.map(it => `
                     <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
                         <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${it.shelf || '未設定'}</span>
                         <span class="font-semibold text-slate-800 flex-grow">${it.jpName}</span>
@@ -545,7 +545,7 @@
                     <td class="px-4 py-3 text-right space-x-1 w-24">
                         <button onclick="openMasterEditModal(${idx})" class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
                         <button onclick="deleteMasterRule('${rule.key}')" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
-                    </td>`;
+                    `;
                 tbody.appendChild(tr);
             });
         }
@@ -682,6 +682,13 @@
             return m ? m[1].trim() : "";
         }
 
+        // 商品情報から「數量: N」や「数量: N」「Quantity: N」を抽出する関数
+        function extractQuantity(text) {
+            if (!text) return 1;
+            let m = text.match(/[數数]量[:\s]*(\d+)/i) || text.match(/quantity[:\s]*(\d+)/i);
+            return m ? parseInt(m[1], 10) : 1;
+        }
+
         function parseSkuAndMultiplier(rawSku) {
             if (!rawSku) return { baseSku: "", suffixMult: 1 };
             const lastUnderscoreIdx = rawSku.lastIndexOf('_');
@@ -700,6 +707,7 @@
         function processItemText(trackingNum, orderSn, productInfo) {
             const rawSku = extractSku(productInfo);
             const { baseSku, suffixMult } = parseSkuAndMultiplier(rawSku);
+            const baseQty = extractQuantity(productInfo); // 注文内の數量（または数量）を取得
             
             let matched = multiplierMaster.find(r => r.key.toLowerCase() === baseSku.toLowerCase());
 
@@ -714,7 +722,7 @@
                         item: productInfo,
                         jpName: it.jpName,
                         shelf: it.shelf || '',
-                        baseQty: 1,
+                        baseQty,
                         multiplier: (it.multiplier || 1) * suffixMult
                     });
                 });
@@ -727,7 +735,7 @@
                     item: productInfo,
                     jpName: productInfo,
                     shelf: '',
-                    baseQty: 1,
+                    baseQty,
                     multiplier: suffixMult
                 });
             }
@@ -784,13 +792,18 @@
                         </div>
                         <div class="text-[11px] text-slate-500 whitespace-normal break-all"><b>元情報:</b> ${row.item}</div>
                     </td>
-                    <td class="px-4 py-2 text-center">${row.baseQty}</td>
+                    <td class="px-4 py-2 text-center"><input type="number" value="${row.baseQty}" min="1" onchange="updateBaseQty(${i}, this.value)" class="border rounded w-16 text-center font-semibold text-slate-700"></td>
                     <td class="px-4 py-2 text-center"><input type="number" value="${row.multiplier}" min="1" onchange="updateMult(${i}, this.value)" class="border rounded w-16 text-center font-semibold text-indigo-600">x</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600" id="total-${i}">${total}</td>
                     <td class="px-4 py-2 text-center"><button onclick="registerRowFromPreview(${i})" class="bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-xs">登録</button></td>
                 `;
                 tbody.appendChild(tr);
             });
+        }
+
+        function updateBaseQty(i, val) {
+            processedDataRows[i].baseQty = parseInt(val, 10) || 1;
+            document.getElementById(`total-${i}`).innerText = processedDataRows[i].baseQty * processedDataRows[i].multiplier;
         }
 
         function updateMult(i, val) {
@@ -852,7 +865,7 @@
 
         function openSheetCopyModal() {
             if (!processedDataRows.length) return;
-            let lines = ["注文番号\t商品名和名\t総数量"];
+            let lines = ["注文番号\t商品名和名\t総數量"];
             processedDataRows.forEach(r => {
                 let total = r.baseQty * r.multiplier;
                 lines.push(`${r.orderSn}\t${r.jpName}\t${total}`);
@@ -910,7 +923,7 @@
                         <thead>
                             <tr class="bg-slate-100 text-[10px] text-slate-600 border-b">
                                 <th class="py-1.5 px-1">商品名</th>
-                                <th class="py-1.5 px-1 text-center w-12">数量</th>
+                                <th class="py-1.5 px-1 text-center w-12">數量</th>
                             </tr>
                         </thead>
                         <tbody>${itemsHtml}</tbody>
@@ -955,7 +968,6 @@
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base total-col">${x.total}</td>
                 `;
                 
-                // ドラッグ＆ドロップイベントの設定
                 tr.addEventListener('dragstart', e => {
                     tr.classList.add('dragging');
                     e.dataTransfer.setData('text/plain', index);
@@ -996,7 +1008,7 @@
         function closeTotalPickingModal() { document.getElementById('totalPickingModal').classList.add('hidden'); }
 
         function printPicking() {
-            document.body.classList.add('printing-picking');
+            body.classList.add('printing-picking');
             window.print();
             document.body.classList.remove('printing-picking');
         }
