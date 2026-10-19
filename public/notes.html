@@ -21,7 +21,6 @@
         .modal-content { background: #fff; width: 100%; max-width: 320px; border-radius: 8px; padding: 20px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .image-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 2000; display: none; padding: 16px; cursor: pointer; }
         .image-modal-content { max-width: 100%; max-height: 100%; border-radius: 8px; object-fit: contain; }
-        .task-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     </style>
 </head>
 <body>
@@ -115,7 +114,14 @@
             <h2 class="font-bold mb-3">📦 発注依頼を作成</h2>
             <div class="grid grid-cols-2 gap-2 mb-3">
                 <div><label class="text-xs font-bold text-gray-700">依頼日</label><input type="date" id="mat-date" class="w-full p-2 border rounded mt-1 text-sm bg-white"></div>
-                <div><label class="text-xs font-bold text-gray-700">依頼者</label><input type="text" id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white"></div>
+                <div>
+                    <label class="text-xs font-bold text-gray-700">倉庫名</label>
+                    <select id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white">
+                        <option value="調布1F">調布1F</option>
+                        <option value="調布地下">調布地下</option>
+                        <option value="本庄">本庄</option>
+                    </select>
+                </div>
             </div>
             <div id="mat-items" class="space-y-2 mb-3"></div>
             <button onclick="addMatRow()" class="w-full bg-sky-50 text-sky-700 p-2 border border-dashed border-sky-300 rounded font-bold text-xs mb-3">＋ 資材を追加</button>
@@ -199,10 +205,9 @@
             document.getElementById(`tab-btn-${tabId}`).classList.add('active');
             document.getElementById(`app-${tabId}`).classList.add('active');
 
-            // 💡 タブを開いた瞬間に対応するアプリのバッジを消す（既読にする）
             if (tabId === 'notes') updatePortalBadge('notes', 0);
-            if (tabId === 'staff') updatePortalBadge('notes', 0); // 必要に応じてIDを調整
-            if (tabId === 'mat') updatePortalBadge('zaico', 0); // 資材発注タブを開いたらzaicoバッジをクリア
+            if (tabId === 'staff') updatePortalBadge('notes', 0);
+            if (tabId === 'mat') updatePortalBadge('zaico', 0);
         };
 
         window.openImage = (url) => {
@@ -443,14 +448,10 @@
             btn.disabled = false; btn.textContent = "送信する";
         });
 
-        // 💡 依頼・伝言の未完了件数をリアルタイム監視してポータルのバッジに連動
         onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), snap => {
             allStaff = snap.docs.map(d => ({id: d.id, ...d.data()}));
-            
-            // 未完了（pending）の件数をカウント
             const pendingCount = allStaff.filter(s => s.status !== 'completed').length;
-            updatePortalBadge('notes', pendingCount); // 連絡くん（notes）のバッジIDと同期
-
+            updatePortalBadge('notes', pendingCount);
             renderStaff();
         });
 
@@ -528,7 +529,6 @@
         // ==================== 3. 資材発注機能 ====================
         let allMat = [];
         document.getElementById('mat-date').valueAsDate = new Date();
-        if(savedName) document.getElementById('mat-req').value = savedName;
 
         window.addMatRow = () => {
             document.getElementById('mat-items').insertAdjacentHTML('beforeend', `
@@ -541,8 +541,7 @@
         addMatRow();
 
         window.saveMatOrder = async () => {
-            const req = document.getElementById('mat-req').value.trim();
-            localStorage.setItem('app_user_name', req);
+            const warehouse = document.getElementById('mat-req').value;
             
             const rows = document.querySelectorAll('.mat-row');
             const itemsText = [], itemsData = [];
@@ -564,9 +563,9 @@
                 await addDoc(collection(db, "material_orders"), {
                     createdAt: serverTimestamp(),
                     date: document.getElementById('mat-date').value,
-                    requester: req || "未設定",
+                    warehouse: warehouse,
                     status: "未発注",
-                    text: `■依頼者: ${req}\n` + itemsText.join('\n'),
+                    text: `■倉庫名: ${warehouse}\n` + itemsText.join('\n'),
                     itemsData: itemsData
                 });
                 alert("発注依頼を保存しました！");
@@ -575,14 +574,10 @@
             btn.disabled = false; btn.textContent = "💾 保存する";
         };
 
-        // 💡 資材発注の未発注件数をリアルタイム監視してポータルのバッジ（例: 'zaico'）に連動
         onSnapshot(query(collection(db, "material_orders"), orderBy("createdAt", "desc")), snap => {
             allMat = snap.docs.map(d => ({id: d.id, ...d.data()}));
-            
-            // 未発注（"未発注"）の件数をカウント
             const pendingMatCount = allMat.filter(m => m.status === "未発注").length;
-            updatePortalBadge('zaico', pendingMatCount); // 必要に応じてポータルのアイコンIDを変更可能
-
+            updatePortalBadge('zaico', pendingMatCount);
             filterMat('all');
         });
 
@@ -599,10 +594,12 @@
             const list = document.getElementById('mat-list');
             list.innerHTML = filtered.map(m => {
                 const isDone = m.status === "発注済み";
+                // 過去データに requester が残っている場合のフォールバックとして warehouse または requester を表示
+                const warehouseDisplay = m.warehouse || m.requester || '未設定';
                 return `
                 <div class="p-3 border rounded text-sm ${isDone?'bg-gray-100 opacity-75':''}">
                     <div class="flex justify-between items-center font-bold mb-2">
-                        <span class="text-xs">📅 ${m.date} (${escapeHtml(m.requester)})</span>
+                        <span class="text-xs">📅 ${m.date} (${escapeHtml(warehouseDisplay)})</span>
                         <span class="${isDone?'text-emerald-600':'text-red-600'} text-xs">${m.status}</span>
                     </div>
                     <div class="whitespace-pre-wrap text-xs text-gray-700 mb-2">${escapeHtml(m.text)}</div>
