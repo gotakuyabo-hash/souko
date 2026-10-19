@@ -306,7 +306,6 @@
             cardDiv.innerHTML = `
                 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                     <div class="flex items-center gap-2 min-w-0 mr-2">
-                        <input type="checkbox" class="unread-checkbox w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" value="${roomId}" onchange="updateSelectedCount()">
                         <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                         <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                     </div>
@@ -327,7 +326,6 @@
                 cardDiv.innerHTML = `
                     <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                         <div class="flex items-center gap-2 min-w-0 mr-2">
-                            <input type="checkbox" class="unread-checkbox w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" value="${roomId}" onchange="updateSelectedCount()">
                             <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                             <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
@@ -625,21 +623,6 @@
                 }
 
                 container.innerHTML = '';
-                
-                // 🚀 一括操作コントロールパネル（全選択 ＆ 選択したルームを既読にする）
-                const controlPanelDiv = document.createElement('div');
-                controlPanelDiv.className = "bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between gap-2";
-                controlPanelDiv.innerHTML = `
-                    <label class="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
-                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer">
-                        <span>すべて選択</span>
-                    </label>
-                    <button id="bulkReadBtn" onclick="markSelectedUnreadAsRead(this)" disabled class="bg-slate-300 text-slate-500 text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition cursor-not-allowed">
-                        ☑️ 選択したルームを既読にする (<span id="selectedCountBadge">0</span>)
-                    </button>
-                `;
-                container.appendChild(controlPanelDiv);
-
                 unreadRoomsCache.forEach(room => {
                     const unread = Number(room.unread_num !== undefined ? room.unread_num : (room.unread_count || 0));
                     renderBurstCard(container, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`);
@@ -653,69 +636,6 @@
                 statusEl.textContent = "エラー";
             }
         }
-
-        // 全選択・全解除の切り替え
-        window.toggleSelectAll = function(masterCheckbox) {
-            const checkboxes = document.querySelectorAll('.unread-checkbox');
-            checkboxes.forEach(cb => { cb.checked = masterCheckbox.checked; });
-            updateSelectedCount();
-        };
-
-        // チェック状態の変更に伴うカウントとボタン状態の更新
-        window.updateSelectedCount = function() {
-            const checkboxes = document.querySelectorAll('.unread-checkbox:checked');
-            const count = checkboxes.length;
-            const badge = document.getElementById('selectedCountBadge');
-            const btn = document.getElementById('bulkReadBtn');
-            const master = document.getElementById('selectAllCheckbox');
-
-            if (badge) badge.textContent = count;
-            
-            const totalCheckboxes = document.querySelectorAll('.unread-checkbox').length;
-            if (master) {
-                master.checked = totalCheckboxes > 0 && count === totalCheckboxes;
-                master.indeterminate = count > 0 && count < totalCheckboxes;
-            }
-
-            if (btn) {
-                if (count > 0) {
-                    btn.disabled = false;
-                    btn.className = "bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow transition cursor-pointer";
-                } else {
-                    btn.disabled = true;
-                    btn.className = "bg-slate-300 text-slate-500 text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition cursor-not-allowed";
-                }
-            }
-        };
-
-        // 選択した未読ルームを一括既読にする関数
-        window.markSelectedUnreadAsRead = async function(btnEl) {
-            const checkboxes = document.querySelectorAll('.unread-checkbox:checked');
-            if (checkboxes.length === 0) return;
-
-            const roomIds = Array.from(checkboxes).map(cb => cb.value);
-            if (!confirm(`選択したルーム(${roomIds.length}件)を既読にしますか？`)) return;
-
-            btnEl.disabled = true;
-            btnEl.textContent = "⏳ 既読処理中...";
-
-            try {
-                for (const roomId of roomIds) {
-                    try {
-                        await callApi("mark_read", { room_id: String(roomId), last_chat_id: "" });
-                        await callApi("update_room_status", { room_id: String(roomId), status: "done" });
-                    } catch (err) {
-                        console.error(`ルーム ${roomId} の既読化失敗:`, err);
-                    }
-                }
-                alert("選択したルームを既読にしました！");
-                refreshCurrentView();
-            } catch (e) {
-                alert("一括処理中にエラーが発生しました: " + e.message);
-                btnEl.disabled = false;
-                updateSelectedCount();
-            }
-        };
 
         function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
             let chatHistoryHtml = '';
