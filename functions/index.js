@@ -367,7 +367,14 @@ exports.apiCreateZaicoShipment = onRequest(
             }
 
             const slipNum = "SLIP-" + Date.now();
-            const todayStr = new Date().toISOString().split('T')[0];
+            
+            // 修正：日本時間（Asia/Tokyo）の当日の日付を "YYYY-MM-DD" 形式で取得
+            const todayStr = new Date().toLocaleDateString('ja-JP', { 
+                timeZone: 'Asia/Tokyo', 
+                year: 'numeric', 
+                month: '2-digit', 
+                day: '2-digit' 
+            }).replace(/\//g, '-');
 
             const zaicoPayload = {
                 num: slipNum,
