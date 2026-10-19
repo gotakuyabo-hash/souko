@@ -45,7 +45,14 @@
             <h2 class="text-base font-bold mb-3">📦 テスト：資材発注依頼</h2>
             <div class="grid grid-cols-2 gap-2 mb-3">
                 <div><label class="text-xs font-bold text-gray-700">依頼日</label><input type="date" id="mat-date" class="w-full p-2 border rounded mt-1 text-sm bg-white"></div>
-                <div><label class="text-xs font-bold text-gray-700">依頼者</label><input type="text" id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white" placeholder="名前"></div>
+                <div>
+                    <label class="text-xs font-bold text-gray-700">倉庫名</label>
+                    <select id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white">
+                        <option value="調布1F">調布1F</option>
+                        <option value="調布地下">調布地下</option>
+                        <option value="本庄">本庄</option>
+                    </select>
+                </div>
             </div>
             <div id="mat-list" class="space-y-3 mb-3"></div>
             <button onclick="addMatItem()" class="w-full bg-sky-50 text-sky-700 p-2.5 border border-dashed border-sky-300 rounded font-bold text-xs mb-3">＋ 発注資材を追加</button>
@@ -145,12 +152,13 @@
             document.querySelectorAll('.mat-row').forEach(r => {
                 items.push(`・${r.querySelector('.m-name').value || '資材'} : ${r.querySelector('.m-qty').value || 1}個 (${r.querySelector('.m-memo').value})`);
             });
+            const warehouse = document.getElementById('mat-req').value;
             await addDoc(collection(db, "material_orders"), {
                 createdAt: serverTimestamp(),
                 date: document.getElementById('mat-date').value,
-                requester: document.getElementById('mat-req').value || "未設定",
+                requester: warehouse,
                 status: "未発注",
-                text: `■依頼者: ${document.getElementById('mat-req').value}\n` + items.join('\n')
+                text: `■倉庫名: ${warehouse}\n` + items.join('\n')
             });
             alert("保存しました！");
             document.getElementById('mat-list').innerHTML = ''; addMatItem();
