@@ -20,7 +20,6 @@
         const db = getFirestore(app);
         window.db = db;
 
-        // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
             const roomId = document.getElementById('linkRoomId').value;
             const roomName = document.getElementById('linkRoomName').value;
@@ -66,7 +65,6 @@
             }
         };
 
-        // 🤖 AI返信フィードバックログ保存（Firestore: ai_feedback_logs）
         window.saveAiFeedbackLog = async function(rcv, draft, final) {
             if (!rcv || !final) return;
             try {
@@ -81,7 +79,6 @@
     </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16">
-    <!-- ヘッダー -->
     <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-20">
         <div class="max-w-md mx-auto flex items-center justify-between">
             <h1 class="text-base font-bold">🚀 未読バーストコックピット</h1>
@@ -92,9 +89,7 @@
         </div>
     </div>
 
-    <!-- メインコンテンツ -->
     <div class="max-w-md mx-auto p-3 space-y-3">
-        <!-- アカウント選択 ＆ タブ切り替え -->
         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <select id="accountSelect" onchange="refreshCurrentView()" class="w-full border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50 font-bold text-indigo-950">
                 <option value="5435a05ddd195c46ca688d021e45bbce" selected>ラクロジスタッフアカウント</option>
@@ -109,7 +104,6 @@
             </div>
         </div>
 
-        <!-- 各モードコンテナ -->
         <div id="burstModeContainer" class="space-y-3"></div>
         <div id="unrepliedModeContainer" class="space-y-2.5" style="display:none;"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
@@ -124,10 +118,8 @@
         </div>
     </div>
 
-    <!-- モーダル群 -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
-    <!-- 🔑 セラー情報モーダル -->
     <div id="modalSellerInfo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-sm bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900">🔑 紐づくセラー情報</h2>
@@ -144,7 +136,6 @@
         </div>
     </div>
 
-    <!-- 🔗 スタッフ間連絡モーダル -->
     <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900">🔗 スタッフ間連絡に登録</h2>
@@ -165,7 +156,7 @@
         let allRoomsCache = [];
         let unreadRoomsCache = [];
         let roomMembersCache = {};
-        let messageCache = {}; // 💡 メッセージ本文を安全に保持するキャッシュ用オブジェクト
+        let messageCache = {};
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
         let aiDraftMemory = {};
@@ -227,22 +218,36 @@
             }
         }
 
-        // ⏳ 後で対応機能
-        function getLaterRooms() { try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; } }
+        function getLaterRooms() { 
+            try { 
+                const data = JSON.parse(localStorage.getItem(LATER_KEY)) || {}; 
+                const token = getToken();
+                if (data[token] && Array.isArray(data[token])) {
+                    data[token] = data[token].filter(id => id && id !== "[object Object]" && typeof id !== "object");
+                }
+                return data;
+            } catch(e) { return {}; } 
+        }
+
         function updateLaterBadge() {
             const later = getLaterRooms();
             document.getElementById('laterCountBadge').textContent = (later[getToken()] || []).length;
         }
+
         window.toggleLaterRoom = function(roomId) {
+            if (roomId && typeof roomId === 'object') {
+                roomId = roomId.room_id || roomId.id || String(roomId);
+            }
             const later = getLaterRooms();
             const token = getToken();
             if (!later[token]) later[token] = [];
-            const idx = later[token].indexOf(String(roomId));
+            const strRoomId = String(roomId);
+            const idx = later[token].indexOf(strRoomId);
             if (idx > -1) { 
                 later[token].splice(idx, 1); 
                 alert("「後で対応」から外しました。"); 
             } else { 
-                later[token].push(String(roomId)); 
+                later[token].push(strRoomId); 
                 alert("「後で対応」に追加しました！"); 
             }
             localStorage.setItem(LATER_KEY, JSON.stringify(later));
@@ -265,7 +270,6 @@
             });
         }
 
-        // ⚠️ 未対応ルーム取得
         async function fetchUnrepliedRooms() {
             const container = document.getElementById('unrepliedModeContainer');
             const statusEl = document.getElementById('loadStatus');
@@ -296,7 +300,6 @@
             }
         }
 
-        // ⚡ 未読タブ用カード描画（1件のみ表示）
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3`;
@@ -334,7 +337,6 @@
             }
         }
 
-        // ⚠️ 未対応タブ用アコーディオンカード描画（10件表示）
         function renderUnrepliedAccordionCard(container, roomId, roomName, badgeText, borderColor) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl shadow-sm overflow-hidden transition`;
@@ -403,7 +405,6 @@
             }
         };
 
-        // 🚀 スタッフ間連絡モーダルを安全に開く（メッセージ本文はメモリキャッシュから取得）
         window.openStaffAppModal = function(roomId, roomName, senderName) {
             const msgBody = messageCache[roomId] || "";
             document.getElementById('linkRoomId').value = roomId;
@@ -437,7 +438,6 @@
             }
         };
 
-        // 📁 通常タブ
         async function fetchNormalRooms() {
             const selectEl = document.getElementById('roomSelect');
             selectEl.innerHTML = '<option value="">-- ルーム一覧読み込み中... --</option>';
@@ -449,6 +449,7 @@
                 renderRoomOptions(allRoomsCache);
             } catch (e) { selectEl.innerHTML = `<option value="">取得失敗: ${e.message}</option>`; }
         }
+
         function renderRoomOptions(rooms) {
             const selectEl = document.getElementById('roomSelect');
             let html = '<option value="">-- ルームを選択 --</option>';
@@ -458,10 +459,12 @@
             });
             selectEl.innerHTML = html;
         }
+
         function filterNormalRooms() {
             const kw = document.getElementById('roomSearchInput').value.toLowerCase();
             renderRoomOptions(allRoomsCache.filter(r => r.name.toLowerCase().includes(kw)));
         }
+
         async function loadSingleRoomMessages() {
             const roomId = document.getElementById('roomSelect').value;
             const container = document.getElementById('singleRoomMessageContainer');
@@ -477,7 +480,6 @@
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
-        // 📎 ファイル軽量プレビュー
         window.fetchAndPreviewFile = async function(roomId, fileId, btnEl) {
             const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
             if (!container) return;
@@ -543,7 +545,6 @@
             if (btn) btn.textContent = '👁️ ファイルを開く / プレビュー';
         };
 
-        // 📎 ファイルタグパーサー
         function parseFiles(body, files, roomId) {
             let rendered = esc(body);
             rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
@@ -597,7 +598,6 @@
             `;
         }
 
-        // ⚡ 未読ルーム一覧スキャン
         async function fetchAllUnreadRooms() {
             const container = document.getElementById('burstModeContainer');
             const statusEl = document.getElementById('loadStatus');
@@ -637,7 +637,6 @@
             }
         }
 
-        // カード内部のHTML生成
         function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
@@ -677,7 +676,6 @@
                 `;
             }
 
-            // 💡 メッセージ本文をキャッシュに安全に保存（特殊文字によるエラーを完全回避）
             messageCache[roomId] = latestMsg.body || "";
             const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
 
@@ -711,7 +709,6 @@
 
                     <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信案..." class="w-full h-20 text-xs border rounded p-2 bg-white"></textarea>
                     
-                    <!-- 📷 カメラ撮影 ＆ 📁 ファイル選択コントロール -->
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-2 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
                             <span>📷 カメラ撮影</span>
@@ -761,7 +758,6 @@
             }
         };
 
-        // 🤖 AI返信案生成
         window.generateAiDraft = async function(roomId) {
             const textarea = document.getElementById(`reply_text_${roomId}`);
             const promptInput = document.getElementById(`ai_prompt_${roomId}`);
@@ -787,7 +783,6 @@
             }
         };
 
-        // 📤 メッセージ送信のみ（既読化・ステータス変更なし）
         window.sendReplyMessage = async function(roomId, lastChatId, btn) {
             const roomIdStr = String(roomId);
             const textarea = document.getElementById(`reply_text_${roomIdStr}`);
@@ -807,7 +802,6 @@
             }
         };
 
-        // 📖 既読のみボタン
         window.markRead = async function(roomId, lastChatId) {
             const roomIdStr = String(roomId);
             try {
