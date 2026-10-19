@@ -725,7 +725,7 @@
                     <div id="file_preview_${roomId}" class="text-[11px] text-indigo-700 font-bold bg-white p-2 rounded border border-indigo-200 hidden"></div>
 
                     <div class="flex gap-2 pt-1">
-                        <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded cursor-pointer">📤 返信して既読</button>
+                        <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded cursor-pointer">📤 メッセージを送信</button>
                         <button onclick="markRead('${roomId}', '${latestMsg.message_id || ''}')" class="bg-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded cursor-pointer">📖 既読のみ</button>
                     </div>
                 </div>
@@ -787,7 +787,7 @@
             }
         };
 
-        // 📤 返信送信 ＆ 既読化
+        // 📤 メッセージ送信のみ（既読化・ステータス変更なし）
         window.sendReplyMessage = async function(roomId, lastChatId, btn) {
             const roomIdStr = String(roomId);
             const textarea = document.getElementById(`reply_text_${roomIdStr}`);
@@ -798,14 +798,12 @@
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
                 if (window.saveAiFeedbackLog) await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomIdStr] || "", finalMsg);
-                await callApi("mark_read", { room_id: roomIdStr, last_chat_id: lastChatId || "" });
-                await callApi("update_room_status", { room_id: roomIdStr, status: "done" });
 
                 alert("送信しました！");
-                refreshCurrentView();
+                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
             } catch (e) {
                 alert("送信失敗: " + e.message);
-                btn.disabled = false; btn.textContent = "📤 返信して既読";
+                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
             }
         };
 
