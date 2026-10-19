@@ -20,6 +20,7 @@
         const db = getFirestore(app);
         window.db = db;
 
+        // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
             const roomId = document.getElementById('linkRoomId').value;
             const roomName = document.getElementById('linkRoomName').value;
@@ -67,45 +68,35 @@
     </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16">
+    <!-- ヘッダー -->
     <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-20">
         <div class="max-w-md mx-auto flex items-center justify-between">
             <h1 class="text-base font-bold">🚀 未読バーストコックピット</h1>
             <div class="flex items-center gap-2">
-                <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">準備完了</span>
+                <span id="loadStatus" class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full text-indigo-100">読込中...</span>
                 <button onclick="refreshCurrentView()" class="bg-indigo-700 text-xs px-2.5 py-1.5 rounded font-bold cursor-pointer">🔄 更新</button>
             </div>
         </div>
     </div>
 
+    <!-- メインコンテンツ -->
     <div class="max-w-md mx-auto p-3 space-y-3">
+        <!-- アカウント選択 ＆ タブ切り替え -->
         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
-            <select id="accountSelect" onchange="onAccountChange()" class="w-full border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50 font-bold text-indigo-950">
+            <select id="accountSelect" onchange="refreshCurrentView()" class="w-full border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50 font-bold text-indigo-950">
                 <option value="5435a05ddd195c46ca688d021e45bbce" selected>ラクロジスタッフアカウント</option>
                 <option value="57d74ea2e63325c5306b594c3bb231af">松下アカウント</option>
             </select>
             
-            <div class="grid grid-cols-4 bg-slate-100 p-1 rounded-lg gap-1">
+            <div class="grid grid-cols-3 bg-slate-100 p-1 rounded-lg gap-1">
                 <button id="tabBurst" onclick="switchMode('burst')" class="py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer">⚡ 未読</button>
-                <button id="tabUnreplied" onclick="switchMode('unreplied')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">⚠️ 未対応</button>
                 <button id="tabLater" onclick="switchMode('later')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">⏳ 後で (<span id="laterCountBadge">0</span>)</button>
                 <button id="tabNormal" onclick="switchMode('normal')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">📁 通常</button>
             </div>
         </div>
 
-        <div id="burstModeContainer" class="space-y-3">
-            <div id="burstActionHeader" class="bg-indigo-50 p-3 rounded-xl border border-indigo-200 flex items-center justify-between" style="display:none;">
-                <label class="flex items-center gap-2 text-xs font-bold text-indigo-950 cursor-pointer">
-                    <input type="checkbox" id="selectAllBurst" onclick="toggleSelectAllBurst(this)" class="w-4 h-4 rounded text-indigo-600">
-                    <span>すべて選択</span>
-                </label>
-                <button onclick="markSelectedRead()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm cursor-pointer transition">
-                    ✅ 選択したルームを既読にする
-                </button>
-            </div>
-            <div id="burstCardsList" class="space-y-3"></div>
-        </div>
-
-        <div id="unrepliedModeContainer" class="space-y-2.5" style="display:none;"></div>
+        <!-- 各モードコンテナ -->
+        <div id="burstModeContainer" class="space-y-3"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
             <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
@@ -118,8 +109,10 @@
         </div>
     </div>
 
+    <!-- モーダル群 -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
+    <!-- 🔑 セラー情報モーダル -->
     <div id="modalSellerInfo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-sm bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900">🔑 紐づくセラー情報</h2>
@@ -136,6 +129,7 @@
         </div>
     </div>
 
+    <!-- 🔗 スタッフ間連絡モーダル -->
     <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900">🔗 スタッフ間連絡に登録</h2>
@@ -145,7 +139,7 @@
             <input type="hidden" id="linkRoomId"><input type="hidden" id="linkRoomName"><input type="hidden" id="linkSenderName"><input type="hidden" id="linkMessageBody">
             <div><label class="block font-bold text-slate-600 mb-1">👤 From</label><input type="text" id="linkFromInput" value="松下" class="w-full border rounded p-2 text-sm"></div>
             <div><label class="block font-bold text-slate-600 mb-1">🎯 To</label><input type="text" id="linkToInput" value="スタッフ全員" class="w-full border rounded p-2 text-sm"></div>
-            <div><label class="block font-bold text-slate-600 mb-1">📷 カメラ撮影 / 画像アップロード</label><input type="file" id="linkImageInput" accept="image/*" capture="environment" class="w-full border rounded p-1.5 bg-slate-50"></div>
+            <div><label class="block font-bold text-slate-600 mb-1">📷 画像アップロード</label><input type="file" id="linkImageInput" accept="image/*" class="w-full border rounded p-1.5 bg-slate-50"></div>
             <div><label class="block font-bold text-slate-600 mb-1">📝 軽いメモ</label><textarea id="linkMemoInput" class="w-full h-16 border rounded p-2 text-sm"></textarea></div>
             <button onclick="registerToStaffApp(this)" class="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-lg shadow cursor-pointer text-sm">🚀 スタッフ間連絡アプリに登録する</button>
         </div>
@@ -157,7 +151,6 @@
         let unreadRoomsCache = [];
         let roomMembersCache = {};
         let messageCache = {};
-        let roomDataCache = {};
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
 
@@ -183,25 +176,18 @@
             return data;
         }
 
-        function onAccountChange() {
-            roomDataCache = {};
-            refreshCurrentView();
-        }
-
         function refreshCurrentView() {
-            roomDataCache = {};
             if (currentMode === 'burst') fetchAllUnreadRooms();
-            else if (currentMode === 'unreplied') fetchUnrepliedRooms();
             else if (currentMode === 'later') renderLaterRooms();
             else fetchNormalRooms();
         }
 
         function switchMode(mode) {
             currentMode = mode;
-            ['tabBurst', 'tabUnreplied', 'tabLater', 'tabNormal'].forEach(id => {
+            ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => {
                 document.getElementById(id).className = "py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer";
             });
-            ['burstModeContainer', 'unrepliedModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => {
+            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => {
                 document.getElementById(id).style.display = 'none';
             });
 
@@ -209,10 +195,6 @@
                 document.getElementById('tabBurst').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('burstModeContainer').style.display = 'block';
                 fetchAllUnreadRooms();
-            } else if (mode === 'unreplied') {
-                document.getElementById('tabUnreplied').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
-                document.getElementById('unrepliedModeContainer').style.display = 'block';
-                fetchUnrepliedRooms();
             } else if (mode === 'later') {
                 document.getElementById('tabLater').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('laterModeContainer').style.display = 'block';
@@ -224,36 +206,22 @@
             }
         }
 
-        function getLaterRooms() { 
-            try { 
-                const data = JSON.parse(localStorage.getItem(LATER_KEY)) || {}; 
-                const token = getToken();
-                if (data[token] && Array.isArray(data[token])) {
-                    data[token] = data[token].filter(id => id && id !== "[object Object]" && typeof id !== "object");
-                }
-                return data;
-            } catch(e) { return {}; } 
-        }
-
+        // ⏳ 後で対応機能
+        function getLaterRooms() { try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; } }
         function updateLaterBadge() {
             const later = getLaterRooms();
             document.getElementById('laterCountBadge').textContent = (later[getToken()] || []).length;
         }
-
         window.toggleLaterRoom = function(roomId) {
-            if (roomId && typeof roomId === 'object') {
-                roomId = roomId.room_id || roomId.id || String(roomId);
-            }
             const later = getLaterRooms();
             const token = getToken();
             if (!later[token]) later[token] = [];
-            const strRoomId = String(roomId);
-            const idx = later[token].indexOf(strRoomId);
+            const idx = later[token].indexOf(String(roomId));
             if (idx > -1) { 
                 later[token].splice(idx, 1); 
                 alert("「後で対応」から外しました。"); 
             } else { 
-                later[token].push(strRoomId); 
+                later[token].push(String(roomId)); 
                 alert("「後で対応」に追加しました！"); 
             }
             localStorage.setItem(LATER_KEY, JSON.stringify(later));
@@ -272,127 +240,17 @@
             list.forEach(roomId => {
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
                 const roomName = roomObj ? roomObj.name : `ルームID: ${roomId}`;
-                renderBurstCard(container, roomId, roomName, "⏳ 後で対応", "border-amber-200", false, false, 2);
+                renderBurstCard(container, roomId, roomName, "⏳ 後で対応", "border-amber-200");
             });
         }
 
-        async function fetchUnrepliedRooms() {
-            const container = document.getElementById('unrepliedModeContainer');
-            const statusEl = document.getElementById('loadStatus');
-            container.innerHTML = '<div class="text-center text-xs text-slate-500 py-8 bg-white rounded-xl shadow-sm border">未対応ルームを読み込み中...</div>';
-            statusEl.textContent = "未対応読込中...";
-
-            try {
-                const data = await callApi("get_unreplied_rooms");
-                const unrepliedList = data.rooms || [];
-
-                if (unrepliedList.length === 0) {
-                    container.innerHTML = '<div class="bg-white p-8 rounded-xl text-center text-sm font-bold text-slate-700 shadow-sm border">🎉 未対応のルームはありません！</div>';
-                    statusEl.textContent = "未対応ゼロ";
-                    statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
-                    return;
-                }
-
-                container.innerHTML = '';
-                unrepliedList.forEach(r => {
-                    renderUnrepliedAccordionCard(container, r.roomId, r.roomName, `⚠️ 未対応 (${r.senderName})`, "border-rose-200");
-                });
-
-                statusEl.textContent = `未対応 ${unrepliedList.length}件`;
-                statusEl.className = "text-xs bg-rose-500 px-2 py-0.5 rounded-full text-white";
-            } catch (e) {
-                container.innerHTML = `<div class="text-xs text-red-500 text-center p-4 bg-white rounded-xl shadow-sm border">エラー: ${e.message}</div>`;
-                statusEl.textContent = "エラー";
-            }
-        }
-
-        function renderUnrepliedAccordionCard(container, roomId, roomName, badgeText, borderColor) {
-            const cardDiv = document.createElement('div');
-            cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl shadow-sm overflow-hidden transition`;
-            cardDiv.innerHTML = `
-                <div class="p-3.5 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition">
-                    <div onclick="toggleUnrepliedAccordion('${roomId}', '${container.id}')" class="flex items-center gap-2 min-w-0 mr-2 flex-1 cursor-pointer">
-                        <span class="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${badgeText}</span>
-                        <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
-                    </div>
-                    <div class="flex items-center gap-2 shrink-0">
-                        <button onclick="dismissUnrepliedRoom('${roomId}', event)" class="bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-700 text-[10px] font-bold px-2 py-1 rounded shadow-sm cursor-pointer" title="退会済みセラーなどを一覧から除外">🚫 除外</button>
-                        <div onclick="toggleUnrepliedAccordion('${roomId}', '${container.id}')" class="text-indigo-600 font-bold text-xs cursor-pointer">
-                            <span id="accordion_icon_${container.id}_${roomId}">▼ 開く</span>
-                        </div>
-                    </div>
-                </div>
-                <div id="accordion_body_${container.id}_${roomId}" class="p-3.5 border-t border-slate-100 space-y-3" style="display:none;" data-loaded="false">
-                    <div class="text-center text-xs text-slate-400 py-4">メッセージを読み込み中...</div>
-                </div>
-            `;
-            container.appendChild(cardDiv);
-        }
-
-        window.dismissUnrepliedRoom = async function(roomId, event) {
-            event.stopPropagation();
-            if (!confirm("このルームを未対応リストから除外しますか？")) return;
-            try {
-                await callApi("update_room_status", { room_id: roomId, status: "dismissed" });
-                alert("未対応リストから除外しました。");
-                fetchUnrepliedRooms();
-            } catch (e) {
-                alert("除外失敗: " + e.message);
-            }
-        };
-
-        window.toggleUnrepliedAccordion = async function(roomId, containerId) {
-            const bodyEl = document.getElementById(`accordion_body_${containerId}_${roomId}`);
-            const iconEl = document.getElementById(`accordion_icon_${containerId}_${roomId}`);
-            
-            if (bodyEl.style.display === 'none') {
-                bodyEl.style.display = 'block';
-                iconEl.textContent = '▲ 閉じる';
-
-                if (bodyEl.getAttribute('data-loaded') === 'false') {
-                    try {
-                        let roomData;
-                        if (roomDataCache[roomId]) {
-                            roomData = roomDataCache[roomId];
-                        } else {
-                            roomData = await callApi("get_room_data", { room_id: roomId });
-                            roomDataCache[roomId] = roomData;
-                        }
-                        const msgs = roomData.messages || [];
-                        roomMembersCache[roomId] = roomData.members || [];
-                        const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                        const roomName = roomObj ? roomObj.name : "ルーム";
-
-                        if (msgs.length === 0) {
-                            bodyEl.innerHTML = '<div class="text-xs text-slate-500 text-center py-4">メッセージはありません</div>';
-                            return;
-                        }
-
-                        bodyEl.innerHTML = buildCardContent(roomId, roomName, msgs, roomData.members || [], false, 10);
-                        bodyEl.setAttribute('data-loaded', 'true');
-                    } catch (e) {
-                        bodyEl.innerHTML = `<div class="text-xs text-red-500 text-center py-4">メッセージ取得失敗: ${e.message}</div>`;
-                    }
-                }
-            } else {
-                bodyEl.style.display = 'none';
-                iconEl.textContent = '▼ 開く';
-            }
-        };
-
-        async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null, showCheckbox = true, limitCount = 2) {
+        // ⚡ 未読タブ用カード描画（1件のみ表示）
+        async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3`;
-            
-            let checkboxHtml = '';
-            if (showCheckbox) {
-                checkboxHtml = `<input type="checkbox" class="burst-checkbox w-4 h-4 rounded text-indigo-600 shrink-0 cursor-pointer" data-room-id="${roomId}">`;
-            }
-
             cardDiv.innerHTML = `
                 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div class="flex items-center gap-2 min-w-0 mr-2 flex-1">
-                        ${checkboxHtml}
+                    <div class="flex items-center gap-2 min-w-0 mr-2">
                         <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                         <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                     </div>
@@ -402,14 +260,7 @@
             container.appendChild(cardDiv);
 
             try {
-                let roomData;
-                if (roomDataCache[roomId]) {
-                    roomData = roomDataCache[roomId];
-                } else {
-                    roomData = await callApi("get_room_data", { room_id: roomId });
-                    roomDataCache[roomId] = roomData;
-                }
-
+                const roomData = await callApi("get_room_data", { room_id: roomId });
                 const msgs = roomData.messages || [];
                 roomMembersCache[roomId] = roomData.members || [];
 
@@ -419,53 +270,19 @@
                 }
                 cardDiv.innerHTML = `
                     <div class="flex items-center justify-between pb-2 border-b border-slate-100">
-                        <div class="flex items-center gap-2 min-w-0 mr-2 flex-1">
-                            ${checkboxHtml}
+                        <div class="flex items-center gap-2 min-w-0 mr-2">
                             <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                             <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
                     </div>
-                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true, limitCount)}
+                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true)}
                 `;
             } catch (e) {
                 cardDiv.querySelector('.msg-loading').innerHTML = '<span class="text-red-500">メッセージ取得失敗</span>';
             }
         }
 
-        window.toggleSelectAllBurst = function(masterCheckbox) {
-            const checkboxes = document.querySelectorAll('.burst-checkbox');
-            checkboxes.forEach(cb => { cb.checked = masterCheckbox.checked; });
-        };
-
-        window.markSelectedRead = async function() {
-            const checkedBoxes = document.querySelectorAll('.burst-checkbox:checked');
-            if (checkedBoxes.length === 0) {
-                alert("既読にするルームが選択されていません。");
-                return;
-            }
-            if (!confirm(`選択された ${checkedBoxes.length} 件のルームを既読にしますか？`)) return;
-
-            let successCount = 0;
-            for (let cb of checkedBoxes) {
-                const roomId = cb.dataset.roomId;
-                try {
-                    let roomData = roomDataCache[roomId];
-                    let lastChatId = "";
-                    if (roomData && roomData.messages && roomData.messages.length > 0) {
-                        lastChatId = roomData.messages[roomData.messages.length - 1].message_id || "";
-                    }
-                    await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId });
-                    await callApi("update_room_status", { room_id: roomId, status: "done" });
-                    successCount++;
-                } catch (e) {
-                    console.error(`ルーム ${roomId} の既読化失敗:`, e);
-                }
-            }
-
-            alert(`${successCount} 件のルームを既読にしました！`);
-            refreshCurrentView();
-        };
-
+        // 🚀 スタッフ間連絡モーダルを安全に開く
         window.openStaffAppModal = function(roomId, roomName, senderName) {
             const msgBody = messageCache[roomId] || "";
             document.getElementById('linkRoomId').value = roomId;
@@ -499,6 +316,7 @@
             }
         };
 
+        // 📁 通常タブ
         async function fetchNormalRooms() {
             const selectEl = document.getElementById('roomSelect');
             selectEl.innerHTML = '<option value="">-- ルーム一覧読み込み中... --</option>';
@@ -510,7 +328,6 @@
                 renderRoomOptions(allRoomsCache);
             } catch (e) { selectEl.innerHTML = `<option value="">取得失敗: ${e.message}</option>`; }
         }
-
         function renderRoomOptions(rooms) {
             const selectEl = document.getElementById('roomSelect');
             let html = '<option value="">-- ルームを選択 --</option>';
@@ -520,40 +337,33 @@
             });
             selectEl.innerHTML = html;
         }
-
         function filterNormalRooms() {
             const kw = document.getElementById('roomSearchInput').value.toLowerCase();
             renderRoomOptions(allRoomsCache.filter(r => r.name.toLowerCase().includes(kw)));
         }
-
         async function loadSingleRoomMessages() {
             const roomId = document.getElementById('roomSelect').value;
             const container = document.getElementById('singleRoomMessageContainer');
             if (!roomId) { container.innerHTML = ''; return; }
             container.innerHTML = '<div class="text-center text-xs text-slate-500 py-6 bg-white rounded-xl shadow-sm border">メッセージ取得中...</div>';
             try {
-                let roomData;
-                if (roomDataCache[roomId]) {
-                    roomData = roomDataCache[roomId];
-                } else {
-                    roomData = await callApi("get_room_data", { room_id: roomId });
-                    roomDataCache[roomId] = roomData;
-                }
+                const roomData = await callApi("get_room_data", { room_id: roomId });
                 const msgs = roomData.messages || [];
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], false, 10);
+                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], false);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
+        // 📎 ファイル軽量プレビュー
         window.fetchAndPreviewFile = async function(roomId, fileId, btnEl) {
             const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
             if (!container) return;
 
             if (container.style.display !== 'none') {
                 container.style.display = 'none';
-                btnEl.textContent = '👁️ ファイル';
+                btnEl.textContent = '👁️ ファイルを開く / プレビュー';
                 return;
             }
 
@@ -573,33 +383,33 @@
 
                 if (isImage) {
                     container.innerHTML = `
-                        <div class="space-y-1">
-                            <div class="font-bold text-slate-700 truncate text-[9px]">${esc(filename)}</div>
-                            <img src="${downloadUrl}" alt="${esc(filename)}" class="max-h-32 rounded border object-contain mx-auto bg-slate-900">
-                            <div class="flex gap-1">
-                                <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold py-0.5 px-1.5 rounded text-center transition block">
-                                    📥 ダウンロード
+                        <div class="space-y-2">
+                            <div class="font-bold text-slate-700 truncate">${esc(filename)}</div>
+                            <img src="${downloadUrl}" alt="${esc(filename)}" class="max-h-48 rounded border object-contain mx-auto bg-slate-900">
+                            <div class="flex gap-2">
+                                <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center transition block">
+                                    📥 画像をダウンロード
                                 </a>
-                                <button onclick="closeFilePreview('${roomId}', '${fileId}')" class="bg-slate-300 text-slate-700 text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer">閉じる</button>
+                                <button onclick="closeFilePreview('${roomId}', '${fileId}')" class="bg-slate-300 text-slate-700 text-[11px] font-bold px-3 py-1.5 rounded cursor-pointer">閉じる</button>
                             </div>
                         </div>
                     `;
                 } else {
                     container.innerHTML = `
-                        <div class="space-y-1">
-                            <div class="font-bold text-slate-700 truncate text-[9px]">📎 ${esc(filename)}</div>
-                            <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold py-1 px-1.5 rounded text-center transition block shadow">
-                                📥 ファイルをダウンロード
+                        <div class="space-y-2">
+                            <div class="font-bold text-slate-700 truncate">📎 ${esc(filename)}</div>
+                            <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-2 px-3 rounded text-center transition block shadow">
+                                📥 ファイルを直接ダウンロードする
                             </a>
                         </div>
                     `;
                 }
 
                 container.style.display = 'block';
-                btnEl.textContent = '🔼 閉じる';
+                btnEl.textContent = '🔼 プレビューを隠す';
             } catch (e) {
                 alert("ファイル取得エラー: " + e.message);
-                btnEl.textContent = '👁️ ファイル';
+                btnEl.textContent = '👁️ ファイルを開く / プレビュー';
             } finally {
                 btnEl.disabled = false;
             }
@@ -609,19 +419,19 @@
             const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
             const btn = document.getElementById(`file_btn_${roomId}_${fileId}`);
             if (container) container.style.display = 'none';
-            if (btn) btn.textContent = '👁️ ファイル';
+            if (btn) btn.textContent = '👁️ ファイルを開く / プレビュー';
         };
 
-        function parseFilesCustom(body, roomId, roomName, senderName) {
+        // 📎 ファイルタグパーサー
+        function parseFiles(body, files, roomId) {
             let rendered = esc(body);
-            // 💡 [info]ブロック（ファイル・プレビュー等）をさらに極小テキスト化・余白最小化
             rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
                 let fileId = "";
-                const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/) || inner.match(/file id=(\d+)/);
+                const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/);
                 if (fm) fileId = fm[1];
 
                 let rawFileName = "添付ファイル"; 
-                const dm = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/) || inner.match(/file id=\d+\]([\s\S]*)/); 
+                const dm = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/); 
                 if (dm) rawFileName = dm[1].trim();
 
                 let fileName = rawFileName;
@@ -636,39 +446,41 @@
                 const fileButtonId = `file_btn_${uniqueKey}`;
                 const previewContainerId = `file_inline_preview_${uniqueKey}`;
 
-                return `<span class="inline-block my-0.5 px-1.5 py-0.5 bg-indigo-50 rounded border border-indigo-200 text-[9px] max-w-full">
-                    <span class="font-bold text-indigo-900">📎 ${esc(fileName)}</span>
-                    ${fileSize ? `<span class="text-[8px] text-slate-500">(${fileSize})</span>` : ''}
+                return `<div class="my-2 p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200 space-y-1.5 shadow-sm max-w-full overflow-hidden">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-indigo-900">📎 添付ファイル</span>
+                        ${fileSize ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">${fileSize}</span>` : ''}
+                    </div>
+                    <div class="text-xs font-semibold text-slate-800 break-all">${esc(fileName)}</div>
                     ${fileId ? `
-                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="ml-1 bg-sky-500 hover:bg-sky-600 text-white text-[8px] font-bold px-1 py-0.2 rounded cursor-pointer inline-block">
-                            👁️表示
+                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="w-full bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center shadow-sm transition block cursor-pointer">
+                            👁️ ファイルを開く / プレビュー
                         </button>
-                        <div id="${previewContainerId}" class="p-1 bg-white rounded border border-indigo-200 mt-1" style="display:none;"></div>
-                    ` : ''}
-                </span>`;
+                        <div id="${previewContainerId}" class="p-2 bg-white rounded border border-indigo-200 mt-1.5 max-w-full overflow-hidden" style="display:none;"></div>
+                    ` : `
+                        <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center shadow-sm transition block">
+                            🌐 Chatwork公式ルームで確認
+                        </a>
+                    `}
+                </div>`;
             });
 
             const chatworkRoomUrl = `https://www.chatwork.com/#!rid${roomId}`;
             return `
                 <div class="whitespace-pre-wrap break-words overflow-hidden">${rendered}</div>
-                <div class="pt-2 flex gap-2">
-                    <a href="${chatworkRoomUrl}" target="_blank" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition text-center block leading-tight">
-                        🌐 公式ルーム
+                <div class="pt-1.5">
+                    <a href="${chatworkRoomUrl}" target="_blank" class="inline-block bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-3 rounded shadow-sm transition">
+                        🌐 Chatwork公式ルームを開く
                     </a>
-                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition text-center cursor-pointer leading-tight">
-                        🚀 スタッフ間連絡
-                    </button>
                 </div>
             `;
         }
 
+        // ⚡ 未読ルーム一覧スキャン
         async function fetchAllUnreadRooms() {
-            const listContainer = document.getElementById('burstCardsList');
-            const actionHeader = document.getElementById('burstActionHeader');
+            const container = document.getElementById('burstModeContainer');
             const statusEl = document.getElementById('loadStatus');
-            
-            listContainer.innerHTML = '<div class="text-center text-xs text-slate-500 py-8 bg-white rounded-xl shadow-sm border">未読ルームをスキャン中...</div>';
-            actionHeader.style.display = 'none';
+            container.innerHTML = '<div class="text-center text-xs text-slate-500 py-8 bg-white rounded-xl shadow-sm border">未読ルームをスキャン中...</div>';
             statusEl.textContent = "スキャン中...";
 
             try {
@@ -683,61 +495,61 @@
                 updateLaterBadge();
 
                 if (unreadRoomsCache.length === 0) {
-                    listContainer.innerHTML = '<div class="bg-white p-8 rounded-xl text-center text-sm font-bold text-slate-700 shadow-sm border">🎉 未読のルームはありません！</div>';
+                    container.innerHTML = '<div class="bg-white p-8 rounded-xl text-center text-sm font-bold text-slate-700 shadow-sm border">🎉 未読のルームはありません！</div>';
                     statusEl.textContent = "未読ゼロ";
                     statusEl.className = "text-xs bg-emerald-500 px-2 py-0.5 rounded-full text-white";
                     return;
                 }
 
-                listContainer.innerHTML = '';
-                actionHeader.style.display = 'flex';
-                document.getElementById('selectAllBurst').checked = false;
-                
-                await Promise.all(unreadRoomsCache.map(room => {
+                container.innerHTML = '';
+                unreadRoomsCache.forEach(room => {
                     const unread = Number(room.unread_num !== undefined ? room.unread_num : (room.unread_count || 0));
-                    return renderBurstCard(listContainer, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`, true, 2);
-                }));
+                    renderBurstCard(container, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`);
+                });
 
                 statusEl.textContent = `未読 ${unreadRoomsCache.length}件`;
                 statusEl.className = "text-xs bg-amber-500 px-2 py-0.5 rounded-full text-white";
 
             } catch (e) {
-                listContainer.innerHTML = `<div class="text-xs text-red-500 text-center p-4 bg-white rounded-xl shadow-sm border">エラー: ${e.message}</div>`;
+                container.innerHTML = `<div class="text-xs text-red-500 text-center p-4 bg-white rounded-xl shadow-sm border">エラー: ${e.message}</div>`;
                 statusEl.textContent = "エラー";
             }
         }
 
-        function buildCardContent(roomId, roomName, messages, members, isSingle = false, limitCount = 2) {
+        // カード内部のHTML生成
+        function buildCardContent(roomId, roomName, messages, members, isSingle = false) {
             let chatHistoryHtml = '';
-            let latestMsg = messages[messages.length - 1] || {};
+            let latestMsg = {};
 
-            if (limitCount === 1) {
+            if (isSingle) {
+                latestMsg = messages[messages.length - 1] || {};
                 const sender = latestMsg.account ? latestMsg.account.name : "相手";
                 const body = latestMsg.body || "";
-                const parsed = parseFilesCustom(body, roomId, roomName, sender);
+                const parsed = parseFiles(body, latestMsg.files, roomId);
                 chatHistoryHtml = `
-                    <div class="text-xs text-slate-700 p-2 bg-slate-50 rounded space-y-1 max-w-full overflow-hidden">
-                        <div class="font-bold text-[10px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
+                    <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1.5 max-w-full overflow-hidden">
+                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
                         ${parsed}
                     </div>
                 `;
             } else {
-                const chatCount = Math.min(messages.length, limitCount);
+                const chatCount = Math.min(messages.length, 10);
                 const recentMsgs = messages.slice(messages.length - chatCount);
+                latestMsg = messages[messages.length - 1] || {};
 
-                recentMsgs.forEach((m, idx) => {
+                recentMsgs.forEach(m => {
                     const sender = m.account ? m.account.name : "相手";
                     const body = m.body || "";
-                    const parsed = parseFilesCustom(body, roomId, roomName, sender);
+                    const parsed = parseFiles(body, m.files, roomId);
                     chatHistoryHtml += `
-                        <div class="p-2 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
-                            <div class="font-bold text-[10px] text-indigo-900">👤 ${esc(sender)}:</div>
+                        <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
+                            <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
                             ${parsed}
                         </div>
                     `;
                 });
                 chatHistoryHtml = `
-                    <div class="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                    <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
                         <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ履歴 (${chatCount}件)</div>
                         ${chatHistoryHtml}
                     </div>
@@ -745,6 +557,7 @@
             }
 
             messageCache[roomId] = latestMsg.body || "";
+            const senderName = latestMsg.account ? latestMsg.account.name : "担当者";
 
             let memberOptions = '<option value="">-- メンバーを選択してTo追加 --</option>';
             if (Array.isArray(members)) {
@@ -754,38 +567,27 @@
             }
 
             return `
-                <div class="space-y-1.5 pb-1.5 border-b border-slate-100 flex items-center gap-1.5">
-                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-[11px] bg-indigo-50 text-indigo-700 py-1.5 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
-                    <button onclick="toggleLaterRoom('${roomId}')" class="text-[11px] bg-amber-100 text-amber-900 px-2.5 py-1.5 rounded-lg font-bold cursor-pointer">⏳ 後で</button>
+                <div class="space-y-2 pb-2 border-b border-slate-100 flex items-center gap-2">
+                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-xs bg-indigo-50 text-indigo-700 py-2 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
+                    <button onclick="toggleLaterRoom('${roomId}')" class="text-xs bg-amber-100 text-amber-900 px-3 py-2 rounded-lg font-bold cursor-pointer">⏳ 後で対応</button>
                 </div>
                 
                 ${chatHistoryHtml}
+
+                <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="w-full text-xs bg-emerald-50 text-emerald-800 py-2 rounded-lg border border-emerald-200 font-bold cursor-pointer">🚀 スタッフ間連絡アプリに登録する</button>
                 
-                <div class="space-y-1.5 pt-1 bg-indigo-50/40 p-2 rounded-lg border border-indigo-100 text-xs">
-                    <div class="flex items-center gap-1">
+                <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
+                    <div class="flex items-center gap-1.5 pt-1">
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
                             ${memberOptions}
                         </select>
-                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-2.5 py-1 rounded shrink-0 cursor-pointer">💬 To</button>
+                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded shrink-0 cursor-pointer">💬 To追加</button>
                     </div>
 
-                    <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信文を入力..." class="w-full h-16 text-xs border rounded p-1.5 bg-white"></textarea>
-                    
-                    <div class="grid grid-cols-2 gap-1.5 pt-0.5">
-                        <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
-                            <span>📷 カメラ</span>
-                            <input type="file" accept="image/*" capture="environment" id="reply_camera_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
-                        </label>
-                        <label class="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
-                            <span>📁 ファイル</span>
-                            <input type="file" id="reply_file_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
-                        </label>
-                    </div>
-                    <div id="file_preview_${roomId}" class="text-[10px] text-indigo-700 font-bold bg-white p-1.5 rounded border border-indigo-200 hidden"></div>
+                    <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-20 text-xs border rounded p-2 bg-white"></textarea>
 
-                    <div class="flex gap-1.5 pt-0.5">
-                        <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 送信</button>
-                        <button onclick="markRead('${roomId}', '${latestMsg.message_id || ''}')" class="bg-slate-200 text-slate-700 text-xs font-bold px-2.5 py-1.5 rounded cursor-pointer">📖 既読のみ</button>
+                    <div class="pt-1">
+                        <button onclick="sendReplyMessage('${roomId}', this)" class="w-full bg-emerald-600 text-white text-xs font-bold py-2 rounded cursor-pointer">📤 メッセージを送信</button>
                     </div>
                 </div>
             `;
@@ -809,18 +611,8 @@
             textarea.focus();
         };
 
-        window.handleFileSelect = function(roomId, inputEl) {
-            const previewEl = document.getElementById(`file_preview_${roomId}`);
-            if (inputEl.files && inputEl.files[0]) {
-                const file = inputEl.files[0];
-                previewEl.textContent = `📎 添付予定: ${file.name} (${Math.round(file.size / 1024)} KB)`;
-                previewEl.style.display = 'block';
-            } else {
-                previewEl.style.display = 'none';
-            }
-        };
-
-        window.sendReplyMessage = async function(roomId, lastChatId, btn) {
+        // 📤 メッセージ送信
+        window.sendReplyMessage = async function(roomId, btn) {
             const roomIdStr = String(roomId);
             const textarea = document.getElementById(`reply_text_${roomIdStr}`);
             if (!textarea || !textarea.value.trim()) { alert("返信文を入力してください。"); return; }
@@ -829,21 +621,11 @@
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
                 alert("送信しました！");
-                btn.disabled = false; btn.textContent = "📤 送信";
+                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
             } catch (e) {
                 alert("送信失敗: " + e.message);
-                btn.disabled = false; btn.textContent = "📤 送信";
+                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
             }
-        };
-
-        window.markRead = async function(roomId, lastChatId) {
-            const roomIdStr = String(roomId);
-            try {
-                await callApi("mark_read", { room_id: roomIdStr, last_chat_id: lastChatId || "" });
-                await callApi("update_room_status", { room_id: roomIdStr, status: "done" });
-                alert("既読にしました！");
-                refreshCurrentView();
-            } catch (e) { alert("既読化失敗: " + e.message); }
         };
     </script>
 </body>
