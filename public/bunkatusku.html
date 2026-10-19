@@ -276,13 +276,13 @@
                 <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (order_sn, product_name_jp, total_quantity)</h3>
                 <button onclick="closeSheetCopyModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。（クリック時に指定の2つのスプレッドシートも自動で開きます）</p>
+            <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。</p>
             <div>
                 <textarea id="sheetCopyTextarea" rows="10" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50 select-all" readonly></textarea>
             </div>
             <div class="flex justify-end space-x-2 pt-2 border-t">
                 <button onclick="closeSheetCopyModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">閉じる</button>
-                <button onclick="copySheetDataToClipboardAndOpenSheets()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-regular fa-copy mr-1"></i>一括コピーしてシートを開く</button>
+                <button onclick="copySheetDataToClipboard()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-regular fa-copy mr-1"></i>クリップボードにコピー</button>
             </div>
         </div>
     </div>
@@ -514,7 +514,8 @@
                     <td class="px-4 py-3 text-right space-x-1 w-24">
                         <button onclick="openMasterEditModal(${idx})" class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
                         <button onclick="deleteMasterRule('${rule.key}')" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
-                    `;
+                    </td>
+                `;
                 tbody.appendChild(tr);
             });
         }
@@ -851,7 +852,7 @@
 
         function openSheetCopyModal() {
             if (!processedDataRows.length) return;
-            let lines = ["order_sn\tproduct_name_jp\ttotal_quantity"];
+            let lines = [];
             processedDataRows.forEach(r => {
                 let total = r.baseQty * r.multiplier;
                 lines.push(`${r.orderSn}\t${r.jpName}\t${total}`);
@@ -864,16 +865,12 @@
             document.getElementById('sheetCopyModal').classList.add('hidden');
         }
 
-        function copySheetDataToClipboardAndOpenSheets() {
+        function copySheetDataToClipboard() {
             const textarea = document.getElementById('sheetCopyTextarea');
             textarea.select();
             textarea.setSelectionRange(0, 999999);
             
             navigator.clipboard.writeText(textarea.value).then(() => {
-                // 指定された2つのスプレッドシートを新しいタブで開く
-                window.open("https://docs.google.com/spreadsheets/d/1C-VS0Fs-TmUf6aQd9rDsX9oHvOn9TAaatzaILpG95-o/edit?gid=1710872387#gid=1710872387", "_blank");
-                window.open("https://docs.google.com/spreadsheets/d/1cSJynUHga-Bq088sMElDw1PYA8kcSqvkCNl6p9-pq9Q/edit?gid=1710872387#gid=1710872387", "_blank");
-
                 const toast = document.getElementById('toast');
                 toast.classList.remove('hidden');
                 setTimeout(() => { toast.classList.add('hidden'); }, 1500);
