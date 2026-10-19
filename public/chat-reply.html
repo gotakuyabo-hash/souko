@@ -285,7 +285,7 @@
             list.forEach(roomId => {
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
                 const roomName = roomObj ? roomObj.name : `ルームID: ${roomId}`;
-                renderBurstCard(container, roomId, roomName, "⏳ 後で対応", "border-amber-200", false);
+                renderBurstCard(container, roomId, roomName, "⏳ 後で対応", "border-amber-200", false, false, 2);
             });
         }
 
@@ -393,7 +393,7 @@
             }
         };
 
-        async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null, showCheckbox = true) {
+        async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null, showCheckbox = true, limitCount = 2) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3`;
             
@@ -438,7 +438,7 @@
                             <h3 class="font-bold text-sm text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
                     </div>
-                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true, 1)}
+                    ${buildCardContent(roomId, roomName, msgs, roomData.members || [], true, limitCount)}
                 `;
             } catch (e) {
                 cardDiv.querySelector('.msg-loading').innerHTML = '<span class="text-red-500">メッセージ取得失敗</span>';
@@ -566,7 +566,7 @@
 
             if (container.style.display !== 'none') {
                 container.style.display = 'none';
-                btnEl.textContent = '👁️ ファイルを開く / プレビュー';
+                btnEl.textContent = '👁️ ファイル';
                 return;
             }
 
@@ -586,33 +586,33 @@
 
                 if (isImage) {
                     container.innerHTML = `
-                        <div class="space-y-2">
+                        <div class="space-y-1.5">
                             <div class="font-bold text-slate-700 truncate">${esc(filename)}</div>
-                            <img src="${downloadUrl}" alt="${esc(filename)}" class="max-h-48 rounded border object-contain mx-auto bg-slate-900">
-                            <div class="flex gap-2">
-                                <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center transition block">
-                                    📥 画像をダウンロード
+                            <img src="${downloadUrl}" alt="${esc(filename)}" class="max-h-36 rounded border object-contain mx-auto bg-slate-900">
+                            <div class="flex gap-1.5">
+                                <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold py-1 px-2 rounded text-center transition block">
+                                    📥 ダウンロード
                                 </a>
-                                <button onclick="closeFilePreview('${roomId}', '${fileId}')" class="bg-slate-300 text-slate-700 text-[11px] font-bold px-3 py-1.5 rounded cursor-pointer">閉じる</button>
+                                <button onclick="closeFilePreview('${roomId}', '${fileId}')" class="bg-slate-300 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded cursor-pointer">閉じる</button>
                             </div>
                         </div>
                     `;
                 } else {
                     container.innerHTML = `
-                        <div class="space-y-2">
+                        <div class="space-y-1.5">
                             <div class="font-bold text-slate-700 truncate">📎 ${esc(filename)}</div>
-                            <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-2 px-3 rounded text-center transition block shadow">
-                                📥 ファイルを直接ダウンロードする
+                            <a href="${downloadUrl}" target="_blank" download="${esc(filename)}" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center transition block shadow">
+                                📥 ファイルをダウンロード
                             </a>
                         </div>
                     `;
                 }
 
                 container.style.display = 'block';
-                btnEl.textContent = '🔼 プレビューを隠す';
+                btnEl.textContent = '🔼 閉じる';
             } catch (e) {
                 alert("ファイル取得エラー: " + e.message);
-                btnEl.textContent = '👁️ ファイルを開く / プレビュー';
+                btnEl.textContent = '👁️ ファイル';
             } finally {
                 btnEl.disabled = false;
             }
@@ -622,18 +622,18 @@
             const container = document.getElementById(`file_inline_preview_${roomId}_${fileId}`);
             const btn = document.getElementById(`file_btn_${roomId}_${fileId}`);
             if (container) container.style.display = 'none';
-            if (btn) btn.textContent = '👁️ ファイルを開く / プレビュー';
+            if (btn) btn.textContent = '👁️ ファイル';
         };
 
         function parseFilesCustom(body, roomId, roomName, senderName) {
             let rendered = esc(body);
             rendered = rendered.replace(/[info]([\s\S]*?)\[\/info\]/g, (match, inner) => {
                 let fileId = "";
-                const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/);
+                const fm = inner.match(/preview id=(\d+)/) || inner.match(/\[download:(\d+)\]/) || inner.match(/file id=(\d+)/);
                 if (fm) fileId = fm[1];
 
                 let rawFileName = "添付ファイル"; 
-                const dm = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/); 
+                const dm = inner.match(/\[download:\d+\]([\s\S]*?)\[\/download\]/) || inner.match(/file id=\d+\]([\s\S]*)/); 
                 if (dm) rawFileName = dm[1].trim();
 
                 let fileName = rawFileName;
@@ -648,20 +648,19 @@
                 const fileButtonId = `file_btn_${uniqueKey}`;
                 const previewContainerId = `file_inline_preview_${uniqueKey}`;
 
-                return `<div class="my-2 p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200 space-y-1.5 shadow-sm max-w-full overflow-hidden">
+                return `<div class="my-1.5 p-2 bg-indigo-50/80 rounded-lg border border-indigo-200 space-y-1 shadow-sm max-w-full overflow-hidden text-xs">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-indigo-900">📎 添付ファイル</span>
-                        ${fileSize ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">${fileSize}</span>` : ''}
+                        <span class="font-bold text-indigo-900 truncate">📎 ${esc(fileName)}</span>
+                        ${fileSize ? `<span class="text-[9px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded font-bold shrink-0">${fileSize}</span>` : ''}
                     </div>
-                    <div class="text-xs font-semibold text-slate-800 break-all">${esc(fileName)}</div>
                     ${fileId ? `
-                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="w-full bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center shadow-sm transition block cursor-pointer">
-                            👁️ ファイルを開く / プレビュー
+                        <button id="${fileButtonId}" onclick="fetchAndPreviewFile('${roomId}', '${fileId}', this)" class="w-full bg-sky-500 hover:bg-sky-600 text-white text-[10px] font-bold py-1 px-2 rounded text-center shadow-sm transition block cursor-pointer">
+                            👁️ ファイル
                         </button>
-                        <div id="${previewContainerId}" class="p-2 bg-white rounded border border-indigo-200 mt-1.5 max-w-full overflow-hidden" style="display:none;"></div>
+                        <div id="${previewContainerId}" class="p-2 bg-white rounded border border-indigo-200 mt-1 max-w-full overflow-hidden" style="display:none;"></div>
                     ` : `
-                        <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-3 rounded text-center shadow-sm transition block">
-                            🌐 Chatwork公式ルームで確認
+                        <a href="https://www.chatwork.com/#!rid${roomId}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[10px] font-bold py-1 px-2 rounded text-center shadow-sm transition block">
+                            🌐 Chatworkで確認
                         </a>
                     `}
                 </div>`;
@@ -671,10 +670,10 @@
             return `
                 <div class="whitespace-pre-wrap break-words overflow-hidden">${rendered}</div>
                 <div class="pt-1.5 flex gap-1.5">
-                    <a href="${chatworkRoomUrl}" target="_blank" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm transition text-center block leading-loose">
+                    <a href="${chatworkRoomUrl}" target="_blank" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-[10px] font-bold py-1 px-2 rounded shadow-sm transition text-center block leading-tight">
                         🌐 公式ルーム
                     </a>
-                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm transition text-center cursor-pointer">
+                    <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(senderName)}')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold py-1 px-2 rounded shadow-sm transition text-center cursor-pointer leading-tight">
                         🚀 スタッフ間連絡
                     </button>
                 </div>
@@ -712,9 +711,10 @@
                 actionHeader.style.display = 'flex';
                 document.getElementById('selectAllBurst').checked = false;
                 
+                // 🚀 未読タブのメッセージ表示を「直近2件」に設定
                 await Promise.all(unreadRoomsCache.map(room => {
                     const unread = Number(room.unread_num !== undefined ? room.unread_num : (room.unread_count || 0));
-                    return renderBurstCard(listContainer, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`, true);
+                    return renderBurstCard(listContainer, room.room_id, room.name, "未読", "border-indigo-100", `未読 ${unread}件`, true, 2);
                 }));
 
                 statusEl.textContent = `未読 ${unreadRoomsCache.length}件`;
@@ -726,7 +726,7 @@
             }
         }
 
-        function buildCardContent(roomId, roomName, messages, members, isSingle = false, limitCount = 1) {
+        function buildCardContent(roomId, roomName, messages, members, isSingle = false, limitCount = 2) {
             let chatHistoryHtml = '';
             let latestMsg = messages[messages.length - 1] || {};
 
@@ -735,8 +735,8 @@
                 const body = latestMsg.body || "";
                 const parsed = parseFilesCustom(body, roomId, roomName, sender);
                 chatHistoryHtml = `
-                    <div class="text-xs text-slate-700 p-2.5 bg-slate-50 rounded space-y-1.5 max-w-full overflow-hidden">
-                        <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
+                    <div class="text-xs text-slate-700 p-2 bg-slate-50 rounded space-y-1 max-w-full overflow-hidden">
+                        <div class="font-bold text-[10px] text-indigo-900">👤 ${esc(sender)} の発言:</div>
                         ${parsed}
                     </div>
                 `;
@@ -749,14 +749,14 @@
                     const body = m.body || "";
                     const parsed = parseFilesCustom(body, roomId, roomName, sender);
                     chatHistoryHtml += `
-                        <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
-                            <div class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</div>
+                        <div class="p-2 bg-slate-50 rounded-lg border border-slate-200 space-y-1 max-w-full overflow-hidden">
+                            <div class="font-bold text-[10px] text-indigo-900">👤 ${esc(sender)}:</div>
                             ${parsed}
                         </div>
                     `;
                 });
                 chatHistoryHtml = `
-                    <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    <div class="space-y-1.5 max-h-60 overflow-y-auto pr-1">
                         <div class="text-[10px] font-bold text-slate-400">💬 直近のメッセージ履歴 (${chatCount}件)</div>
                         ${chatHistoryHtml}
                     </div>
@@ -773,41 +773,41 @@
             }
 
             return `
-                <div class="space-y-2 pb-2 border-b border-slate-100 flex items-center gap-2">
-                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-xs bg-indigo-50 text-indigo-700 py-2 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
-                    <button onclick="toggleLaterRoom('${roomId}')" class="text-xs bg-amber-100 text-amber-900 px-3 py-2 rounded-lg font-bold cursor-pointer">⏳ 後で対応</button>
+                <div class="space-y-1.5 pb-1.5 border-b border-slate-100 flex items-center gap-1.5">
+                    <button onclick="fetchSellerInfo('${esc(roomName)}')" class="flex-1 text-[11px] bg-indigo-50 text-indigo-700 py-1.5 rounded-lg border border-indigo-200 font-bold cursor-pointer">🔑 セラー情報</button>
+                    <button onclick="toggleLaterRoom('${roomId}')" class="text-[11px] bg-amber-100 text-amber-900 px-2.5 py-1.5 rounded-lg font-bold cursor-pointer">⏳ 後で</button>
                 </div>
                 
                 ${chatHistoryHtml}
                 
-                <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100">
-                    <input type="text" id="ai_prompt_${roomId}" placeholder="AIへの指示（例：明日返信する）..." class="w-full text-xs border rounded p-1.5 bg-white">
-                    <button onclick="generateAiDraft('${roomId}')" class="w-full text-xs bg-indigo-600 text-white font-bold py-1.5 rounded cursor-pointer">✨ AI返信案を作成</button>
+                <div class="space-y-1.5 pt-1 bg-indigo-50/40 p-2 rounded-lg border border-indigo-100 text-xs">
+                    <input type="text" id="ai_prompt_${roomId}" placeholder="AIへの指示（例：明日返信する）..." class="w-full text-xs border rounded p-1 bg-white">
+                    <button onclick="generateAiDraft('${roomId}')" class="w-full text-xs bg-indigo-600 text-white font-bold py-1 rounded cursor-pointer">✨ AI返信案を作成</button>
                     
-                    <div class="flex items-center gap-1.5 pt-1">
+                    <div class="flex items-center gap-1 pt-0.5">
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
                             ${memberOptions}
                         </select>
-                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded shrink-0 cursor-pointer">💬 To追加</button>
+                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-2 py-1 rounded shrink-0 cursor-pointer">💬 To</button>
                     </div>
 
-                    <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信案..." class="w-full h-20 text-xs border rounded p-2 bg-white"></textarea>
+                    <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-1.5 bg-white"></textarea>
                     
-                    <div class="grid grid-cols-2 gap-2 pt-1">
-                        <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold py-2 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
-                            <span>📷 カメラ撮影</span>
+                    <div class="grid grid-cols-2 gap-1.5 pt-0.5">
+                        <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
+                            <span>📷 カメラ</span>
                             <input type="file" accept="image/*" capture="environment" id="reply_camera_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
                         </label>
-                        <label class="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white text-[11px] font-bold py-2 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
-                            <span>📁 ファイル選択</span>
+                        <label class="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
+                            <span>📁 ファイル</span>
                             <input type="file" id="reply_file_${roomId}" onchange="handleFileSelect('${roomId}', this)" class="hidden">
                         </label>
                     </div>
-                    <div id="file_preview_${roomId}" class="text-[11px] text-indigo-700 font-bold bg-white p-2 rounded border border-indigo-200 hidden"></div>
+                    <div id="file_preview_${roomId}" class="text-[10px] text-indigo-700 font-bold bg-white p-1.5 rounded border border-indigo-200 hidden"></div>
 
-                    <div class="flex gap-2 pt-1">
-                        <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded cursor-pointer">📤 メッセージを送信</button>
-                        <button onclick="markRead('${roomId}', '${latestMsg.message_id || ''}')" class="bg-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded cursor-pointer">📖 既読のみ</button>
+                    <div class="flex gap-1.5 pt-0.5">
+                        <button onclick="sendReplyMessage('${roomId}', '${latestMsg.message_id || ''}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 送信</button>
+                        <button onclick="markRead('${roomId}', '${latestMsg.message_id || ''}')" class="bg-slate-200 text-slate-700 text-xs font-bold px-2.5 py-1.5 rounded cursor-pointer">📖 既読のみ</button>
                     </div>
                 </div>
             `;
@@ -879,10 +879,10 @@
                 if (window.saveAiFeedbackLog) await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomIdStr] || "", finalMsg);
 
                 alert("送信しました！");
-                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
+                btn.disabled = false; btn.textContent = "📤 送信";
             } catch (e) {
                 alert("送信失敗: " + e.message);
-                btn.disabled = false; btn.textContent = "📤 メッセージを送信";
+                btn.disabled = false; btn.textContent = "📤 送信";
             }
         };
 
