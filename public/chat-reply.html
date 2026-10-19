@@ -95,14 +95,21 @@
                 <button id="tabNormal" onclick="switchMode('normal')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">📁 通常</button>
             </div>
 
-            <!-- 一括既読バー（未読・後でタブでのみ表示） -->
-            <div id="batchActionBar" class="flex items-center justify-between pt-2 border-t border-slate-100">
-                <label class="flex items-center gap-1.5 font-bold cursor-pointer text-slate-600">
-                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-3.5 h-3.5 rounded"> 全選択
-                </label>
-                <button onclick="batchMarkAsRead()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded shadow-sm text-xs cursor-pointer">
-                    ✅ 選択したルームを一括既読にする
-                </button>
+            <!-- 一括操作バー（未読・後でタブでのみ表示） -->
+            <div id="batchActionBar" class="space-y-2 pt-2 border-t border-slate-100">
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center gap-1.5 font-bold cursor-pointer text-slate-600">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-3.5 h-3.5 rounded"> 全選択
+                    </label>
+                    <button onclick="batchMarkAsRead()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded shadow-sm text-xs cursor-pointer">
+                        ✅ 選択したルームを一括既読
+                    </button>
+                </div>
+                <div>
+                    <button onclick="copyAllUnreadChats(this)" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-1.5 rounded shadow-sm text-xs cursor-pointer">
+                        📋 未読タブの全チャットをまとめてコピー
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -206,12 +213,12 @@
             if (mode === 'burst') {
                 document.getElementById('tabBurst').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('burstModeContainer').style.display = 'block';
-                document.getElementById('batchActionBar').style.display = 'flex';
+                document.getElementById('batchActionBar').style.display = 'block';
                 fetchAllUnreadRooms();
             } else if (mode === 'later') {
                 document.getElementById('tabLater').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('laterModeContainer').style.display = 'block';
-                document.getElementById('batchActionBar').style.display = 'flex';
+                document.getElementById('batchActionBar').style.display = 'block';
                 renderLaterRooms();
             } else {
                 document.getElementById('tabNormal').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
@@ -261,7 +268,8 @@
         // ⚡ 未読タブ用カード描画（チェックボックス付き、1件表示）
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
-            cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
+            cardDiv.className = `burst-card bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
+            cardDiv.setAttribute('data-room-name', roomName);
             cardDiv.innerHTML = `
                 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                     <div class="flex items-center gap-2 min-w-0 mr-2">
@@ -324,7 +332,7 @@
             refreshCurrentView();
         };
 
-        // 📋 チャット本文コピー機能
+        // 📋 単体コピー機能
         window.copyMessageText = function(text, btn) {
             navigator.clipboard.writeText(text).then(() => {
                 const originalText = btn.textContent;
@@ -336,6 +344,63 @@
                 }, 1500);
             }).catch(err => {
                 alert("コピーに失敗しました: " + err);
+            });
+        };
+
+        // 📋 未読タブに存在するすべてのチャットを一括コピーする機能
+        window.copyAllUnreadChats = function(btn) {
+            const activeContainer = currentMode === 'burst' ? document.getElementById('burstModeContainer') : document.getElementById('laterModeContainer');
+            const msgElements = activeContainer.querySelectorAll('.chat-msg-body-text');
+            const cardElements = activeContainer.querySelectorAll('.burst-card');
+
+            if (msgElements.length === 0) {
+                alert("コピーする未読メッセージがありません。");
+                return;
+            }
+
+            let combinedText = "【未読チャット一覧】\n\n";
+            cardElements.forEach((card, idx) => {
+                const roomName = card.getAttribute('data-room-name') || "ルーム";
+                const bodyEl = card.querySelector('.chat-msg-body-text');
+                const bodyText = bodyEl ? bodyEl.textContent : "";
+                combinedText += `■ [${idx + 1}] ルーム: ${roomName}\n${bodyText}\n\n--------------------\n\n`;
+            });
+
+            navigator.clipboard.writeText(combinedText.trim()).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = "✅ 全未読チャットのコピー完了！";
+                btn.className = btn.className.replace("bg-sky-600 hover:bg-sky-700 text-white", "bg-emerald-600 text-white");
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.className = btn.className.replace("bg-emerald-600 text-white", "bg-sky-600 hover:bg-sky-700 text-white");
+                }, 1500);
+            }).catch(err => {
+                alert("一括コピーに失敗しました: " + err);
+            });
+        };
+
+        // 📁 ルームのメッセージを一括コピー機能（通常タブ用 - 20件）
+        window.copyAllRoomMessages = function(roomName, btn) {
+            const msgContainers = document.querySelectorAll('#singleRoomMessageContainer .chat-msg-body-text');
+            if (msgContainers.length === 0) {
+                alert("コピーするメッセージがありません。");
+                return;
+            }
+            let combinedText = `【ルーム名: ${roomName}】\n\n`;
+            msgContainers.forEach((el, idx) => {
+                combinedText += `--- メッセージ ${idx + 1} ---\n` + el.textContent + `\n\n`;
+            });
+
+            navigator.clipboard.writeText(combinedText.trim()).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = "✅ 20件コピー完了";
+                btn.className = btn.className.replace("bg-indigo-600 hover:bg-indigo-700 text-white", "bg-emerald-600 text-white");
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.className = btn.className.replace("bg-emerald-600 text-white", "bg-indigo-600 hover:bg-indigo-700 text-white");
+                }, 1500);
+            }).catch(err => {
+                alert("一括コピーに失敗しました: " + err);
             });
         };
 
@@ -408,12 +473,12 @@
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], 10);
+                container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], 20, true);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
 
         function parseMessageBody(body) {
-            return `<div class="whitespace-pre-wrap break-all text-xs">${esc(body)}</div>`;
+            return `<div class="chat-msg-body-text whitespace-pre-wrap break-all text-xs">${esc(body)}</div>`;
         }
 
         // ⚡ 未読ルーム一覧スキャン
@@ -456,8 +521,8 @@
             }
         }
 
-        // カード内部のHTML生成（未読は1件、通常は10件）
-        function buildCardContent(roomId, roomName, messages, members, displayCount = 1) {
+        // カード内部のHTML生成
+        function buildCardContent(roomId, roomName, messages, members, displayCount = 1, isNormalTab = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
 
@@ -472,7 +537,6 @@
                 const body = m.body || "";
                 const parsed = parseMessageBody(body);
                 const safeBody = esc(body).replace(/'/g, "&#39;");
-                // data属性や引数用にエスケープ処理
                 const rawBodyForCopy = body.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n');
 
                 chatHistoryHtml += `
@@ -494,9 +558,20 @@
                 `;
             });
 
+            let batchCopyHeaderBtn = '';
+            if (isNormalTab) {
+                const safeRoomNameForCopy = roomName.replace(/'/g, "\\'");
+                batchCopyHeaderBtn = `
+                    <button onclick="copyAllRoomMessages('${safeRoomNameForCopy}', this)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 rounded-lg shadow-sm transition cursor-pointer mb-2">
+                        📁 表示中の ${chatCount}件のチャットをまとめてコピー
+                    </button>
+                `;
+            }
+
             chatHistoryHtml = `
-                <div class="space-y-2 max-h-60 overflow-y-auto pr-1 w-full box-border">
+                <div class="space-y-2 max-h-80 overflow-y-auto pr-1 w-full box-border">
                     <div class="text-[10px] font-bold text-slate-400">💬 メッセージ (${chatCount}件)</div>
+                    ${batchCopyHeaderBtn}
                     ${chatHistoryHtml}
                 </div>
             `;
