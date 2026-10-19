@@ -94,6 +94,16 @@
                 <button id="tabLater" onclick="switchMode('later')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">⏳ 後で (<span id="laterCountBadge">0</span>)</button>
                 <button id="tabNormal" onclick="switchMode('normal')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">📁 通常</button>
             </div>
+
+            <!-- 一括既読バー（未読・後でタブでのみ表示） -->
+            <div id="batchActionBar" class="flex items-center justify-between pt-2 border-t border-slate-100">
+                <label class="flex items-center gap-1.5 font-bold cursor-pointer text-slate-600">
+                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-3.5 h-3.5 rounded"> 全選択
+                </label>
+                <button onclick="batchMarkAsRead()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded shadow-sm text-xs cursor-pointer">
+                    ✅ 選択したルームを一括既読にする
+                </button>
+            </div>
         </div>
 
         <!-- 各モードコンテナ -->
@@ -177,6 +187,7 @@
         }
 
         function refreshCurrentView() {
+            document.getElementById('selectAllCheckbox').checked = false;
             if (currentMode === 'burst') fetchAllUnreadRooms();
             else if (currentMode === 'later') renderLaterRooms();
             else fetchNormalRooms();
@@ -184,20 +195,23 @@
 
         function switchMode(mode) {
             currentMode = mode;
+            document.getElementById('selectAllCheckbox').checked = false;
             ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => {
                 document.getElementById(id).className = "py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer";
             });
-            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => {
+            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer', 'batchActionBar'].forEach(id => {
                 document.getElementById(id).style.display = 'none';
             });
 
             if (mode === 'burst') {
                 document.getElementById('tabBurst').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('burstModeContainer').style.display = 'block';
+                document.getElementById('batchActionBar').style.display = 'flex';
                 fetchAllUnreadRooms();
             } else if (mode === 'later') {
                 document.getElementById('tabLater').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
                 document.getElementById('laterModeContainer').style.display = 'block';
+                document.getElementById('batchActionBar').style.display = 'flex';
                 renderLaterRooms();
             } else {
                 document.getElementById('tabNormal').className = "py-1.5 text-[11px] font-bold rounded-md bg-white text-indigo-600 shadow-sm cursor-pointer";
@@ -244,13 +258,14 @@
             });
         }
 
-        // ⚡ 未読タブ用カード描画（1件のみ表示）
+        // ⚡ 未読タブ用カード描画（チェックボックス付き）
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
             cardDiv.innerHTML = `
                 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                     <div class="flex items-center gap-2 min-w-0 mr-2">
+                        <input type="checkbox" class="room-checkbox w-4 h-4 rounded" data-room-id="${roomId}">
                         <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                         <h3 class="font-bold text-xs text-slate-900 truncate">${esc(roomName)}</h3>
                     </div>
@@ -271,6 +286,7 @@
                 cardDiv.innerHTML = `
                     <div class="flex items-center justify-between pb-2 border-b border-slate-100">
                         <div class="flex items-center gap-2 min-w-0 mr-2">
+                            <input type="checkbox" class="room-checkbox w-4 h-4 rounded" data-room-id="${roomId}">
                             <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">${unreadBadge || badgeText}</span>
                             <h3 class="font-bold text-xs text-slate-900 truncate">${esc(roomName)}</h3>
                         </div>
@@ -281,6 +297,32 @@
                 cardDiv.querySelector('.msg-loading').innerHTML = '<span class="text-red-500">メッセージ取得失敗</span>';
             }
         }
+
+        // 全選択・一括既読の制御
+        window.toggleSelectAll = function(masterCheckbox) {
+            const checkboxes = document.querySelectorAll('.room-checkbox');
+            checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+        };
+
+        window.batchMarkAsRead = async function() {
+            const checkedBoxes = document.querySelectorAll('.room-checkbox:checked');
+            if (checkedBoxes.length === 0) {
+                alert("既読にするルームが選択されていません。");
+                return;
+            }
+            if (!confirm(`選択された ${checkedBoxes.length} 件のルームを既読にしますか？`)) return;
+
+            let successCount = 0;
+            for (const cb of checkedBoxes) {
+                const roomId = cb.getAttribute('data-room-id');
+                try {
+                    await callApi("mark_read", { room_id: roomId });
+                    successCount++;
+                } catch (e) {}
+            }
+            alert(`${successCount} 件のルームを既読にしました！`);
+            refreshCurrentView();
+        };
 
         // 🚀 スタッフ間連絡モーダルを開く
         window.openStaffAppModal = function(roomId, roomName, senderName, messageBody) {
@@ -399,7 +441,7 @@
             }
         }
 
-        // カード内部のHTML生成（displayCount: 未読は1件、通常は10件）
+        // カード内部のHTML生成
         function buildCardContent(roomId, roomName, messages, members, displayCount = 1) {
             let chatHistoryHtml = '';
             let latestMsg = {};
@@ -414,7 +456,6 @@
                 const sender = m.account ? m.account.name : "相手";
                 const body = m.body || "";
                 const parsed = parseMessageBody(body);
-                const msgId = m.message_id || "";
                 const safeBody = esc(body).replace(/'/g, "&#39;");
 
                 chatHistoryHtml += `
@@ -493,7 +534,7 @@
             textarea.focus();
         };
 
-        // 📖 既読にする機能
+        // 📖 個別既読にする機能
         window.markAsRead = async function(roomId, lastChatId, btn) {
             btn.disabled = true;
             btn.textContent = "処理中...";
