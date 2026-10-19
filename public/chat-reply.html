@@ -18,7 +18,12 @@
             appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
         });
         const db = getFirestore(app);
+        
+        // グローバルに公開
         window.db = db;
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.serverTimestamp = serverTimestamp;
 
         // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
@@ -49,13 +54,13 @@
                     });
                 }
 
-                await addDoc(collection(db, "staff_requests"), {
+                await window.addDoc(window.collection(window.db, "staff_requests"), {
                     from: fromVal || '未設定',
                     to: toVal || '未設定',
                     task: taskContent,
                     imageUrl: imageUrl,
                     status: 'pending',
-                    createdAt: serverTimestamp()
+                    createdAt: window.serverTimestamp()
                 });
                 alert('スタッフ間連絡アプリに登録しました！');
                 closeAllModals();
@@ -404,7 +409,7 @@
             });
         };
 
-        // 🚀 スタッフ間連絡モーダルを開く（ここでフォームへ確実に値をセットするよう修正）
+        // 🚀 スタッフ間連絡モーダルを開く
         window.openStaffAppModal = function(msgKey, roomName, senderName) {
             const messageBody = window.messageStore[msgKey] || "";
             document.getElementById('linkRoomId').value = "";
@@ -523,6 +528,65 @@
             }
         }
 
+        // 🤖 GAS経由でAI返信文を生成してFirestoreに記録する関数
+        window.generateAiReply = async function(roomId) {
+            const textarea = document.getElementById(`reply_text_${roomId}`);
+            const btn = document.getElementById(`ai_btn_${roomId}`);
+            const roomName = document.querySelector(`[data-room-id="${roomId}"]`)?.closest('.burst-card')?.getAttribute('data-room-name') || "ルーム";
+            
+            const msgContainer = textarea.closest('.burst-card, #singleRoomMessageContainer');
+            const msgTexts = Array.from(msgContainer.querySelectorAll('.chat-msg-body-text')).map(el => el.textContent);
+            const contextText = msgTexts.join("\n---\n");
+
+            btn.disabled = true;
+            btn.textContent = "AI生成中...";
+
+            try {
+                const data = await callApi("generate_ai_reply", {
+                    room_id: roomId,
+                    room_name: roomName,
+                    context: contextText
+                });
+
+                const aiReply = data.ai_reply || "";
+
+                if (aiReply) {
+                    textarea.value = aiReply;
+                    
+                    // Firestoreに生成ログを保存
+                    await window.addDoc(window.collection(window.db, "ai_reply_logs"), {
+                        roomId: String(roomId),
+                        roomName: roomName,
+                        context: contextText,
+                        aiGeneratedText: aiReply,
+                        status: 'generated',
+                        createdAt: window.serverTimestamp()
+                    });
+                } else {
+                    alert("AI生成結果が空でした。");
+                }
+            } catch (e) {
+                alert("AI生成エラー: " + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "✨ AI返信生成";
+            }
+        };
+
+        // 📝 添削内容を自動保存する内部関数
+        async function saveAutoFeedback(roomId, text) {
+            if (!text || !text.trim()) return;
+            try {
+                await window.addDoc(window.collection(window.db, "ai_brushup_feedback"), {
+                    roomId: String(roomId),
+                    userEditedText: text.trim(),
+                    updatedAt: window.serverTimestamp()
+                });
+            } catch (e) {
+                console.error("自動添削保存失敗:", e);
+            }
+        }
+
         // カード内部のHTML生成
         function buildCardContent(roomId, roomName, messages, members, displayCount = 1, isNormalTab = false) {
             let chatHistoryHtml = '';
@@ -602,6 +666,13 @@
                         <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded shrink-0 cursor-pointer">💬 To追加</button>
                     </div>
 
+                    <!-- 🤖 AI返信生成ボタン -->
+                    <div>
+                        <button id="ai_btn_${roomId}" onclick="generateAiReply('${roomId}')" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm cursor-pointer transition">
+                            ✨ AI返信生成
+                        </button>
+                    </div>
+
                     <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-2 bg-white box-border"></textarea>
 
                     <div class="flex gap-2 pt-1">
@@ -630,8 +701,13 @@
             textarea.focus();
         };
 
-        // 📖 個別既読にする機能
+        // 📖 個別既読にする機能（同時に返信案を自動保存）
         window.markAsRead = async function(roomId, lastChatId, btn) {
+            const textarea = document.getElementById(`reply_text_${roomId}`);
+            if (textarea && textarea.value.trim()) {
+                await saveAutoFeedback(roomId, textarea.value);
+            }
+
             btn.disabled = true;
             btn.textContent = "処理中...";
             try {
@@ -645,12 +721,16 @@
             }
         };
 
-        // 📤 メッセージ送信
+        // 📤 メッセージ送信（同時に返信案を自動保存）
         window.sendReplyMessage = async function(roomId, btn) {
             const roomIdStr = String(roomId);
             const textarea = document.getElementById(`reply_text_${roomIdStr}`);
             if (!textarea || !textarea.value.trim()) { alert("返信文を入力してください。"); return; }
             const finalMsg = textarea.value.trim();
+
+            // 修正文を自動保存
+            await saveAutoFeedback(roomIdStr, finalMsg);
+
             btn.disabled = true; btn.textContent = "送信中...";
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
