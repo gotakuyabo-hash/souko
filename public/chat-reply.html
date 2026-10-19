@@ -64,18 +64,6 @@
                 btnEl.textContent = "🚀 スタッフ間連絡アプリに登録する";
             }
         };
-
-        window.saveAiFeedbackLog = async function(rcv, draft, final) {
-            if (!rcv || !final) return;
-            try {
-                await addDoc(collection(db, "ai_feedback_logs"), {
-                    receivedMessage: rcv,
-                    aiDraft: draft || "",
-                    finalMessage: final,
-                    createdAt: serverTimestamp()
-                });
-            } catch (e) { console.error(e); }
-        };
     </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16">
@@ -172,7 +160,6 @@
         let roomDataCache = {};
         let currentMode = 'burst';
         const LATER_KEY = "chatwork_later_rooms_v1";
-        let aiDraftMemory = {};
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
@@ -762,9 +749,7 @@
                 `;
             }
 
-            // 💡 通常個別などの複数件表示のときも、最新メッセージの本文を正しく保持できるようにする
             messageCache[roomId] = latestMsg.body || "";
-            const latestSenderName = latestMsg.account ? latestMsg.account.name : "相手";
 
             let memberOptions = '<option value="">-- メンバーを選択してTo追加 --</option>';
             if (Array.isArray(members)) {
@@ -782,18 +767,14 @@
                 ${chatHistoryHtml}
                 
                 <div class="space-y-1.5 pt-1 bg-indigo-50/40 p-2 rounded-lg border border-indigo-100 text-xs">
-                    <!-- 💡 通常個別でも正しくルーム名やメッセージを渡せるように調整 -->
-                    <input type="text" id="ai_prompt_${roomId}" placeholder="AIへの指示（例：明日返信する）..." class="w-full text-xs border rounded p-1 bg-white">
-                    <button onclick="generateAiDraft('${roomId}', '${esc(roomName)}')" class="w-full text-xs bg-indigo-600 text-white font-bold py-1 rounded cursor-pointer">✨ AI返信案を作成</button>
-                    
-                    <div class="flex items-center gap-1 pt-0.5">
+                    <div class="flex items-center gap-1">
                         <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
                             ${memberOptions}
                         </select>
                         <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-2 py-1 rounded shrink-0 cursor-pointer">💬 To</button>
                     </div>
 
-                    <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-1.5 bg-white"></textarea>
+                    <textarea id="reply_text_${roomId}" data-received="${esc(latestMsg.body || '')}" placeholder="返信文を入力..." class="w-full h-16 text-xs border rounded p-1.5 bg-white"></textarea>
                     
                     <div class="grid grid-cols-2 gap-1.5 pt-0.5">
                         <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold py-1.5 px-2 rounded text-center shadow-sm transition flex items-center justify-center gap-1">
@@ -844,49 +825,14 @@
             }
         };
 
-        window.generateAiDraft = async function(roomId, roomNameArg) {
-            const textarea = document.getElementById(`reply_text_${roomId}`);
-            const promptInput = document.getElementById(`ai_prompt_${roomId}`);
-            if (!textarea) return;
-
-            const instruction = promptInput ? promptInput.value.trim() : "";
-            const receivedMsg = textarea.dataset.received || "";
-            
-            // ルーム名が引数で渡されない場合のフォールバック
-            let roomName = roomNameArg || "ルーム";
-            if (!roomNameArg) {
-                const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                if (roomObj) roomName = roomObj.name;
-            }
-            
-            textarea.value = "🤖 AI返信案を作成中...";
-
-            try {
-                const data = await callApi("generate_ai_draft", {
-                    room_name: roomName,
-                    message_body: receivedMsg,
-                    custom_instruction: instruction
-                });
-
-                let draft = data.draft || "返信案の生成に失敗しました。";
-                textarea.value = draft;
-                aiDraftMemory[roomId] = draft;
-            } catch (e) {
-                textarea.value = "エラー: " + e.message;
-            }
-        };
-
         window.sendReplyMessage = async function(roomId, lastChatId, btn) {
             const roomIdStr = String(roomId);
             const textarea = document.getElementById(`reply_text_${roomIdStr}`);
             if (!textarea || !textarea.value.trim()) { alert("返信文を入力してください。"); return; }
             const finalMsg = textarea.value.trim();
-            const receivedMsg = textarea.dataset.received || "";
             btn.disabled = true; btn.textContent = "送信中...";
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
-                if (window.saveAiFeedbackLog) await window.saveAiFeedbackLog(receivedMsg, aiDraftMemory[roomIdStr] || "", finalMsg);
-
                 alert("送信しました！");
                 btn.disabled = false; btn.textContent = "📤 送信";
             } catch (e) {
