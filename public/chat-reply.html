@@ -22,10 +22,10 @@
 
         // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
-            const roomId = btnEl.getAttribute('data-room-id');
-            const roomName = btnEl.getAttribute('data-room-name');
-            const senderName = btnEl.getAttribute('data-sender-name');
-            const messageBody = btnEl.getAttribute('data-message-body');
+            const roomId = document.getElementById('linkRoomId').value;
+            const roomName = document.getElementById('linkRoomName').value;
+            const senderName = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
             
             const fromVal = document.getElementById('linkFromInput').value;
             const toVal = document.getElementById('linkToInput').value;
@@ -169,6 +169,8 @@
         let unreadRoomsCache = [];
         let roomMembersCache = {};
         let currentMode = 'burst';
+        // 各メッセージのデータを保持するグローバルマップ
+        window.messageStore = {};
         const LATER_KEY = "chatwork_later_rooms_v1";
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -265,7 +267,7 @@
             });
         }
 
-        // ⚡ 未読タブ用カード描画（チェックボックス付き、1件表示）
+        // ⚡ 未読タブ用カード描画
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `burst-card bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
@@ -306,7 +308,6 @@
             }
         }
 
-        // 全選択・一括既読の制御
         window.toggleSelectAll = function(masterCheckbox) {
             const checkboxes = document.querySelectorAll('.room-checkbox');
             checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
@@ -333,7 +334,8 @@
         };
 
         // 📋 単体コピー機能
-        window.copyMessageText = function(text, btn) {
+        window.copyMessageText = function(msgKey, btn) {
+            const text = window.messageStore[msgKey] || "";
             navigator.clipboard.writeText(text).then(() => {
                 const originalText = btn.textContent;
                 btn.textContent = "✅ コピー完了";
@@ -347,13 +349,12 @@
             });
         };
 
-        // 📋 未読タブに存在するすべてのチャットを一括コピーする機能
+        // 📋 未読タブの全チャット一括コピー
         window.copyAllUnreadChats = function(btn) {
             const activeContainer = currentMode === 'burst' ? document.getElementById('burstModeContainer') : document.getElementById('laterModeContainer');
-            const msgElements = activeContainer.querySelectorAll('.chat-msg-body-text');
             const cardElements = activeContainer.querySelectorAll('.burst-card');
 
-            if (msgElements.length === 0) {
+            if (cardElements.length === 0) {
                 alert("コピーする未読メッセージがありません。");
                 return;
             }
@@ -379,7 +380,7 @@
             });
         };
 
-        // 📁 ルームのメッセージを一括コピー機能（通常タブ用 - 20件）
+        // 📁 通常タブの20件一括コピー
         window.copyAllRoomMessages = function(roomName, btn) {
             const msgContainers = document.querySelectorAll('#singleRoomMessageContainer .chat-msg-body-text');
             if (msgContainers.length === 0) {
@@ -404,9 +405,10 @@
             });
         };
 
-        // 🚀 スタッフ間連絡モーダルを開く
-        window.openStaffAppModal = function(roomId, roomName, senderName, messageBody) {
-            document.getElementById('linkRoomId').value = roomId;
+        // 🚀 スタッフ間連絡モーダルを開く（安全なキー参照方式）
+        window.openStaffAppModal = function(msgKey, roomName, senderName) {
+            const messageBody = window.messageStore[msgKey] || "";
+            document.getElementById('linkRoomId').value = "";
             document.getElementById('linkRoomName').value = roomName;
             document.getElementById('linkSenderName').value = senderName;
             document.getElementById('linkMessageBody').value = messageBody;
@@ -521,7 +523,7 @@
             }
         }
 
-        // カード内部のHTML生成
+        // カード内部のHTML生成（データ破損を防ぐ安全な参照キー方式）
         function buildCardContent(roomId, roomName, messages, members, displayCount = 1, isNormalTab = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
@@ -532,25 +534,27 @@
             const lastChatId = latestMsg.message_id || "";
             const chatworkRoomUrl = `https://www.chatwork.com/#!rid${roomId}`;
 
-            recentMsgs.forEach(m => {
+            recentMsgs.forEach((m, idx) => {
                 const sender = m.account ? m.account.name : "相手";
                 const body = m.body || "";
                 const parsed = parseMessageBody(body);
-                const safeBody = esc(body).replace(/'/g, "&#39;");
-                const rawBodyForCopy = body.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n');
+                
+                // メッセージ内容をグローバルストアに安全に格納
+                const msgKey = `msg_${roomId}_${idx}_${Math.random().toString(36).substr(2, 6)}`;
+                window.messageStore[msgKey] = body;
 
                 chatHistoryHtml += `
                     <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2 w-full box-border">
                         <div class="flex items-center justify-between">
                             <span class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</span>
-                            <button onclick="copyMessageText('${rawBodyForCopy}', this)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer transition">📋 コピー</button>
+                            <button onclick="copyMessageText('${msgKey}', this)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer transition">📋 コピー</button>
                         </div>
                         ${parsed}
                         <div class="grid grid-cols-2 gap-1.5 pt-1">
                             <a href="${chatworkRoomUrl}" target="_blank" class="bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold py-1 px-2 rounded text-center transition block truncate">
                                 🌐 公式ルーム
                             </a>
-                            <button onclick="openStaffAppModal('${roomId}', '${esc(roomName)}', '${esc(sender)}', '${safeBody}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1 px-2 rounded shadow-sm transition cursor-pointer truncate">
+                            <button onclick="openStaffAppModal('${msgKey}', '${esc(roomName)}', '${esc(sender)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1 px-2 rounded shadow-sm transition cursor-pointer truncate">
                                 🚀 スタッフ連絡
                             </button>
                         </div>
