@@ -19,7 +19,6 @@
         });
         const db = getFirestore(app);
         
-        // グローバルに公開
         window.db = db;
         window.collection = collection;
         window.addDoc = addDoc;
@@ -100,7 +99,7 @@
                 <button id="tabNormal" onclick="switchMode('normal')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">📁 通常</button>
             </div>
 
-            <!-- 一括操作バー（未読・後でタブでのみ表示） -->
+            <!-- 一括操作バー -->
             <div id="batchActionBar" class="space-y-2 pt-2 border-t border-slate-100">
                 <div class="flex items-center justify-between">
                     <label class="flex items-center gap-1.5 font-bold cursor-pointer text-slate-600">
@@ -233,7 +232,6 @@
             }
         }
 
-        // ⏳ 後で対応機能
         function getLaterRooms() { try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch(e) { return {}; } }
         function updateLaterBadge() {
             const later = getLaterRooms();
@@ -271,7 +269,6 @@
             });
         }
 
-        // ⚡ 未読タブ用カード描画
         async function renderBurstCard(container, roomId, roomName, badgeText, borderColor, unreadBadge = null) {
             const cardDiv = document.createElement('div');
             cardDiv.className = `burst-card bg-white border-2 ${borderColor} rounded-xl p-3.5 shadow-sm space-y-3 w-full max-w-full overflow-hidden box-border`;
@@ -337,7 +334,6 @@
             refreshCurrentView();
         };
 
-        // 📋 単体コピー機能
         window.copyMessageText = function(msgKey, btn) {
             const text = window.messageStore[msgKey] || "";
             navigator.clipboard.writeText(text).then(() => {
@@ -348,12 +344,9 @@
                     btn.textContent = originalText;
                     btn.className = btn.className.replace("bg-emerald-500 text-white", "bg-slate-200 hover:bg-slate-300 text-slate-700");
                 }, 1500);
-            }).catch(err => {
-                alert("コピーに失敗しました: " + err);
-            });
+            }).catch(err => { alert("コピーに失敗しました: " + err); });
         };
 
-        // 📋 未読タブの全チャット一括コピー
         window.copyAllUnreadChats = function(btn) {
             const activeContainer = currentMode === 'burst' ? document.getElementById('burstModeContainer') : document.getElementById('laterModeContainer');
             const cardElements = activeContainer.querySelectorAll('.burst-card');
@@ -379,12 +372,9 @@
                     btn.textContent = originalText;
                     btn.className = btn.className.replace("bg-emerald-600 text-white", "bg-sky-600 hover:bg-sky-700 text-white");
                 }, 1500);
-            }).catch(err => {
-                alert("一括コピーに失敗しました: " + err);
-            });
+            }).catch(err => { alert("一括コピーに失敗しました: " + err); });
         };
 
-        // 📁 通常タブの20件一括コピー
         window.copyAllRoomMessages = function(roomName, btn) {
             const msgContainers = document.querySelectorAll('#singleRoomMessageContainer .chat-msg-body-text');
             if (msgContainers.length === 0) {
@@ -398,18 +388,15 @@
 
             navigator.clipboard.writeText(combinedText.trim()).then(() => {
                 const originalText = btn.textContent;
-                btn.textContent = "✅ 20件コピー完了";
+                btn.textContent = "✅ コピー完了";
                 btn.className = btn.className.replace("bg-indigo-600 hover:bg-indigo-700 text-white", "bg-emerald-600 text-white");
                 setTimeout(() => {
                     btn.textContent = originalText;
                     btn.className = btn.className.replace("bg-emerald-600 text-white", "bg-indigo-600 hover:bg-indigo-700 text-white");
                 }, 1500);
-            }).catch(err => {
-                alert("一括コピーに失敗しました: " + err);
-            });
+            }).catch(err => { alert("一括コピーに失敗しました: " + err); });
         };
 
-        // 🚀 スタッフ間連絡モーダルを開く
         window.openStaffAppModal = function(msgKey, roomName, senderName) {
             const messageBody = window.messageStore[msgKey] || "";
             document.getElementById('linkRoomId').value = "";
@@ -444,7 +431,6 @@
             }
         };
 
-        // 📁 通常タブ
         async function fetchNormalRooms() {
             const selectEl = document.getElementById('roomSelect');
             selectEl.innerHTML = '<option value="">-- ルーム一覧読み込み中... --</option>';
@@ -480,6 +466,7 @@
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
+                // 通常タブは20件表示
                 container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], 20, true);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
@@ -488,7 +475,6 @@
             return `<div class="chat-msg-body-text whitespace-pre-wrap break-all text-xs">${esc(body)}</div>`;
         }
 
-        // ⚡ 未読ルーム一覧スキャン
         async function fetchAllUnreadRooms() {
             const container = document.getElementById('burstModeContainer');
             const statusEl = document.getElementById('loadStatus');
@@ -528,24 +514,20 @@
             }
         }
 
-        // 🤖 GAS経由でAI返信文を生成してFirestoreに記録する関数
-        window.generateAiReply = async function(roomId) {
-            const textarea = document.getElementById(`reply_text_${roomId}`);
-            const btn = document.getElementById(`ai_btn_${roomId}`);
+        // 🤖 個別チャットごとにAI返信文を生成する関数
+        window.generateAiReplyForMessage = async function(msgKey, roomId, btnEl) {
+            const textarea = document.getElementById(`reply_text_${msgKey}`);
             const roomName = document.querySelector(`[data-room-id="${roomId}"]`)?.closest('.burst-card')?.getAttribute('data-room-name') || "ルーム";
-            
-            const msgContainer = textarea.closest('.burst-card, #singleRoomMessageContainer');
-            const msgTexts = Array.from(msgContainer.querySelectorAll('.chat-msg-body-text')).map(el => el.textContent);
-            const contextText = msgTexts.join("\n---\n");
+            const targetMessageText = window.messageStore[msgKey] || "";
 
-            btn.disabled = true;
-            btn.textContent = "AI生成中...";
+            btnEl.disabled = true;
+            btnEl.textContent = "AI生成中...";
 
             try {
                 const data = await callApi("generate_ai_reply", {
                     room_id: roomId,
                     room_name: roomName,
-                    context: contextText
+                    context: targetMessageText
                 });
 
                 const aiReply = data.ai_reply || "";
@@ -553,11 +535,10 @@
                 if (aiReply) {
                     textarea.value = aiReply;
                     
-                    // Firestoreに生成ログを保存
                     await window.addDoc(window.collection(window.db, "ai_reply_logs"), {
                         roomId: String(roomId),
                         roomName: roomName,
-                        context: contextText,
+                        context: targetMessageText,
                         aiGeneratedText: aiReply,
                         status: 'generated',
                         createdAt: window.serverTimestamp()
@@ -568,12 +549,11 @@
             } catch (e) {
                 alert("AI生成エラー: " + e.message);
             } finally {
-                btn.disabled = false;
-                btn.textContent = "✨ AI返信生成";
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ このチャットに対するAI返信作成";
             }
         };
 
-        // 📝 添削内容を自動保存する内部関数
         async function saveAutoFeedback(roomId, text) {
             if (!text || !text.trim()) return;
             try {
@@ -582,12 +562,10 @@
                     userEditedText: text.trim(),
                     updatedAt: window.serverTimestamp()
                 });
-            } catch (e) {
-                console.error("自動添削保存失敗:", e);
-            }
+            } catch (e) { console.error("自動添削保存失敗:", e); }
         }
 
-        // カード内部のHTML生成
+        // 各チャットブロックごとに個別返信欄とボタンを持たせる構造
         function buildCardContent(roomId, roomName, messages, members, displayCount = 1, isNormalTab = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
@@ -606,8 +584,15 @@
                 const msgKey = `msg_${roomId}_${idx}_${Math.random().toString(36).substr(2, 6)}`;
                 window.messageStore[msgKey] = body;
 
+                let memberOptions = '<option value="">-- To追加 --</option>';
+                if (Array.isArray(members)) {
+                    members.forEach(mem => {
+                        memberOptions += `<option value="${mem.account_id}">${esc(mem.name)}</option>`;
+                    });
+                }
+
                 chatHistoryHtml += `
-                    <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2 w-full box-border">
+                    <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5 w-full box-border">
                         <div class="flex items-center justify-between">
                             <span class="font-bold text-[11px] text-indigo-900">👤 ${esc(sender)}:</span>
                             <button onclick="copyMessageText('${msgKey}', this)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer transition">📋 コピー</button>
@@ -620,6 +605,25 @@
                             <button onclick="openStaffAppModal('${msgKey}', '${esc(roomName)}', '${esc(sender)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1 px-2 rounded shadow-sm transition cursor-pointer truncate">
                                 🚀 スタッフ連絡
                             </button>
+                        </div>
+
+                        <!-- 🤖 チャットごとの個別AI返信・送信エリア -->
+                        <div class="mt-2 pt-2 border-t border-slate-200 space-y-2 bg-indigo-50/50 p-2 rounded-lg">
+                            <div class="flex items-center gap-1.5">
+                                <select id="member_select_${msgKey}" class="flex-1 border rounded p-1 text-[11px] bg-white font-bold">
+                                    ${memberOptions}
+                                </select>
+                                <button onclick="insertMentionForMsg('${msgKey}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-2.5 py-1 rounded shrink-0 cursor-pointer">To追加</button>
+                            </div>
+                            <div>
+                                <button onclick="generateAiReplyForMessage('${msgKey}', '${roomId}', this)" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm cursor-pointer transition">
+                                    ✨ このチャットに対するAI返信作成
+                                </button>
+                            </div>
+                            <textarea id="reply_text_${msgKey}" placeholder="返信案..." class="w-full h-14 text-xs border rounded p-2 bg-white box-border"></textarea>
+                            <div class="flex gap-2">
+                                <button onclick="sendReplyForMessage('${roomId}', '${msgKey}', this)" class="flex-1 bg-emerald-600 text-white text-[11px] font-bold py-1.5 rounded cursor-pointer">📤 送信</button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -636,19 +640,12 @@
             }
 
             chatHistoryHtml = `
-                <div class="space-y-2 max-h-80 overflow-y-auto pr-1 w-full box-border">
+                <div class="space-y-3 max-h-[450px] overflow-y-auto pr-1 w-full box-border">
                     <div class="text-[10px] font-bold text-slate-400">💬 メッセージ (${chatCount}件)</div>
                     ${batchCopyHeaderBtn}
                     ${chatHistoryHtml}
                 </div>
             `;
-
-            let memberOptions = '<option value="">-- メンバーを選択してTo追加 --</option>';
-            if (Array.isArray(members)) {
-                members.forEach(m => {
-                    memberOptions += `<option value="${m.account_id}">${esc(m.name)}</option>`;
-                });
-            }
 
             return `
                 <div class="space-y-2 pb-2 border-b border-slate-100 flex items-center gap-2">
@@ -658,56 +655,27 @@
                 
                 ${chatHistoryHtml}
 
-                <div class="space-y-2 pt-1 bg-indigo-50/40 p-2.5 rounded-lg border border-indigo-100 w-full box-border">
-                    <div class="flex items-center gap-1.5 pt-1">
-                        <select id="member_select_${roomId}" class="flex-1 border rounded p-1 text-xs bg-white font-bold">
-                            ${memberOptions}
-                        </select>
-                        <button onclick="insertSelectedMention('${roomId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded shrink-0 cursor-pointer">💬 To追加</button>
-                    </div>
-
-                    <!-- 🤖 AI返信生成ボタン -->
-                    <div>
-                        <button id="ai_btn_${roomId}" onclick="generateAiReply('${roomId}')" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm cursor-pointer transition">
-                            ✨ AI返信生成
-                        </button>
-                    </div>
-
-                    <textarea id="reply_text_${roomId}" placeholder="返信案..." class="w-full h-16 text-xs border rounded p-2 bg-white box-border"></textarea>
-
-                    <div class="flex gap-2 pt-1">
-                        <button onclick="sendReplyMessage('${roomId}', this)" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-1.5 rounded cursor-pointer">📤 メッセージ送信</button>
-                        <button onclick="markAsRead('${roomId}', '${lastChatId}', this)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-1.5 px-3 rounded cursor-pointer">📖 既読にする</button>
-                    </div>
+                <div class="pt-2 border-t border-slate-100 flex gap-2">
+                    <button onclick="markAsRead('${roomId}', '${lastChatId}', this)" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-2 rounded cursor-pointer">📖 ルーム全体を既読にする</button>
                 </div>
             `;
         }
 
-        window.insertSelectedMention = function(roomId) {
-            const selectEl = document.getElementById(`member_select_${roomId}`);
-            const textarea = document.getElementById(`reply_text_${roomId}`);
+        window.insertMentionForMsg = function(msgKey) {
+            const selectEl = document.getElementById(`member_select_${msgKey}`);
+            const textarea = document.getElementById(`reply_text_${msgKey}`);
             if (!selectEl || !textarea) return;
 
             const accountId = selectEl.value;
             const memberName = selectEl.options[selectEl.selectedIndex].text;
-
-            if (!accountId) {
-                alert("宛先にするメンバーを選択してください。");
-                return;
-            }
+            if (!accountId) { alert("宛先にするメンバーを選択してください。"); return; }
 
             const mentionText = `[To:${accountId}] ${memberName}さん\n`;
             textarea.value = mentionText + textarea.value;
             textarea.focus();
         };
 
-        // 📖 個別既読にする機能（同時に返信案を自動保存）
         window.markAsRead = async function(roomId, lastChatId, btn) {
-            const textarea = document.getElementById(`reply_text_${roomId}`);
-            if (textarea && textarea.value.trim()) {
-                await saveAutoFeedback(roomId, textarea.value);
-            }
-
             btn.disabled = true;
             btn.textContent = "処理中...";
             try {
@@ -717,28 +685,26 @@
             } catch (e) {
                 alert("既読エラー: " + e.message);
                 btn.disabled = false;
-                btn.textContent = "📖 既読にする";
+                btn.textContent = "📖 ルーム全体を既読にする";
             }
         };
 
-        // 📤 メッセージ送信（同時に返信案を自動保存）
-        window.sendReplyMessage = async function(roomId, btn) {
+        window.sendReplyForMessage = async function(roomId, msgKey, btn) {
             const roomIdStr = String(roomId);
-            const textarea = document.getElementById(`reply_text_${roomIdStr}`);
+            const textarea = document.getElementById(`reply_text_${msgKey}`);
             if (!textarea || !textarea.value.trim()) { alert("返信文を入力してください。"); return; }
             const finalMsg = textarea.value.trim();
 
-            // 修正文を自動保存
             await saveAutoFeedback(roomIdStr, finalMsg);
 
             btn.disabled = true; btn.textContent = "送信中...";
             try {
                 await callApi("send_message", { room_id: roomIdStr, body: finalMsg });
                 alert("送信しました！");
-                btn.disabled = false; btn.textContent = "📤 メッセージ送信";
+                btn.disabled = false; btn.textContent = "📤 送信";
             } catch (e) {
                 alert("送信失敗: " + e.message);
-                btn.disabled = false; btn.textContent = "📤 メッセージ送信";
+                btn.disabled = false; btn.textContent = "📤 送信";
             }
         };
     </script>
