@@ -95,6 +95,13 @@ main{max-width:1240px;margin:0 auto;padding:20px}
 .field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .field label{font-size:12px;font-weight:700}
 .field small{color:var(--muted);font-size:11px}
+select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:#fff;width:100%;color:var(--ink)}
+.oki-box{margin-top:12px;border:1px solid #f0b9a8;background:#fffaf8;border-radius:8px;padding:10px 12px}
+.check{display:flex;gap:8px;align-items:flex-start;font-size:13px;font-weight:700;cursor:pointer}
+.check input{margin-top:3px;width:16px;height:16px;flex:none}
+.oki-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.oki-settings .field{margin-bottom:0}
+@media (max-width:520px){.oki-settings{grid-template-columns:1fr}}
 input[type=text],input[type=number]{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:#fff;width:100%;color:var(--ink)}
 input[type=number]{font-variant-numeric:tabular-nums}
 
@@ -196,11 +203,28 @@ tr.drag-over td{border-top:2px solid var(--accent)}
       <div class="step-body grid2">
         <div class="action-card">
           <h3>送り状・検品シート</h3>
-          <p class="note">佐川の出力では、沖縄宛て（AR列）を自動で除外します。</p>
+          <p class="note">沖縄宛て（AR列）は佐川の出力から外し、ヤマトで出す設定にできます。</p>
           <div class="btn-stack">
             <button id="printBtn" class="btn btn-primary" onclick="openPrintPreview()" disabled>検品シートを印刷 <span class="hint" id="printHint"></span></button>
             <button id="yamatoBtn" class="btn btn-yamato" onclick="exportYamatoCsv()" disabled>ヤマトB2用CSVを出力 <span class="hint" id="yamatoHint"></span></button>
             <button id="ehidenBtn" class="btn btn-sagawa" onclick="exportEhidenCsv()" disabled>佐川e飛伝用CSVを出力 <span class="hint" id="sagawaHint"></span></button>
+          </div>
+          <div class="oki-box">
+            <label class="check"><input type="checkbox" id="okiToYamato">沖縄宛ては佐川データをヤマトB2形式に書き換えて、ヤマト用CSVに含める</label>
+            <div class="oki-settings" id="okiSettings">
+              <div class="field">
+                <label for="okiInvoiceType">送り状種類</label>
+                <select id="okiInvoiceType">
+                  <option value="auto">ヤマトCSVに合わせる</option>
+                  <option value="0">発払い（宅急便）</option>
+                  <option value="8">宅急便コンパクト</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="okiFareNo">運賃管理番号</label>
+                <input type="text" id="okiFareNo" placeholder="空欄＝ヤマトCSVに合わせる（なければ01）">
+              </div>
+            </div>
           </div>
         </div>
         <div class="action-card">
@@ -289,6 +313,7 @@ let draggedIndex = null;
 window.addEventListener('DOMContentLoaded', () => {
   initDropZone();
   initCustomerNameStorage();
+  initOkiSettings();
   updateAccumulatedData(false);
   loadMasterItems();
 });
@@ -442,7 +467,14 @@ function updateButtons() {
   const okiCount = getOkinawaOrderNos().size;
 
   setBtn('printBtn', hasOrder, 'printHint', hasOrder ? `${orderCount}件` : '受注CSVが必要です');
-  setBtn('yamatoBtn', hasOrder && yCount > 0, 'yamatoHint', !hasOrder ? '受注CSVが必要です' : (yCount ? `元データ ${yCount}件` : 'ヤマトCSVが必要です'));
+  const okiOn = getOkiSettings().enabled;
+  const okiConvertible = okiOn && sCount > 0 && okiCount > 0;
+  let yHint = '受注CSVが必要です';
+  if (hasOrder) {
+    if (!yCount && !okiConvertible) yHint = 'ヤマトCSVが必要です';
+    else yHint = [yCount ? `元データ ${yCount}件` : '', okiConvertible ? `沖縄 ${okiCount}件を含む` : ''].filter(Boolean).join('・');
+  }
+  setBtn('yamatoBtn', hasOrder && (yCount > 0 || okiConvertible), 'yamatoHint', yHint);
   setBtn('ehidenBtn', hasOrder && sCount > 0, 'sagawaHint', !hasOrder ? '受注CSVが必要です' : (sCount ? `沖縄 ${okiCount}件を除外` : '佐川CSVが必要です'));
   setBtn('calcPickBtn', hasOrder, 'calcHint', hasOrder ? (pickStale ? '受注が変わったので再計算してください' : '') : '受注CSVが必要です');
   const canSend = pickGroups.length > 0 && !pickStale;
@@ -918,40 +950,177 @@ function cleanPhone(phoneStr) {
   return s;
 }
 
+/* ---------- 沖縄宛て：佐川データ → ヤマトB2 変換 ---------- */
+const OKI_KEY = 'oki_yamato_settings';
+// ヤマトB2の列番号（0始まり）
+const B2 = { MGMT: 0, TYPE: 1, COOL: 2, SHIP_DATE: 4, DELIV_DATE: 5, TIME: 6, TEL: 8, ZIP: 10, ADDR: 11, APT: 12, CO1: 13, CO2: 14, NAME: 15,
+  S_TEL: 19, S_ZIP: 21, S_ADDR: 22, S_APT: 23, S_NAME: 24, ITEM1: 27, ITEM2: 29, BILL_CODE: 39, BILL_CLASS: 40, FARE_NO: 41 };
+// 佐川e飛伝CSVの列番号（0始まり）
+const SG = { TEL: 2, ZIP: 3, ADDR1: 4, ADDR2: 5, ADDR3: 6, NAME1: 7, NAME2: 8, MGMT: 9, S_TEL: 17, S_ZIP: 18, S_ADDR1: 19, S_ADDR2: 20,
+  S_NAME1: 21, ITEM1: 24, ITEM2: 25, COOL: 43, DATE: 44, TIME: 45 };
+const SG_COOL_TO_B2 = { '002': '2', '003': '1' };                 // 冷蔵→2、冷凍→1、それ以外→0
+const SG_TIME_TO_B2 = { '01': '0812', '14': '1416', '16': '1618', '18': '1820', '19': '1921', '04': '1921' };
+
+function initOkiSettings() {
+  let saved = { enabled: true, invoiceType: 'auto', fareNo: '' };
+  try { Object.assign(saved, JSON.parse(localStorage.getItem(OKI_KEY) || '{}')); } catch (e) {}
+  const cb = document.getElementById('okiToYamato');
+  const sel = document.getElementById('okiInvoiceType');
+  const fare = document.getElementById('okiFareNo');
+  cb.checked = !!saved.enabled;
+  sel.value = saved.invoiceType || 'auto';
+  fare.value = saved.fareNo || '';
+  const onChange = () => {
+    try { localStorage.setItem(OKI_KEY, JSON.stringify(getOkiSettings())); } catch (e) {}
+    document.getElementById('okiSettings').classList.toggle('hidden', !cb.checked);
+    updateButtons();
+  };
+  [cb, sel].forEach(el => el.addEventListener('change', onChange));
+  fare.addEventListener('input', onChange);
+  document.getElementById('okiSettings').classList.toggle('hidden', !cb.checked);
+}
+function getOkiSettings() {
+  const cb = document.getElementById('okiToYamato');
+  const sel = document.getElementById('okiInvoiceType');
+  const fare = document.getElementById('okiFareNo');
+  return { enabled: cb ? cb.checked : true, invoiceType: sel ? sel.value : 'auto', fareNo: fare ? fare.value.trim() : '' };
+}
+
+// 文字幅：半角=1、全角=2（B2の「全角○文字」は ○×2 で判定）
+function charWidth(ch) { const c = ch.charCodeAt(0); return (c <= 0x7e || (c >= 0xff61 && c <= 0xff9f)) ? 1 : 2; }
+function widthOf(str) { let w = 0; for (const ch of str) w += charWidth(ch); return w; }
+function cutByWidth(str, max) { let w = 0, out = ''; for (const ch of String(str || '')) { const cw = charWidth(ch); if (w + cw > max) break; out += ch; w += cw; } return out; }
+function normText(v) { return String(v === undefined || v === null ? '' : v).replace(/[\s\u3000]+/g, ' ').trim(); }
+
+// 住所などを、空白の区切りをなるべく保ちながら複数の欄に振り分ける
+function splitIntoFields(text, limits) {
+  const out = limits.map(() => '');
+  let fi = 0, overflow = false;
+  for (let t of normText(text).split(' ').filter(Boolean)) {
+    while (t && fi < limits.length) {
+      const sep = out[fi] ? ' ' : '';
+      if (widthOf(out[fi] + sep + t) <= limits[fi]) { out[fi] += sep + t; t = ''; }
+      else if (!out[fi]) { const head = cutByWidth(t, limits[fi]); out[fi] = head; t = t.slice(head.length); fi++; }
+      else fi++;
+    }
+    if (t) { overflow = true; break; }
+  }
+  return { fields: out, overflow };
+}
+
+function convertSagawaRowToB2(s, template, settings) {
+  const len = Math.max(42, template ? template.length : 0);
+  const row = Array(len).fill('');
+  const warns = [];
+  const tpl = (i) => template && template[i] !== undefined ? String(template[i]).trim() : '';
+
+  row[B2.MGMT] = normText(s[SG.MGMT]);
+  row[B2.TYPE] = settings.invoiceType !== 'auto' ? settings.invoiceType : (tpl(B2.TYPE) || '0');
+  row[B2.COOL] = SG_COOL_TO_B2[normText(s[SG.COOL])] || '0';
+  row[B2.SHIP_DATE] = getTodayString();
+  const d = normText(s[SG.DATE]);
+  if (/^\d{8}$/.test(d)) row[B2.DELIV_DATE] = `${d.slice(0, 4)}/${d.slice(4, 6)}/${d.slice(6, 8)}`;
+  const t = normText(s[SG.TIME]);
+  if (SG_TIME_TO_B2[t]) row[B2.TIME] = SG_TIME_TO_B2[t];
+  else if (t && t !== '00') warns.push('時間帯指定（ヤマトにない枠）を外しました');
+
+  row[B2.TEL] = cleanPhone(s[SG.TEL]);
+  row[B2.ZIP] = normText(s[SG.ZIP]);
+  // お届け先住所：住所(全角32)・建物名(全角16)・会社部門1(全角25)・会社部門2(全角25)
+  const addr = splitIntoFields([s[SG.ADDR1], s[SG.ADDR2], s[SG.ADDR3]].map(v => v || '').join(''), [64, 32, 50, 50]); // 佐川は固定長で分割しているので、そのままつなげる
+  [row[B2.ADDR], row[B2.APT], row[B2.CO1], row[B2.CO2]] = addr.fields;
+  if (addr.overflow) warns.push('住所が長く、末尾が入りきりませんでした');
+  row[B2.NAME] = cutByWidth(normText(s[SG.NAME1]), 32);
+  if (widthOf(normText(s[SG.NAME1])) > 32) warns.push('お届け先名を16文字で切りました');
+  const name2 = normText(s[SG.NAME2]);
+  if (name2) {
+    if (!row[B2.CO1]) row[B2.CO1] = cutByWidth(name2, 50);
+    else if (!row[B2.CO2]) row[B2.CO2] = cutByWidth(name2, 50);
+  }
+
+  // ご依頼主（ショップ）
+  row[B2.S_TEL] = cleanPhone(s[SG.S_TEL]);
+  row[B2.S_ZIP] = normText(s[SG.S_ZIP]);
+  const sAddr = splitIntoFields([s[SG.S_ADDR1], s[SG.S_ADDR2]].map(v => v || '').join(''), [64, 32]);
+  [row[B2.S_ADDR], row[B2.S_APT]] = sAddr.fields;
+  row[B2.S_NAME] = cutByWidth(normText(s[SG.S_NAME1]), 32);
+
+  // 品名（全角25）。品名2には受注番号（No:〜）が入ります
+  row[B2.ITEM1] = cutByWidth(normText(s[SG.ITEM1]), 50);
+  row[B2.ITEM2] = cutByWidth(normText(s[SG.ITEM2]), 50);
+
+  row[B2.BILL_CODE] = '09050540672';
+  row[B2.BILL_CLASS] = tpl(B2.BILL_CLASS);
+  row[B2.FARE_NO] = settings.fareNo || tpl(B2.FARE_NO) || '01';
+  return { row, warns };
+}
+
 window.exportYamatoCsv = () => {
   const uniqueOrderNos = getOrderUniqueIds();
   const yamatoRows = getAllYamatoRows();
+  const sagawaRows = getAllSagawaRows();
+  const settings = getOkiSettings();
+  const okinawaOrderNos = getOkinawaOrderNos();
   if (!getAllOrderRows().length) { alert("受注データが読み込まれていません。"); return; }
-  if (!yamatoRows.length) { alert("ヤマトデータが読み込まれていません。"); return; }
+  if (!yamatoRows.length && !(settings.enabled && sagawaRows.length && okinawaOrderNos.size)) { alert("ヤマトデータが読み込まれていません。"); return; }
+
+  // 送り状種類などを合わせるための見本行（ヘッダー行は除く）
+  const template = yamatoRows.find(r => /^[0-9A-Z]$/.test(String(r[1] || '').trim())) || null;
 
   const outputRows = [];
   const todayStr = getTodayString();
+  let fromYamato = 0, converted = 0;
+  const missingOki = [], warnLines = [];
+
   uniqueOrderNos.forEach(oNum => {
     const matched = yamatoRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
-    if (!matched) return;
-    const newRow = [...matched];
-    while (newRow.length < 42) newRow.push("");
-    newRow[4] = todayStr;
-    newRow[39] = '09050540672';
-    newRow[26] = "";
-    for (let c = 0; c < newRow.length; c++) {
-      if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
+    if (matched) {
+      const newRow = [...matched];
+      while (newRow.length < 42) newRow.push("");
+      newRow[4] = todayStr;
+      newRow[39] = '09050540672';
+      newRow[26] = "";
+      for (let c = 0; c < newRow.length; c++) {
+        if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
+      }
+      // M列（建物名）：全角16文字（半角は0.5文字）を超えたら、はみ出した分をN列→O列の順に送る
+      const mStr = normText(newRow[B2.APT]);
+      if (widthOf(mStr) > 32) {
+        const combined = [mStr, newRow[B2.CO1], newRow[B2.CO2]].map(normText).filter(Boolean).join(' ');
+        const split = splitIntoFields(combined, [32, 50, 50]);
+        [newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]] = split.fields;
+        if (split.overflow) warnLines.push(`・${normText(newRow[B2.NAME]) || oNum}：建物名・会社名が長く、末尾が入りきりませんでした`);
+      }
+      const abStr = String(newRow[27] || '');
+      if (abStr.length > 25) newRow[27] = abStr.substring(0, 25);
+      outputRows.push(newRow);
+      fromYamato++;
+      return;
     }
-    const mStr = String(newRow[12] || '');
-    if (mStr.length >= 16) {
-      const overflow = mStr.substring(15);
-      newRow[12] = mStr.substring(0, 15);
-      const next = String(newRow[13] || '');
-      newRow[13] = next ? (overflow + ' ' + next) : overflow;
+    // ヤマトCSVにない沖縄宛ては、佐川データから書き換える
+    if (settings.enabled && okinawaOrderNos.has(oNum)) {
+      const sRow = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
+      if (!sRow) { missingOki.push(oNum); return; }
+      const { row, warns } = convertSagawaRowToB2(sRow, template, settings);
+      outputRows.push(row);
+      converted++;
+      if (warns.length) warnLines.push(`・${row[B2.NAME] || oNum}：${warns.join('／')}`);
     }
-    const abStr = String(newRow[27] || '');
-    if (abStr.length > 25) newRow[27] = abStr.substring(0, 25);
-    outputRows.push(newRow);
   });
 
-  if (!outputRows.length) { alert("ヤマトデータと一致する受注番号が見つかりませんでした。"); return; }
+  if (!outputRows.length) { alert("ヤマトで出力できる注文が見つかりませんでした。"); return; }
+  const maxLen = Math.max(...outputRows.map(r => r.length));
+  outputRows.forEach(r => { while (r.length < maxLen) r.push(''); });
   exportCsvGeneric(outputRows, "yamato_processed.csv");
-  toast(`ヤマトCSVを出力しました（${outputRows.length}件）`);
+
+  if (converted || missingOki.length || warnLines.length) {
+    let msg = `ヤマトCSVを出力しました（${outputRows.length}件）。\n・ヤマトCSVから：${fromYamato}件\n・沖縄宛てを佐川データから書き換え：${converted}件`;
+    if (missingOki.length) msg += `\n\n佐川CSVにもヤマトCSVにもない沖縄宛てが ${missingOki.length}件あり、出力できませんでした。`;
+    if (warnLines.length) msg += `\n\n確認が必要な行：\n${warnLines.join('\n')}`;
+    alert(msg);
+  } else {
+    toast(`ヤマトCSVを出力しました（${outputRows.length}件）`);
+  }
 };
 
 window.exportEhidenCsv = () => {
