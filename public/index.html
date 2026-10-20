@@ -14,6 +14,7 @@
             min-height: 100vh;
             user-select: none;
             -webkit-user-select: none;
+            -webkit-touch-callout: none;
         }
         .app-icon {
             background: rgba(255, 255, 255, 0.1);
@@ -23,7 +24,7 @@
             border-radius: 20px;
             padding: 14px 10px;
             text-align: center;
-            cursor: grab;
+            cursor: pointer;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
@@ -31,18 +32,56 @@
             justify-content: center;
             aspect-ratio: 1 / 1;
             position: relative;
-            touch-action: none;
-            transition: background 0.2s, box-shadow 0.2s;
+            /* スクロールは許可（長押し後だけスクリプト側でスクロールを止める） */
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.15s;
         }
-        .app-icon:active { cursor: grabbing; }
+        /* 長押し中（ドラッグ開始直前）の押し込み表現 */
+        .app-icon.pressing {
+            transform: scale(0.94);
+            background: rgba(255, 255, 255, 0.16);
+        }
+        /* ドラッグ中の元アイコン */
         .app-icon.dragging {
-            opacity: 0.4;
-            transform: scale(0.95);
+            opacity: 0.25;
+            transform: scale(0.92);
         }
-        .app-icon.drag-over {
-            border: 2px dashed #3b82f6;
-            background: rgba(59, 130, 246, 0.2);
+        /* 指に追従する複製アイコン */
+        .drag-ghost {
+            position: fixed;
+            z-index: 100;
+            pointer-events: none;
+            margin: 0;
+            opacity: 0.95;
+            transform: scale(1.1);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+            background: rgba(51, 65, 85, 0.95);
+            border: 1px solid rgba(96, 165, 250, 0.7);
+            transition: none;
         }
+        /* 差し込み位置の表示（左右どちらに入るか） */
+        .app-icon.drop-before::before,
+        .app-icon.drop-after::after {
+            content: "";
+            position: absolute;
+            top: 10%;
+            bottom: 10%;
+            width: 4px;
+            border-radius: 2px;
+            background: #3b82f6;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+        }
+        .app-icon.drop-before::before { left: -7px; }
+        .app-icon.drop-after::after { right: -7px; }
+        /* カテゴリ末尾へのドロップ表示 */
+        .grid-drop-target {
+            outline: 2px dashed #3b82f6;
+            outline-offset: 4px;
+            border-radius: 12px;
+        }
+        body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
         .app-emoji {
             font-size: 2.2rem;
             margin-bottom: 6px;
@@ -81,6 +120,9 @@
             pointer-events: none;
             border: 1.5px solid #0f172a;
         }
+        @media (prefers-reduced-motion: reduce) {
+            .app-icon { transition: none; }
+        }
     </style>
 </head>
 <body>
@@ -88,7 +130,7 @@
         <header class="mb-6 px-2 flex justify-between items-center">
             <div>
                 <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
-                <p class="text-[11px] text-slate-400">タップで起動 ＆ ドラッグで並び替え</p>
+                <p class="text-[11px] text-slate-400">タップで起動 ＆ 長押しして動かすと並び替え</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="openAddCategoryModal()" class="bg-emerald-600/85 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full transition shadow">
@@ -116,7 +158,15 @@
     </div>
 
     <script>
-        const STORAGE_KEY = 'warehouse_portal_v7_data';
+        // =========================================================
+        // 保存データについて
+        //  ・端末に保存するのは「並び順・カテゴリ割り当て・追加カテゴリ」だけ
+        //  ・ツールの名前／説明／リンク先は、毎回下の defaultData（コード）から読む
+        //  → コードを書き換えれば、全端末に「初期化なし」で反映されます
+        //  ・コードから消したツールは、端末からも自動で消えます
+        // =========================================================
+        const STORAGE_KEY = 'warehouse_portal_v8_layout';
+        const LEGACY_KEY  = 'warehouse_portal_v7_data'; // 旧バージョンの保存データ（並び順を引き継ぐ）
 
         const defaultData = {
             categories: [
@@ -132,9 +182,9 @@
                 { id: "checklist", category: "communication", title: "📋 日次チェックリスト", desc: "出勤時〜終業時までのチェックリスト・出荷件数集計", href: "checklist.html", badge: 0 },
                 { id: "chat-reply", category: "communication", title: "💬 バーストくん", desc: "未読ルーム一斉表示・スタッフ間連絡アプリ連携", href: "chat-reply.html", badge: 0 },
                 { id: "denpyo-post", category: "others", title: "📮 着払いくん", desc: "スマホカメラで着払いバーコードを読み取り、金額・メモと共に記録", href: "denpyo-post.html", badge: 0 },
-{ id: "bunkatusku", category: "shipping", title: "⏱️ 分割くん吉原", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "bunkatusku.html", badge: 0 },
+                { id: "bunkatusku", category: "shipping", title: "⏱️ 分割くん吉原", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "bunkatusku.html", badge: 0 },
                 { id: "bunkatuedaban", category: "shipping", title: "⏱️ 分割くんMedicarry", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "bunkatuedaban.html", badge: 0 },
-                  { id: "cloudfanding", category: "others", title: "⏱️ クラファンくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "cloudfanding.html", badge: 0 },
+                { id: "cloudfanding", category: "others", title: "⏱️ クラファンくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "cloudfanding.html", badge: 0 },
                 { id: "timer", category: "others", title: "⏱️ ストップウォッチくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html", badge: 0 },
                 { id: "label", category: "others", title: "🏷️ ラベルくん", desc: "処理済みラベル・QRコード作成", href: "label.html", badge: 0 },
                 { id: "syntyoku", category: "others", title: "🏷️ 進捗くん", desc: "処理済みラベル・QRコード作成", href: "sintyoku.html", badge: 0 },
@@ -142,29 +192,97 @@
             ]
         };
 
-        function loadData() {
+        // ---------- 保存データの読み書き ----------
+
+        // 端末に保存されている配置情報を読む（なければ旧データから引き継ぐ）
+        function loadLayout() {
             try {
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    if (parsed && parsed.categories && parsed.cards) {
-                        defaultData.cards.forEach(defCard => {
-                            if (!parsed.cards.some(c => c.id === defCard.id)) {
-                                parsed.cards.push(defCard);
-                            }
-                        });
-                        return parsed;
+                    if (parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.order)) return parsed;
+                }
+                const legacy = localStorage.getItem(LEGACY_KEY);
+                if (legacy) {
+                    const old = JSON.parse(legacy);
+                    if (old && Array.isArray(old.categories) && Array.isArray(old.cards)) {
+                        const defaultCatIds = defaultData.categories.map(c => c.id);
+                        const layout = {
+                            categories: old.categories.map(c => defaultCatIds.includes(c.id) ? { id: c.id } : { id: c.id, name: c.name }),
+                            order: old.cards.map(c => ({ id: c.id, category: c.category })),
+                            deletedCategoryIds: defaultCatIds.filter(id => !old.categories.some(c => c.id === id))
+                        };
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+                        return layout;
                     }
                 }
             } catch (e) {
                 console.error("Data load error:", e);
             }
-            return JSON.parse(JSON.stringify(defaultData));
+            return null;
         }
 
+        // コードの定義 ＋ 端末の配置情報 → 画面に出すデータを組み立てる
+        function loadData() {
+            const layout = loadLayout();
+            const defaultCats = defaultData.categories;
+            const cardDefs = defaultData.cards;
+
+            if (!layout) {
+                return {
+                    categories: defaultCats.map(c => ({ ...c })),
+                    cards: cardDefs.map(c => ({ ...c }))
+                };
+            }
+
+            const deleted = layout.deletedCategoryIds || [];
+
+            // カテゴリ：保存順を優先。既定カテゴリの名前は常にコードから取る
+            const categories = [];
+            layout.categories.forEach(c => {
+                const def = defaultCats.find(d => d.id === c.id);
+                if (def) categories.push({ ...def });
+                else if (c.name) categories.push({ id: c.id, name: c.name });
+            });
+            // コードに新しく追加された既定カテゴリ（ユーザーが削除したもの以外）を末尾に追加
+            defaultCats.forEach(d => {
+                if (!categories.some(c => c.id === d.id) && !deleted.includes(d.id)) {
+                    categories.push({ ...d });
+                }
+            });
+            if (categories.length === 0) categories.push({ ...defaultCats[0] });
+
+            const catExists = id => categories.some(c => c.id === id);
+            const fallbackCat = (id) => catExists(id) ? id : categories[0].id;
+
+            // ツール：保存された並び順に、コードの最新定義を当てはめる
+            const cards = [];
+            layout.order.forEach(o => {
+                const def = cardDefs.find(d => d.id === o.id);
+                if (!def) return; // コードから消えたツールは表示しない
+                if (cards.some(c => c.id === def.id)) return;
+                cards.push({ ...def, category: fallbackCat(o.category) });
+            });
+            // コードに新しく追加されたツールを、既定カテゴリの末尾に追加
+            cardDefs.forEach(def => {
+                if (!cards.some(c => c.id === def.id)) {
+                    cards.push({ ...def, category: fallbackCat(def.category) });
+                }
+            });
+
+            return { categories, cards, deletedCategoryIds: deleted };
+        }
+
+        // 画面データから「配置情報だけ」を取り出して保存
         function saveData(data) {
+            const defaultCatIds = defaultData.categories.map(c => c.id);
+            const layout = {
+                categories: data.categories.map(c => defaultCatIds.includes(c.id) ? { id: c.id } : { id: c.id, name: c.name }),
+                order: data.cards.map(c => ({ id: c.id, category: c.category })),
+                deletedCategoryIds: data.deletedCategoryIds || []
+            };
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
             } catch (e) {
                 console.error("Data save error:", e);
             }
@@ -179,8 +297,7 @@
             return { emoji: "📦", name: title };
         }
 
-        let draggedCardId = null;
-        let hasMoved = false;
+        // ---------- 画面描画 ----------
 
         function render() {
             const data = loadData();
@@ -204,7 +321,7 @@
 
                 if (catIndex > 0) catControls.appendChild(createSmallButton('▲', () => moveCategory(catIndex, -1)));
                 if (catIndex < data.categories.length - 1) catControls.appendChild(createSmallButton('▼', () => moveCategory(catIndex, 1)));
-                if (data.categories.length > 1) catControls.appendChild(createSmallButton('×', () => deleteCategory(cat.id), 'text-rose-400 hover:bg-rose-950/50'));
+                if (data.categories.length > 1) catControls.appendChild(createSmallButton('×', () => deleteCategory(cat.id), 'text-rose-400 hover:bg-rose-950/50 text-[10px] w-6 h-6 flex items-center justify-center rounded'));
 
                 headerDiv.appendChild(catControls);
                 section.appendChild(headerDiv);
@@ -212,14 +329,6 @@
                 const gridDiv = document.createElement('div');
                 gridDiv.className = 'grid grid-cols-4 gap-2.5 sm:gap-3';
                 gridDiv.dataset.categoryId = cat.id;
-
-                gridDiv.addEventListener('dragover', (e) => e.preventDefault());
-                gridDiv.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    if (draggedCardId) {
-                        moveCardToCategoryAndIndex(draggedCardId, cat.id, null);
-                    }
-                });
 
                 const catCards = data.cards.filter(card => card.category === cat.id);
 
@@ -233,45 +342,15 @@
                         const parsed = parseTitle(card.title);
                         const appEl = document.createElement('div');
                         appEl.className = 'app-icon';
-                        appEl.draggable = true;
                         appEl.dataset.cardId = card.id;
+                        appEl.title = card.desc || '';
 
                         appEl.addEventListener('click', () => {
-                            if (!hasMoved) {
-                                window.location.href = card.href;
-                            }
+                            if (suppressClick || drag.active) return;
+                            window.location.href = card.href;
                         });
-
-                        appEl.addEventListener('dragstart', (e) => {
-                            hasMoved = true;
-                            draggedCardId = card.id;
-                            appEl.classList.add('dragging');
-                        });
-
-                        appEl.addEventListener('dragend', () => {
-                            appEl.classList.remove('dragging');
-                            document.querySelectorAll('.app-icon').forEach(el => el.classList.remove('drag-over'));
-                            draggedCardId = null;
-                            setTimeout(() => { hasMoved = false; }, 150);
-                        });
-
-                        appEl.addEventListener('dragover', (e) => {
-                            e.preventDefault();
-                            appEl.classList.add('drag-over');
-                        });
-
-                        appEl.addEventListener('dragleave', () => {
-                            appEl.classList.remove('drag-over');
-                        });
-
-                        appEl.addEventListener('drop', (e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            appEl.classList.remove('drag-over');
-                            if (draggedCardId && draggedCardId !== card.id) {
-                                reorderCards(draggedCardId, card.id);
-                            }
-                        });
+                        appEl.addEventListener('pointerdown', (e) => onPointerDown(e, appEl, card.id));
+                        appEl.addEventListener('contextmenu', (e) => e.preventDefault());
 
                         let badgeHtml = '';
                         if (card.badge && card.badge > 0) {
@@ -300,6 +379,196 @@
             return btn;
         }
 
+        // ---------- 並び替え（スマホ・PC共通） ----------
+        //  スマホ：長押し（0.4秒）でつかむ → 指を動かして離す
+        //          長押し前に指を動かした場合は普通のスクロール
+        //  PC    ：クリックしたまま少し動かすとつかむ
+
+        const LONG_PRESS_MS = 400;
+        const MOVE_TOLERANCE = 8;   // 長押し判定中に許す指のブレ(px)
+        const EDGE_SCROLL_ZONE = 70; // 画面の上下端から何pxで自動スクロールするか
+
+        const drag = {
+            pending: false, active: false,
+            cardId: null, sourceEl: null, ghost: null,
+            pointerId: null, pointerType: '',
+            startX: 0, startY: 0, lastX: 0, lastY: 0,
+            offsetX: 0, offsetY: 0,
+            timer: null, scrollRaf: null,
+            target: null // { type: 'card', id, after } または { type: 'grid', categoryId }
+        };
+        let suppressClick = false;
+
+        function onPointerDown(e, el, cardId) {
+            if (e.button !== undefined && e.button !== 0) return;
+            if (drag.pending || drag.active) return;
+
+            drag.pending = true;
+            drag.cardId = cardId;
+            drag.sourceEl = el;
+            drag.pointerId = e.pointerId;
+            drag.pointerType = e.pointerType;
+            drag.startX = drag.lastX = e.clientX;
+            drag.startY = drag.lastY = e.clientY;
+
+            if (e.pointerType !== 'mouse') {
+                el.classList.add('pressing');
+                drag.timer = setTimeout(() => {
+                    if (drag.pending) startDrag();
+                }, LONG_PRESS_MS);
+            }
+        }
+
+        function startDrag() {
+            drag.pending = false;
+            drag.active = true;
+            clearTimeout(drag.timer);
+
+            const el = drag.sourceEl;
+            el.classList.remove('pressing');
+            const rect = el.getBoundingClientRect();
+            drag.offsetX = drag.startX - rect.left;
+            drag.offsetY = drag.startY - rect.top;
+
+            const ghost = el.cloneNode(true);
+            ghost.classList.add('drag-ghost');
+            ghost.style.width = rect.width + 'px';
+            ghost.style.height = rect.height + 'px';
+            document.body.appendChild(ghost);
+            drag.ghost = ghost;
+            moveGhost(drag.lastX, drag.lastY);
+
+            el.classList.add('dragging');
+            document.body.classList.add('is-dragging');
+            if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+
+            updateDropTarget(drag.lastX, drag.lastY);
+            autoScrollLoop();
+        }
+
+        function moveGhost(x, y) {
+            if (!drag.ghost) return;
+            drag.ghost.style.left = (x - drag.offsetX) + 'px';
+            drag.ghost.style.top = (y - drag.offsetY) + 'px';
+        }
+
+        function clearDropMarkers() {
+            document.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+            document.querySelectorAll('.grid-drop-target').forEach(el => el.classList.remove('grid-drop-target'));
+        }
+
+        // 指の位置から「どこに入れるか」を決める
+        function updateDropTarget(x, y) {
+            clearDropMarkers();
+            drag.target = null;
+            const under = document.elementFromPoint(x, y);
+            if (!under) return;
+
+            const icon = under.closest('.app-icon');
+            if (icon && !icon.classList.contains('drag-ghost')) {
+                if (icon.dataset.cardId === drag.cardId) return;
+                const r = icon.getBoundingClientRect();
+                const after = x > r.left + r.width / 2;
+                icon.classList.add(after ? 'drop-after' : 'drop-before');
+                drag.target = { type: 'card', id: icon.dataset.cardId, after };
+                return;
+            }
+
+            const section = under.closest('section');
+            const grid = section ? section.querySelector('[data-category-id]') : null;
+            if (grid) {
+                grid.classList.add('grid-drop-target');
+                drag.target = { type: 'grid', categoryId: grid.dataset.categoryId };
+            }
+        }
+
+        // 画面の上下端に指があるときは自動でスクロール
+        function autoScrollLoop() {
+            if (!drag.active) return;
+            const h = window.innerHeight;
+            let dy = 0;
+            if (drag.lastY < EDGE_SCROLL_ZONE) dy = -Math.ceil((EDGE_SCROLL_ZONE - drag.lastY) / 6);
+            else if (drag.lastY > h - EDGE_SCROLL_ZONE) dy = Math.ceil((drag.lastY - (h - EDGE_SCROLL_ZONE)) / 6);
+            if (dy !== 0) {
+                window.scrollBy(0, dy);
+                updateDropTarget(drag.lastX, drag.lastY);
+            }
+            drag.scrollRaf = requestAnimationFrame(autoScrollLoop);
+        }
+
+        function onPointerMove(e) {
+            if (e.pointerId !== drag.pointerId) return;
+            drag.lastX = e.clientX;
+            drag.lastY = e.clientY;
+
+            if (drag.pending) {
+                const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+                if (drag.pointerType === 'mouse') {
+                    if (dist > 5) startDrag();
+                } else if (dist > MOVE_TOLERANCE) {
+                    cancelPending(); // 長押し前に動いた → スクロールとして扱う
+                }
+                return;
+            }
+            if (drag.active) {
+                moveGhost(e.clientX, e.clientY);
+                updateDropTarget(e.clientX, e.clientY);
+            }
+        }
+
+        function cancelPending() {
+            clearTimeout(drag.timer);
+            if (drag.sourceEl) drag.sourceEl.classList.remove('pressing');
+            drag.pending = false;
+            drag.cardId = null;
+            drag.sourceEl = null;
+            drag.pointerId = null;
+        }
+
+        function onPointerUp(e) {
+            if (e.pointerId !== drag.pointerId) return;
+            if (drag.pending) { cancelPending(); return; }
+            if (!drag.active) return;
+            finishDrag(e.type !== 'pointercancel');
+        }
+
+        function finishDrag(commit) {
+            cancelAnimationFrame(drag.scrollRaf);
+            const target = drag.target;
+            const cardId = drag.cardId;
+
+            if (drag.ghost) drag.ghost.remove();
+            if (drag.sourceEl) drag.sourceEl.classList.remove('dragging');
+            document.body.classList.remove('is-dragging');
+            clearDropMarkers();
+
+            drag.active = false;
+            drag.ghost = null;
+            drag.sourceEl = null;
+            drag.cardId = null;
+            drag.pointerId = null;
+            drag.target = null;
+
+            // 指を離した直後のタップ判定で画面遷移しないようにする
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 350);
+
+            if (!commit || !target) return;
+            if (target.type === 'card') placeCard(cardId, target.id, target.after);
+            else if (target.type === 'grid') moveCardToCategoryEnd(cardId, target.categoryId);
+        }
+
+        // ドラッグ中だけスクロールを止める（長押し前はふつうにスクロールできる）
+        document.addEventListener('touchmove', (e) => {
+            if (drag.active) e.preventDefault();
+        }, { passive: false });
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
+        window.addEventListener('blur', () => { if (drag.active) finishDrag(false); else if (drag.pending) cancelPending(); });
+
+        // ---------- データ操作 ----------
+
         function moveCategory(index, direction) {
             const data = loadData();
             const targetIndex = index + direction;
@@ -318,43 +587,36 @@
             }
             if (confirm('このカテゴリを削除しますか？')) {
                 data.categories = data.categories.filter(c => c.id !== catId);
+                if (defaultData.categories.some(c => c.id === catId)) {
+                    data.deletedCategoryIds = [...new Set([...(data.deletedCategoryIds || []), catId])];
+                }
                 saveData(data);
             }
         }
 
-        function reorderCards(sourceId, targetId) {
+        // 対象アイコンの前（after=true なら後ろ）に入れる
+        function placeCard(sourceId, targetId, after) {
+            if (sourceId === targetId) return;
             const data = loadData();
             const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
-            const targetIdx = data.cards.findIndex(c => c.id === targetId);
-            if (sourceIdx === -1 || targetIdx === -1) return;
+            const targetCard = data.cards.find(c => c.id === targetId);
+            if (sourceIdx === -1 || !targetCard) return;
 
-            const sourceCard = data.cards[sourceIdx];
-            const targetCard = data.cards[targetIdx];
-
+            const [sourceCard] = data.cards.splice(sourceIdx, 1);
             sourceCard.category = targetCard.category;
-
-            data.cards.splice(sourceIdx, 1);
-            const newTargetIdx = data.cards.findIndex(c => c.id === targetId);
-            data.cards.splice(newTargetIdx, 0, sourceCard);
-
+            const targetIdx = data.cards.findIndex(c => c.id === targetId);
+            data.cards.splice(after ? targetIdx + 1 : targetIdx, 0, sourceCard);
             saveData(data);
         }
 
-        function moveCardToCategoryAndIndex(sourceId, targetCatId, targetId) {
+        // カテゴリの末尾に入れる
+        function moveCardToCategoryEnd(sourceId, targetCatId) {
             const data = loadData();
             const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
             if (sourceIdx === -1) return;
-
-            const sourceCard = data.cards[sourceIdx];
+            const [sourceCard] = data.cards.splice(sourceIdx, 1);
             sourceCard.category = targetCatId;
-
-            data.cards.splice(sourceIdx, 1);
-            if (targetId) {
-                const targetIdx = data.cards.findIndex(c => c.id === targetId);
-                data.cards.splice(targetIdx, 0, sourceCard);
-            } else {
-                data.cards.push(sourceCard);
-            }
+            data.cards.push(sourceCard);
             saveData(data);
         }
 
@@ -374,13 +636,18 @@
 
         function resetDefault() {
             if (confirm('初期状態に戻しますか？')) {
-                localStorage.removeItem(STORAGE_KEY);
+                try {
+                    localStorage.removeItem(STORAGE_KEY);
+                    localStorage.removeItem(LEGACY_KEY);
+                } catch (e) {
+                    console.error("Reset error:", e);
+                }
                 render();
             }
         }
 
         window.addEventListener('storage', (e) => {
-            if (e.key === STORAGE_KEY) {
+            if (e.key === STORAGE_KEY && !drag.active) {
                 render();
             }
         });
