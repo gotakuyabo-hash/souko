@@ -249,6 +249,7 @@
                 <div>
                     <label class="block text-xs font-bold text-slate-300 mb-1">バーコードデータ</label>
                     <input type="text" id="bcInputText" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500" value="RS-2026-001" placeholder="バーコードにする文字列">
+                    <p id="bcErrorMsg" class="text-[11px] text-rose-400 mt-1 leading-snug" style="display: none;"></p>
                 </div>
 
                 <div class="flex gap-3">
@@ -433,29 +434,28 @@
             const seller = document.getElementById('p-seller').value.trim();
             const staff = document.getElementById('p-staff').value.trim();
             const processDate = document.getElementById('p-date').value;
-            
-            try {
-                const items = [];
-                document.querySelectorAll('.item-row').forEach(r => {
-                    items.push({
-                        text: r.querySelector('.t').value,
-                        checked: r.querySelector('.c').checked
-                    });
-                });
 
-                await addDoc(collection(db, "processed_label_history"), {
-                    processDate: processDate,
-                    sellerName: seller,
-                    staffName: staff,
-                    items: items,
-                    createdAt: serverTimestamp()
+            const items = [];
+            document.querySelectorAll('.item-row').forEach(r => {
+                items.push({
+                    text: r.querySelector('.t').value,
+                    checked: r.querySelector('.c').checked
                 });
-                loadProcessedHistory();
-            } catch (e) {
-                console.error("処理済みラベル保存エラー: ", e);
-            }
+            });
 
+            // 【修正①】通信状態に左右されないよう、先に印刷する
             executePrint('processed', '100mm', '150mm');
+
+            // 履歴保存は印刷の後ろで行う（通信が遅くても印刷は止まらない）
+            addDoc(collection(db, "processed_label_history"), {
+                processDate: processDate,
+                sellerName: seller,
+                staffName: staff,
+                items: items,
+                createdAt: serverTimestamp()
+            })
+            .then(() => loadProcessedHistory())
+            .catch(e => console.error("処理済みラベル保存エラー: ", e));
         };
 
         window.loadProcessedHistory = async function() {
@@ -505,7 +505,7 @@
                         </div>
                         <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
                     `;
-                    processedHistoryList.appendChild(itemDiv);
+                    historyListEl.appendChild(itemDiv);  // 【修正③】
                 });
             } catch (e) {
                 console.error("処理済み履歴取得エラー: ", e);
@@ -581,19 +581,18 @@
 
             window.updatePreview();
 
-            try {
-                await addDoc(collection(db, "qr_label_history"), {
-                    productName: productName,
-                    text: val,
-                    count: count,
-                    createdAt: serverTimestamp()
-                });
-                loadHistory();
-            } catch (e) {
-                console.error("Firestore保存エラー: ", e);
-            }
-
+            // 【修正①】先に印刷する
             executePrint('qr', '52mm', '29mm');
+
+            // 履歴保存は印刷の後ろで行う
+            addDoc(collection(db, "qr_label_history"), {
+                productName: productName,
+                text: val,
+                count: count,
+                createdAt: serverTimestamp()
+            })
+            .then(() => loadHistory())
+            .catch(e => console.error("Firestore保存エラー: ", e));
         };
 
         window.loadHistory = async function() {
@@ -649,21 +648,42 @@
             document.getElementById("bcPreviewProductName").innerText = productName;
             document.getElementById("bcPreviewCountLabel").innerText = `印刷枚数: ${count}枚`;
 
+            // 【修正②】選んだ規格で作れるデータかをチェックする
+            const previewSvg = document.getElementById("previewBarcodeSvg");
+            const errorMsgEl = document.getElementById("bcErrorMsg");
+            const printArea = document.getElementById("printArea");
+            let isValid = true;
+
             try {
-                JsBarcode("#previewBarcodeSvg", val, {
+                JsBarcode(previewSvg, val, {
                     format: format,
                     lineColor: "#000",
                     width: 1.5,
                     height: 42,
                     displayValue: true,
                     fontSize: 9.5,
-                    margin: 0
+                    margin: 0,
+                    valid: (v) => { isValid = v; }
                 });
             } catch (e) {
+                isValid = false;
                 console.error("プレビューバーコード生成エラー:", e);
             }
 
-            const printArea = document.getElementById("printArea");
+            if (!isValid) {
+                // 古いバーコードが残らないよう消して、画面にメッセージを出す
+                previewSvg.innerHTML = "";
+                previewSvg.removeAttribute("width");
+                previewSvg.removeAttribute("height");
+                previewSvg.removeAttribute("viewBox");
+                errorMsgEl.innerText = "⚠️ このデータは選択中の規格では作成できません。" + getFormatHint(format);
+                errorMsgEl.style.display = "block";
+                printArea.innerHTML = "";
+                return false;
+            }
+            errorMsgEl.innerText = "";
+            errorMsgEl.style.display = "none";
+
             printArea.innerHTML = "";
 
             for (let i = 0; i < count; i++) {
@@ -705,7 +725,18 @@
                     console.error("印刷用バーコード生成エラー:", e);
                 }
             }
+            return true;
         };
+
+        // 規格ごとの入力ルール（エラー時の案内用）
+        function getFormatHint(format) {
+            switch (format) {
+                case "EAN13": return "EAN-13（JAN）は数字12桁または13桁で入力してください。";
+                case "UPC":   return "UPCは数字11桁または12桁で入力してください。";
+                case "CODE39": return "CODE39は英大文字・数字・一部記号（- . $ / + % スペース）が使えます。";
+                default:      return "CODE128は半角英数字・記号が使えます（全角文字は不可）。";
+            }
+        }
 
         window.printAndSaveBarcode = async function() {
             const productName = document.getElementById("bcProductName").value.trim();
@@ -718,22 +749,26 @@
                 return;
             }
 
-            window.updateBarcodePreview();
-
-            try {
-                await addDoc(collection(db, "barcode_label_history"), {
-                    productName: productName,
-                    text: val,
-                    format: format,
-                    count: count,
-                    createdAt: serverTimestamp()
-                });
-                loadBarcodeHistory();
-            } catch (e) {
-                console.error("Firestoreバーコード保存エラー: ", e);
+            // 【修正②】選んだ規格で作れないデータなら、印刷も保存もしない
+            const ok = window.updateBarcodePreview();
+            if (!ok) {
+                alert("このデータは選択中のバーコード規格では作成できません。\n" + getFormatHint(format));
+                return;
             }
 
+            // 【修正①】先に印刷する
             executePrint('barcode', '52mm', '29mm');
+
+            // 履歴保存は印刷の後ろで行う
+            addDoc(collection(db, "barcode_label_history"), {
+                productName: productName,
+                text: val,
+                format: format,
+                count: count,
+                createdAt: serverTimestamp()
+            })
+            .then(() => loadBarcodeHistory())
+            .catch(e => console.error("Firestoreバーコード保存エラー: ", e));
         };
 
         window.loadBarcodeHistory = async function() {
@@ -773,7 +808,7 @@
                         </div>
                         <span class="text-[11px] bg-blue-600/30 text-blue-400 px-2 py-1 rounded flex-shrink-0">再利用</span>
                     `;
-                    barcodeHistoryList.appendChild(itemDiv);
+                    historyListEl.appendChild(itemDiv);  // 【修正③】
                 });
             } catch (e) {
                 console.error("バーコード履歴取得エラー: ", e);
@@ -782,7 +817,7 @@
         };
 
         function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            return String(str ?? "").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         document.getElementById("bcProductName").addEventListener("input", window.updateBarcodePreview);
