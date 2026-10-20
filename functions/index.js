@@ -9,9 +9,9 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-// zaicoのAPIトークンと会社IDを定義
-const ZAICO_API_TOKEN = "JrUbGqtdGSndDtF3K8VsNtVwHZnSQKxW";
+// zaicoの会社ID（トークンはSecret Managerで管理）
 const COMPANY_ID = "220891";
+const zaicoApiTokenSecret = defineSecret("ZAICO_API_TOKEN");
 
 // ==========================================
 // Slack Webhook設定（セキュアな環境変数から取得）
@@ -19,20 +19,40 @@ const COMPANY_ID = "220891";
 const slackWebhookUrlSecret = defineSecret("SLACK_WEBHOOK_URL");
 
 // ==========================================
-// クールダウン管理
+// クールダウン管理（Firestoreで保持）
+// インスタンスが入れ替わっても、同時に複数起動しても
+// 「最後に通知した時刻」を共有できるようにしています。
 // ==========================================
-const notificationCooldowns = {};
 const COOLDOWN_TIME_MS = 15 * 60 * 1000; // 15分間
+const COOLDOWN_COLLECTION = "notification_cooldowns";
 
-function canSendNotification(uniqueKey) {
-    const now = Date.now();
-    const lastTime = notificationCooldowns[uniqueKey] || 0;
-    
-    if (now - lastTime < COOLDOWN_TIME_MS) {
-        return false;
+async function canSendNotification(uniqueKey) {
+    const db = admin.firestore();
+    const ref = db.collection(COOLDOWN_COLLECTION).doc(uniqueKey);
+
+    try {
+        // トランザクションで「確認」と「記録」を同時に行うため、
+        // ほぼ同時に2回呼ばれても通知は1回だけになります。
+        return await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            const now = Date.now();
+            const lastSentAt = snap.exists ? (snap.data().lastSentAt || 0) : 0;
+
+            if (now - lastSentAt < COOLDOWN_TIME_MS) {
+                return false;
+            }
+
+            tx.set(ref, {
+                lastSentAt: now,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            return true;
+        });
+    } catch (error) {
+        // 判定に失敗したときは、通知漏れを防ぐため送信する側に倒します
+        logger.error(`クールダウン判定でエラーが発生しました (${uniqueKey}):`, error);
+        return true;
     }
-    notificationCooldowns[uniqueKey] = now;
-    return true;
 }
 
 // Webhookを使った通知関数（ボタン付き）
@@ -103,7 +123,7 @@ exports.notifySharedNotes = onDocumentWritten(
         if (!snap || !snap.after.exists) return;
         const docId = event.params.docId;
         const data = snap.after.data();
-        
+
         const title = data.title || data.name || "無題";
         const category = data.category || "未分類";
         const content = data.content ? (data.content.length > 50 ? data.content.substring(0, 50) + "..." : data.content) : "内容なし";
@@ -121,7 +141,7 @@ exports.notifyStaffRequests = onDocumentWritten(
         if (!snap || !snap.after.exists) return;
         const docId = event.params.docId;
         const data = snap.after.data();
-        
+
         const fromUser = data.from || "スタッフ";
         const toUser = data.to || "未設定";
         const taskContent = data.task || "内容なし";
@@ -140,7 +160,7 @@ exports.notifyWarehouseReports = onDocumentWritten(
         if (!snap || !snap.after.exists) return;
         const dateId = event.params.dateId;
 
-        if (!canSendNotification(`warehouse_reports_${dateId}`)) return;
+        if (!(await canSendNotification(`warehouse_reports_${dateId}`))) return;
 
         const data = snap.after.data();
         const reporterName = data.name || "未設定";
@@ -177,7 +197,7 @@ exports.checkUnorderedMaterials = onSchedule(
 
             let messageText = `📦 *【定期通知】未発注の資材一覧*\n`;
             let hasUnordered = false;
-            
+
             snapshot.forEach(doc => {
                 const data = doc.data();
                 const items = data.itemsData || [];
@@ -297,8 +317,9 @@ exports.checkDailyIncompleteTasks = onSchedule(
 
 // zaico出庫指示用API
 exports.apiCreateZaicoShipment = onRequest(
-    { region: "asia-northeast1" },
+    { region: "asia-northeast1", timeoutSeconds: 300, secrets: [zaicoApiTokenSecret] },
     async (req, res) => {
+        const ZAICO_API_TOKEN = zaicoApiTokenSecret.value();
         res.set('Access-Control-Allow-Origin', '*');
         res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -309,7 +330,7 @@ exports.apiCreateZaicoShipment = onRequest(
         }
 
         try {
-            const items = req.body.items; 
+            const items = req.body.items;
             const customerName = req.body.customerName || "受注一括出荷";
 
             if (!items || !Array.isArray(items) || items.length === 0) {
@@ -325,6 +346,7 @@ exports.apiCreateZaicoShipment = onRequest(
             let page = 1;
             let hasMore = true;
             const perPage = 100;
+            const MAX_PAGES = 1000; // 最大10万件まで検索
 
             while (hasMore && codeToInventoryIdMap.size < targetBarcodes.size) {
                 const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=${perPage}`;
@@ -353,7 +375,11 @@ exports.apiCreateZaicoShipment = onRequest(
                     }
                 }
 
-                if (inventoryList.length < perPage || page >= 30) {
+                // 最終ページまで読み切ったら終了（MAX_PAGESは無限ループ防止の安全装置）
+                if (inventoryList.length < perPage || page >= MAX_PAGES) {
+                    if (page >= MAX_PAGES) {
+                        logger.warn(`在庫検索が安全上限 (${MAX_PAGES}ページ) に達しました。`);
+                    }
                     hasMore = false;
                 } else {
                     page++;
@@ -378,8 +404,8 @@ exports.apiCreateZaicoShipment = onRequest(
             }
 
             if (deliveries.length === 0) {
-                res.status(400).json({ 
-                    success: false, 
+                res.status(400).json({
+                    success: false,
                     error: "zaico側に対応する在庫ID（inventory_id）が見つかりませんでした。バーコードを確認してください。",
                     missingBarcodes: missingBarcodes
                 });
@@ -387,12 +413,12 @@ exports.apiCreateZaicoShipment = onRequest(
             }
 
             const slipNum = "SLIP-" + Date.now();
-            
-            const todayStr = new Date().toLocaleDateString('ja-JP', { 
-                timeZone: 'Asia/Tokyo', 
-                year: 'numeric', 
-                month: '2-digit', 
-                day: '2-digit' 
+
+            const todayStr = new Date().toLocaleDateString('ja-JP', {
+                timeZone: 'Asia/Tokyo',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
             }).replace(/\//g, '-');
 
             const zaicoPayload = {
