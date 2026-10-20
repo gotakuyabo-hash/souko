@@ -3,140 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <title>クラウドファンディング見積＆送り状データ出力ツール（Firestore連携版）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body {
-            font-family: sans-serif;
-            margin: 20px;
-            background-color: #f9f9f9;
-            color: #333;
-        }
-        h1 {
-            font-size: 20px;
-            margin-bottom: 10px;
-        }
-        .container {
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            max-width: 1450px;
-        }
+        body { font-family: sans-serif; margin: 20px; background-color: #f9f9f9; color: #333; }
+        h1 { font-size: 20px; margin-bottom: 10px; }
+        h3 { font-size: 16px; margin: 18px 0 6px; }
+        .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 1450px; }
         .controls, .history-panel, .export-panel, .sender-panel {
-            margin-bottom: 15px;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            flex-wrap: wrap;
-            background: #f1f3f5;
-            padding: 10px 15px;
-            border-radius: 6px;
+            margin-bottom: 15px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;
+            background: #f1f3f5; padding: 10px 15px; border-radius: 6px;
         }
-        label {
-            font-weight: bold;
-            font-size: 13px;
-        }
-        select, button, input[type="number"], input[type="text"], input[type="date"] {
-            padding: 6px 10px;
-            font-size: 14px;
-        }
-        textarea {
-            width: 100%;
-            height: 100px;
-            padding: 10px;
-            box-sizing: border-box;
-            font-size: 14px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            margin-bottom: 10px;
-        }
-        .help-text {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 15px;
-        }
-        .summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .summary-box {
-            background: #eef2f7;
-            padding: 12px 15px;
-            border-radius: 4px;
-        }
-        .summary-box.total-box {
-            background: #d4edda;
-            font-weight: bold;
-            color: #155724;
-            font-size: 15px;
-        }
-        .summary-detail {
-            font-size: 12px;
-            color: #555;
-            margin-top: 4px;
-            white-space: pre-line;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 8px 10px;
-            text-align: left;
-            font-size: 13px;
-        }
-        th {
-            background-color: #f4f4f4;
-        }
-        .not-found {
-            color: red;
-        }
-        .size-select, .number-input {
-            padding: 4px 6px;
-            font-size: 13px;
-            width: 70px;
-        }
-        .btn {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            padding: 8px 16px;
-            font-weight: bold;
-        }
-        .btn:hover {
-            background-color: #0056b3;
-        }
-        .btn-success {
-            background-color: #28a745;
-        }
-        .btn-success:hover {
-            background-color: #218838;
-        }
-        .btn-warning {
-            background-color: #fd7e14;
-            color: white;
-        }
-        .btn-warning:hover {
-            background-color: #e86902;
-        }
-        .btn-danger {
-            background-color: #dc3545;
-            padding: 4px 8px;
-            font-size: 12px;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        .btn-danger:hover {
-            background-color: #bd2130;
-        }
+        label { font-weight: bold; font-size: 13px; }
+        select, button, input[type="number"], input[type="text"], input[type="date"] { padding: 6px 10px; font-size: 14px; }
+        textarea { width: 100%; height: 100px; padding: 10px; box-sizing: border-box; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; }
+        .help-text { font-size: 12px; color: #666; margin-bottom: 15px; }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; font-size: 14px; }
+        .summary-box { background: #eef2f7; padding: 12px 15px; border-radius: 4px; }
+        .summary-box.total-box { background: #d4edda; font-weight: bold; color: #155724; font-size: 15px; }
+        .summary-detail { font-size: 12px; color: #555; margin-top: 4px; white-space: pre-line; }
+        .pref-warning { display: none; background: #fdecea; color: #a61b1b; border: 1px solid #f5c2c0; padding: 10px 14px; border-radius: 4px; margin-bottom: 15px; font-size: 14px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; font-size: 13px; }
+        th { background-color: #f4f4f4; }
+        .not-found { color: red; }
+        .size-select, .number-input { padding: 4px 6px; font-size: 13px; width: 70px; }
+        .btn { background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; padding: 8px 16px; font-weight: bold; }
+        .btn:hover { background-color: #0056b3; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover { background-color: #218838; }
+        .btn-warning { background-color: #fd7e14; color: white; }
+        .btn-warning:hover { background-color: #e86902; }
+        .btn-gray { background-color: #6c757d; }
+        .btn-gray:hover { background-color: #565e64; }
+        .btn-danger { background-color: #dc3545; padding: 4px 8px; font-size: 12px; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-danger:hover { background-color: #bd2130; }
+
+        /* 受注データ読み込み */
+        .import-panel { margin-bottom: 15px; border: 2px solid #007bff; border-radius: 6px; padding: 14px 16px; background: #f5f9ff; }
+        .import-title { font-weight: bold; font-size: 15px; margin-bottom: 8px; color: #0b4f9c; }
+        .drop-zone { border: 2px dashed #9bbbe3; border-radius: 6px; padding: 18px; text-align: center; color: #557; background: #fff; cursor: pointer; font-size: 14px; }
+        .drop-zone.dragover { background: #e3eeff; border-color: #007bff; }
+        .import-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; font-size: 13px; }
+        .mapping-grid { display: grid; grid-template-columns: 210px 1fr; gap: 6px 12px; align-items: start; background: #fff; padding: 12px; border-radius: 6px; border: 1px solid #d6e2f0; }
+        .mapping-grid .m-label { font-weight: bold; font-size: 13px; padding-top: 6px; }
+        .mapping-grid .m-label small { display: block; font-weight: normal; color: #777; font-size: 11px; }
+        .mapping-grid .m-slots { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .mapping-grid select { font-size: 13px; padding: 4px 6px; max-width: 230px; }
+        .mapping-grid input[type="text"] { font-size: 13px; padding: 4px 6px; width: 90px; }
+        .import-msg { font-size: 13px; padding: 8px 12px; border-radius: 4px; margin-top: 8px; display: none; }
+        .import-msg.ok { display: block; background: #d4edda; color: #155724; }
+        .import-msg.warn { display: block; background: #fff3cd; color: #7a5b00; }
+        .import-msg ul { margin: 6px 0 0 18px; padding: 0; }
+        .preview-table th, .preview-table td { font-size: 12px; padding: 5px 8px; }
     </style>
 </head>
 <body>
@@ -159,27 +77,65 @@
         <button class="btn btn-danger" onclick="deleteHistory()" style="padding: 8px 12px; font-size: 14px;">選択中の履歴を削除</button>
     </div>
 
+    <!-- 受注データ読み込みパネル -->
+    <div class="import-panel">
+        <div class="import-title">受注データを読み込む（Excel / CSV をそのまま）</div>
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('importFile').click()">
+            ここにファイルをドラッグ＆ドロップ、またはクリックして選択
+            <div id="importFileName" style="margin-top:6px; font-weight:bold; color:#0b4f9c;"></div>
+        </div>
+        <input type="file" id="importFile" accept=".xlsx,.xls,.csv,.tsv,.txt" style="display:none" onchange="handleImportFile(this.files[0]); this.value='';">
+
+        <div id="mappingArea" style="display:none;">
+            <div class="import-row">
+                <span id="sheetSelectWrap" style="display:none;">
+                    <label>シート: <select id="sheetSelect" onchange="loadSheet(this.value)"></select></label>
+                </span>
+                <label>読み込み設定:
+                    <select id="templateSelect" onchange="applyTemplateByName(this.value)">
+                        <option value="">-- 自動判定 --</option>
+                    </select>
+                </label>
+                <input type="text" id="templateNameInput" placeholder="設定名 (例: CAMPFIRE用)" style="width:170px;">
+                <button class="btn btn-success" onclick="saveTemplate()" style="padding:6px 12px;">この設定を保存</button>
+                <button class="btn btn-danger" onclick="deleteTemplate()" style="padding:6px 10px; font-size:13px;">設定を削除</button>
+            </div>
+
+            <div class="mapping-grid" id="mappingGrid"></div>
+
+            <div class="import-row">
+                <label>品名の先頭に付ける文字: <input type="text" id="itemFixedInput" placeholder="例: 腕時計" style="width:120px;" oninput="previewImport()"></label>
+                <label><input type="checkbox" id="mergeCheck" checked onchange="previewImport()"> 同じ人の行を1件にまとめる（同梱）</label>
+                <label>商品点数の入れ方:
+                    <select id="qtyModeSelect" onchange="previewImport()">
+                        <option value="default">一括設定の値（従来どおり）</option>
+                        <option value="qty">合計数量</option>
+                        <option value="qtyMinus1">合計数量−1（2点目から）</option>
+                    </select>
+                </label>
+            </div>
+
+            <div id="importMsg" class="import-msg"></div>
+            <div id="importWarnings" class="import-msg"></div>
+
+            <div id="previewWrap" style="margin-top:10px;"></div>
+
+            <div class="import-row">
+                <button class="btn" onclick="applyImport()">この内容で一覧に反映</button>
+                <span style="font-size:12px; color:#666;">※反映すると下の貼り付け欄と内訳一覧が置き換わります。</span>
+            </div>
+        </div>
+    </div>
+
     <!-- ご依頼主（出荷人）情報パネル -->
     <div class="sender-panel">
         <span style="font-weight: bold; color: #333;">ご依頼主（出荷人）設定:</span>
-        <div>
-            <label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label>
-        </div>
-        <div>
-            <label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label>
-        </div>
-        <div>
-            <label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label>
-        </div>
-        <div>
-            <label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label>
-        </div>
-        <div>
-            <label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label>
-        </div>
-        <div>
-            <label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label>
-        </div>
+        <div><label>名前: <input type="text" id="senderName" value="" placeholder="依頼人名" style="width: 100px;"></label></div>
+        <div><label>郵便番号: <input type="text" id="senderPostal" value="" placeholder="000-0000" style="width: 75px;"></label></div>
+        <div><label>住所: <input type="text" id="senderAddress" value="" placeholder="東京都..." style="width: 180px;"></label></div>
+        <div><label>建物名: <input type="text" id="senderBuilding" value="" placeholder="ビル名・階数など" style="width: 120px;"></label></div>
+        <div><label>電話番号: <input type="text" id="senderPhone" value="" placeholder="03-0000-0000" style="width: 100px;"></label></div>
+        <div><label>出荷予定日: <input type="date" id="shippingDate" style="width: 125px;"></label></div>
     </div>
 
     <!-- 送り状データ出力パネル -->
@@ -188,7 +144,7 @@
         <button class="btn btn-warning" onclick="exportSagawa()">佐川急便 送り状CSVを出力</button>
         <button class="btn btn-warning" onclick="exportYamato()">ヤマト(B2) 送り状CSVを出力</button>
     </div>
-    
+
     <div class="controls">
         <div>
             <label for="defaultSizeSelect">一括サイズ設定: </label>
@@ -221,22 +177,23 @@
             </select>
         </div>
         <button class="btn" onclick="initRows()">入力データ反映</button>
+        <button class="btn btn-gray" onclick="addEmptyRow()">行を追加</button>
     </div>
 
     <div>
         <label for="addressInput">データ貼り付け (スプレッドシート等から「注文ID」「名前」「品名」「郵便番号」「電話番号」「住所」の順にコピー):</label>
         <textarea id="addressInput" placeholder="例:&#10;ORD-001	山田 太郎	特製Tシャツ	105-0014	03-1234-5678	東京都港区芝4-16-2&#10;ORD-002	鈴木 花子	限定マグカップ	593-8312	072-987-6543	大阪府堺市南区槇塚台3-37-17"></textarea>
-        <div class="help-text">※タブ区切りで最大6列（注文ID、名前、品名、郵便番号、電話番号、住所）まで自動認識します。</div>
+        <div class="help-text">※タブ区切りで最大6列（注文ID、名前、品名、郵便番号、電話番号、住所）まで自動認識します。上の「受注データを読み込む」を使えば、ここは自動で埋まります。</div>
     </div>
+
+    <div class="pref-warning" id="prefWarning"></div>
 
     <div class="summary">
         <div class="summary-box">
             表示件数: <span id="totalCount">0</span> 件
             <div class="summary-detail" id="detailCount"></div>
         </div>
-        <div class="summary-box">
-            送料合計: <span id="totalShipping">0</span> 円
-        </div>
+        <div class="summary-box">送料合計: <span id="totalShipping">0</span> 円</div>
         <div class="summary-box">
             出荷手数料(300円×件): <span id="totalFee">0</span> 円
             <div class="summary-detail" id="detailFee"></div>
@@ -258,22 +215,8 @@
     <table id="resultTable">
         <thead>
             <tr>
-                <th>No.</th>
-                <th>注文ID</th>
-                <th>名前</th>
-                <th>品名</th>
-                <th>郵便番号</th>
-                <th>電話番号</th>
-                <th>住所</th>
-                <th>都道府県</th>
-                <th>サイズ</th>
-                <th>送料</th>
-                <th>出荷手数料</th>
-                <th>資材費</th>
-                <th>点数</th>
-                <th>同梱費</th>
-                <th>行合計</th>
-                <th>操作</th>
+                <th>No.</th><th>注文ID</th><th>名前</th><th>品名</th><th>郵便番号</th><th>電話番号</th><th>住所</th>
+                <th>都道府県</th><th>サイズ</th><th>送料</th><th>出荷手数料</th><th>資材費</th><th>点数</th><th>同梱費</th><th>行合計</th><th>操作</th>
             </tr>
         </thead>
         <tbody id="resultBody">
@@ -285,7 +228,6 @@
 <!-- Firebase SDKs -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
     import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -299,7 +241,6 @@
     };
 
     const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
     const db = getFirestore(app);
 
     window.db = db;
@@ -310,10 +251,9 @@
     window.getDocs = getDocs;
     window.deleteDoc = deleteDoc;
 
-    // 初期化時にFirestoreから履歴リストを読み込む
-    window.addEventListener('DOMContentLoaded', () => {
-        updateHistoryDropdown();
-    });
+    // Firestoreの準備ができたら履歴と読み込み設定の一覧を取得
+    updateHistoryDropdown();
+    loadTemplateList();
 </script>
 
 <script>
@@ -371,9 +311,25 @@ const prefectures = Object.keys(rateTable);
 
 window.onload = function() {
     initPrefectureFilter();
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('shippingDate').value = today;
+    document.getElementById('shippingDate').value = todayLocal();
+    initDropZone();
 };
+
+// 日本時間の今日の日付（YYYY-MM-DD）
+function todayLocal() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// HTMLの属性値に安全に入れるためのエスケープ
+function escAttr(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Firestoreのドキュメント名に使えない「/」を置き換え
+function safeDocId(s) {
+    return String(s).trim().replace(/\//g, '／');
+}
 
 function initPrefectureFilter() {
     const filterSelect = document.getElementById('filterPref');
@@ -387,9 +343,7 @@ function initPrefectureFilter() {
 
 function extractPrefecture(text) {
     for (let pref of prefectures) {
-        if (text.includes(pref)) {
-            return pref;
-        }
+        if (text.includes(pref)) return pref;
     }
     if (text.includes("東京")) return "東京都";
     if (text.includes("大阪")) return "大阪府";
@@ -398,9 +352,51 @@ function extractPrefecture(text) {
     return null;
 }
 
+function isEmptyTable() {
+    const rows = document.querySelectorAll('#resultBody tr');
+    return rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td') && rows[0].querySelector('td').colSpan > 1);
+}
+
+// 1行分のHTMLを作る
+function createRow(data, index) {
+    const defaultSize = data.size || document.getElementById('defaultSizeSelect').value;
+    const material = data.material ?? document.getElementById('defaultMaterialCost').value;
+    const itemCount = data.itemCount ?? document.getElementById('defaultItemCount').value;
+    const address = data.address || '';
+    const pref = extractPrefecture(address);
+
+    const tr = document.createElement('tr');
+    tr.dataset.index = index;
+    tr.dataset.pref = pref || "";
+    const prefDisplay = pref ? pref : '<span class="not-found">都道府県不明</span>';
+    const sizes = [['ss','SS'],['compact','コンパクト'],['60','60'],['80','80'],['100','100'],['120','120'],['140','140'],['160','160'],['180','180'],['200','200'],['240','240']];
+    const sizeOptions = sizes.map(([v, t]) => `<option value="${v}" ${defaultSize === v ? 'selected' : ''}>${t}</option>`).join('');
+
+    tr.innerHTML = `
+        <td class="no-cell">${index + 1}</td>
+        <td><input type="text" class="orderid-input" value="${escAttr(data.orderId)}" placeholder="注文ID" style="width: 80px; padding: 4px;"></td>
+        <td><input type="text" class="name-input" value="${escAttr(data.name)}" placeholder="名前" style="width: 80px; padding: 4px;"></td>
+        <td><input type="text" class="itemname-input" value="${escAttr(data.itemName)}" placeholder="品名" style="width: 110px; padding: 4px;"></td>
+        <td><input type="text" class="postal-input" value="${escAttr(data.postal)}" placeholder="郵便番号" style="width: 80px; padding: 4px;"></td>
+        <td><input type="text" class="phone-input" value="${escAttr(data.phone)}" placeholder="電話番号" style="width: 95px; padding: 4px;"></td>
+        <td><input type="text" class="address-input" value="${escAttr(address)}" placeholder="住所" style="width: 170px; padding: 4px;" oninput="updateRowAddress(this)"></td>
+        <td class="pref-cell" data-pref="${pref || ''}">${prefDisplay}</td>
+        <td><select class="size-select" onchange="calculate()">${sizeOptions}</select></td>
+        <td class="shipping-cell">0 円</td>
+        <td class="fee-cell">300 円</td>
+        <td><input type="number" class="number-input material-input" value="${escAttr(material)}" min="0" oninput="calculate()"></td>
+        <td><input type="number" class="number-input itemcount-input" value="${escAttr(itemCount)}" min="0" oninput="calculate()"></td>
+        <td class="bundle-cell">0 円</td>
+        <td class="rowtotal-cell">0 円</td>
+        <td><button class="btn btn-danger" onclick="deleteRow(this)">削除</button></td>
+    `;
+    return tr;
+}
+
 function initRows() {
     const rawText = document.getElementById('addressInput').value;
-    const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    // 行頭のタブ（注文IDが空の行）を消さないよう、改行コードだけ除去
+    const lines = rawText.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim().length > 0);
     const tbody = document.getElementById('resultBody');
     tbody.innerHTML = '';
 
@@ -410,97 +406,49 @@ function initRows() {
         return;
     }
 
-    const defaultSize = document.getElementById('defaultSizeSelect').value;
-    const defaultMaterial = document.getElementById('defaultMaterialCost').value;
-    const defaultItemCount = document.getElementById('defaultItemCount').value;
-
     lines.forEach((line, index) => {
-        let orderId = "";
-        let name = "";
-        let itemName = "";
-        let postal = "";
-        let phone = "";
-        let address = line;
+        let d = { orderId: "", name: "", itemName: "", postal: "", phone: "", address: line.trim() };
 
         if (line.includes('\t')) {
             const parts = line.split('\t').map(p => p.trim());
             if (parts.length >= 6) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                postal = parts[3];
-                phone = parts[4];
-                address = parts[5];
+                d = { orderId: parts[0], name: parts[1], itemName: parts[2], postal: parts[3], phone: parts[4], address: parts[5] };
             } else if (parts.length === 5) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                phone = parts[3];
-                address = parts[4];
+                d = { orderId: parts[0], name: parts[1], itemName: parts[2], postal: "", phone: parts[3], address: parts[4] };
             } else if (parts.length === 4) {
-                orderId = parts[0];
-                name = parts[1];
-                itemName = parts[2];
-                address = parts[3];
+                d = { orderId: parts[0], name: parts[1], itemName: parts[2], postal: "", phone: "", address: parts[3] };
             } else if (parts.length === 3) {
-                name = parts[0];
-                itemName = parts[1];
-                address = parts[2];
+                d = { orderId: "", name: parts[0], itemName: parts[1], postal: "", phone: "", address: parts[2] };
             } else if (parts.length === 2) {
-                name = parts[0];
-                address = parts[1];
+                d = { orderId: "", name: parts[0], itemName: "", postal: "", phone: "", address: parts[1] };
             }
         }
-
-        const pref = extractPrefecture(address);
-        const tr = document.createElement('tr');
-        tr.dataset.index = index;
-        tr.dataset.pref = pref || "";
-
-        let prefDisplay = pref ? pref : '<span class="not-found">都道府県不明</span>';
-
-        tr.innerHTML = `
-            <td>${index + 1}</td>
-            <td><input type="text" class="orderid-input" value="${orderId}" placeholder="注文ID" style="width: 80px; padding: 4px;"></td>
-            <td><input type="text" class="name-input" value="${name}" placeholder="名前" style="width: 80px; padding: 4px;"></td>
-            <td><input type="text" class="itemname-input" value="${itemName}" placeholder="品名" style="width: 90px; padding: 4px;"></td>
-            <td><input type="text" class="postal-input" value="${postal}" placeholder="郵便番号" style="width: 80px; padding: 4px;"></td>
-            <td><input type="text" class="phone-input" value="${phone}" placeholder="電話番号" style="width: 95px; padding: 4px;"></td>
-            <td><input type="text" class="address-input" value="${address}" placeholder="住所" style="width: 150px; padding: 4px;" oninput="updateRowAddress(this)"></td>
-            <td class="pref-cell" data-pref="${pref || ''}">${prefDisplay}</td>
-            <td>
-                <select class="size-select" onchange="calculate()">
-                    <option value="ss" ${defaultSize === 'ss' ? 'selected' : ''}>SS</option>
-                    <option value="compact" ${defaultSize === 'compact' ? 'selected' : ''}>コンパクト</option>
-                    <option value="60" ${defaultSize === '60' ? 'selected' : ''}>60</option>
-                    <option value="80" ${defaultSize === '80' ? 'selected' : ''}>80</option>
-                    <option value="100" ${defaultSize === '100' ? 'selected' : ''}>100</option>
-                    <option value="120" ${defaultSize === '120' ? 'selected' : ''}>120</option>
-                    <option value="140" ${defaultSize === '140' ? 'selected' : ''}>140</option>
-                    <option value="160" ${defaultSize === '160' ? 'selected' : ''}>160</option>
-                    <option value="180" ${defaultSize === '180' ? 'selected' : ''}>180</option>
-                    <option value="200" ${defaultSize === '200' ? 'selected' : ''}>200</option>
-                    <option value="240" ${defaultSize === '240' ? 'selected' : ''}>240</option>
-                </select>
-            </td>
-            <td class="shipping-cell">0 円</td>
-            <td class="fee-cell">300 円</td>
-            <td><input type="number" class="number-input material-input" value="${defaultMaterial}" min="0" oninput="calculate()"></td>
-            <td><input type="number" class="number-input itemcount-input" value="${defaultItemCount}" min="0" oninput="calculate()"></td>
-            <td class="bundle-cell">0 円</td>
-            <td class="rowtotal-cell">0 円</td>
-            <td><button class="btn btn-danger" onclick="deleteRow(this)">削除</button></td>
-        `;
-        tbody.appendChild(tr);
+        tbody.appendChild(createRow(d, index));
     });
 
     filterTable();
 }
 
+function addEmptyRow() {
+    const tbody = document.getElementById('resultBody');
+    if (isEmptyTable()) tbody.innerHTML = '';
+    const tr = createRow({}, tbody.querySelectorAll('tr').length);
+    tbody.appendChild(tr);
+    renumberRows();
+    calculate();
+    tr.querySelector('.orderid-input').focus();
+}
+
+function renumberRows() {
+    document.querySelectorAll('#resultBody tr').forEach((tr, i) => {
+        const c = tr.querySelector('.no-cell');
+        if (c) c.textContent = i + 1;
+    });
+}
+
 function updateRowAddress(input) {
     const tr = input.closest('tr');
-    const address = input.value;
-    const pref = extractPrefecture(address);
+    const pref = extractPrefecture(input.value);
     tr.dataset.pref = pref || "";
     const prefCell = tr.querySelector('.pref-cell');
     prefCell.dataset.pref = pref || "";
@@ -509,79 +457,50 @@ function updateRowAddress(input) {
 }
 
 function deleteRow(btn) {
-    const tr = btn.closest('tr');
-    tr.remove();
+    btn.closest('tr').remove();
+    renumberRows();
     calculate();
 }
 
 function applyDefaultSize() {
-    const defaultSize = document.getElementById('defaultSizeSelect').value;
-    document.querySelectorAll('#resultBody tr').forEach(row => {
-        const select = row.querySelector('.size-select');
-        if (select) select.value = defaultSize;
-    });
+    const v = document.getElementById('defaultSizeSelect').value;
+    document.querySelectorAll('#resultBody .size-select').forEach(s => s.value = v);
     calculate();
 }
 
 function applyDefaultMaterial() {
-    const val = document.getElementById('defaultMaterialCost').value;
-    document.querySelectorAll('#resultBody tr').forEach(row => {
-        const input = row.querySelector('.material-input');
-        if (input) input.value = val;
-    });
+    const v = document.getElementById('defaultMaterialCost').value;
+    document.querySelectorAll('#resultBody .material-input').forEach(i => i.value = v);
     calculate();
 }
 
 function applyDefaultItemCount() {
-    const val = document.getElementById('defaultItemCount').value;
-    document.querySelectorAll('#resultBody tr').forEach(row => {
-        const input = row.querySelector('.itemcount-input');
-        if (input) input.value = val;
-    });
+    const v = document.getElementById('defaultItemCount').value;
+    document.querySelectorAll('#resultBody .itemcount-input').forEach(i => i.value = v);
     calculate();
 }
 
 function filterTable() {
     const selectedPref = document.getElementById('filterPref').value;
-    const rows = document.querySelectorAll('#resultBody tr');
-
-    rows.forEach(row => {
-        if (!row.dataset.pref && row.style.display !== 'none') {}
+    document.querySelectorAll('#resultBody tr').forEach(row => {
         const pref = row.dataset.pref;
-        if (!selectedPref || pref === selectedPref) {
-            row.style.display = '';
-        } else {
-            row.style.display = 'none';
-        }
+        row.style.display = (!selectedPref || pref === selectedPref) ? '' : 'none';
     });
     calculate();
 }
 
 function calculate() {
     const rows = document.querySelectorAll('#resultBody tr');
-    let totalCount = 0;
-    let totalShipping = 0;
-    let totalFee = 0;
-    let totalMaterial = 0;
-    let totalBundle = 0;
-    let totalItemsCount = 0;
-
+    let totalCount = 0, totalShipping = 0, totalFee = 0, totalMaterial = 0, totalBundle = 0, totalItemsCount = 0;
+    let unknownPrefCount = 0;
     let sizeCounts = {};
     let materialSizeCounts = {};
+    const warn = document.getElementById('prefWarning');
 
-    if (rows.length === 1 && rows[0].querySelector && rows[0].querySelector('td').colSpan > 1) {
-        document.getElementById('totalCount').textContent = 0;
-        document.getElementById('totalShipping').textContent = 0;
-        document.getElementById('totalFee').textContent = 0;
-        document.getElementById('totalMaterial').textContent = 0;
-        document.getElementById('totalBundle').textContent = 0;
-        document.getElementById('subtotalPrice').textContent = 0;
-        document.getElementById('taxPrice').textContent = 0;
-        document.getElementById('grandTotalPrice').textContent = 0;
-        document.getElementById('detailCount').textContent = '';
-        document.getElementById('detailFee').textContent = '';
-        document.getElementById('detailMaterial').textContent = '';
-        document.getElementById('detailBundle').textContent = '';
+    if (isEmptyTable()) {
+        ['totalCount','totalShipping','totalFee','totalMaterial','totalBundle','subtotalPrice','taxPrice','grandTotalPrice'].forEach(id => document.getElementById(id).textContent = 0);
+        ['detailCount','detailFee','detailMaterial','detailBundle'].forEach(id => document.getElementById(id).textContent = '');
+        warn.style.display = 'none';
         return;
     }
 
@@ -590,6 +509,8 @@ function calculate() {
 
         const prefCell = row.querySelector('.pref-cell');
         const sizeSelect = row.querySelector('.size-select');
+        if (!prefCell || !sizeSelect) return;
+
         const shippingCell = row.querySelector('.shipping-cell');
         const feeCell = row.querySelector('.fee-cell');
         const materialInput = row.querySelector('.material-input');
@@ -597,12 +518,9 @@ function calculate() {
         const bundleCell = row.querySelector('.bundle-cell');
         const rowtotalCell = row.querySelector('.rowtotal-cell');
 
-        if (!prefCell || !sizeSelect) return;
-
         totalCount++;
         const pref = prefCell.dataset.pref;
         const size = sizeSelect.value;
-        
         sizeCounts[size] = (sizeCounts[size] || 0) + 1;
 
         let shipping = 0;
@@ -611,15 +529,14 @@ function calculate() {
             shippingCell.textContent = shipping.toLocaleString() + ' 円';
         } else {
             shippingCell.textContent = '-';
+            unknownPrefCount++;
         }
 
         const fee = 300;
         feeCell.textContent = fee.toLocaleString() + ' 円';
 
         const material = parseInt(materialInput.value) || 0;
-        if (material > 0) {
-            materialSizeCounts[size] = (materialSizeCounts[size] || 0) + 1;
-        }
+        if (material > 0) materialSizeCounts[size] = (materialSizeCounts[size] || 0) + 1;
 
         const itemCount = parseInt(itemcountInput.value) || 0;
         totalItemsCount += itemCount;
@@ -648,36 +565,65 @@ function calculate() {
     document.getElementById('taxPrice').textContent = tax.toLocaleString();
     document.getElementById('grandTotalPrice').textContent = grandTotal.toLocaleString();
 
-    // 内訳表示の生成
-    let countDetailText = Object.entries(sizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
+    const countDetailText = Object.entries(sizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
     document.getElementById('detailCount').textContent = countDetailText ? `(${countDetailText})` : '';
-
-    let feeDetailText = `${totalCount}件`;
-    document.getElementById('detailFee').textContent = `(${feeDetailText})`;
-
-    let materialDetailText = Object.entries(materialSizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
+    document.getElementById('detailFee').textContent = `(${totalCount}件)`;
+    const materialDetailText = Object.entries(materialSizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
     document.getElementById('detailMaterial').textContent = materialDetailText ? `(${materialDetailText})` : '';
-
     document.getElementById('detailBundle').textContent = `(総点数: ${totalItemsCount}点)`;
+
+    if (unknownPrefCount > 0) {
+        warn.textContent = `⚠ 都道府県が判定できない行が ${unknownPrefCount} 件あります。この行は送料0円で計算されているため、見積が実際より安くなっています。住所を確認してください。`;
+        warn.style.display = 'block';
+    } else {
+        warn.style.display = 'none';
+    }
 }
 
 // -------------------------------------------------------------
-// Firestoreを用いた保存・読み込み・削除関数
+// Firestoreを用いた履歴の保存・読み込み・削除
 // -------------------------------------------------------------
+function collectRowData() {
+    const list = [];
+    document.querySelectorAll('#resultBody tr').forEach(row => {
+        if (!row.querySelector('.size-select')) return;
+        list.push({
+            orderId: row.querySelector('.orderid-input').value,
+            name: row.querySelector('.name-input').value,
+            itemName: row.querySelector('.itemname-input').value,
+            postal: row.querySelector('.postal-input').value,
+            phone: row.querySelector('.phone-input').value,
+            address: row.querySelector('.address-input').value,
+            size: row.querySelector('.size-select').value,
+            material: row.querySelector('.material-input').value,
+            itemCount: row.querySelector('.itemcount-input').value
+        });
+    });
+    return list;
+}
+
+function renderRowsFromData(list) {
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>';
+    } else {
+        list.forEach((d, i) => tbody.appendChild(createRow(d, i)));
+    }
+    // 貼り付け欄にも同じ内容を入れておく
+    document.getElementById('addressInput').value = list.map(d =>
+        [d.orderId, d.name, d.itemName, d.postal, d.phone, d.address].map(v => String(v ?? '').replace(/[\t\r\n]/g, ' ')).join('\t')
+    ).join('\n');
+    filterTable();
+}
+
 async function saveHistory() {
-    const title = document.getElementById('historyTitleInput').value.trim();
-    if (!title) {
-        alert("保存名を入力してください。");
-        return;
-    }
+    const rawTitle = document.getElementById('historyTitleInput').value.trim();
+    if (!rawTitle) { alert("保存名を入力してください。"); return; }
+    const title = safeDocId(rawTitle);
+    if (isEmptyTable()) { alert("保存するデータがありません。"); return; }
 
-    const rows = document.querySelectorAll('#resultBody tr');
-    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
-        alert("保存するデータがありません。");
-        return;
-    }
-
-    let senderInfo = {
+    const senderInfo = {
         name: document.getElementById('senderName').value,
         postal: document.getElementById('senderPostal').value,
         address: document.getElementById('senderAddress').value,
@@ -686,26 +632,10 @@ async function saveHistory() {
         date: document.getElementById('shippingDate').value
     };
 
-    let rowDataList = [];
-    rows.forEach(row => {
-        const orderId = row.querySelector('.orderid-input') ? row.querySelector('.orderid-input').value : "";
-        const name = row.querySelector('.name-input') ? row.querySelector('.name-input').value : "";
-        const itemName = row.querySelector('.itemname-input') ? row.querySelector('.itemname-input').value : "";
-        const postal = row.querySelector('.postal-input') ? row.querySelector('.postal-input').value : "";
-        const phone = row.querySelector('.phone-input') ? row.querySelector('.phone-input').value : "";
-        const address = row.querySelector('.address-input') ? row.querySelector('.address-input').value : "";
-        const size = row.querySelector('.size-select') ? row.querySelector('.size-select').value : "60";
-        const material = row.querySelector('.material-input') ? row.querySelector('.material-input').value : "40";
-        const itemCount = row.querySelector('.itemcount-input') ? row.querySelector('.itemcount-input').value : "0";
-
-        rowDataList.push({ orderId, name, itemName, postal, phone, address, size, material, itemCount });
-    });
-
     try {
-        const docRef = window.doc(window.db, "shipping_histories", title);
-        await window.setDoc(docRef, {
+        await window.setDoc(window.doc(window.db, "shipping_histories", title), {
             sender: senderInfo,
-            rows: rowDataList,
+            rows: collectRowData(),
             updatedAt: new Date().toISOString()
         });
         alert(`「${title}」をFirestoreに保存しました。`);
@@ -719,14 +649,13 @@ async function saveHistory() {
 async function updateHistoryDropdown() {
     const select = document.getElementById('historySelect');
     select.innerHTML = '<option value="">-- 履歴から選択して読み込む --</option>';
-    
+    if (!window.db) return;
     try {
-        const querySnapshot = await window.getDocs(window.collection(window.db, "shipping_histories"));
-        querySnapshot.forEach((docSnap) => {
-            const title = docSnap.id;
+        const snap = await window.getDocs(window.collection(window.db, "shipping_histories"));
+        snap.forEach(docSnap => {
             const opt = document.createElement('option');
-            opt.value = title;
-            opt.textContent = title;
+            opt.value = docSnap.id;
+            opt.textContent = docSnap.id;
             select.appendChild(opt);
         });
     } catch (e) {
@@ -737,50 +666,21 @@ async function updateHistoryDropdown() {
 async function loadHistory() {
     const title = document.getElementById('historySelect').value;
     if (!title) return;
-
     try {
-        const docRef = window.doc(window.db, "shipping_histories", title);
-        const docSnap = await window.getDoc(docRef);
+        const docSnap = await window.getDoc(window.doc(window.db, "shipping_histories", title));
+        if (!docSnap.exists()) { alert("該当する履歴が見つかりませんでした。"); return; }
 
-        if (!docSnap.exists()) {
-            alert("該当する履歴が見つかりませんでした。");
-            return;
-        }
-
-        const historyData = docSnap.data();
+        const h = docSnap.data();
         document.getElementById('historyTitleInput').value = title;
-
-        if (historyData.sender) {
-            document.getElementById('senderName').value = historyData.sender.name || "";
-            document.getElementById('senderPostal').value = historyData.sender.postal || "";
-            document.getElementById('senderAddress').value = historyData.sender.address || "";
-            document.getElementById('senderBuilding').value = historyData.sender.building || "";
-            document.getElementById('senderPhone').value = historyData.sender.phone || "";
-            if (historyData.sender.date) {
-                document.getElementById('shippingDate').value = historyData.sender.date;
-            }
+        if (h.sender) {
+            document.getElementById('senderName').value = h.sender.name || "";
+            document.getElementById('senderPostal').value = h.sender.postal || "";
+            document.getElementById('senderAddress').value = h.sender.address || "";
+            document.getElementById('senderBuilding').value = h.sender.building || "";
+            document.getElementById('senderPhone').value = h.sender.phone || "";
+            if (h.sender.date) document.getElementById('shippingDate').value = h.sender.date;
         }
-
-        let rowDataList = historyData.rows || [];
-        let textLines = [];
-        rowDataList.forEach(item => {
-            textLines.push(`${item.orderId}\t${item.name}\t${item.itemName}\t${item.postal}\t${item.phone}\t${item.address}`);
-        });
-        document.getElementById('addressInput').value = textLines.join('\n');
-        initRows();
-
-        const rows = document.querySelectorAll('#resultBody tr');
-        rows.forEach((row, i) => {
-            if (rowDataList[i]) {
-                const sizeSel = row.querySelector('.size-select');
-                const matIn = row.querySelector('.material-input');
-                const itemIn = row.querySelector('.itemcount-input');
-                if (sizeSel) sizeSel.value = rowDataList[i].size;
-                if (matIn) matIn.value = rowDataList[i].material;
-                if (itemIn) itemIn.value = rowDataList[i].itemCount;
-            }
-        });
-        calculate();
+        renderRowsFromData(h.rows || []);
     } catch (e) {
         console.error("読み込みエラー: ", e);
         alert("読み込みに失敗しました。");
@@ -789,17 +689,10 @@ async function loadHistory() {
 
 async function deleteHistory() {
     const title = document.getElementById('historySelect').value;
-    if (!title) {
-        alert("削除する履歴を選択してください。");
-        return;
-    }
-
+    if (!title) { alert("削除する履歴を選択してください。"); return; }
     if (!confirm(`履歴「${title}」をFirestoreから削除してもよろしいですか？`)) return;
-
     try {
-        const docRef = window.doc(window.db, "shipping_histories", title);
-        await window.deleteDoc(docRef);
-
+        await window.deleteDoc(window.doc(window.db, "shipping_histories", title));
         updateHistoryDropdown();
         document.getElementById('historyTitleInput').value = "";
         alert("削除しました。");
@@ -809,86 +702,544 @@ async function deleteHistory() {
     }
 }
 
-// -------------------------------------------------------------
-// 佐川急便 送り状データ出力
-// -------------------------------------------------------------
-function exportSagawa() {
-    const rows = document.querySelectorAll('#resultBody tr');
-    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
-        alert("出力するデータがありません。");
-        return;
+// =============================================================
+// 受注データ読み込み（Excel / CSV）
+// =============================================================
+const MAP_FIELDS = [
+    { key: 'group',   label: 'まとめるキー',  note: '同じ値の行を1件の送り状にまとめます', slots: 1 },
+    { key: 'orderId', label: '注文ID',        note: '', slots: 1 },
+    { key: 'name',    label: '名前',          note: '姓・名が別の列なら2つ選択', slots: 2 },
+    { key: 'postal',  label: '郵便番号',      note: '', slots: 1 },
+    { key: 'phone',   label: '電話番号',      note: '', slots: 1 },
+    { key: 'address', label: '住所',          note: '都道府県→市区町村→番地→建物の順に', slots: 4 },
+    { key: 'item',    label: '品名に使う列',  note: '右の欄は値の前に付ける文字（例: ストラップ）', slots: 3, prefix: true },
+    { key: 'qty',     label: '数量',          note: '', slots: 1 }
+];
+
+const EXCLUDE_RE = /ご依頼主|依頼人|送り主|発送元|差出人|請求|メール|mail/i;
+
+let importWorkbook = null;
+let importHeaders = [];
+let importRows = [];
+let importTemplates = {};   // 名前 → 設定
+let importResult = null;    // プレビュー結果
+
+function initDropZone() {
+    const dz = document.getElementById('dropZone');
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
+    dz.addEventListener('drop', e => {
+        const f = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) handleImportFile(f);
+    });
+}
+
+async function handleImportFile(file) {
+    if (!file) return;
+    if (typeof XLSX === 'undefined') { alert('読み込み用ライブラリが読み込めていません。ネット接続を確認して再読み込みしてください。'); return; }
+    try {
+        const buf = await file.arrayBuffer();
+        if (/\.(csv|tsv|txt)$/i.test(file.name)) {
+            // 文字コード自動判定（UTF-8で化けたらShift_JIS）
+            let text = new TextDecoder('utf-8').decode(buf);
+            if (text.includes('\uFFFD')) text = new TextDecoder('shift_jis').decode(buf);
+            text = text.replace(/^\uFEFF/, '');
+            importWorkbook = XLSX.read(text, { type: 'string', raw: true, FS: /\.tsv$/i.test(file.name) ? '\t' : undefined });
+        } else {
+            importWorkbook = XLSX.read(buf, { type: 'array' });
+        }
+        document.getElementById('importFileName').textContent = `読み込み中のファイル：${file.name}`;
+
+        const sheetSel = document.getElementById('sheetSelect');
+        sheetSel.innerHTML = importWorkbook.SheetNames.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
+        document.getElementById('sheetSelectWrap').style.display = importWorkbook.SheetNames.length > 1 ? '' : 'none';
+        loadSheet(importWorkbook.SheetNames[0]);
+    } catch (e) {
+        console.error(e);
+        alert('ファイルを読み込めませんでした。Excel（.xlsx）かCSVかをご確認ください。');
     }
+}
+
+function loadSheet(name) {
+    const ws = importWorkbook.Sheets[name];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+
+    // 見出し行を探す（上から10行のうち、項目名らしい単語が一番多い行）
+    const KEY = /氏名|名前|住所|郵便|電話|都道府県|注文|支援|数量|品名|商品|番地/;
+    let headerIdx = 0, best = -1;
+    aoa.slice(0, 10).forEach((r, i) => {
+        const score = r.filter(c => KEY.test(String(c))).length;
+        if (score > best) { best = score; headerIdx = i; }
+    });
+
+    importHeaders = (aoa[headerIdx] || []).map((h, i) => cleanCell(h) || `（列${i + 1}）`);
+    importRows = aoa.slice(headerIdx + 1).filter(r => r.some(c => cleanCell(c) !== ''));
+
+    document.getElementById('mappingArea').style.display = 'block';
+    renderMappingGrid();
+
+    // 保存済み設定で、見出しが全部そろうものがあれば自動で適用
+    const matched = findMatchingTemplate();
+    if (matched) {
+        document.getElementById('templateSelect').value = matched;
+        applyTemplateByName(matched, true);
+    } else {
+        document.getElementById('templateSelect').value = '';
+        applyAutoDetect();
+        showImportMsg('ok', `${importRows.length} 行を読み込みました。列の割り当ては自動判定です。違っていればプルダウンで直してください。`);
+    }
+}
+
+function cleanCell(v) {
+    return String(v ?? '').replace(/_x000D_/g, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function renderMappingGrid() {
+    const opts = '<option value="-1">（なし）</option>' +
+        importHeaders.map((h, i) => `<option value="${i}">${escAttr(h)}</option>`).join('');
+    const grid = document.getElementById('mappingGrid');
+    grid.innerHTML = MAP_FIELDS.map(f => {
+        let slots = '';
+        for (let s = 0; s < f.slots; s++) {
+            slots += `<select id="map_${f.key}_${s}" onchange="previewImport()">${opts}</select>`;
+            if (f.prefix) slots += `<input type="text" id="map_${f.key}_p${s}" placeholder="前に付ける文字" oninput="previewImport()">`;
+            if (f.key === 'address' && s < f.slots - 1) slots += '<span style="color:#999;">＋</span>';
+        }
+        return `<div class="m-label">${f.label}${f.note ? `<small>${f.note}</small>` : ''}</div><div class="m-slots">${slots}</div>`;
+    }).join('');
+}
+
+function setSlot(key, s, idx, prefix) {
+    const sel = document.getElementById(`map_${key}_${s}`);
+    if (sel) sel.value = (idx >= 0 && idx < importHeaders.length) ? String(idx) : '-1';
+    const p = document.getElementById(`map_${key}_p${s}`);
+    if (p && prefix !== undefined) p.value = prefix;
+}
+
+function clearMapping() {
+    MAP_FIELDS.forEach(f => { for (let s = 0; s < f.slots; s++) setSlot(f.key, s, -1, ''); });
+}
+
+// 見出しから列を自動判定
+function applyAutoDetect() {
+    clearMapping();
+    const H = importHeaders;
+    const usable = i => !EXCLUDE_RE.test(H[i]);
+    const findFirst = regs => {
+        for (const re of regs) {
+            const i = H.findIndex((h, k) => usable(k) && re.test(h));
+            if (i >= 0) return i;
+        }
+        return -1;
+    };
+
+    const orderId = findFirst([/^支援ID$/, /注文ID|注文番号|受注番号|オーダー(ID|番号)|支援ID|購入ID/, /^ID$/i]);
+    let group = findFirst([/^支援者$|購入者ID|会員ID|ユーザーID|顧客ID|支援者ID|ユーザー名/]);
+    if (group < 0) group = orderId;
+
+    let names = [findFirst([
+        /^(氏名|お名前|名前|宛名)$/,
+        /(配送先|送付先|お届け先|届け先|受取人|宛先|配送).*(氏名|名前)/,
+        /氏名|お名前|宛名/
+    ])];
+    if (names[0] < 0) {
+        const sei = findFirst([/(^|配送先|送付先|お届け先)姓$/]);
+        const mei = findFirst([/(^|配送先|送付先|お届け先)名$/]);
+        names = [sei, mei];
+    }
+
+    const postal = findFirst([/郵便番号|〒|郵便/]);
+    const phone = findFirst([/電話|TEL|携帯/i]);
+
+    const addrIdx = [];
+    [/都道府県/, /市区町村|市町村|住所|番地|丁目/, /建物|マンション|ビル|部屋/].forEach(re => {
+        H.forEach((h, i) => { if (usable(i) && re.test(h) && !addrIdx.includes(i)) addrIdx.push(i); });
+    });
+    addrIdx.sort((a, b) => a - b);
+
+    const itemIdx = [];
+    H.forEach((h, i) => {
+        if (itemIdx.length >= 3) return;
+        if (!usable(i)) return;
+        if (/内容|金額|価格|ID|支援額|別リターン|日/.test(h)) return;
+        if (/カラー|色|サイズ|ストラップ|選択|オプション|商品名|品名|リターン名|プラン/.test(h)) {
+            // 中身が全部空か「-」の列は除外
+            const hasValue = importRows.some(r => { const v = cleanCell(r[i]); return v && v !== '-'; });
+            if (hasValue) itemIdx.push(i);
+        }
+    });
+
+    const qty = findFirst([/^数量$|個数|数量/]);
+
+    setSlot('group', 0, group);
+    setSlot('orderId', 0, orderId);
+    names.forEach((v, s) => setSlot('name', s, v));
+    setSlot('postal', 0, postal);
+    setSlot('phone', 0, phone);
+    addrIdx.slice(0, 4).forEach((v, s) => setSlot('address', s, v));
+    itemIdx.forEach((v, s) => setSlot('item', s, v, /ストラップ/.test(H[v]) ? 'ストラップ' : ''));
+    setSlot('qty', 0, qty);
+
+    previewImport();
+}
+
+function readMapping() {
+    const m = {};
+    MAP_FIELDS.forEach(f => {
+        m[f.key] = [];
+        if (f.prefix) m[f.key + 'Prefix'] = [];
+        for (let s = 0; s < f.slots; s++) {
+            const v = parseInt(document.getElementById(`map_${f.key}_${s}`).value);
+            if (f.prefix) {
+                // 品名は前置き文字と対応させるため位置を保つ
+                m[f.key].push(v);
+                m[f.key + 'Prefix'].push(document.getElementById(`map_${f.key}_p${s}`).value);
+            } else if (v >= 0) {
+                m[f.key].push(v);
+            }
+        }
+    });
+    return m;
+}
+
+// ---- 表記ゆれの正規化 ----
+function toHalf(s) {
+    return String(s).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+}
+function normDash(s) {
+    return s
+        .replace(/([ァ-ヴ])[－−‐‑–—―-](?=[ァ-ヴ])/g, '$1ー') // カタカナに挟まれたダッシュは長音（パ-ク → パーク）
+        .replace(/[－−‐‑–—―]/g, '-')                        // それ以外のダッシュはハイフンに
+        .replace(/(\d)\s*[ーｰ]\s*(?=\d)/g, '$1-');          // 数字の間の「ー」はハイフンに（18ー1 → 18-1）
+}
+function normAddressPart(s) {
+    return normDash(toHalf(s)).replace(/\s+/g, ' ').trim();
+}
+function joinAddress(parts) {
+    const p = parts.map(normAddressPart).filter(Boolean);
+    if (p.length === 0) return '';
+    let out = p[0];
+    let i = 1;
+    // 都道府県だけの列なら、次の列とスペースなしでつなぐ（重複していれば省く）
+    if (/^.{2,3}[都道府県]$/.test(p[0]) && p.length > 1) {
+        out = p[1].startsWith(p[0]) ? p[1] : p[0] + p[1];
+        i = 2;
+    }
+    for (; i < p.length; i++) out += ' ' + p[i];
+    return out;
+}
+function normPostal(s) {
+    let d = toHalf(s).replace(/\D/g, '');
+    if (d.length === 6) d = '0' + d;            // Excelで先頭の0が消えた場合
+    return d.length === 7 ? d.slice(0, 3) + '-' + d.slice(3) : toHalf(s).trim();
+}
+function normPhone(s) {
+    const t = normDash(toHalf(s)).replace(/\s+/g, '').trim();
+    const d = t.replace(/\D/g, '');
+    if ((d.length === 9 || d.length === 10) && !d.startsWith('0') && !/-/.test(t)) return '0' + d;  // 先頭の0が消えた場合
+    return t;
+}
+
+function previewImport() {
+    if (!importRows.length) return;
+    const m = readMapping();
+    const merge = document.getElementById('mergeCheck').checked;
+    const fixed = document.getElementById('itemFixedInput').value.trim();
+    const qtyMode = document.getElementById('qtyModeSelect').value;
+    const getVals = (r, idxs) => idxs.map(i => cleanCell(r[i])).filter(v => v && v !== '-');
+
+    const recs = importRows.map((r, i) => {
+        const items = [];
+        m.item.forEach((ci, k) => {
+            if (ci < 0) return;
+            const v = cleanCell(r[ci]);
+            if (v && v !== '-') items.push({ slot: k, text: (m.itemPrefix[k] || '') + v });
+        });
+        return {
+            row: i,
+            group: getVals(r, m.group).join(''),
+            orderId: getVals(r, m.orderId).join('/'),
+            name: getVals(r, m.name).join(' '),
+            postal: normPostal(getVals(r, m.postal).join('')),
+            phone: normPhone(getVals(r, m.phone).join('')),
+            address: joinAddress(m.address.map(ci => cleanCell(r[ci])).filter(v => v && v !== '-')),
+            items,
+            qty: parseInt(toHalf(getVals(r, m.qty)[0] || '')) || 1
+        };
+    }).filter(r => r.name || r.address || r.orderId || r.items.length);
+
+    // グループ化
+    const groups = new Map();
+    recs.forEach((r, i) => {
+        const key = (merge && r.group) ? 'g:' + r.group : 'r:' + i;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+    });
+
+    const shipments = [];
+    const orphans = [];
+    const addrConflicts = [];
+    let mergedCount = 0;
+
+    groups.forEach(list => {
+        const base = list.find(r => r.address);
+        if (!base) { orphans.push(...list); return; }
+        if (list.length > 1) mergedCount++;
+
+        const addrSet = new Set(list.filter(r => r.address).map(r => r.address));
+        if (addrSet.size > 1) addrConflicts.push(base);
+
+        // 品名：品名の列の順（本体→オプションなど）に並べ、同じものは「×数」でまとめる
+        const allItems = [];
+        list.forEach(r => r.items.forEach(it => allItems.push({ ...it, qty: r.qty })));
+        allItems.sort((a, b) => a.slot - b.slot);
+        const counter = new Map();
+        allItems.forEach(it => counter.set(it.text, (counter.get(it.text) || 0) + it.qty));
+        const itemsText = [...counter.entries()].map(([it, c]) => c > 1 ? `${it}×${c}` : it).join('・');
+        const itemName = [fixed, itemsText].filter(Boolean).join(' ');
+
+        const totalQty = list.reduce((a, r) => a + r.qty, 0);
+        let itemCount;
+        if (qtyMode === 'qty') itemCount = totalQty;
+        else if (qtyMode === 'qtyMinus1') itemCount = Math.max(0, totalQty - 1);
+
+        shipments.push({
+            orderId: [...new Set(list.map(r => r.orderId).filter(Boolean))].join('/'),
+            name: base.name || (list.find(r => r.name) || {}).name || '',
+            itemName,
+            postal: base.postal || (list.find(r => r.postal) || {}).postal || '',
+            phone: base.phone || (list.find(r => r.phone) || {}).phone || '',
+            address: base.address,
+            itemCount,
+            lines: list.length
+        });
+    });
+
+    importResult = { shipments, orphans };
+
+    // メッセージ
+    const msg = [`${recs.length} 行 → 送り状 ${shipments.length} 件`];
+    if (merge && mergedCount) msg.push(`（${mergedCount} 件は同梱でまとめました）`);
+    showImportMsg('ok', msg.join(''), true);
+
+    // 要確認
+    const w = [];
+    orphans.forEach(r => {
+        w.push(`住所がなく、まとめ先も見つからない行：注文ID ${escAttr(r.orderId || '-')} ／ キー ${escAttr(r.group || '-')} ／ ${escAttr(r.items.map(x => x.text).join('・') || '-')}（「行を追加」で手入力してください）`);
+    });
+    addrConflicts.forEach(r => w.push(`同じキーで住所が異なる行があります：${escAttr(r.name)}（1件目の住所を使っています）`));
+    const missing = shipments.filter(s => !s.name || !s.postal || !s.phone);
+    missing.forEach(s => w.push(`名前・郵便番号・電話番号のどれかが空です：${escAttr(s.name || s.orderId)}`));
+    const wb = document.getElementById('importWarnings');
+    if (w.length) {
+        wb.className = 'import-msg warn';
+        wb.innerHTML = `<b>要確認（${w.length}件）</b><ul>${w.map(x => `<li>${x}</li>`).join('')}</ul>`;
+    } else {
+        wb.className = 'import-msg';
+        wb.innerHTML = '';
+    }
+
+    // プレビュー（先頭5件）
+    const pv = shipments.slice(0, 5).map(s => `<tr><td>${escAttr(s.orderId)}</td><td>${escAttr(s.name)}</td><td>${escAttr(s.itemName)}</td><td>${escAttr(s.postal)}</td><td>${escAttr(s.phone)}</td><td>${escAttr(s.address)}</td></tr>`).join('');
+    document.getElementById('previewWrap').innerHTML = shipments.length ? `
+        <div style="font-size:12px; color:#555;">プレビュー（先頭5件）</div>
+        <table class="preview-table"><thead><tr><th>注文ID</th><th>名前</th><th>品名</th><th>郵便番号</th><th>電話番号</th><th>住所</th></tr></thead><tbody>${pv}</tbody></table>` : '';
+}
+
+function showImportMsg(type, text) {
+    const el = document.getElementById('importMsg');
+    el.className = 'import-msg ' + type;
+    el.textContent = text;
+}
+
+function applyImport() {
+    if (!importResult || importResult.shipments.length === 0) { alert('反映できるデータがありません。'); return; }
+    if (!isEmptyTable() && !confirm('今の内訳一覧を、読み込んだデータで置き換えます。よろしいですか？')) return;
+    renderRowsFromData(importResult.shipments.map(s => ({
+        orderId: s.orderId, name: s.name, itemName: s.itemName, postal: s.postal, phone: s.phone, address: s.address,
+        itemCount: s.itemCount
+    })));
+    document.getElementById('resultTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ---- 読み込み設定（Firestore: import_templates） ----
+async function loadTemplateList() {
+    if (!window.db) return;
+    try {
+        const snap = await window.getDocs(window.collection(window.db, "import_templates"));
+        importTemplates = {};
+        snap.forEach(d => importTemplates[d.id] = d.data());
+        const sel = document.getElementById('templateSelect');
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">-- 自動判定 --</option>' +
+            Object.keys(importTemplates).map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
+        if (importTemplates[cur]) sel.value = cur;
+    } catch (e) {
+        console.error("読み込み設定の取得エラー: ", e);
+    }
+}
+
+function findMatchingTemplate() {
+    for (const [name, t] of Object.entries(importTemplates)) {
+        const needed = Object.values(t.fields || {}).flat().filter(Boolean);
+        if (needed.length && needed.every(h => importHeaders.includes(h))) return name;
+    }
+    return null;
+}
+
+function applyTemplateByName(name, auto) {
+    if (!name) { applyAutoDetect(); return; }
+    const t = importTemplates[name];
+    if (!t) return;
+    clearMapping();
+    MAP_FIELDS.forEach(f => {
+        const cols = (t.fields && t.fields[f.key]) || [];
+        cols.forEach((h, s) => {
+            const idx = h ? importHeaders.indexOf(h) : -1;
+            const prefix = f.prefix ? ((t.itemPrefix || [])[s] || '') : undefined;
+            setSlot(f.key, s, idx, prefix);
+        });
+    });
+    document.getElementById('itemFixedInput').value = t.itemFixed || '';
+    document.getElementById('mergeCheck').checked = t.merge !== false;
+    document.getElementById('qtyModeSelect').value = t.qtyMode || 'default';
+    document.getElementById('templateNameInput').value = name;
+    previewImport();
+    const el = document.getElementById('importMsg');
+    el.textContent = (auto ? `保存済みの設定「${name}」を自動で適用しました。` : `設定「${name}」を適用しました。`) + el.textContent;
+}
+
+async function saveTemplate() {
+    const raw = document.getElementById('templateNameInput').value.trim();
+    if (!raw) { alert('設定名を入力してください（例: CAMPFIRE用）'); return; }
+    if (!importHeaders.length) { alert('先にファイルを読み込んでください。'); return; }
+    const name = safeDocId(raw);
+    const fields = {};
+    MAP_FIELDS.forEach(f => {
+        fields[f.key] = [];
+        for (let s = 0; s < f.slots; s++) {
+            const v = parseInt(document.getElementById(`map_${f.key}_${s}`).value);
+            fields[f.key].push(v >= 0 ? importHeaders[v] : '');
+        }
+    });
+    const itemPrefix = [];
+    for (let s = 0; s < 3; s++) itemPrefix.push(document.getElementById(`map_item_p${s}`).value);
+
+    try {
+        await window.setDoc(window.doc(window.db, "import_templates", name), {
+            fields, itemPrefix,
+            itemFixed: document.getElementById('itemFixedInput').value,
+            merge: document.getElementById('mergeCheck').checked,
+            qtyMode: document.getElementById('qtyModeSelect').value,
+            updatedAt: new Date().toISOString()
+        });
+        await loadTemplateList();
+        document.getElementById('templateSelect').value = name;
+        alert(`読み込み設定「${name}」を保存しました。次回から同じ形式のファイルは自動で適用されます。`);
+    } catch (e) {
+        console.error(e);
+        alert('設定の保存に失敗しました。');
+    }
+}
+
+async function deleteTemplate() {
+    const name = document.getElementById('templateSelect').value;
+    if (!name) { alert('削除する設定を選んでください。'); return; }
+    if (!confirm(`読み込み設定「${name}」を削除してもよろしいですか？`)) return;
+    try {
+        await window.deleteDoc(window.doc(window.db, "import_templates", name));
+        await loadTemplateList();
+        document.getElementById('templateSelect').value = '';
+        alert('削除しました。');
+    } catch (e) {
+        console.error(e);
+        alert('削除に失敗しました。');
+    }
+}
+
+// =============================================================
+// 送り状データ出力
+// =============================================================
+function exportableRows() {
+    if (isEmptyTable()) { alert("出力するデータがありません。"); return null; }
+    if (document.getElementById('filterPref').value &&
+        !confirm('都道府県フィルターがかかっています。表示中の行だけを出力しますか？')) return null;
+    return [...document.querySelectorAll('#resultBody tr')].filter(r => r.style.display !== 'none' && r.querySelector('.size-select'));
+}
+
+function splitByLength(s, len, count) {
+    const out = [];
+    for (let i = 0; i < count; i++) out.push(s.substring(i * len, (i + 1) * len));
+    return out;
+}
+
+function csvLine(arr) {
+    return arr.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(",") + "\n";
+}
+
+// 佐川急便（e飛伝Ⅱ 74列）
+function exportSagawa() {
+    const rows = exportableRows();
+    if (!rows) return;
 
     const sName = document.getElementById('senderName').value;
     const sPostal = document.getElementById('senderPostal').value;
     const sAddress = document.getElementById('senderAddress').value;
     const sBuilding = document.getElementById('senderBuilding').value;
     const sPhone = document.getElementById('senderPhone').value;
-    let sDate = document.getElementById('shippingDate').value.replace(/-/g, '');
+    const sDate = document.getElementById('shippingDate').value.replace(/-/g, '');
 
-    let csvContent = "\uFEFF"; // BOM
     const header = [
-        "お届け先コード取得区分", "お届け先コード", "お届け先電話番号", "お届け先郵便番号", 
-        "お届け先住所１", "お届け先住所２", "お届け先住所３", "お届け先名称１", "お届け先名称２", 
-        "お客様管理番号(旧9)", "お客様コード", "部署ご担当者コード取得区分", "部署ご担当者コード", "部署ご担当者名称", 
-        "荷送人電話番号", "ご依頼主コード取得区分", "ご依頼主コード", "ご依頼主電話番号", "ご依頼主郵便番号", 
-        "ご依頼主住所１", "ご依頼主住所２", "ご依頼主名称１", "ご依頼主名称２", "荷姿", "品名１", 
-        "品名２", "品名３", "品名４", "お客様管理番号(AB列=28番目)", "品名５", "荷札荷姿", "荷札品名１", "荷札品名２", "荷札品名３", 
-        "荷札品名４", "荷札品名５", "荷札品名６", "荷札品名７", "荷札品名８", "荷札品名９", "荷札品名１０", 
-        "荷札品名１１", "出荷個数", "スピード指定", "クール便指定", "配達日", "配達指定時間帯", "配達指定時間（時分）", 
-        "代引金額", "消費税", "決済種別", "保険金額", "指定シール１", "指定シール２", "指定シール３", 
-        "営業所受取", "SRC区分", "営業所受取営業所コード", "元着区分", "メールアドレス", "ご不在時連絡先", 
-        "出荷日(BI列=60番目)", "お問い合せ送り状No.", "出荷場印字区分", "集約解除指定", "編集０１", "編集０２", 
+        "お届け先コード取得区分", "お届け先コード", "お届け先電話番号", "お届け先郵便番号",
+        "お届け先住所１", "お届け先住所２", "お届け先住所３", "お届け先名称１", "お届け先名称２",
+        "お客様管理番号", "お客様コード", "部署ご担当者コード取得区分", "部署ご担当者コード", "部署ご担当者名称",
+        "荷送人電話番号", "ご依頼主コード取得区分", "ご依頼主コード", "ご依頼主電話番号", "ご依頼主郵便番号",
+        "ご依頼主住所１", "ご依頼主住所２", "ご依頼主名称１", "ご依頼主名称２", "荷姿", "品名１",
+        "品名２", "品名３", "品名４", "品名５（注文ID）", "荷札荷姿", "荷札品名１", "荷札品名２", "荷札品名３",
+        "荷札品名４", "荷札品名５", "荷札品名６", "荷札品名７", "荷札品名８", "荷札品名９", "荷札品名１０",
+        "荷札品名１１", "出荷個数", "スピード指定", "クール便指定", "配達日", "配達指定時間帯", "配達指定時間（時分）",
+        "代引金額", "消費税", "決済種別", "保険金額", "指定シール１", "指定シール２", "指定シール３",
+        "営業所受取", "SRC区分", "営業所受取営業所コード", "元着区分", "メールアドレス", "ご不在時連絡先",
+        "出荷日", "お問い合せ送り状No.", "出荷場印字区分", "集約解除指定", "編集０１", "編集０２",
         "編集０３", "編集０４", "編集０５", "編集０６", "編集０７", "編集０８", "編集０９", "編集１０"
     ];
-    csvContent += header.join(",") + "\n";
+    let csv = "\uFEFF" + header.join(",") + "\n";
 
     rows.forEach(row => {
-        if (row.style.display === 'none') return;
+        const orderId = row.querySelector('.orderid-input').value;
+        const name = row.querySelector('.name-input').value;
+        const itemName = row.querySelector('.itemname-input').value;
+        const postal = row.querySelector('.postal-input').value;
+        const phone = row.querySelector('.phone-input').value;
+        const address = row.querySelector('.address-input').value;
 
-        const orderId = row.querySelector('.orderid-input')?.value || "";
-        const name = row.querySelector('.name-input')?.value || "";
-        let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 16) {
-            itemName = itemName.substring(0, 16);
-        }
-
-        const postal = row.querySelector('.postal-input')?.value || "";
-        const phone = row.querySelector('.phone-input')?.value || "";
-        const address = row.querySelector('.address-input')?.value || "";
-
-        let lineData = new Array(74).fill("");
-        lineData[2] = phone;
-        lineData[3] = postal;
-        lineData[4] = address;
-        lineData[7] = name;
-        lineData[14] = sPhone;
-        lineData[17] = sPhone;
-        lineData[18] = sPostal;
-        lineData[19] = sAddress;
-        lineData[20] = sBuilding;
-        lineData[21] = sName;
-        lineData[24] = itemName;
-        lineData[28] = orderId; 
-        lineData[41] = "1";
-        lineData[60] = sDate;    
-
-        const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
-        csvContent += escaped.join(",") + "\n";
+        const line = new Array(header.length).fill("");
+        line[2] = phone;
+        line[3] = postal;
+        const [a1, a2, a3] = splitByLength(address, 16, 3);   // 住所１〜３に16文字ずつ
+        line[4] = a1; line[5] = a2; line[6] = a3;
+        line[7] = name;
+        line[14] = sPhone;
+        line[17] = sPhone;
+        line[18] = sPostal;
+        line[19] = sAddress;
+        line[20] = sBuilding;
+        line[21] = sName;
+        const [i1, i2, i3, i4] = splitByLength(itemName, 16, 4); // 品名１〜４に16文字ずつ
+        line[24] = i1; line[25] = i2; line[26] = i3; line[27] = i4;
+        line[28] = orderId;
+        line[41] = "1";
+        line[60] = sDate;
+        csv += csvLine(line);
     });
 
-    downloadFile(csvContent, "sagawa_okurijo_data.csv", "text/csv;charset=utf-8;");
+    downloadFile(csv, "sagawa_okurijo_data.csv", "text/csv;charset=utf-8;");
 }
 
-// -------------------------------------------------------------
-// ヤマト運輸(B2) 送り状データ出力
-// -------------------------------------------------------------
+// ヤマト運輸（B2クラウド）
 function exportYamato() {
-    const rows = document.querySelectorAll('#resultBody tr');
-    if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td').colSpan > 1)) {
-        alert("出力するデータがありません。");
-        return;
-    }
+    const rows = exportableRows();
+    if (!rows) return;
 
     const sName = document.getElementById('senderName').value;
     const sPostal = document.getElementById('senderPostal').value;
@@ -898,14 +1249,13 @@ function exportYamato() {
     const rawDate = document.getElementById('shippingDate').value;
     const sDateYamato = rawDate ? rawDate.replace(/-/g, '/') : "";
 
-    let csvContent = "\uFEFF"; // BOM
     const header = [
-        "お客様管理番号(旧0)", "送り状種類", "クール区分", "伝票番号", "出荷予定日", "お届け予定日", "配達時間帯",
+        "お客様管理番号", "送り状種類", "クール区分", "伝票番号", "出荷予定日", "お届け予定日", "配達時間帯",
         "お届け先コード", "お届け先電話番号", "お届け先電話番号枝番", "お届け先郵便番号", "お届け先住所",
         "お届け先アパートマンション名", "お届け先会社・部門１", "お届け先会社・部門２", "お届け先名", "お届け先名(ｶﾅ)", "敬称",
         "ご依頼主コード", "ご依頼主電話番号", "ご依頼主電話番号枝番", "ご依頼主郵便番号", "ご依頼主住所",
-        "ご依頼主アパートマンション", "ご依頼主名", "ご依頼主名(ｶﾅ)", "品名コード１", "注文ID(AA列=26)",
-        "品名１(AB列=27)", "品名２", "荷扱い１", "荷扱い２", "記事", "ｺﾚｸﾄ代金引換額（税込)", "内消費税額等",
+        "ご依頼主アパートマンション", "ご依頼主名", "ご依頼主名(ｶﾅ)", "品名コード１（注文ID）",
+        "品名１", "品名コード２", "品名２", "荷扱い１", "荷扱い２", "記事", "ｺﾚｸﾄ代金引換額（税込)", "内消費税額等",
         "止置き", "営業所コード", "発行枚数", "個数口表示フラグ", "請求先顧客コード", "請求先分類コード", "運賃管理番号",
         "クロネコwebコレクトデータ登録", "クロネコwebコレクト加盟店番号", "クロネコwebコレクト申込受付番号１", "クロネコwebコレクト申込受付番号２",
         "クロネコwebコレクト申込受付番号３", "お届け予定ｅメール利用区分", "お届け予定ｅメールe-mailアドレス", "入力機種",
@@ -920,55 +1270,45 @@ function exportYamato() {
         "投函完了メール（お届け先宛）利用区分", "投函完了メール（お届け先宛）e-mailアドレス", "投函完了メール（お届け先宛）メールメッセージ",
         "投函完了メール（ご依頼主宛）利用区分", "投函完了メール（ご依頼主宛）e-mailアドレス", "投函完了メール（ご依頼主宛）メールメッセージ"
     ];
-    csvContent += header.join(",") + "\n";
+    let csv = "\uFEFF" + header.join(",") + "\n";
 
     rows.forEach(row => {
-        if (row.style.display === 'none') return;
+        const orderId = row.querySelector('.orderid-input').value;
+        const name = row.querySelector('.name-input').value;
+        const itemName = row.querySelector('.itemname-input').value;
+        const postal = row.querySelector('.postal-input').value;
+        const phone = row.querySelector('.phone-input').value;
+        const address = row.querySelector('.address-input').value;
 
-        const orderId = row.querySelector('.orderid-input')?.value || "";
-        const name = row.querySelector('.name-input')?.value || "";
-        let itemName = row.querySelector('.itemname-input')?.value || "";
-        if (itemName.length > 25) {
-            itemName = itemName.substring(0, 25);
-        }
-
-        const postal = row.querySelector('.postal-input')?.value || "";
-        const phone = row.querySelector('.phone-input')?.value || "";
-        let address = row.querySelector('.address-input')?.value || "";
-
-        let addr1 = address;
-        let company1 = ""; 
+        let addr1 = address, company1 = "";
         if (address.length >= 26) {
             addr1 = address.substring(0, 26);
             company1 = address.substring(26);
         }
 
-        let lineData = new Array(header.length).fill("");
-        lineData[1] = "0";           
-        lineData[4] = sDateYamato;   
-        lineData[8] = phone;         
-        lineData[10] = postal;       
-        lineData[11] = addr1;        
-        lineData[13] = company1;     
-        lineData[15] = name;         
-
-        lineData[19] = sPhone;       
-        lineData[21] = sPostal;      
-        lineData[22] = sAddress;     
-        lineData[23] = sBuilding;    
-        lineData[24] = sName;        
-
-        lineData[26] = orderId;      
-        lineData[27] = itemName;     
-
-        lineData[39] = "09050540672"; 
-        lineData[41] = "01";         
-
-        const escaped = lineData.map(val => `"${String(val).replace(/"/g, '""')}"`);
-        csvContent += escaped.join(",") + "\n";
+        const line = new Array(header.length).fill("");
+        line[1] = "0";
+        line[4] = sDateYamato;
+        line[8] = phone;
+        line[10] = postal;
+        line[11] = addr1;
+        line[13] = company1;
+        line[15] = name;
+        line[19] = sPhone;
+        line[21] = sPostal;
+        line[22] = sAddress;
+        line[23] = sBuilding;
+        line[24] = sName;
+        line[26] = orderId;
+        const [i1, i2] = splitByLength(itemName, 25, 2);   // 品名１・品名２に25文字ずつ
+        line[27] = i1;
+        line[29] = i2;
+        line[39] = "09050540672";
+        line[41] = "01";
+        csv += csvLine(line);
     });
 
-    downloadFile(csvContent, "yamato_b2_okurijo_data.csv", "text/csv;charset=utf-8;");
+    downloadFile(csv, "yamato_b2_okurijo_data.csv", "text/csv;charset=utf-8;");
 }
 
 function downloadFile(content, filename, mimeType) {
