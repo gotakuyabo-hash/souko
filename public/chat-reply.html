@@ -208,6 +208,22 @@
         </div>
     </div>
 
+    <!-- 画像ビューア -->
+    <div id="imageViewer" class="fixed inset-0 z-[70] bg-black/95 flex-col" style="display:none;">
+        <div class="flex items-center gap-2 px-3 text-white" style="padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px;">
+            <div id="viewerName" class="flex-1 min-w-0 truncate text-sm font-bold"></div>
+            <button onclick="closeViewer()" class="w-11 h-11 text-2xl shrink-0 cursor-pointer" aria-label="閉じる">✕</button>
+        </div>
+        <div class="flex-1 min-h-0 flex items-center justify-center overflow-auto p-2" onclick="if(event.target===this) closeViewer()">
+            <div id="viewerLoading" class="text-white text-base">読み込み中…</div>
+            <div id="viewerError" class="text-white text-base text-center px-6 leading-relaxed" style="display:none;"></div>
+            <img id="viewerImg" alt="" class="max-w-full max-h-full object-contain" style="display:none;">
+        </div>
+        <div class="px-3" style="padding-top: 8px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));">
+            <button id="viewerDownloadBtn" class="btn btn-sub w-full">⬇ ダウンロード</button>
+        </div>
+    </div>
+
     <script>
         const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
         const LATER_KEY = "chatwork_later_rooms_v2";
@@ -269,13 +285,110 @@
                 .replace(/\[\/?info\]/g, '')
                 .replace(/\[title\]/g, '【').replace(/\[\/title\]/g, '】\n')
                 .replace(/\[hr\]/g, '──────')
-                .replace(/\[download:\d+\]/g, '📎 ').replace(/\[\/download\]/g, '')
+                .replace(/\[download:\d+\][\s\S]*?\[\/download\]/g, '')
                 .replace(/\[preview[^\]]*\]/g, '')
                 .replace(/\[dtext:[^\]]*\]/g, '')
                 .replace(/\[\/?code\]/g, '')
+                .replace(/【\s*】\n?/g, '')
                 .replace(/\n{3,}/g, '\n\n')
                 .trim();
         }
+
+        // ===== 添付ファイル =====
+        const fileNameMap = {};   // fileId → 表示名
+        const fileUrlCache = {};  // fileId → { url, t }
+        const URL_CACHE_MS = 3 * 60 * 1000;
+
+        // 本文中の [download:ID]ファイル名 (サイズ)[/download] を取り出す
+        function parseFiles(raw) {
+            const files = [];
+            const re = /\[download:(\d+)\]([\s\S]*?)\[\/download\]/g;
+            let m;
+            while ((m = re.exec(String(raw || ''))) !== null) {
+                const name = m[2].trim();
+                const base = name.replace(/\s*\([\d.,]+\s*[KMGT]?B\)\s*$/i, '');
+                files.push({ id: m[1], name: name, base: base });
+                fileNameMap[m[1]] = base;
+            }
+            return files;
+        }
+        function isImageFile(name) { return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(name || ''); }
+
+        function attachmentsHtml(roomId, files) {
+            if (!files || files.length === 0) return '';
+            const rid = safeId(roomId);
+            return `<div class="mt-2 space-y-2">` + files.map(f => {
+                const img = isImageFile(f.base);
+                return `
+                    <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 pl-3">
+                        <span class="text-xl shrink-0">${img ? '🖼️' : '📄'}</span>
+                        <span class="flex-1 min-w-0 text-sm truncate">${esc(f.name)}</span>
+                        ${img ? `<button onclick="previewImage('${rid}', '${safeId(f.id)}')" class="btn btn-main shrink-0" style="height:38px">見る</button>` : ''}
+                        <button onclick="downloadFile('${rid}', '${safeId(f.id)}')" class="btn btn-sub shrink-0" style="height:38px" aria-label="ダウンロード">⬇ 保存</button>
+                    </div>`;
+            }).join('') + `</div>`;
+        }
+
+        // ダウンロード用URLを取得（数分間は使い回す）
+        async function getFileUrl(roomId, fileId) {
+            const c = fileUrlCache[fileId];
+            if (c && Date.now() - c.t < URL_CACHE_MS) return c.url;
+            const data = await callApi("get_room_file", { room_id: roomId, file_id: fileId });
+            const url = data.file && data.file.download_url;
+            if (!url) throw new Error("ファイルのURLを取得できませんでした");
+            fileUrlCache[fileId] = { url: url, t: Date.now() };
+            return url;
+        }
+
+        window.previewImage = async function(roomId, fileId) {
+            const viewer = document.getElementById('imageViewer');
+            const img = document.getElementById('viewerImg');
+            const loading = document.getElementById('viewerLoading');
+            const err = document.getElementById('viewerError');
+            document.getElementById('viewerName').textContent = fileNameMap[fileId] || '';
+            document.getElementById('viewerDownloadBtn').onclick = () => downloadFile(roomId, fileId);
+            img.style.display = 'none';
+            img.removeAttribute('src');
+            err.style.display = 'none';
+            loading.style.display = 'block';
+            viewer.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+            try {
+                const url = await getFileUrl(roomId, fileId);
+                img.onload = () => { loading.style.display = 'none'; img.style.display = 'block'; };
+                img.onerror = () => {
+                    loading.style.display = 'none';
+                    err.textContent = 'この端末では画像を表示できませんでした（HEIC形式など）。下の「ダウンロード」から開いてください。';
+                    err.style.display = 'block';
+                };
+                img.src = url;
+            } catch (e) {
+                loading.style.display = 'none';
+                err.textContent = '読み込みに失敗しました：' + e.message;
+                err.style.display = 'block';
+            }
+        };
+
+        window.closeViewer = function() {
+            document.getElementById('imageViewer').style.display = 'none';
+            document.getElementById('viewerImg').removeAttribute('src');
+            document.body.style.overflow = '';
+        };
+
+        // スマホのポップアップブロック対策：先に空タブを開いてからURLを入れる
+        window.downloadFile = async function(roomId, fileId) {
+            const c = fileUrlCache[fileId];
+            if (c && Date.now() - c.t < URL_CACHE_MS) { window.open(c.url, '_blank'); return; }
+            const w = window.open('', '_blank');
+            if (w) w.document.write('<p style="font-family:sans-serif;font-size:18px;padding:24px">ファイルを準備中…</p>');
+            try {
+                const url = await getFileUrl(roomId, fileId);
+                if (w) w.location.href = url; else location.href = url;
+            } catch (e) {
+                if (w) w.close();
+                alert("ダウンロードに失敗しました: " + e.message);
+            }
+        };
 
         function openSheet(id) {
             ['sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
@@ -448,7 +561,8 @@
             const avatar = avatarUrl
                 ? `<img src="${esc(avatarUrl)}" alt="" class="w-9 h-9 rounded-full shrink-0 bg-slate-200 object-cover">`
                 : `<div class="w-9 h-9 rounded-full shrink-0 bg-slate-200"></div>`;
-            const body = window.messageStore[msgKey].body;
+            const st = window.messageStore[msgKey];
+            const body = st.displayBody;
             const isLong = body.length > 280 || body.split('\n').length > 8;
             return `
                 <div class="flex items-center gap-2.5">
@@ -458,8 +572,9 @@
                         <div class="text-xs text-slate-400">${fmtTime(m.send_time)}</div>
                     </div>
                 </div>
-                <div id="body_${msgKey}" class="chat-msg-body-text msg-body mt-2 ${isLong ? 'clamp' : ''}">${esc(body)}</div>
-                ${isLong ? `<button onclick="expandBody('${msgKey}', this)" class="text-indigo-600 text-sm font-bold py-1.5 cursor-pointer">続きを読む</button>` : ''}`;
+                <div id="body_${msgKey}" class="chat-msg-body-text msg-body mt-2 ${isLong ? 'clamp' : ''}" ${body ? '' : 'style="display:none"'}>${esc(body)}</div>
+                ${isLong ? `<button onclick="expandBody('${msgKey}', this)" class="text-indigo-600 text-sm font-bold py-1.5 cursor-pointer">続きを読む</button>` : ''}
+                ${attachmentsHtml(st.roomId, st.files)}`;
         }
 
         window.expandBody = function(msgKey, btn) {
@@ -491,7 +606,11 @@
         function storeMessage(roomId, roomName, m, idx) {
             const rid = safeId(roomId);
             const msgKey = `msg_${rid}_${idx}_${Math.random().toString(36).slice(2, 8)}`;
-            window.messageStore[msgKey] = { body: cleanBody(m.body), sender: m.account ? m.account.name : "相手", roomId: rid, roomName };
+            const files = parseFiles(m.body);
+            const display = cleanBody(m.body);
+            // コピー・AI・スタッフ連絡用の本文には添付ファイル名も含める
+            const body = display + (files.length ? (display ? '\n' : '') + files.map(f => '📎 ' + f.name).join('\n') : '');
+            window.messageStore[msgKey] = { body, displayBody: display, files, sender: m.account ? m.account.name : "相手", roomId: rid, roomName };
             return msgKey;
         }
 
