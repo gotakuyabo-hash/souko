@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main ]
 
+env:
+  # ▼ firebase-tools のバージョンを固定（更新するときはここだけ変更） ▼
+  FIREBASE_TOOLS_VERSION: 15.32.1
+  FIREBASE_PROJECT: souko-2de57
+
 jobs:
   deploy_all:
     runs-on: ubuntu-latest
@@ -15,41 +20,52 @@ jobs:
         with:
           node-version: '20'
 
+      # ▼ 依存パッケージのインストール ▼
+      #   package-lock.json どおりにインストール（ビルドを安定させる）
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
         working-directory: functions
 
-      # ▼ サービスアカウントのファイルを作成し、認証を通す準備 ▼
+      # ▼ サービスアカウントのキーはリポジトリの外（一時フォルダ）に置く ▼
+      #   → Hosting に誤ってアップされる心配がなくなる
+      #   → GITHUB_ENV に登録するので、以降の全ステップで自動的に使われる
       - name: Setup Service Account
         run: |
-          echo "$GCP_SA_KEY" > ./service-account.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=./service-account.json" >> $GITHUB_ENV
+          echo "$GCP_SA_KEY" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
         env:
           GCP_SA_KEY: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOUKO_2DE57 }}'
 
       # ▼ Hostingのデプロイ ▼
       - name: Deploy Hosting
-        run: npx firebase-tools@latest deploy --only hosting --project souko-2de57
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ./service-account.json
+        run: npx --yes firebase-tools@${{ env.FIREBASE_TOOLS_VERSION }} deploy --only hosting --project ${{ env.FIREBASE_PROJECT }}
 
-      # ▼ Functionsのデプロイ（--force を追加してクリーンアップポリシーのエラーを回避） ▼
+      # ▼ Functionsのデプロイ（--force でクリーンアップポリシーのエラーを回避） ▼
       - name: Deploy Functions
-        run: npx firebase-tools@latest deploy --only functions --project souko-2de57 --force
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ./service-account.json
+        run: npx --yes firebase-tools@${{ env.FIREBASE_TOOLS_VERSION }} deploy --only functions --project ${{ env.FIREBASE_PROJECT }} --force
 
-      # ▼ デプロイ完了時のSlack通知 ▼
+      # ▼ 後片付け：キーファイルを削除（失敗時も実行） ▼
+      - name: Cleanup Service Account
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
+
+      # ▼ Slack通知（成功・失敗どちらも通知） ▼
       - name: Send Slack Notification
+        if: always()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           node -e '
             const https = require("https");
             const commitMsg = process.env.COMMIT_MSG || "更新";
             const firstLine = commitMsg.split("\n")[0];
-            const text = `<!channel> アプリが更新されました: ${firstLine}`;
+            const ok = process.env.JOB_STATUS === "success";
+            const text = ok
+              ? `<!here> アプリが更新されました: ${firstLine}`
+              : `<!here> ⚠️ デプロイに失敗しました: ${firstLine}\n詳細: ${process.env.RUN_URL}`;
             const data = JSON.stringify({ text });
             const url = new URL(process.env.SLACK_WEBHOOK_URL);
             const req = https.request({
@@ -65,6 +81,7 @@ jobs:
                 console.log("Webhook Response Body:", body);
               });
             });
+            req.on("error", (e) => console.error("Slack通知エラー:", e.message));
             req.write(data);
             req.end();
           '
