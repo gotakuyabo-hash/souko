@@ -17,9 +17,16 @@
         <div class="card">
             <h2 class="text-lg font-bold mb-4">受注データ処理シミュレーター（振り分けくん）</h2>
             <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
-                <input type="file" id="csvFile" accept=".csv" class="text-xs">
-                <button id="dlBtn" onclick="downloadCSV()" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-4 py-2 rounded text-xs font-bold transition">ステータス220のみCSVダウンロード</button>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <input type="file" id="csvFile" accept=".csv" class="text-xs">
+                    <span id="fileName" class="text-xs text-slate-500"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="countLabel" class="text-xs font-bold text-slate-600">220設定：0件</span>
+                    <button id="dlBtn" onclick="downloadCSV()" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-4 py-2 rounded text-xs font-bold transition">ステータス220のみCSVダウンロード</button>
+                </div>
             </div>
+            <p class="text-xs text-slate-500 mb-2">F列（青いセル）をクリックすると220に設定、もう一度クリックすると元に戻ります。</p>
             <div class="max-h-[600px] overflow-auto border rounded bg-slate-50">
                 <table id="table" class="w-full text-xs text-left border-collapse whitespace-nowrap">
                     <thead id="thead" class="bg-slate-100 sticky top-0 z-10">
@@ -34,29 +41,46 @@
     </div>
 
     <script>
-        let rawHeader = [], rows = [];
+        // ===== 設定（列番号は0始まり） =====
+        const TRIGGER_COL = 5;    // F列：クリック対象
+        const STATUS_COL  = 7;    // H列：ステータス
+        const TIME_COL    = 27;   // AB列：処理日時
+        const NEW_STATUS  = '220';
 
-        document.getElementById('csvFile').addEventListener('change', function(e) {
+        let rawHeader = [], rows = [], colCount = 28, quoteAll = false;
+
+        // ===== ファイル読み込み =====
+        document.getElementById('csvFile').addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (!file) return;
+            document.getElementById('fileName').textContent = '読み込み中：' + file.name;
 
             const reader = new FileReader();
-            reader.onload = function(event) {
-                const buffer = event.target.result;
-                const codes = new Uint8Array(buffer);
-
-                const encoding = Encoding.detect(codes);
-                const unicodeStr = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
-
-                parseCSVRobust(unicodeStr);
+            reader.onload = function (event) {
+                const codes = new Uint8Array(event.target.result);
+                let encoding = Encoding.detect(codes);
+                if (!encoding || encoding === 'BINARY') encoding = 'SJIS'; // 判定失敗時はShift_JIS扱い
+                let text = Encoding.convert(codes, { to: 'UNICODE', from: encoding, type: 'string' });
+                text = text.replace(/^\uFEFF/, ''); // BOM除去
+                parseCSVRobust(text);
+                document.getElementById('fileName').textContent = '読み込み済：' + file.name;
+            };
+            reader.onerror = function () {
+                document.getElementById('fileName').textContent = '';
+                alert('ファイルを読み込めませんでした。ファイルが開いたままになっていないか確認してください。');
             };
             reader.readAsArrayBuffer(file);
+            e.target.value = ''; // 同じファイルを再選択しても読み込めるようにする
         });
 
+        // ===== CSV解析 =====
         function parseCSVRobust(text) {
+            // 元CSVがダブルクォート囲みかどうか（出力形式を合わせるため）
+            quoteAll = text.replace(/^\s+/, '').startsWith('"');
+
             let records = [], currentRow = [], currentField = '', inQuotes = false;
             for (let i = 0; i < text.length; i++) {
-                let char = text[i], nextChar = text[i + 1];
+                const char = text[i], nextChar = text[i + 1];
                 if (char === '"') {
                     if (inQuotes && nextChar === '"') { currentField += '"'; i++; } else { inQuotes = !inQuotes; }
                 } else if (char === ',' && !inQuotes) {
@@ -70,125 +94,169 @@
             }
             if (currentField !== '' || currentRow.length > 0) { currentRow.push(currentField); records.push(currentRow); }
 
-            if (records.length === 0) return;
+            if (records.length === 0) { alert('CSVにデータがありません。'); return; }
 
             rawHeader = records[0];
+            colCount = Math.max(TIME_COL + 1, rawHeader.length);
+            while (rawHeader.length < colCount) rawHeader.push('');
 
             rows = [];
             for (let i = 1; i < records.length; i++) {
-                let cols = records[i];
+                const cols = records[i];
                 if (!cols || cols.length <= 1) continue;
-                let hasValidData = cols.some(val => val !== "" && val !== "0" && val !== null);
+                const hasValidData = cols.some(val => val !== '' && val !== '0' && val !== null);
                 if (!hasValidData) continue;
 
-                while (cols.length < 28) cols.push('');
-                let initialH = cols[7] || '';
-                let initialAB = cols[27] || '';
+                while (cols.length < colCount) cols.push('');
                 rows.push({
                     cols: cols,
-                    h: initialH,
-                    ab: initialAB,
-                    originalH: initialH,   // 元のステータスを保持
-                    originalAB: initialAB  // 元のAB列を保持
+                    originalH: cols[STATUS_COL] || '',
+                    originalAB: cols[TIME_COL] || '',
+                    selected: false  // このツールで220にしたかどうか
                 });
             }
 
             renderTable();
+            updateCount();
             document.getElementById('dlBtn').disabled = false;
+        }
+
+        // ===== 表示 =====
+        function escapeHTML(str) {
+            return String(str ?? '')
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         function renderTable() {
             const thead = document.getElementById('thead');
             thead.innerHTML = '<tr class="bg-slate-100">' + rawHeader.map((h, i) => {
-                let label = String(h !== null && h !== undefined ? h : '').replace(/^"|"$/g, '').replace(/""/g, '"');
-                if (i === 5) label = 'F列: ' + label;
-                if (i === 7) label = 'H列(スタ): ' + label;
-                if (i === 27) label = 'AB列: ' + label;
+                let label = escapeHTML(h);
+                if (i === TRIGGER_COL) label = 'F列: ' + label;
+                if (i === STATUS_COL)  label = 'H列(スタ): ' + label;
+                if (i === TIME_COL)    label = 'AB列: ' + label;
                 return `<th class="p-2 border border-slate-200 font-semibold text-slate-700">${label}</th>`;
             }).join('') + '</tr>';
 
             const tbody = document.getElementById('tbody');
             if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td class="p-6 text-center text-gray-400" colspan="' + rawHeader.length + '">有効なデータが見つかりませんでした</td></tr>';
+                tbody.innerHTML = `<tr><td class="p-6 text-center text-gray-400" colspan="${colCount}">有効なデータが見つかりませんでした</td></tr>`;
                 return;
             }
-
-            tbody.innerHTML = rows.map((rowObj, idx) => {
-                let cols = rowObj.cols;
-                return `<tr class="hover:bg-slate-100 bg-white">` + cols.map((val, j) => {
-                    let tdClass = "p-2 border border-slate-200";
-                    let clickAttr = "";
-
-                    let displayVal = String(val !== null && val !== undefined ? val : '').replace(/^"|"$/g, '').replace(/""/g, '"');
-
-                    if (displayVal === "0" && j !== 5) {
-                        displayVal = "";
-                    }
-
-                    if (j === 5) {
-                        tdClass += " bg-sky-50 text-sky-700 font-bold cursor-pointer text-center hover:bg-sky-100";
-                        clickAttr = `onclick="updateRow(${idx})" title="クリックで220設定 / 再クリックで元に戻す"`;
-                        if (!displayVal || displayVal === "0") displayVal = '237';
-                    } else if (j === 7 && rowObj.h === '220') {
-                        tdClass += " bg-emerald-50 text-emerald-700 font-bold";
-                    } else if (j === 27 && rowObj.ab) {
-                        tdClass += " bg-emerald-50 text-emerald-700 font-bold";
-                    }
-                    return `<td class="${tdClass}" ${clickAttr}>${displayVal}</td>`;
-                }).join('') + `</tr>`;
-            }).join('');
+            tbody.innerHTML = rows.map((_, idx) => rowHTML(idx)).join('');
         }
+
+        function rowHTML(idx) {
+            const r = rows[idx];
+            const trClass = r.selected ? 'bg-emerald-50' : 'bg-white hover:bg-slate-100';
+            return `<tr id="row-${idx}" class="${trClass}">` + r.cols.map((val, j) => {
+                let tdClass = 'p-2 border border-slate-200';
+                let attr = '';
+                let disp = String(val ?? '');
+                if (disp === '0' && j !== TRIGGER_COL) disp = '';
+
+                if (j === TRIGGER_COL) {
+                    tdClass += ' bg-sky-50 text-sky-700 font-bold cursor-pointer text-center hover:bg-sky-100 min-w-[3rem]';
+                    attr = `data-idx="${idx}" title="クリックで220設定 / 再クリックで元に戻す"`;
+                    disp = (r.selected ? '✓ ' : '') + disp;
+                } else if (r.selected && (j === STATUS_COL || j === TIME_COL)) {
+                    tdClass += ' text-emerald-700 font-bold';
+                }
+                return `<td class="${tdClass}" ${attr}>${escapeHTML(disp)}</td>`;
+            }).join('') + '</tr>';
+        }
+
+        function updateCount() {
+            const n = rows.filter(r => r.selected).length;
+            document.getElementById('countLabel').textContent = `220設定：${n}件`;
+        }
+
+        // ===== クリック処理（クリックした行だけ更新） =====
+        document.getElementById('tbody').addEventListener('click', function (e) {
+            const td = e.target.closest('td[data-idx]');
+            if (!td) return;
+            updateRow(Number(td.dataset.idx));
+        });
 
         function updateRow(idx) {
-            let rowObj = rows[idx];
-            if (rowObj.h === '220') {
-                // すでに220の場合は元の値に戻す
-                rowObj.h = rowObj.originalH;
-                rowObj.ab = rowObj.originalAB;
-                rowObj.cols[7] = rowObj.originalH;
-                rowObj.cols[27] = rowObj.originalAB;
+            const r = rows[idx];
+            if (r.selected) {
+                // 元の値に戻す
+                r.selected = false;
+                r.cols[STATUS_COL] = r.originalH;
+                r.cols[TIME_COL] = r.originalAB;
             } else {
-                // 220に変更し、タイムスタンプを付与
-                rowObj.h = '220';
-                const timeString = new Date().toTimeString().split(' ')[0];
-                rowObj.ab = timeString;
-                rowObj.cols[7] = '220';
-                rowObj.cols[27] = timeString;
+                // 220に変更し、処理日時を付与
+                r.selected = true;
+                r.cols[STATUS_COL] = NEW_STATUS;
+                r.cols[TIME_COL] = formatDateTime(new Date());
             }
-            renderTable();
+            document.getElementById('row-' + idx).outerHTML = rowHTML(idx);
+            updateCount();
         }
 
+        function pad(n) { return String(n).padStart(2, '0'); }
+
+        // AB列の書式（例：2026/10/20 14:05:09）
+        function formatDateTime(d) {
+            return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        // ===== ダウンロード =====
         function downloadCSV() {
-            const filtered = rows.filter(r => r.h === '220');
+            const filtered = rows.filter(r => r.selected);
             if (filtered.length === 0) { alert('ステータス220に設定された行がありません。F列をクリックしてください。'); return; }
 
-            let csvContent = rawHeader.map(escapeCSV).join(',') + '\r\n';
-            filtered.forEach(row => {
-                csvContent += row.cols.map(escapeCSV).join(',') + '\r\n';
-            });
+            const lines = [rawHeader, ...filtered.map(r => r.cols)];
+            const csvContent = lines.map(cols => cols.map(escapeCSV).join(',')).join('\r\n') + '\r\n';
 
-            const unicodeList = Encoding.stringToCode(csvContent);
-            const sjisCodeList = Encoding.convert(unicodeList, { to: 'SJIS', from: 'UNICODE', type: 'array' });
-            const uint8Array = new Uint8Array(sjisCodeList);
+            // Shift_JISに変換できない文字のチェック
+            const bad = findUnmappableChars(csvContent);
+            if (bad.length > 0) {
+                const ok = confirm(
+                    'Shift_JISに変換できない文字が含まれています（「?」などに置き換わります）。\n\n' +
+                    '対象の文字：' + bad.join(' ') + '\n\n' +
+                    'このままダウンロードしますか？'
+                );
+                if (!ok) return;
+            }
 
-            const blob = new Blob([uint8Array], { type: 'text/csv;charset=shift_jis;' });
+            const sjis = Encoding.convert(Encoding.stringToCode(csvContent), { to: 'SJIS', from: 'UNICODE', type: 'array' });
+            const blob = new Blob([new Uint8Array(sjis)], { type: 'text/csv;charset=shift_jis;' });
             const url = URL.createObjectURL(blob);
+
+            const d = new Date();
+            const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'processed_order_status220.csv';
+            a.download = `processed_order_status220_${stamp}.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
 
-        function escapeCSV(str) {
-            if (str === null || str === undefined) return '""';
-            let stringVal = String(str);
-            if (stringVal.includes(',') || stringVal.includes('"') || stringVal.includes('\n') || stringVal.includes('\r')) {
-                return '"' + stringVal.replace(/"/g, '""') + '"';
+        const sjisCheckCache = {};
+        function findUnmappableChars(text) {
+            const bad = new Set();
+            for (const ch of text) {
+                if (ch.charCodeAt(0) < 0x80 || ch === '?') continue;
+                if (!(ch in sjisCheckCache)) {
+                    const sj = Encoding.convert(Encoding.stringToCode(ch), { to: 'SJIS', from: 'UNICODE', type: 'array' });
+                    sjisCheckCache[ch] = !(sj.length > 0 && sj.every(b => b === 0x3F)); // 「?」だけになったら変換不可
+                }
+                if (!sjisCheckCache[ch]) bad.add(ch);
             }
-            return stringVal;
+            return [...bad];
+        }
+
+        function escapeCSV(val) {
+            const s = String(val ?? '');
+            if (quoteAll || /[",\r\n]/.test(s)) {
+                return '"' + s.replace(/"/g, '""') + '"';
+            }
+            return s;
         }
     </script>
 </body>
