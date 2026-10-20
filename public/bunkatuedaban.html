@@ -11,7 +11,7 @@
     <!-- Firebase SDK (Modular v10) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -27,7 +27,7 @@
         const db = getFirestore(app);
 
         window.db = db;
-        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc };
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
         
         window.initFirestoreMaster();
     </script>
@@ -90,17 +90,19 @@
             body.printing-picking #inspectionModal { display: none !important; }
 
             .no-print { display: none !important; }
+            #inspectionPrintArea > * { margin-top: 0 !important; }
+            .inspection-slip:last-child { page-break-after: auto !important; break-after: auto !important; }
             
             .inspection-slip {
                 page-break-after: always !important; 
                 break-after: page !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                margin: 0 auto 10mm auto !important; 
+                margin: 0 auto !important; 
                 border: 2px solid #000 !important;
                 background: white !important;
                 width: 100mm !important;
-                min-height: 150mm !important;
+                min-height: 146mm !important;
                 box-sizing: border-box !important;
             }
         }
@@ -296,7 +298,7 @@
     <div id="sheetCopyModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (注文番号, 商品名和名, 総數量)</h3>
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (注文番号, 商品名和名, 総数量)</h3>
                 <button onclick="closeSheetCopyModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。</p>
@@ -341,7 +343,7 @@
                             <th class="px-2 py-3 text-center w-8"><i class="fa-solid fa-grip-vertical text-slate-400"></i></th>
                             <th class="px-4 py-3">棚番</th>
                             <th class="px-4 py-3">商品名</th>
-                            <th class="px-4 py-3 text-center">必要総數量</th>
+                            <th class="px-4 py-3 text-center">必要総数量</th>
                         </tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
@@ -361,6 +363,42 @@
         let multiplierMaster = [];
         let allFilesRawData = [];
         let processedDataRows = [];
+        let masterLoadedOnce = false;
+
+        // HTML埋め込み用エスケープ（商品名に " や ' が入っても表示が崩れないように）
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Firestoreのドキュメントとして使えるSKUか（「/」入りは不可）
+        function isValidDocId(key) {
+            const k = String(key || '');
+            return k.length > 0 && !k.includes('/') && k !== '.' && k !== '..' && !/^__.*__$/.test(k);
+        }
+
+        function masterDocRef(key) {
+            return window.firebaseFns.doc(window.db, COLLECTION_NAME, key);
+        }
+
+        function findMaster(baseSku) {
+            const lk = String(baseSku).toLowerCase();
+            return multiplierMaster.find(m => String(m.key).toLowerCase() === lk);
+        }
+
+        // Firestoreの一括書き込み（1回500件の上限に合わせて分割）
+        async function commitInChunks(ops) {
+            const { writeBatch } = window.firebaseFns;
+            for (let i = 0; i < ops.length; i += 400) {
+                const batch = writeBatch(window.db);
+                ops.slice(i, i + 400).forEach(op => op(batch));
+                await batch.commit();
+            }
+        }
 
         window.initFirestoreMaster = async function() {
             try {
@@ -372,6 +410,11 @@
 
                 updateMasterCountBadge();
                 renderMasterTable();
+                if (!masterLoadedOnce) {
+                    masterLoadedOnce = true;
+                    // マスタ読込前にファイルを読み込んでいた場合は計算し直す
+                    if (allFilesRawData.length > 0) processAllData();
+                }
             } catch (err) {
                 console.error("Firestore読み込みエラー:", err);
                 alert("Firestoreからのマスタ読み込みに失敗しました。インターネット接続やFirebase設定を確認してください。");
@@ -472,17 +515,35 @@
                 alert('有効なデータが見つかりませんでした。');
                 return;
             }
+            const existingKeys = new Set(multiplierMaster.map(m => String(m.key).toLowerCase()));
+            const seen = new Set();
+            const toAdd = [];
+            let existCount = 0, dupCount = 0, invalidCount = 0;
+
+            rows.forEach(r => {
+                const lk = r.key.toLowerCase();
+                if (!isValidDocId(r.key)) { invalidCount++; return; }
+                if (existingKeys.has(lk)) { existCount++; return; }   // 登録済みSKUは上書きしない
+                if (seen.has(lk)) { dupCount++; return; }             // インポート内の重複は最初の1件のみ
+                seen.add(lk);
+                toAdd.push(r);
+            });
+
+            const detail = `（登録済みのためスキップ ${existCount}件 / 重複 ${dupCount}件 / 使えないSKU ${invalidCount}件）`;
+            if (toAdd.length === 0) {
+                alert(`新しく追加できるSKUはありませんでした。\n${detail}`);
+                return;
+            }
+
             try {
-                for (let r of rows) {
-                    const newData = {
-                        key: r.key,
-                        items: [{ jpName: r.jpName, shelf: "未設定", multiplier: 1 }]
-                    };
-                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.key), newData);
-                }
+                await commitInChunks(toAdd.map(r => batch => batch.set(masterDocRef(r.key), {
+                    key: r.key,
+                    items: [{ jpName: r.jpName, shelf: "未設定", multiplier: 1 }]
+                })));
                 await window.initFirestoreMaster();
                 closeMasterImportModal();
-                alert(`${rows.length}件のマスタをインポートしました！`);
+                if (allFilesRawData.length > 0) processAllData();
+                alert(`${toAdd.length}件のマスタを新規追加しました。\n${detail}`);
             } catch (e) {
                 console.error(e);
                 alert('インポート中にエラーが発生しました');
@@ -490,19 +551,16 @@
         }
 
         async function clearMasterFirestore() {
-            if (confirm('Firestore上のマスタをすべて削除しますか？')) {
-                try {
-                    for (let m of multiplierMaster) {
-                        await window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, m.key));
-                    }
-                    multiplierMaster = [];
-                    updateMasterCountBadge();
-                    renderMasterTable();
-                    alert('すべて削除しました');
-                } catch (e) {
-                    console.error(e);
-                    alert('削除に失敗しました');
-                }
+            if (!confirm('Firestore上のマスタをすべて削除しますか？')) return;
+            try {
+                await commitInChunks(multiplierMaster.map(m => batch => batch.delete(masterDocRef(m.key))));
+                multiplierMaster = [];
+                updateMasterCountBadge();
+                renderMasterTable();
+                alert('すべて削除しました');
+            } catch (e) {
+                console.error(e);
+                alert('削除に失敗しました');
             }
         }
 
@@ -511,40 +569,42 @@
             const query = (document.getElementById('masterSearchInput')?.value || "").toLowerCase();
             tbody.innerHTML = '';
             const filtered = multiplierMaster.filter(r => {
-                let matchKey = r.key.toLowerCase().includes(query);
-                let matchItem = r.items.some(it => it.jpName.toLowerCase().includes(query) || (it.shelf && it.shelf.toLowerCase().includes(query)));
+                const matchKey = String(r.key).toLowerCase().includes(query);
+                const matchItem = (r.items || []).some(it =>
+                    String(it.jpName || '').toLowerCase().includes(query) ||
+                    (it.shelf && String(it.shelf).toLowerCase().includes(query)));
                 return matchKey || matchItem;
             });
-            
+
             if (filtered.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="3" class="px-4 py-4 text-center text-slate-400">マスタがありません</td></tr>`;
                 return;
             }
 
             filtered.forEach(rule => {
-                const idx = multiplierMaster.findIndex(m => m.key === rule.key);
+                const idx = multiplierMaster.indexOf(rule);
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 align-top';
-                
-                let itemsHtml = (rule.items || []).map(it => `
+
+                const itemsHtml = (rule.items || []).map(it => `
                     <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
-                        <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${it.shelf || '未設定'}</span>
-                        <span class="font-semibold text-slate-800 flex-grow">${it.jpName}</span>
-                        <span class="text-indigo-600 font-bold">× ${it.multiplier}</span>
+                        <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${escapeHtml(it.shelf || '未設定')}</span>
+                        <span class="font-semibold text-slate-800 flex-grow">${escapeHtml(it.jpName)}</span>
+                        <span class="text-indigo-600 font-bold">× ${escapeHtml(it.multiplier)}</span>
                     </div>
                 `).join('');
 
                 tr.innerHTML = `
                     <td class="px-4 py-3 font-mono font-medium w-48">
-                        <button onclick="copyToClipboard('${rule.key}')" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
-                            <span>${rule.key}</span>
+                        <button data-copy="${escapeHtml(rule.key)}" onclick="copyToClipboard(this.dataset.copy)" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
+                            <span>${escapeHtml(rule.key)}</span>
                             <i class="fa-regular fa-copy text-[10px]"></i>
                         </button>
                     </td>
                     <td class="px-4 py-3">${itemsHtml}</td>
                     <td class="px-4 py-3 text-right space-x-1 w-24">
                         <button onclick="openMasterEditModal(${idx})" class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
-                        <button onclick="deleteMasterRule('${rule.key}')" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
+                        <button data-key="${escapeHtml(rule.key)}" onclick="deleteMasterRule(this.dataset.key)" class="bg-rose-50 text-rose-600 px-2.5 py-1 rounded text-xs"><i class="fa-solid fa-trash"></i></button>
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -581,13 +641,13 @@
             div.className = "flex gap-2 items-center bg-white p-2.5 rounded-lg border shadow-sm";
             div.innerHTML = `
                 <div class="flex-grow space-y-1">
-                    <input type="text" placeholder="正式商品名" value="${jpName}" class="modal-jpname w-full border rounded px-2 py-1 text-xs font-semibold">
+                    <input type="text" placeholder="正式商品名" value="${escapeHtml(jpName)}" class="modal-jpname w-full border rounded px-2 py-1 text-xs font-semibold">
                 </div>
                 <div class="w-24">
-                    <input type="text" placeholder="棚番" value="${shelf}" class="modal-shelf w-full border rounded px-2 py-1 text-xs text-center font-bold">
+                    <input type="text" placeholder="棚番" value="${escapeHtml(shelf)}" class="modal-shelf w-full border rounded px-2 py-1 text-xs text-center font-bold">
                 </div>
                 <div class="w-20">
-                    <input type="number" placeholder="数量" min="1" value="${multiplier}" class="modal-mult w-full border rounded px-2 py-1 text-xs text-center font-bold text-indigo-600">
+                    <input type="number" placeholder="数量" min="1" value="${escapeHtml(multiplier)}" class="modal-mult w-full border rounded px-2 py-1 text-xs text-center font-bold text-indigo-600">
                 </div>
                 <button onclick="this.parentElement.remove()" class="text-rose-500 hover:text-rose-700 px-2 py-1 text-xs"><i class="fa-solid fa-trash"></i></button>
             `;
@@ -599,6 +659,7 @@
         async function saveMasterToFirestore() {
             const key = document.getElementById('modalKey').value.trim();
             if (!key) { alert('SKUコードを入力してください'); return; }
+            if (!isValidDocId(key)) { alert('SKUコードに「/」は使えません'); return; }
 
             const rows = document.querySelectorAll('#modalItemsContainer > div');
             if (rows.length === 0) { alert('最低1つ以上の商品を登録してください'); return; }
@@ -650,29 +711,44 @@
         }
 
         function handleFiles(files) {
-            document.getElementById('loadingState').classList.remove('hidden');
-            let loaded = 0;
+            const fileInput = document.getElementById('fileInput');
             const listEl = document.getElementById('fileList');
-            document.getElementById('fileListContainer').classList.remove('hidden');
+            const all = Array.from(files);
+            const newFiles = all.filter(f => !allFilesRawData.some(d => d.name === f.name && d.size === f.size));
+            const skipped = all.length - newFiles.length;
+            if (skipped > 0) {
+                alert(`同じファイルがすでに読み込まれているため、${skipped}件をスキップしました。`);
+            }
+            if (newFiles.length === 0) { fileInput.value = ''; return; }
 
-            Array.from(files).forEach(file => {
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('fileListContainer').classList.remove('hidden');
+            let loaded = 0;
+
+            const finishOne = () => {
+                if (++loaded === newFiles.length) {
+                    document.getElementById('loadingState').classList.add('hidden');
+                    fileInput.value = '';
+                    processAllData();
+                }
+            };
+
+            newFiles.forEach(file => {
                 const reader = new FileReader();
                 reader.onload = e => {
                     try {
                         const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
                         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
                         if (rows.length) {
-                            allFilesRawData.push({ name: file.name, rows });
+                            allFilesRawData.push({ name: file.name, size: file.size, rows });
                             const li = document.createElement('li');
-                            li.innerHTML = `<i class="fa-solid fa-file-excel text-emerald-600 mr-1"></i>${file.name} (${rows.length - 1}行)`;
+                            li.innerHTML = `<i class="fa-solid fa-file-excel text-emerald-600 mr-1"></i>${escapeHtml(file.name)} (${rows.length - 1}行)`;
                             listEl.appendChild(li);
                         }
-                    } catch (err) { alert('読込失敗'); }
-                    if (++loaded === files.length) {
-                        document.getElementById('loadingState').classList.add('hidden');
-                        processAllData();
-                    }
+                    } catch (err) { alert(`読込失敗: ${file.name}`); }
+                    finishOne();
                 };
+                reader.onerror = () => { alert(`読込失敗: ${file.name}`); finishOne(); };
                 reader.readAsArrayBuffer(file);
             });
         }
@@ -689,58 +765,48 @@
             return m ? parseInt(m[1], 10) : 1;
         }
 
+        // 末尾の「_数字（1〜99）」だけを枝番＝倍率として扱う
+        // 例: ABC_3 → ベース ABC / 倍率3、ABC_2024 → 枝番扱いしない
         function parseSkuAndMultiplier(rawSku) {
             if (!rawSku) return { baseSku: "", suffixMult: 1 };
-            const lastUnderscoreIdx = rawSku.lastIndexOf('_');
-            if (lastUnderscoreIdx !== -1) {
-                const potentialNum = parseInt(rawSku.substring(lastUnderscoreIdx + 1), 10);
-                if (!isNaN(potentialNum)) {
-                    return {
-                        baseSku: rawSku.substring(0, lastUnderscoreIdx),
-                        suffixMult: potentialNum
-                    };
-                }
+            const s = String(rawSku);
+            const m = s.match(/^(.+)_(\d{1,2})$/);
+            if (m) {
+                const n = parseInt(m[2], 10);
+                if (n >= 1 && n <= 99) return { baseSku: m[1], suffixMult: n };
             }
-            return { baseSku: rawSku, suffixMult: 1 };
+            return { baseSku: s, suffixMult: 1 };
         }
 
         function processItemText(trackingNum, orderSn, productInfo) {
             const rawSku = extractSku(productInfo);
             const { baseSku, suffixMult } = parseSkuAndMultiplier(rawSku);
             const baseQty = extractQuantity(productInfo);
-            
-            let matched = multiplierMaster.find(r => r.key.toLowerCase() === baseSku.toLowerCase());
+            const matched = baseSku ? findMaster(baseSku) : null;
 
-            let results = [];
+            const common = { trackingNum, orderSn, sku: rawSku, baseSku, item: productInfo, baseQty, suffixMult };
+
             if (matched && matched.items && matched.items.length > 0) {
-                matched.items.forEach(it => {
-                    results.push({
-                        trackingNum,
-                        orderSn,
-                        sku: rawSku,
-                        baseSku,
-                        item: productInfo,
+                return matched.items.map(it => {
+                    const multiplier = (it.multiplier || 1) * suffixMult;   // マスタ倍率 × 枝番
+                    return {
+                        ...common,
                         jpName: it.jpName,
+                        masterJpName: it.jpName,     // マスタ上の名前（和名を変えたときの更新先）
                         shelf: it.shelf || '',
-                        baseQty,
-                        multiplier: (it.multiplier || 1) * suffixMult
-                    });
-                });
-            } else {
-                results.push({
-                    trackingNum,
-                    orderSn,
-                    sku: rawSku,
-                    baseSku,
-                    item: productInfo,
-                    jpName: productInfo,
-                    shelf: '',
-                    baseQty,
-                    multiplier: suffixMult
+                        multiplier,
+                        origMultiplier: multiplier   // 手修正の有無の判定用
+                    };
                 });
             }
-
-            return results;
+            return [{
+                ...common,
+                jpName: productInfo,
+                masterJpName: '',
+                shelf: '',
+                multiplier: suffixMult,
+                origMultiplier: suffixMult
+            }];
         }
 
         function processAllData() {
@@ -764,7 +830,7 @@
             document.getElementById('resultSection').classList.remove('hidden');
             document.getElementById('resultSubtitle').innerText = `合計 ${processedDataRows.length} 行`;
             document.getElementById('rowCountBadge').innerText = `全 ${processedDataRows.length} 行`;
-            
+
             const tbody = document.getElementById('previewBody');
             tbody.innerHTML = '';
 
@@ -772,25 +838,25 @@
                 const total = row.baseQty * row.multiplier;
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50';
-                
-                let skuCellHtml = row.sku ? `
-                    <button onclick="copyToClipboard('${row.sku}')" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
-                        <span class="font-mono text-xs">${row.sku}</span>
+
+                const skuCellHtml = row.sku ? `
+                    <button data-copy="${escapeHtml(row.sku)}" onclick="copyToClipboard(this.dataset.copy)" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
+                        <span class="font-mono text-xs">${escapeHtml(row.sku)}</span>
                         <i class="fa-regular fa-copy text-[10px]"></i>
                     </button>
                 ` : '<span class="text-slate-400">-</span>';
 
                 tr.innerHTML = `
                     <td class="px-2 py-2 text-center text-slate-400">${i+1}</td>
-                    <td class="px-4 py-2 font-mono text-xs">${row.trackingNum}</td>
-                    <td class="px-4 py-2 font-mono text-xs">${row.orderSn}</td>
+                    <td class="px-4 py-2 font-mono text-xs">${escapeHtml(row.trackingNum)}</td>
+                    <td class="px-4 py-2 font-mono text-xs">${escapeHtml(row.orderSn)}</td>
                     <td class="px-4 py-2">${skuCellHtml}</td>
                     <td class="px-4 py-2 space-y-1">
                         <div class="flex items-center space-x-2">
-                            <span class="bg-indigo-50 text-indigo-700 font-bold text-[10px] px-2 py-0.5 rounded">棚: ${row.shelf || '未設定'}</span>
-                            <input type="text" value="${row.jpName}" onchange="processedDataRows[${i}].jpName=this.value" class="border rounded px-2 py-1 w-full text-xs font-bold bg-white">
+                            <span class="bg-indigo-50 text-indigo-700 font-bold text-[10px] px-2 py-0.5 rounded">棚: ${escapeHtml(row.shelf || '未設定')}</span>
+                            <input type="text" value="${escapeHtml(row.jpName)}" onchange="processedDataRows[${i}].jpName=this.value" class="border rounded px-2 py-1 w-full text-xs font-bold bg-white">
                         </div>
-                        <div class="text-[11px] text-slate-500 whitespace-normal break-all"><b>元情報:</b> ${row.item}</div>
+                        <div class="text-[11px] text-slate-500 whitespace-normal break-all"><b>元情報:</b> ${escapeHtml(row.item)}</div>
                     </td>
                     <td class="px-4 py-2 text-center"><input type="number" value="${row.baseQty}" min="1" onchange="updateBaseQty(${i}, this.value)" class="border rounded w-16 text-center font-semibold text-slate-700"></td>
                     <td class="px-4 py-2 text-center"><input type="number" value="${row.multiplier}" min="1" onchange="updateMult(${i}, this.value)" class="border rounded w-16 text-center font-semibold text-indigo-600">x</td>
@@ -811,25 +877,85 @@
             document.getElementById(`total-${i}`).innerText = processedDataRows[i].baseQty * processedDataRows[i].multiplier;
         }
 
+        // 画面の倍率（マスタ倍率×枝番）から、マスタに保存する倍率に割り戻す
+        // 例: ABC_3 で画面倍率6 → マスタには 2 を保存
+        function toMasterMultiplier(r) {
+            const s = r.suffixMult || 1;
+            return Math.max(1, Math.round((r.multiplier || 1) / s));
+        }
+
+        // マスタ未登録で、和名がShopeeの元情報のままの行
+        function isUnchangedUnmatched(r) {
+            return !r.masterJpName && r.jpName === r.item;
+        }
+
+        // 和名か倍率を手修正した行か
+        function isModified(r) {
+            return r.jpName !== (r.masterJpName || r.item) || r.multiplier !== r.origMultiplier;
+        }
+
+        // 「どのマスタ商品の行か」を表すキー
+        function rowIdentity(r) {
+            // マスタ未登録の行は、元情報に数量などが含まれ注文ごとに文字列が違うため、ベースSKUで同一とみなす
+            return r.masterJpName ? 'name:' + r.masterJpName : 'raw:' + String(r.baseSku).toLowerCase();
+        }
+
+        // 既存マスタのコピーを作る（元データを直接書き換えない）
+        function cloneMasterEntry(baseSku) {
+            const m = findMaster(baseSku);
+            return {
+                key: m ? m.key : baseSku,
+                items: m ? (m.items || []).map(it => ({ ...it })) : []
+            };
+        }
+
+        // 行の内容をマスタの商品構成に反映（和名を変えた場合は追加ではなく名前を更新）
+        function mergeRowIntoItems(items, r) {
+            const mult = toMasterMultiplier(r);
+            const existing = (r.masterJpName && items.find(it => it.jpName === r.masterJpName))
+                || items.find(it => it.jpName === r.jpName);
+            if (existing) {
+                existing.jpName = r.jpName;
+                existing.shelf = r.shelf;
+                existing.multiplier = mult;
+            } else {
+                items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: mult });
+            }
+        }
+
+        // 登録後、同じ商品の他の行にも新しい和名・棚番・倍率を反映（手入力した数量は保持）
+        function applyRegisteredRows(registered) {
+            const regSet = new Set(registered);
+            const plans = registered.map(r => ({
+                r, id: rowIdentity(r), lk: r.baseSku.toLowerCase(), mult: toMasterMultiplier(r)
+            }));
+            plans.forEach(({ r, id, lk, mult }) => {
+                processedDataRows.forEach(x => {
+                    if (regSet.has(x)) return;
+                    if (String(x.baseSku).toLowerCase() !== lk || rowIdentity(x) !== id) return;
+                    x.jpName = r.jpName;
+                    x.shelf = r.shelf;
+                    if (x.multiplier === x.origMultiplier) x.multiplier = mult * (x.suffixMult || 1);
+                    x.masterJpName = r.jpName;
+                    x.origMultiplier = x.multiplier;
+                });
+            });
+            registered.forEach(r => { r.masterJpName = r.jpName; r.origMultiplier = r.multiplier; });
+            renderResults();
+        }
+
         async function registerRowFromPreview(i) {
             const r = processedDataRows[i];
             if (!r.baseSku) { alert('SKUがありません'); return; }
-            
-            let m = multiplierMaster.find(x => x.key.toLowerCase() === r.baseSku.toLowerCase());
-            let items = m ? [...m.items] : [];
-            let existingItem = items.find(it => it.jpName === r.jpName);
-            
-            if (existingItem) {
-                existingItem.multiplier = r.multiplier;
-                existingItem.shelf = r.shelf;
-            } else {
-                items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: r.multiplier });
-            }
+            if (!isValidDocId(r.baseSku)) { alert('SKUに「/」が含まれているため登録できません'); return; }
+            if (isUnchangedUnmatched(r) && !confirm('和名がShopeeの元情報のままです。このまま登録しますか？')) return;
 
-            const newData = { key: r.baseSku, items };
+            const entry = cloneMasterEntry(r.baseSku);
+            mergeRowIntoItems(entry.items, r);
             try {
-                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.baseSku), newData);
+                await window.firebaseFns.setDoc(masterDocRef(entry.key), entry);
                 await window.initFirestoreMaster();
+                applyRegisteredRows([r]);
                 alert('Firestoreのマスタに登録しました');
             } catch (e) {
                 console.error(e);
@@ -837,26 +963,40 @@
             }
         }
 
+        // 一括登録：和名か倍率を修正した行だけを、SKUごとにまとめて1回で保存
         async function registerAllToMaster() {
-            try {
-                for (let r of processedDataRows) {
-                    if (!r.baseSku) continue;
-                    let m = multiplierMaster.find(x => x.key.toLowerCase() === r.baseSku.toLowerCase());
-                    let items = m ? [...m.items] : [];
-                    let existingItem = items.find(it => it.jpName === r.jpName);
-                    
-                    if (existingItem) {
-                        existingItem.multiplier = r.multiplier;
-                        existingItem.shelf = r.shelf;
-                    } else {
-                        items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: r.multiplier });
-                    }
+            const latest = new Map();
+            let skippedRaw = 0, invalid = 0;
+            processedDataRows.forEach(r => {
+                if (!r.baseSku || !isModified(r)) return;
+                if (isUnchangedUnmatched(r)) { skippedRaw++; return; }
+                if (!isValidDocId(r.baseSku)) { invalid++; return; }
+                latest.set(r.baseSku.toLowerCase() + '|' + rowIdentity(r), r);
+            });
+            const targets = [...latest.values()];
 
-                    const newData = { key: r.baseSku, items };
-                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, COLLECTION_NAME, r.baseSku), newData);
-                }
+            if (targets.length === 0) {
+                alert('登録・更新が必要な行はありません。\n※和名や倍率を修正した行だけが一括登録の対象です（和名が元情報のままの行は対象外）');
+                return;
+            }
+
+            const entries = new Map();
+            targets.forEach(r => {
+                const lk = r.baseSku.toLowerCase();
+                if (!entries.has(lk)) entries.set(lk, cloneMasterEntry(r.baseSku));
+                mergeRowIntoItems(entries.get(lk).items, r);
+            });
+
+            if (!confirm(`修正した ${targets.length} 商品（SKU ${entries.size} 件）をマスタに登録・更新します。よろしいですか？`)) return;
+
+            try {
+                await commitInChunks([...entries.values()].map(en => batch => batch.set(masterDocRef(en.key), en)));
                 await window.initFirestoreMaster();
-                alert('すべての行をFirestoreのマスタに一括登録しました');
+                applyRegisteredRows(targets);
+                let msg = `${entries.size}件のSKUをマスタに登録・更新しました`;
+                if (skippedRaw) msg += `\n※和名が元情報のままの ${skippedRaw} 行は対象外にしました`;
+                if (invalid) msg += `\n※SKUに「/」が含まれる ${invalid} 行は登録できませんでした`;
+                alert(msg);
             } catch (e) {
                 console.error(e);
                 alert('一括登録に失敗しました');
@@ -865,7 +1005,7 @@
 
         function openSheetCopyModal() {
             if (!processedDataRows.length) return;
-            let lines = ["注文番号\t商品名和名\t総數量"];
+            let lines = ["注文番号\t商品名和名\t総数量"];
             processedDataRows.forEach(r => {
                 let total = r.baseQty * r.multiplier;
                 lines.push(`${r.orderSn}\t${r.jpName}\t${total}`);
@@ -893,37 +1033,37 @@
             if (!processedDataRows.length) return;
             const area = document.getElementById('inspectionPrintArea');
             area.innerHTML = '';
-            let map = {};
+            const map = {};
             processedDataRows.forEach(r => {
-                let sn = r.orderSn || "UNKNOWN";
+                const sn = r.orderSn || "UNKNOWN";
                 if (!map[sn]) map[sn] = { tracking: r.trackingNum, items: [] };
                 map[sn].items.push(r);
             });
 
             Object.keys(map).forEach(sn => {
-                let o = map[sn];
-                let slip = document.createElement('div');
+                const o = map[sn];
+                const slip = document.createElement('div');
                 slip.className = "inspection-slip bg-white border-2 border-slate-800 p-4 rounded-xl mx-auto mb-6 shadow-sm";
-                slip.style.width = "100mm"; 
-                slip.style.minHeight = "150mm";
-                
-                let itemsHtml = o.items.map(it => `
+                slip.style.width = "100mm";
+                slip.style.minHeight = "146mm";
+
+                const itemsHtml = o.items.map(it => `
                     <tr class="border-b text-xs">
-                        <td class="py-2.5 px-1 font-bold">${it.jpName}<br><span class="text-[9px] text-slate-500 font-normal">棚: ${it.shelf||'-'} | SKU: ${it.sku||'-'}</span></td>
-                        <td class="py-2.5 px-1 text-center font-bold text-indigo-600 text-sm">${it.baseQty*it.multiplier}</td>
+                        <td class="py-2.5 px-1 font-bold">${escapeHtml(it.jpName)}<br><span class="text-[9px] text-slate-500 font-normal">棚: ${escapeHtml(it.shelf || '-')} | SKU: ${escapeHtml(it.sku || '-')}</span></td>
+                        <td class="py-2.5 px-1 text-center font-bold text-indigo-600 text-sm">${it.baseQty * it.multiplier}</td>
                     </tr>
                 `).join('');
 
                 slip.innerHTML = `
                     <div class="flex justify-between border-b-2 border-slate-800 pb-2 mb-3">
-                        <div><div class="text-[10px] text-slate-500 font-bold">注文番号</div><div class="text-xs font-mono font-bold">${sn}</div></div>
-                        <div class="text-right"><div class="text-[10px] text-slate-500 font-bold">追跡番号</div><div class="text-xs font-mono font-bold">${o.tracking}</div></div>
+                        <div><div class="text-[10px] text-slate-500 font-bold">注文番号</div><div class="text-xs font-mono font-bold">${escapeHtml(sn)}</div></div>
+                        <div class="text-right"><div class="text-[10px] text-slate-500 font-bold">追跡番号</div><div class="text-xs font-mono font-bold">${escapeHtml(o.tracking)}</div></div>
                     </div>
                     <table class="w-full text-left border-collapse mb-4">
                         <thead>
                             <tr class="bg-slate-100 text-[10px] text-slate-600 border-b">
                                 <th class="py-1.5 px-1">商品名</th>
-                                <th class="py-1.5 px-1 text-center w-12">數量</th>
+                                <th class="py-1.5 px-1 text-center w-12">数量</th>
                             </tr>
                         </thead>
                         <tbody>${itemsHtml}</tbody>
@@ -937,25 +1077,51 @@
 
         function closeInspectionModal() { document.getElementById('inspectionModal').classList.add('hidden'); }
 
-        function printInspection() {
-            document.body.classList.add('printing-inspection');
+        // 印刷ごとに用紙サイズを切り替え、印刷ダイアログを閉じてから元に戻す
+        function setPrintPageStyle(css) {
+            let el = document.getElementById('dynamicPageStyle');
+            if (!el) {
+                el = document.createElement('style');
+                el.id = 'dynamicPageStyle';
+                document.head.appendChild(el);
+            }
+            el.textContent = css;
+        }
+
+        function runPrint(bodyClass, pageCss) {
+            document.body.classList.remove('printing-inspection', 'printing-picking');
+            document.body.classList.add(bodyClass);
+            setPrintPageStyle(pageCss);
+            const cleanup = () => {
+                document.body.classList.remove(bodyClass);
+                setPrintPageStyle('');
+                window.removeEventListener('afterprint', cleanup);
+            };
+            window.addEventListener('afterprint', cleanup);
             window.print();
-            document.body.classList.remove('printing-inspection');
+        }
+
+        function printInspection() {
+            runPrint('printing-inspection', '@page { size: 100mm 150mm; margin: 0; }');
         }
 
         function openTotalPickingModal() {
             if (!processedDataRows.length) return;
-            let map = {};
+            const map = {};
             processedDataRows.forEach(r => {
-                let k = (r.shelf || '未設定') + "_" + r.jpName;
-                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, total: 0 };
+                const shelf = String(r.shelf || '未設定');
+                const k = shelf + "_" + r.jpName;
+                if (!map[k]) map[k] = { shelf, name: r.jpName, total: 0 };
                 map[k].total += r.baseQty * r.multiplier;
             });
-            let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf));
-            
+            // 棚番は数字を考慮して並べる（A-2 → A-10 の順）
+            const sorted = Object.values(map).sort((a, b) =>
+                a.shelf.localeCompare(b.shelf, 'ja', { numeric: true }) ||
+                String(a.name).localeCompare(String(b.name), 'ja', { numeric: true }));
+
             const tbody = document.getElementById('totalPickingBody');
             tbody.innerHTML = '';
-            
+
             sorted.forEach((x, index) => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 draggable-row';
@@ -963,11 +1129,11 @@
                 tr.dataset.index = index;
                 tr.innerHTML = `
                     <td class="px-2 py-2 text-center cursor-grab text-slate-400"><i class="fa-solid fa-grip-vertical"></i></td>
-                    <td class="px-4 py-2 font-bold text-indigo-700 shelf-col">${x.shelf}</td>
-                    <td class="px-4 py-2 font-semibold name-col">${x.name}</td>
+                    <td class="px-4 py-2 font-bold text-indigo-700 shelf-col">${escapeHtml(x.shelf)}</td>
+                    <td class="px-4 py-2 font-semibold name-col">${escapeHtml(x.name)}</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base total-col">${x.total}</td>
                 `;
-                
+
                 tr.addEventListener('dragstart', e => {
                     tr.classList.add('dragging');
                     e.dataTransfer.setData('text/plain', index);
@@ -978,6 +1144,7 @@
                 tr.addEventListener('dragover', e => {
                     e.preventDefault();
                     const draggingEl = tbody.querySelector('.dragging');
+                    if (!draggingEl) return;
                     const afterElement = getDragAfterElement(tbody, e.clientY);
                     if (afterElement == null) {
                         tbody.appendChild(draggingEl);
@@ -1008,9 +1175,7 @@
         function closeTotalPickingModal() { document.getElementById('totalPickingModal').classList.add('hidden'); }
 
         function printPicking() {
-            document.body.classList.add('printing-picking');
-            window.print();
-            document.body.classList.remove('printing-picking');
+            runPrint('printing-picking', '@page { size: A4 portrait; margin: 10mm; }');
         }
 
         function downloadExcel() {
