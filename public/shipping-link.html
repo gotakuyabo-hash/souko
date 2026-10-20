@@ -37,17 +37,21 @@
                 <div class="text-[11px] text-emerald-600 font-bold mt-1" id="fileNameSagawa"></div>
             </div>
 
-            <button id="execBtn" onclick="execLink()" disabled class="w-full bg-blue-600 hover:bg-blue-750 disabled:bg-slate-300 text-white p-3 rounded font-bold text-sm transition shadow-sm mb-4">
+            <button id="execBtn" onclick="execLink()" disabled class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white p-3 rounded font-bold text-sm transition shadow-sm mb-4">
                 紐づけを実行してCSVをダウンロード
             </button>
 
-            <div id="log" class="bg-zinc-950 text-emerald-400 p-3 rounded font-mono text-xs h-40 overflow-y-auto whitespace-pre-wrap">ファイルをアップロードしてください。</div>
+            <div id="log" class="bg-zinc-950 text-emerald-400 p-3 rounded font-mono text-xs h-64 overflow-y-auto whitespace-pre-wrap">ファイルをアップロードしてください。
+</div>
         </div>
     </div>
 
     <script>
         let orderData = null, orderMeta = null;
         let yamatoData = null, sagawaData = null;
+
+        // ログに一覧を出すときの最大件数（多すぎると見づらいため）
+        const LIST_LIMIT = 30;
 
         document.getElementById('orderFile').addEventListener('change', (e) => handleFile(e.target.files[0], 'order'));
         document.getElementById('yamatoFile').addEventListener('change', (e) => handleFile(e.target.files[0], 'yamato'));
@@ -60,6 +64,9 @@
             if (type === 'sagawa') document.getElementById('fileNameSagawa').textContent = `選択: ${file.name}`;
 
             const reader = new FileReader();
+            reader.onerror = function() {
+                log(`❌ ファイルを読み込めませんでした: ${file.name}`);
+            };
             reader.onload = function(event) {
                 const buffer = event.target.result;
                 let unicodeString = '';
@@ -94,64 +101,145 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
+        // 一覧をログに出す（多い場合は先頭だけ表示）
+        function logList(title, items) {
+            if (items.length === 0) return;
+            log(`\n${title}: ${items.length}件`);
+            items.slice(0, LIST_LIMIT).forEach(item => log(`  - ${item}`));
+            if (items.length > LIST_LIMIT) log(`  …ほか${items.length - LIST_LIMIT}件`);
+        }
+
         // 受注番号の正規化（表記ゆれ防止）
         function cleanOrderNoNormalized(str) {
             if (!str) return "";
             return String(str).replace(/^No:?[\.\s]*/i, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g, "").trim().toLowerCase();
         }
 
+        // 運送会社CSVから「注文番号 → 追跡番号」の対応表を作る
+        // 同じ注文番号が複数行ある場合（複数口）は、最初の追跡番号を使う
+        function buildCarrierMap(rows, orderCol, trackingCol) {
+            const map = new Map();
+            let multiCount = 0;
+            rows.forEach(row => {
+                if (!row) return;
+                const key = cleanOrderNoNormalized(row[orderCol]);
+                const tracking = String(row[trackingCol] || '').trim();
+                if (!key || !tracking) return;
+
+                if (map.has(key)) {
+                    const entry = map.get(key);
+                    if (entry.count === 1) multiCount++;
+                    entry.count++;
+                    return;
+                }
+                map.set(key, { tracking, rawOrderNo: String(row[orderCol]).trim(), count: 1, used: false });
+            });
+            return { map, multiCount };
+        }
+
+        // Shift_JISに変換できない文字のチェック
+        const sjisCache = new Map();
+        function isSjisSafe(ch) {
+            if (ch.codePointAt(0) < 0x80) return true;
+            if (sjisCache.has(ch)) return sjisCache.get(ch);
+            const sjis = Encoding.convert(Encoding.stringToCode(ch), { to: 'SJIS', from: 'UNICODE', type: 'array' });
+            const back = Encoding.codeToString(Encoding.convert(sjis, { to: 'UNICODE', from: 'SJIS', type: 'array' }));
+            const ok = (back === ch);
+            sjisCache.set(ch, ok);
+            return ok;
+        }
+
+        function findUnsafeChars(rows) {
+            const warnings = [];
+            rows.forEach((row, idx) => {
+                if (idx === 0) return; // ヘッダー行は除外
+                const bad = new Set();
+                row.forEach(v => {
+                    Array.from(String(v ?? '')).forEach(ch => { if (!isSjisSafe(ch)) bad.add(ch); });
+                });
+                if (bad.size > 0) warnings.push(`注文番号 ${row[5]}：「${[...bad].join('')}」`);
+            });
+            return warnings;
+        }
+
         function execLink() {
             if (!orderData || orderData.length <= 1) { alert('受注データがありません。'); return; }
-            const todayStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
+            if (!yamatoData && !sagawaData) { alert('ヤマトまたは佐川急便のCSVを読み込んでください。'); return; }
 
-            // ヤマトマップ作成 (1列目(0番目): 注文番号 / D列(3番目): 伝票番号) ※ヘッダーなしのため全行対象
-            const yamatoMap = new Map();
-            if (yamatoData) {
-                yamatoData.forEach(row => {
-                    let key = cleanOrderNoNormalized(row[0]), val = String(row[3] || '').trim();
-                    if (key) yamatoMap.set(key, val);
-                });
-            }
+            log('\n──────── 紐づけ処理を開始 ────────');
+            const todayStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
 
-            // 佐川マップ作成 (AO列(40番目): 注文番号 / A列(0番目): お問い合わせ番号)
-            const sagawaMap = new Map();
-            if (sagawaData) {
-                sagawaData.slice(1).forEach(row => {
-                    let key = cleanOrderNoNormalized(row[40]), val = String(row[0] || '').trim();
-                    if (key) sagawaMap.set(key, val);
-                });
-            }
+            // ヤマト (1列目(0番目): 注文番号 / D列(3番目): 伝票番号) ※ヘッダーなしのため全行対象
+            // 複数口は伝票番号が口ごとに変わるため、最初の伝票番号で紐づけ
+            const yamato = buildCarrierMap(yamatoData ? yamatoData : [], 0, 3);
 
-            // ヘッダー行を保持
-            const filteredRows = [orderData[0]];
-            let updatedCount = 0;
+            // 佐川 (AO列(40番目): 注文番号 / A列(0番目): お問い合わせ番号) ※1行目はヘッダー
+            // 複数口でもお問い合わせ番号は同じ
+            const sagawa = buildCarrierMap(sagawaData ? sagawaData.slice(1) : [], 40, 0);
+
+            // ヘッダー行（明細行と列数をそろえる）
+            const header = [...orderData[0]];
+            while (header.length <= 56) header.push('');
+            const outputRows = [header];
+
+            let updatedCount = 0, yamatoCount = 0, sagawaCount = 0;
+            const unmatchedOrders = [];
 
             for (let i = 1; i < orderData.length; i++) {
-                const row = orderData[i];
-                if (!row || row.length <= 5) continue;
-                const normOrderNo = cleanOrderNoNormalized(row[5]);
-                let isUpdated = false;
+                const src = orderData[i];
+                if (!src || src.length <= 5) continue;
+                const normOrderNo = cleanOrderNoNormalized(src[5]);
+                if (!normOrderNo) continue;
 
-                if (normOrderNo && yamatoMap.has(normOrderNo)) {
-                    while(row.length <= 56) row.push('');
-                    row[7] = '120'; row[46] = '発払い'; row[51] = todayStr; row[55] = 'ヤマト運輸'; row[56] = yamatoMap.get(normOrderNo);
-                    isUpdated = true;
-                } else if (normOrderNo && sagawaMap.has(normOrderNo)) {
-                    while(row.length <= 56) row.push('');
-                    row[7] = '120'; row[46] = '発払い'; row[51] = todayStr; row[55] = '佐川急便'; row[56] = sagawaMap.get(normOrderNo);
-                    isUpdated = true;
+                let carrier = null, entry = null;
+                if (yamato.map.has(normOrderNo)) {
+                    carrier = 'ヤマト運輸'; entry = yamato.map.get(normOrderNo); yamatoCount++;
+                } else if (sagawa.map.has(normOrderNo)) {
+                    carrier = '佐川急便'; entry = sagawa.map.get(normOrderNo); sagawaCount++;
                 }
 
-                // 紐づけられてステータスが120になった行のみ抽出
-                if (isUpdated && row[7] === '120') {
-                    filteredRows.push(row);
-                    updatedCount++;
+                if (!entry) {
+                    unmatchedOrders.push(String(src[5]).trim());
+                    continue;
                 }
+                entry.used = true;
+
+                // 元データを書き換えないようにコピーしてから更新
+                const row = [...src];
+                while (row.length <= 56) row.push('');
+                row[7] = '120';
+                row[46] = '発払い';
+                row[51] = todayStr;
+                row[55] = carrier;
+                row[56] = entry.tracking;
+
+                outputRows.push(row);
+                updatedCount++;
             }
 
-            log(`\n🎉 抽出・紐づけ処理完了！\n- ステータス120（出力対象）: ${updatedCount}件`);
+            // 結果ログ
+            log(`\n🎉 紐づけ結果`);
+            log(`- ステータス120（出力対象）: ${updatedCount}件（ヤマト ${yamatoCount}件 / 佐川 ${sagawaCount}件）`);
+            if (yamato.multiCount > 0) log(`- ヤマト複数口の注文: ${yamato.multiCount}件（1口目の伝票番号で紐づけ）`);
+            if (sagawa.multiCount > 0) log(`- 佐川複数口の注文: ${sagawa.multiCount}件`);
 
-            exportCsvSjis(filteredRows, 'updated_status120_' + (orderMeta || 'order.csv'));
+            logList('⚠️ 受注CSVにあるが、追跡番号が見つからなかった注文', unmatchedOrders);
+            logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号',
+                [...yamato.map.values()].filter(e => !e.used).map(e => e.rawOrderNo));
+            logList('⚠️ 佐川CSVにあるが、受注CSVに見当たらない注文番号',
+                [...sagawa.map.values()].filter(e => !e.used).map(e => e.rawOrderNo));
+
+            if (updatedCount === 0) {
+                log('\n❌ 紐づけできた注文が0件のため、CSVは出力していません。');
+                alert('紐づけできた注文が0件でした。\n読み込んだCSVの組み合わせを確認してください。');
+                return;
+            }
+
+            // Shift_JISで文字化けする文字のチェック
+            logList('⚠️ Shift_JISにない文字があるため「?」になる行（取り込み後に確認してください）', findUnsafeChars(outputRows));
+
+            exportCsvSjis(outputRows, 'updated_status120_' + (orderMeta || 'order.csv'));
+            log('\n📥 CSVをダウンロードしました。');
         }
 
         function exportCsvSjis(dataRows, filename) {
