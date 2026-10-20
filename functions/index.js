@@ -205,7 +205,7 @@ exports.checkUnorderedMaterials = onSchedule(
     }
 );
 
-// B. 総出荷件数の定期通知 -> shukka.html
+// B. 総出荷件数の定期通知 -> checklist.html
 exports.reportTotalShukkaCounts = onSchedule(
     {
         schedule: "0 12,15,17 * * *",
@@ -235,7 +235,7 @@ exports.reportTotalShukkaCounts = onSchedule(
 
             let messageText = `📊 *【定期通知】本日の総出荷件数*\n>・ *対象日:* ${todayStr}\n>・ *総合計:* ${totalCount.toLocaleString()} 件`;
 
-            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/shukka.html", "出荷集計を開く");
+            await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/checklist.html", "出荷集計を開く");
             logger.info("総出荷件数の定期通知を送信しました。");
         } catch (error) {
             logger.error("総出荷件数の定期通知でエラーが発生しました:", error);
