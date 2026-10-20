@@ -1,564 +1,869 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FBA作業カード進捗管理ボード</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .dragging {
-            opacity: 0.4;
-        }
-        .drag-over {
-            background-color: #f1f5f9 !important;
-            border-color: #3b82f6 !important;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FBA作業・件数管理ボード</title>
+<style>
+  :root {
+    --bg: #EDF0F3;
+    --surface: #FFFFFF;
+    --ink: #18202B;
+    --muted: #5B6675;
+    --line: #D5DBE2;
+    --soft: #F3F5F8;
+    --pick: #D98E0B;
+    --pick-bg: #FFF0D2;
+    --pick-ink: #6E4300;
+    --pack: #2E62C9;
+    --pack-bg: #E2EBFF;
+    --pack-ink: #1D3F87;
+    --todo: #8A94A3;
+    --doing: #2E62C9;
+    --ship: #7A4FD0;
+    --done: #1F9D6B;
+    --danger: #C93636;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 3px solid #6C9BFF; outline-offset: 2px; }
+
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 16px; }
+
+  /* ヘッダー */
+  .top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+  .top h1 { font-size: 20px; margin: 0; font-weight: 800; }
+  .top .sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+  .plan-bar { flex: 1 1 520px; max-width: 760px; }
+  .field-label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+  .plan-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  #planSelector { flex: 1 1 240px; font-weight: 700; }
+
+  select, input, textarea {
+    border: 1px solid var(--line); background: var(--surface);
+    border-radius: 8px; padding: 9px 12px; min-height: 44px; width: 100%;
+  }
+  #planSelector, .plan-row .btn { width: auto; }
+  textarea { resize: vertical; line-height: 1.6; }
+
+  .btn { min-height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid transparent; font-weight: 700; white-space: nowrap; background: var(--surface); }
+  .btn.primary { background: var(--ink); color: #fff; }
+  .btn.primary:hover { background: #2C3644; }
+  .btn.ghost { border-color: var(--line); }
+  .btn.ghost:hover { background: var(--soft); }
+  .btn.small { min-height: 32px; padding: 0 10px; font-size: 12px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+
+  /* 登録エリア + 進捗 */
+  .work-head { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 12px; margin-bottom: 12px; }
+  .add-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .add-head h2, .summary h2 { font-size: 15px; margin: 0; }
+  .seg-switch { display: inline-flex; background: var(--soft); border-radius: 8px; padding: 3px; }
+  .seg-switch button { border: 0; background: transparent; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+  .seg-switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(24,32,43,.15); }
+  .add-single { display: grid; grid-template-columns: minmax(0, 1fr) 190px auto; gap: 8px; align-items: end; }
+  .add-single label, .bulk label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+  .form-note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .bulk-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  #bulkPreview { font-size: 13px; color: var(--muted); }
+  #bulkPreview.error { color: var(--danger); font-weight: 700; }
+
+  .summary-line { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 8px; }
+  .summary-line b { font-size: 28px; line-height: 1; }
+  .summary-line span { color: var(--muted); font-size: 13px; }
+  .meter { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--soft); }
+  .meter span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 2px 14px; list-style: none; padding: 0; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .c-todo { background: var(--todo); } .c-in_progress { background: var(--doing); }
+  .c-shipping { background: var(--ship); } .c-done { background: var(--done); }
+
+  /* 絞り込み */
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar input { max-width: 360px; }
+  .toolbar .hint { font-size: 12px; color: var(--muted); }
+
+  /* ボード */
+  .status-tabs { display: none; }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+  .col { background: #E1E5EA; border-radius: var(--radius); padding: 10px; border: 2px solid transparent; transition: border-color .15s, background-color .15s; }
+  .col.drag-over { border-color: var(--doing); background: #D8E3F6; }
+  .col-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 10px; }
+  .col-head h2 { font-size: 14px; margin: 0; flex: 1; }
+  .col-head .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .count { font-weight: 800; font-size: 13px; background: var(--surface); border-radius: 999px; padding: 1px 10px; }
+  .col-body { display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
+  .col-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 28px 8px; margin: 0; border: 1px dashed #BEC6D0; border-radius: 10px; }
+
+  /* カード */
+  .card { background: var(--surface); border-radius: 10px; padding: 10px 12px 12px; border: 1px solid var(--line); border-left: 5px solid var(--kind, var(--todo)); }
+  .card.pick { --kind: var(--pick); }
+  .card.pack { --kind: var(--pack); }
+  @media (hover: hover) { .card { cursor: grab; } .card:active { cursor: grabbing; } }
+  .card.dragging { opacity: .4; }
+  .card-top { display: flex; justify-content: space-between; align-items: center; }
+  .badge { font-size: 12px; font-weight: 800; padding: 1px 10px; border-radius: 6px; border: 1px solid; }
+  .badge.pick { background: var(--pick-bg); color: var(--pick-ink); border-color: #EFC26A; }
+  .badge.pack { background: var(--pack-bg); color: var(--pack-ink); border-color: #9DB7F0; }
+  .badge.other { background: var(--soft); color: var(--muted); border-color: var(--line); }
+  .icon-btn { border: 0; background: transparent; width: 36px; height: 32px; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1; }
+  .icon-btn:hover { background: var(--soft); }
+  .product { font-weight: 700; margin: 6px 0; font-size: 15px; line-height: 1.4; word-break: break-word; }
+  .qty { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0; font-size: 13px; color: var(--muted); padding-top: 6px; border-top: 1px solid var(--soft); }
+  .qty b { color: var(--ink); font-size: 15px; text-align: right; }
+  .card-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .btn-back { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; font-size: 13px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .btn-back:hover { background: var(--soft); }
+  .btn-next { flex: 1; min-height: 40px; border: 0; border-radius: 8px; color: #fff; font-weight: 800; font-size: 14px; background: var(--c); }
+  .btn-next:hover { filter: brightness(1.08); }
+  .btn-next:disabled, .btn-back:disabled { opacity: .5; }
+  .next-in_progress { --c: var(--doing); } .next-shipping { --c: var(--ship); } .next-done { --c: var(--done); }
+  .done-mark { flex: 1; text-align: center; color: var(--done); font-weight: 800; align-self: center; font-size: 14px; }
+  .card-menu { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); text-align: right; }
+  .danger-link { border: 0; background: transparent; color: var(--danger); font-weight: 700; font-size: 13px; padding: 6px 4px; text-decoration: underline; }
+
+  /* 案件なし・読み込み */
+  .empty-state { text-align: center; padding: 48px 16px; }
+  .empty-state p { margin: 0 0 16px; color: var(--muted); }
+
+  /* ダイアログ */
+  dialog { border: 0; border-radius: 14px; padding: 20px; width: min(480px, calc(100vw - 24px)); box-shadow: 0 20px 50px rgba(24,32,43,.3); color: var(--ink); }
+  dialog::backdrop { background: rgba(24,32,43,.45); }
+  dialog h3 { margin: 0 0 14px; font-size: 17px; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #archiveDialog { width: min(780px, calc(100vw - 24px)); }
+  .archive-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .archive-head h3 { margin: 0; }
+  .archive-head select { width: auto; max-width: 100%; }
+  .archive-list { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .archive-item { background: var(--soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .archive-item .meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+  .plan-tag { background: #E1E5EA; border-radius: 4px; padding: 1px 8px; font-weight: 700; color: var(--muted); }
+  .archive-item .name { font-weight: 700; margin: 4px 0 0; }
+  .archive-item .q { font-size: 13px; color: var(--muted); }
+  .archive-item .acts { display: flex; gap: 6px; }
+  .btn.danger { color: var(--danger); border-color: #EBB9B9; }
+
+  /* トースト */
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    background: var(--ink); color: #fff; border-radius: 10px; padding: 10px 10px 10px 16px;
+    display: flex; gap: 12px; align-items: center;
+    width: max-content; max-width: min(560px, calc(100vw - 24px));
+    box-shadow: 0 8px 24px rgba(24,32,43,.3); z-index: 100; font-size: 14px;
+  }
+  .toast button { background: transparent; border: 1px solid rgba(255,255,255,.55); color: #fff; border-radius: 6px; padding: 6px 12px; font-weight: 700; white-space: nowrap; min-height: 36px; }
+
+  /* スマホ・タブレット */
+  @media (max-width: 860px) {
+    .wrap { padding: 12px; }
+    .work-head { grid-template-columns: 1fr; }
+    .add-single { grid-template-columns: 1fr 1fr; }
+    .add-single .full { grid-column: 1 / -1; }
+    .add-single button { grid-column: 1 / -1; }
+    .toolbar .hint { display: none; }
+    .toolbar input { max-width: none; }
+    .status-tabs {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+      position: sticky; top: 0; z-index: 5; background: var(--bg);
+      padding: calc(6px + env(safe-area-inset-top, 0px)) 0 8px;
+    }
+    .status-tab { border: 1px solid var(--line); border-bottom: 4px solid var(--c); background: var(--surface); border-radius: 8px; padding: 4px 2px; font-size: 11px; font-weight: 700; display: flex; flex-direction: column; align-items: center; min-height: 54px; justify-content: center; }
+    .status-tab[aria-selected="true"] { background: var(--ink); color: #fff; }
+    .tab-count { font-size: 18px; font-weight: 800; line-height: 1.2; }
+    .board { grid-template-columns: 1fr; }
+    .col { display: none; background: transparent; padding: 0; }
+    .col.active { display: block; }
+    .col-head h2, .col-head .dot { display: none; }
+    .col-head { justify-content: flex-end; padding: 0 0 6px; }
+    .col-head .count { display: none; }
+    .col-head:not(:has(button)) { display: none; }
+  }
+  @media (max-width: 420px) {
+    .add-single { grid-template-columns: 1fr; }
+    .plan-row .btn { flex: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
+<body>
+<div class="wrap">
 
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <!-- ヘッダー & 案件（プラン）切り替え -->
-        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-                <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                    <span>📦</span> FBA作業・件数管理ボード
-                </h1>
-                <p class="text-sm text-slate-600 mt-1">商品名と件数を入れると「ピック」「梱包」のカードが自動生成されます</p>
-            </div>
-            
-            <div class="flex items-center gap-3 w-full md:w-auto flex-wrap">
-                <div class="flex-1 md:w-64">
-                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">現在の対象案件（プラン）</label>
-                    <select id="planSelector" onchange="changePlan(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                        <option value="">案件を選択してください...</option>
-                    </select>
-                </div>
-                <div class="flex items-center gap-2 mt-5">
-                    <button onclick="openPlanModal()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap">
-                        + 案件を追加
-                    </button>
-                    <button onclick="openArchiveModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-lg transition shadow-sm whitespace-nowrap flex items-center gap-1.5">
-                        <span>🗂️</span> アーカイブ一覧
-                    </button>
-                </div>
-            </div>
-        </header>
+  <header class="top">
+    <div>
+      <h1>📦 FBA作業・件数管理ボード</h1>
+      <p class="sub">商品名と数量を入れると「ピック」「梱包」のカードができます</p>
+    </div>
+    <div class="plan-bar">
+      <label for="planSelector" class="field-label">案件（納品プラン）</label>
+      <div class="plan-row">
+        <select id="planSelector"></select>
+        <button type="button" id="renamePlanBtn" class="btn ghost" hidden>名前変更</button>
+        <button type="button" id="addPlanBtn" class="btn primary">＋ 案件を追加</button>
+        <button type="button" id="openArchiveBtn" class="btn ghost">🗂️ アーカイブ</button>
+      </div>
+    </div>
+  </header>
 
-        <!-- 作業カード追加バー（案件選択時のみ有効） -->
-        <div id="taskInputContainer" class="bg-blue-50/70 border border-blue-200 p-5 rounded-2xl mb-8 hidden shadow-sm">
-            <h2 class="text-xs font-bold text-blue-900 uppercase tracking-wider mb-3">商品を登録して作業カードを自動生成</h2>
-            <form onsubmit="handleAddTask(event)" class="grid grid-cols-1 md:grid-cols-12 gap-3">
-                <div class="md:col-span-7">
-                    <label class="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">商品名</label>
-                    <input type="text" id="taskProductName" required placeholder="例: ステンレスマグボトル 500ml" class="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm font-medium bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div class="md:col-span-4">
-                    <label class="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">件数・数量</label>
-                    <input type="text" id="taskQuantity" required placeholder="例: 120個 (3箱)" class="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm font-medium bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div class="md:col-span-1 flex items-end">
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow-sm">自動生成</button>
-                </div>
-            </form>
+  <div id="loading" class="panel empty-state"><p>読み込み中…</p></div>
+
+  <div id="emptyState" class="panel empty-state" hidden>
+    <p>案件がまだありません。まず納品プランを追加してください。</p>
+    <button type="button" class="btn primary" data-open-plan>＋ 案件を追加</button>
+  </div>
+
+  <div id="workArea" hidden>
+    <div class="work-head">
+      <section class="panel" aria-labelledby="addTitle">
+        <div class="add-head">
+          <h2 id="addTitle">作業カードを作る</h2>
+          <div class="seg-switch" role="group" aria-label="登録方法">
+            <button type="button" data-mode="single" aria-pressed="true">1商品ずつ</button>
+            <button type="button" data-mode="bulk" aria-pressed="false">まとめて貼り付け</button>
+          </div>
         </div>
 
-        <!-- カンバンボード（4カラム） -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
-            
-            <!-- カラム 1: 未着手 -->
-            <div class="bg-slate-200/70 rounded-2xl p-4 border border-slate-300 transition" 
-                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'todo')">
-                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-300">
-                    <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2 pointer-events-none">
-                        <span class="w-3 h-3 rounded-full bg-amber-500"></span> 1. 未着手 (To Do)
-                    </h3>
-                    <span id="count-todo" class="text-xs bg-slate-300 text-slate-800 px-2 py-0.5 rounded-full font-bold">0</span>
-                </div>
-                <div id="col-todo" class="space-y-3 min-h-[350px]"></div>
-            </div>
+        <form id="singleForm" class="add-single" autocomplete="off">
+          <div class="full">
+            <label for="taskProductName">商品名</label>
+            <input type="text" id="taskProductName" required placeholder="例：ステンレスマグボトル 500ml" enterkeyhint="next">
+          </div>
+          <div class="full">
+            <label for="taskQuantity">件数・数量</label>
+            <input type="text" id="taskQuantity" required placeholder="例：120個（3箱）" enterkeyhint="done">
+          </div>
+          <button type="submit" class="btn primary">カードを作成</button>
+        </form>
 
-            <!-- カラム 2: 進行中 -->
-            <div class="bg-slate-200/70 rounded-2xl p-4 border border-slate-300 transition" 
-                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'in_progress')">
-                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-300">
-                    <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2 pointer-events-none">
-                        <span class="w-3 h-3 rounded-full bg-blue-500"></span> 2. 進行中 (Doing)
-                    </h3>
-                    <span id="count-in_progress" class="text-xs bg-slate-300 text-slate-800 px-2 py-0.5 rounded-full font-bold">0</span>
-                </div>
-                <div id="col-in_progress" class="space-y-3 min-h-[350px]"></div>
-            </div>
+        <form id="bulkForm" class="bulk" hidden>
+          <label for="bulkText">1行に1商品。商品名と数量を「タブ」か「カンマ」で区切ってください（エクセルの2列をそのままコピーでOK）</label>
+          <textarea id="bulkText" rows="4" placeholder="ステンレスマグボトル 500ml	120個&#10;保冷バッグ M, 60個（2箱）"></textarea>
+          <div class="bulk-foot">
+            <span id="bulkPreview">商品名と数量を貼り付けてください</span>
+            <button type="submit" class="btn primary" id="bulkSubmit" disabled>まとめて作成</button>
+          </div>
+        </form>
+      </section>
 
-            <!-- カラム 3: 出荷・配送中 -->
-            <div class="bg-slate-200/70 rounded-2xl p-4 border border-slate-300 transition" 
-                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'shipping')">
-                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-300">
-                    <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2 pointer-events-none">
-                        <span class="w-3 h-3 rounded-full bg-purple-500"></span> 3. 出荷・配送中
-                    </h3>
-                    <span id="count-shipping" class="text-xs bg-slate-300 text-slate-800 px-2 py-0.5 rounded-full font-bold">0</span>
-                </div>
-                <div id="col-shipping" class="space-y-3 min-h-[350px]"></div>
-            </div>
-
-            <!-- カラム 4: 完了 -->
-            <div class="bg-slate-200/70 rounded-2xl p-4 border border-slate-300 transition" 
-                 ondragover="allowDrop(event)" ondragleave="removeDropStyle(event)" ondrop="dropTask(event, 'done')">
-                <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-300">
-                    <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2 pointer-events-none">
-                        <span class="w-3 h-3 rounded-full bg-emerald-500"></span> 4. 完了 (Done)
-                    </h3>
-                    <div class="flex items-center gap-2">
-                        <button onclick="archiveDoneTasks()" title="完了したタスクを一括アーカイブ" class="text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2 py-0.5 rounded transition shadow-sm">
-                            アーカイブ
-                        </button>
-                        <span id="count-done" class="text-xs bg-slate-300 text-slate-800 px-2 py-0.5 rounded-full font-bold">0</span>
-                    </div>
-                </div>
-                <div id="col-done" class="space-y-3 min-h-[350px]"></div>
-            </div>
-
-        </div>
+      <section class="panel summary" aria-labelledby="sumTitle">
+        <h2 id="sumTitle">この案件の進み具合</h2>
+        <div id="summary"></div>
+      </section>
     </div>
 
-    <!-- 新規案件作成モーダル -->
-    <div id="planModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
-            <h3 class="text-lg font-bold text-slate-900 mb-4">新規FBA案件（プラン）の追加</h3>
-            <form onsubmit="handleCreatePlan(event)" class="space-y-4">
-                <div>
-                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">案件名・納品プラン名</label>
-                    <input type="text" id="planTitle" required placeholder="例: 10月下旬 FBA通常納品 第1便" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div class="flex justify-end gap-3 pt-2">
-                    <button type="button" onclick="closePlanModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition">キャンセル</button>
-                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition shadow-sm">作成する</button>
-                </div>
-            </form>
-        </div>
+    <div class="toolbar">
+      <input type="search" id="searchInput" placeholder="🔍 商品名で絞り込み" aria-label="商品名で絞り込み">
+      <span class="hint">カードはボタンで次の列へ進められます。ドラッグでも移動できます。</span>
     </div>
 
-    <!-- アーカイブ一覧モーダル -->
-    <div id="archiveModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden items-center justify-center p-4 z-55">
-        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] flex flex-col">
-            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
-                <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                    <span>🗂️</span> アーカイブされたタスク一覧
-                </h3>
-                <button onclick="closeArchiveModal()" class="text-slate-400 hover:text-slate-700 text-xl font-bold px-2">✕</button>
-            </div>
-            
-            <div class="mb-3 flex items-center justify-between gap-3">
-                <p class="text-xs text-slate-500">現在選択中の案件、またはすべての案件のアーカイブ済みタスクを確認できます。</p>
-                <select id="archivePlanFilter" onchange="filterArchiveTasks(this.value)" class="border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    <option value="all">すべての案件</option>
-                </select>
-            </div>
+    <nav class="status-tabs" id="statusTabs" role="tablist" aria-label="表示する列">
+      <button type="button" class="status-tab" role="tab" data-status="todo" style="--c:var(--todo)"><span class="tab-count">0</span>未着手</button>
+      <button type="button" class="status-tab" role="tab" data-status="in_progress" style="--c:var(--doing)"><span class="tab-count">0</span>進行中</button>
+      <button type="button" class="status-tab" role="tab" data-status="shipping" style="--c:var(--ship)"><span class="tab-count">0</span>出荷・配送中</button>
+      <button type="button" class="status-tab" role="tab" data-status="done" style="--c:var(--done)"><span class="tab-count">0</span>完了</button>
+    </nav>
 
-            <div id="archiveTaskList" class="overflow-y-auto flex-1 space-y-3 pr-1 min-h-[250px] max-h-[50vh]">
-                <!-- 動的に挿入 -->
-            </div>
+    <main class="board" id="board">
+      <section class="col" data-status="todo">
+        <header class="col-head"><span class="dot c-todo"></span><h2>未着手</h2><span class="count" id="count-todo">0</span></header>
+        <div class="col-body" id="col-todo"></div>
+      </section>
+      <section class="col" data-status="in_progress">
+        <header class="col-head"><span class="dot c-in_progress"></span><h2>進行中</h2><span class="count" id="count-in_progress">0</span></header>
+        <div class="col-body" id="col-in_progress"></div>
+      </section>
+      <section class="col" data-status="shipping">
+        <header class="col-head"><span class="dot c-shipping"></span><h2>出荷・配送中</h2><span class="count" id="count-shipping">0</span></header>
+        <div class="col-body" id="col-shipping"></div>
+      </section>
+      <section class="col" data-status="done">
+        <header class="col-head"><span class="dot c-done"></span><h2>完了</h2>
+          <button type="button" id="archiveDoneBtn" class="btn ghost small" disabled>完了分をアーカイブ</button>
+          <span class="count" id="count-done">0</span></header>
+        <div class="col-body" id="col-done"></div>
+      </section>
+    </main>
+  </div>
+</div>
 
-            <div class="flex justify-end pt-4 mt-2 border-t border-slate-200">
-                <button type="button" onclick="closeArchiveModal()" class="px-4 py-2 text-sm font-medium bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition shadow-sm">閉じる</button>
-            </div>
-        </div>
+<!-- 案件の追加・名前変更 -->
+<dialog id="planDialog">
+  <form id="planForm">
+    <h3 id="planDialogTitle">案件（納品プラン）を追加</h3>
+    <label for="planTitle" class="field-label">案件名・納品プラン名</label>
+    <input type="text" id="planTitle" required placeholder="例：10月下旬 FBA通常納品 第1便" autocomplete="off">
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>キャンセル</button>
+      <button type="submit" class="btn primary" id="planSubmit">追加する</button>
     </div>
+  </form>
+</dialog>
 
-    <!-- Firebase SDK & アプリケーションロジック -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+<!-- アーカイブ一覧 -->
+<dialog id="archiveDialog">
+  <div class="archive-head">
+    <h3>🗂️ アーカイブしたカード</h3>
+    <select id="archivePlanFilter" aria-label="案件で絞り込み"></select>
+  </div>
+  <div id="archiveList" class="archive-list"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn primary" data-close>閉じる</button>
+  </div>
+</dialog>
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-            authDomain: "souko-2de57.firebaseapp.com",
-            projectId: "souko-2de57",
-            storageBucket: "souko-2de57.firebasestorage.app",
-            messagingSenderId: "642116656086",
-            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-            measurementId: "G-8WG8GWQGCR"
-        };
+<div id="toast" class="toast" role="status" aria-live="polite" hidden>
+  <span id="toastMsg"></span>
+  <button type="button" id="toastUndo" hidden>元に戻す</button>
+</div>
 
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, setDoc, doc, query, where, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        let currentPlanId = null;
-        let unsubscribeTasks = null;
-        let currentTasksData = []; // 現在のタスクデータを保持
-        let allPlansMap = {}; // 案件IDとタイトルの対応マップ
-        let allArchivedTasksData = []; // アーカイブ済みタスクデータ
+  const firebaseConfig = {
+    apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+    authDomain: "souko-2de57.firebaseapp.com",
+    projectId: "souko-2de57",
+    storageBucket: "souko-2de57.firebasestorage.app",
+    messagingSenderId: "642116656086",
+    appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+    measurementId: "G-8WG8GWQGCR"
+  };
 
-        const statuses = ['todo', 'in_progress', 'shipping', 'done'];
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
 
-        async function loadPlans() {
-            const planSelector = document.getElementById('planSelector');
-            const archivePlanFilter = document.getElementById('archivePlanFilter');
-            const snapshot = await getDocs(collection(db, "fba_plans"));
-            
-            planSelector.innerHTML = '<option value="">案件を選択してください...</option>';
-            archivePlanFilter.innerHTML = '<option value="all">すべての案件</option>';
-            allPlansMap = {};
-            
-            let firstId = null;
-            snapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                const id = docSnap.id;
-                if (!firstId) firstId = id;
-                allPlansMap[id] = data.title;
+  // ---------- 定義 ----------
+  const ORDER = ['todo', 'in_progress', 'shipping', 'done'];
+  const STATUS = {
+    todo:        { label: '未着手',       nextLabel: '作業を始める' },
+    in_progress: { label: '進行中',       nextLabel: '出荷へ進める' },
+    shipping:    { label: '出荷・配送中', nextLabel: '完了にする' },
+    done:        { label: '完了',         nextLabel: null }
+  };
+  const EMPTY = {
+    todo: '上のフォームから商品を登録してください',
+    in_progress: '進行中のカードはありません',
+    shipping: '出荷・配送中のカードはありません',
+    done: '完了したカードはここに入ります'
+  };
+  const TASK_TYPES = ['ピック', '梱包'];
+  const LAST_PLAN_KEY = 'fba_board_last_plan';
 
-                const option = document.createElement('option');
-                option.value = id;
-                option.textContent = data.title;
-                planSelector.appendChild(option);
+  let currentPlanId = null;
+  let unsubscribeTasks = null;
+  let tasks = [];
+  let plans = [];
+  let archived = [];
+  let searchText = '';
+  let planDialogMode = 'create';
 
-                const filterOption = document.createElement('option');
-                filterOption.value = id;
-                filterOption.textContent = data.title;
-                archivePlanFilter.appendChild(filterOption);
-            });
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+  const short = (s, n = 18) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+  // 保存直後（サーバー時刻が未確定）のものは最後尾扱い
+  const ms = (ts) => (ts && typeof ts.toMillis === 'function') ? ts.toMillis() : Number.MAX_SAFE_INTEGER;
+  const kindOf = (t) => t.taskName === 'ピック' ? 'pick' : t.taskName === '梱包' ? 'pack' : 'other';
+  const rank = (t) => t.taskName === 'ピック' ? 0 : t.taskName === '梱包' ? 1 : 2;
+  const sortTasks = (a, b) => (ms(a.createdAt) - ms(b.createdAt)) || ((a.seq ?? 0) - (b.seq ?? 0)) || (rank(a) - rank(b));
 
-            if (currentPlanId && document.querySelector(`option[value="${currentPlanId}"]`)) {
-                planSelector.value = currentPlanId;
-                switchPlan(currentPlanId);
-            } else if (snapshot.size > 0) {
-                planSelector.value = firstId;
-                switchPlan(firstId);
-            }
+  function remember(v) { try { localStorage.setItem(LAST_PLAN_KEY, v); } catch (e) {} }
+  function recall() { try { return localStorage.getItem(LAST_PLAN_KEY); } catch (e) { return null; } }
+
+  // ---------- トースト ----------
+  let toastTimer;
+  function toast(msg, opt = {}) {
+    const el = $('toast');
+    const undoBtn = $('toastUndo');
+    $('toastMsg').textContent = msg;
+    undoBtn.hidden = !opt.undo;
+    undoBtn.onclick = opt.undo ? async () => {
+      el.hidden = true;
+      try { await opt.undo(); toast('元に戻しました'); }
+      catch (e) { console.error(e); toast('元に戻せませんでした。'); }
+    } : null;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, opt.undo ? 6000 : 3500);
+  }
+  const netError = (what) => toast(`${what}できませんでした。通信状況を確認して、もう一度お試しください。`);
+
+  // ---------- 案件 ----------
+  async function loadPlans(selectId) {
+    const snap = await getDocs(collection(db, 'fba_plans'));
+    plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ms(b.createdAt) - ms(a.createdAt)); // 新しい案件が上
+
+    const sel = $('planSelector');
+    sel.innerHTML = '';
+    if (!plans.length) sel.innerHTML = '<option value="">案件がまだありません</option>';
+    plans.forEach((p) => sel.add(new Option(p.title, p.id)));
+
+    const filter = $('archivePlanFilter');
+    filter.innerHTML = '';
+    filter.add(new Option('すべての案件', 'all'));
+    plans.forEach((p) => filter.add(new Option(p.title, p.id)));
+
+    const want = selectId || currentPlanId || recall();
+    const target = plans.some((p) => p.id === want) ? want : (plans[0]?.id || null);
+    if (target) sel.value = target;
+    $('loading').hidden = true;
+    switchPlan(target);
+  }
+
+  function switchPlan(planId) {
+    currentPlanId = planId || null;
+    if (unsubscribeTasks) { unsubscribeTasks(); unsubscribeTasks = null; }
+    tasks = [];
+    searchText = '';
+    $('searchInput').value = '';
+
+    const has = !!currentPlanId;
+    $('workArea').hidden = !has;
+    $('emptyState').hidden = has;
+    $('renamePlanBtn').hidden = !has;
+    if (!has) return;
+
+    remember(currentPlanId);
+    render();
+    const q = query(collection(db, 'fba_tasks'), where('planId', '==', currentPlanId));
+    unsubscribeTasks = onSnapshot(q, (snap) => {
+      tasks = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((t) => t.status !== 'archived')
+        .map((t) => ({ ...t, status: ORDER.includes(t.status) ? t.status : 'todo' }));
+      render();
+    }, (err) => {
+      console.error(err);
+      toast('カードを読み込めませんでした。ページを再読み込みしてください。');
+    });
+  }
+
+  $('planSelector').addEventListener('change', (e) => switchPlan(e.target.value));
+
+  function openPlanDialog(mode) {
+    planDialogMode = mode;
+    const isCreate = mode === 'create';
+    $('planDialogTitle').textContent = isCreate ? '案件（納品プラン）を追加' : '案件名を変更';
+    $('planSubmit').textContent = isCreate ? '追加する' : '変更する';
+    $('planTitle').value = isCreate ? '' : (plans.find((p) => p.id === currentPlanId)?.title || '');
+    $('planDialog').showModal();
+    $('planTitle').focus();
+  }
+  $('addPlanBtn').addEventListener('click', () => openPlanDialog('create'));
+  $('renamePlanBtn').addEventListener('click', () => openPlanDialog('rename'));
+  document.querySelector('[data-open-plan]').addEventListener('click', () => openPlanDialog('create'));
+
+  $('planForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = $('planTitle').value.trim();
+    if (!title) return;
+    const btn = $('planSubmit');
+    btn.disabled = true;
+    try {
+      if (planDialogMode === 'create') {
+        const ref = await addDoc(collection(db, 'fba_plans'), { title, createdAt: serverTimestamp() });
+        $('planDialog').close();
+        await loadPlans(ref.id);
+        toast(`案件「${short(title)}」を追加しました`);
+        $('taskProductName').focus();
+      } else {
+        await updateDoc(doc(db, 'fba_plans', currentPlanId), { title });
+        $('planDialog').close();
+        await loadPlans(currentPlanId);
+        toast('案件名を変更しました');
+      }
+    } catch (err) {
+      console.error(err);
+      netError(planDialogMode === 'create' ? '案件を追加' : '案件名を変更');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ダイアログ共通：閉じるボタン・背景クリック
+  document.querySelectorAll('dialog').forEach((d) => {
+    d.addEventListener('click', (e) => {
+      if (e.target === d || e.target.closest('[data-close]')) d.close();
+    });
+  });
+
+  // ---------- 描画 ----------
+  function render() {
+    const counts = { todo: 0, in_progress: 0, shipping: 0, done: 0 };
+    tasks.forEach((t) => { counts[t.status]++; });
+
+    const q = searchText.trim().toLowerCase();
+    const visible = tasks
+      .filter((t) => !q || String(t.productName || '').toLowerCase().includes(q))
+      .sort(sortTasks);
+
+    ORDER.forEach((s) => {
+      const list = visible.filter((t) => t.status === s);
+      $('col-' + s).innerHTML = list.length
+        ? list.map(cardHTML).join('')
+        : `<p class="col-empty">${q ? '該当するカードはありません' : EMPTY[s]}</p>`;
+      $('count-' + s).textContent = counts[s];
+      const tab = document.querySelector(`.status-tab[data-status="${s}"] .tab-count`);
+      if (tab) tab.textContent = counts[s];
+    });
+
+    $('archiveDoneBtn').disabled = counts.done === 0;
+    renderSummary(counts);
+  }
+
+  function renderSummary(c) {
+    const total = ORDER.reduce((n, s) => n + c[s], 0);
+    const el = $('summary');
+    if (!total) {
+      el.innerHTML = '<p class="form-note">まだカードがありません。左のフォームから商品を登録すると、ここに進み具合が出ます。</p>';
+      return;
+    }
+    const pct = Math.round((c.done / total) * 100);
+    el.innerHTML = `
+      <div class="summary-line"><b>${pct}%</b><span>完了（${c.done} / ${total} 枚）</span></div>
+      <div class="meter" role="img" aria-label="未着手${c.todo}、進行中${c.in_progress}、出荷・配送中${c.shipping}、完了${c.done}">
+        ${ORDER.map((s) => c[s] ? `<span class="c-${s}" style="width:${(c[s] / total) * 100}%"></span>` : '').join('')}
+      </div>
+      <ul class="legend">${ORDER.map((s) => `<li><i class="c-${s}"></i>${STATUS[s].label} ${c[s]}</li>`).join('')}</ul>`;
+  }
+
+  function cardHTML(t) {
+    const idx = ORDER.indexOf(t.status);
+    const next = ORDER[idx + 1];
+    const prev = ORDER[idx - 1];
+    const kind = kindOf(t);
+    return `
+      <article class="card ${kind}" draggable="true" data-id="${esc(t.id)}">
+        <div class="card-top">
+          <span class="badge ${kind}">${esc(t.taskName || '作業')}</span>
+          <button type="button" class="icon-btn" data-act="menu" aria-label="その他の操作" aria-expanded="false">⋯</button>
+        </div>
+        <p class="product">${esc(t.productName)}</p>
+        <p class="qty"><span>件数</span><b>${esc(t.quantity)}</b></p>
+        <div class="card-actions">
+          ${prev ? `<button type="button" class="btn-back" data-act="back" aria-label="${STATUS[prev].label}に戻す">◀ 戻す</button>` : ''}
+          ${next
+            ? `<button type="button" class="btn-next next-${next}" data-act="next">${STATUS[t.status].nextLabel} ▶</button>`
+            : '<span class="done-mark">✓ 完了</span>'}
+        </div>
+        <div class="card-menu" hidden>
+          <button type="button" class="danger-link" data-act="delete">このカードを削除</button>
+        </div>
+      </article>`;
+  }
+
+  // ---------- カード操作 ----------
+  async function moveTask(t, to) {
+    const from = t.status;
+    if (from === to) return;
+    const ref = doc(db, 'fba_tasks', t.id);
+    const saving = updateDoc(ref, { status: to });
+    toast(`${t.taskName || '作業'}「${short(t.productName)}」を${STATUS[to].label}へ移動しました`, {
+      undo: () => updateDoc(ref, { status: from })
+    });
+    try { await saving; } catch (e) { console.error(e); netError('移動'); }
+  }
+
+  async function deleteTask(t) {
+    const { id, ...data } = t;
+    try {
+      await deleteDoc(doc(db, 'fba_tasks', id));
+      toast(`${t.taskName || '作業'}カード「${short(t.productName)}」を削除しました`, {
+        undo: () => setDoc(doc(db, 'fba_tasks', id), data)
+      });
+    } catch (e) { console.error(e); netError('削除'); }
+  }
+
+  $('board').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const card = btn.closest('.card');
+    const t = tasks.find((x) => x.id === card?.dataset.id);
+    if (!t) return;
+    const act = btn.dataset.act;
+
+    if (act === 'menu') {
+      const menu = card.querySelector('.card-menu');
+      menu.hidden = !menu.hidden;
+      btn.setAttribute('aria-expanded', String(!menu.hidden));
+      return;
+    }
+    if (act === 'next' || act === 'back') {
+      const to = ORDER[ORDER.indexOf(t.status) + (act === 'next' ? 1 : -1)];
+      if (!to) return;
+      btn.disabled = true; // 二度押し防止
+      moveTask(t, to);
+      return;
+    }
+    if (act === 'delete') deleteTask(t);
+  });
+
+  // ドラッグ＆ドロップ（PC用）
+  $('board').addEventListener('dragstart', (e) => {
+    const card = e.target.closest?.('.card');
+    if (!card) return;
+    e.dataTransfer.setData('text/plain', card.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+  $('board').addEventListener('dragend', (e) => {
+    e.target.closest?.('.card')?.classList.remove('dragging');
+    document.querySelectorAll('.col.drag-over').forEach((c) => c.classList.remove('drag-over'));
+  });
+  document.querySelectorAll('.col').forEach((col) => {
+    col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
+    col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over'); });
+    col.addEventListener('drop', (e) => {
+      e.preventDefault();
+      col.classList.remove('drag-over');
+      const t = tasks.find((x) => x.id === e.dataTransfer.getData('text/plain'));
+      if (t) moveTask(t, col.dataset.status);
+    });
+  });
+
+  // スマホ：列の切り替えタブ
+  function showColumn(status) {
+    document.querySelectorAll('.status-tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.status === status)));
+    document.querySelectorAll('.col').forEach((c) => c.classList.toggle('active', c.dataset.status === status));
+  }
+  $('statusTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('.status-tab');
+    if (b) showColumn(b.dataset.status);
+  });
+  showColumn('todo');
+
+  $('searchInput').addEventListener('input', (e) => { searchText = e.target.value; render(); });
+
+  // ---------- カード作成 ----------
+  async function createCards(items) {
+    const planId = currentPlanId;
+    // 1回の書き込み上限（500件）に収まるよう分割
+    for (let i = 0; i < items.length; i += 200) {
+      const batch = writeBatch(db);
+      items.slice(i, i + 200).forEach(({ name, qty }, j) => {
+        TASK_TYPES.forEach((taskName) => {
+          batch.set(doc(collection(db, 'fba_tasks')), {
+            planId, productName: name, taskName, quantity: qty,
+            status: 'todo', seq: i + j, createdAt: serverTimestamp()
+          });
+        });
+      });
+      await batch.commit();
+    }
+  }
+
+  // 登録方法の切り替え
+  document.querySelectorAll('.seg-switch button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const bulk = b.dataset.mode === 'bulk';
+      document.querySelectorAll('.seg-switch button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      $('singleForm').hidden = bulk;
+      $('bulkForm').hidden = !bulk;
+      (bulk ? $('bulkText') : $('taskProductName')).focus();
+    });
+  });
+
+  // 商品名でEnter → 数量へ移動
+  $('taskProductName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing && !$('taskQuantity').value) {
+      e.preventDefault();
+      $('taskQuantity').focus();
+    }
+  });
+
+  $('singleForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentPlanId) return;
+    const name = $('taskProductName').value.trim();
+    const qty = $('taskQuantity').value.trim();
+    if (!name || !qty) return;
+    const btn = e.submitter || e.target.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      await createCards([{ name, qty }]);
+      $('taskProductName').value = '';
+      $('taskQuantity').value = '';
+      $('taskProductName').focus();
+      toast(`「${short(name)}」のピック・梱包カードを作りました`);
+    } catch (err) {
+      console.error(err);
+      netError('カードを作成');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function parseBulk(text) {
+    const items = [];
+    const bad = [];
+    text.split(/\r?\n/).forEach((line, i) => {
+      const s = line.trim();
+      if (!s) return;
+      let cells = null;
+      if (s.includes('\t')) {
+        cells = s.split('\t').map((x) => x.trim()).filter(Boolean);
+      } else {
+        const m = s.match(/^(.+)[,，]\s*([^,，]+)$/);
+        if (m) cells = [m[1].trim(), m[2].trim()];
+      }
+      if (cells && cells.length >= 2) items.push({ name: cells[0], qty: cells.slice(1).join(' ') });
+      else bad.push(i + 1);
+    });
+    return { items, bad };
+  }
+
+  function updateBulkPreview() {
+    const { items, bad } = parseBulk($('bulkText').value);
+    const p = $('bulkPreview');
+    if (bad.length) {
+      p.textContent = `${bad.slice(0, 5).join('・')}行目に数量が見つかりません（商品名と数量の間にタブかカンマが必要です）`;
+      p.className = 'error';
+    } else if (items.length) {
+      p.textContent = `${items.length}商品 → ${items.length * TASK_TYPES.length}枚のカードを作ります`;
+      p.className = '';
+    } else {
+      p.textContent = '商品名と数量を貼り付けてください';
+      p.className = '';
+    }
+    $('bulkSubmit').disabled = !items.length || bad.length > 0;
+  }
+  $('bulkText').addEventListener('input', updateBulkPreview);
+
+  $('bulkForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentPlanId) return;
+    const { items, bad } = parseBulk($('bulkText').value);
+    if (!items.length || bad.length) return;
+    $('bulkSubmit').disabled = true;
+    try {
+      await createCards(items);
+      $('bulkText').value = '';
+      updateBulkPreview();
+      toast(`${items.length}商品分（${items.length * TASK_TYPES.length}枚）のカードを作りました`);
+    } catch (err) {
+      console.error(err);
+      netError('カードを作成');
+      updateBulkPreview();
+    }
+  });
+
+  // ---------- 完了分のアーカイブ ----------
+  $('archiveDoneBtn').addEventListener('click', async () => {
+    const done = tasks.filter((t) => t.status === 'done');
+    if (!done.length) return;
+    const batch = writeBatch(db);
+    done.forEach((t) => batch.update(doc(db, 'fba_tasks', t.id), { status: 'archived' }));
+    try {
+      await batch.commit();
+      toast(`完了カード ${done.length}枚をアーカイブしました`, {
+        undo: async () => {
+          const back = writeBatch(db);
+          done.forEach((t) => back.update(doc(db, 'fba_tasks', t.id), { status: 'done' }));
+          await back.commit();
         }
+      });
+    } catch (e) { console.error(e); netError('アーカイブ'); }
+  });
 
-        window.changePlan = function(planId) {
-            switchPlan(planId);
-        }
+  // ---------- アーカイブ一覧 ----------
+  $('openArchiveBtn').addEventListener('click', async () => {
+    $('archivePlanFilter').value = currentPlanId || 'all';
+    $('archiveDialog').showModal();
+    await fetchArchived();
+  });
+  $('archivePlanFilter').addEventListener('change', renderArchive);
 
-        function switchPlan(planId) {
-            currentPlanId = planId;
-            const inputContainer = document.getElementById('taskInputContainer');
+  async function fetchArchived() {
+    const list = $('archiveList');
+    list.innerHTML = '<p class="col-empty">読み込み中…</p>';
+    try {
+      const snap = await getDocs(query(collection(db, 'fba_tasks'), where('status', '==', 'archived')));
+      archived = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderArchive();
+    } catch (e) {
+      console.error(e);
+      list.innerHTML = '<p class="col-empty">アーカイブを読み込めませんでした。通信状況を確認して、開き直してください。</p>';
+    }
+  }
 
-            if (!planId) {
-                inputContainer.classList.add('hidden');
-                clearColumns();
-                return;
-            }
+  function renderArchive() {
+    const f = $('archivePlanFilter').value;
+    const list = $('archiveList');
+    const rows = archived
+      .filter((t) => f === 'all' || t.planId === f)
+      .sort((a, b) => ms(b.createdAt) - ms(a.createdAt) || rank(a) - rank(b));
+    if (!rows.length) {
+      list.innerHTML = '<p class="col-empty">アーカイブしたカードはありません</p>';
+      return;
+    }
+    list.innerHTML = rows.map((t) => {
+      const kind = kindOf(t);
+      const planTitle = plans.find((p) => p.id === t.planId)?.title || '不明な案件';
+      return `
+        <div class="archive-item" data-id="${esc(t.id)}">
+          <div>
+            <div class="meta"><span class="plan-tag">${esc(planTitle)}</span><span class="badge ${kind}">${esc(t.taskName || '作業')}</span></div>
+            <p class="name">${esc(t.productName)}</p>
+            <div class="q">数量：${esc(t.quantity)}</div>
+          </div>
+          <div class="acts">
+            <button type="button" class="btn ghost small" data-act="restore">未着手に戻す</button>
+            <button type="button" class="btn ghost small danger" data-act="purge">完全に削除</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
 
-            inputContainer.classList.remove('hidden');
+  $('archiveList').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const id = b.closest('[data-id]').dataset.id;
+    const t = archived.find((x) => x.id === id);
+    if (!t) return;
 
-            if (unsubscribeTasks) unsubscribeTasks();
+    if (b.dataset.act === 'restore') {
+      b.disabled = true;
+      try {
+        await updateDoc(doc(db, 'fba_tasks', id), { status: 'todo' });
+        archived = archived.filter((x) => x.id !== id);
+        renderArchive();
+        toast(`「${short(t.productName)}」を未着手に戻しました`);
+      } catch (err) { console.error(err); toast('未着手に戻せませんでした。通信状況を確認して、もう一度お試しください。'); b.disabled = false; }
+    }
+    if (b.dataset.act === 'purge') {
+      if (!confirm('このカードを完全に削除します。あとから元に戻せません。よろしいですか？')) return;
+      b.disabled = true;
+      try {
+        await deleteDoc(doc(db, 'fba_tasks', id));
+        archived = archived.filter((x) => x.id !== id);
+        renderArchive();
+        toast('完全に削除しました');
+      } catch (err) { console.error(err); netError('削除'); b.disabled = false; }
+    }
+  });
 
-            const q = query(collection(db, "fba_tasks"), where("planId", "==", planId));
-            unsubscribeTasks = onSnapshot(q, (snapshot) => {
-                statuses.forEach(status => {
-                    document.getElementById(`col-${status}`).innerHTML = '';
-                    document.getElementById(`count-${status}`).textContent = '0';
-                });
-
-                const counts = { todo: 0, in_progress: 0, shipping: 0, done: 0 };
-                currentTasksData = [];
-
-                snapshot.forEach((docSnap) => {
-                    const data = docSnap.data();
-                    const id = docSnap.id;
-                    const status = data.status || 'todo';
-
-                    // アーカイブ済みのものはボード上に表示しない
-                    if (status === 'archived') return;
-
-                    currentTasksData.push({ id, ...data });
-                    counts[status] = (counts[status] || 0) + 1;
-
-                    const cardHTML = createTaskCardHTML(id, data);
-                    document.getElementById(`col-${status}`).insertAdjacentHTML('beforeend', cardHTML);
-                });
-
-                statuses.forEach(status => {
-                    document.getElementById(`count-${status}`).textContent = counts[status];
-                });
-            });
-        }
-
-        function clearColumns() {
-            statuses.forEach(status => {
-                document.getElementById(`col-${status}`).innerHTML = '';
-                document.getElementById(`count-${status}`).textContent = '0';
-            });
-            currentTasksData = [];
-        }
-
-        // カードデザイン
-        function createTaskCardHTML(id, data) {
-            const isPick = data.taskName === 'ピック';
-            const badgeColor = isPick ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-indigo-100 text-indigo-900 border-indigo-300';
-
-            return `
-                <div draggable="true" 
-                     ondragstart="dragStart(event, '${id}')" 
-                     class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-grab active:cursor-grabbing">
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="text-xs font-extrabold px-2.5 py-1 rounded-md border ${badgeColor}">${escapeHTML(data.taskName || '作業')}</span>
-                        <button onclick="deleteTask('${id}')" class="text-slate-400 hover:text-red-600 text-sm font-bold px-1.5 py-0.5">✕</button>
-                    </div>
-                    <div class="font-bold text-slate-900 text-sm leading-snug mb-3">${escapeHTML(data.productName || '')}</div>
-                    <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-medium text-slate-600">
-                        <span>件数:</span>
-                        <span class="font-extrabold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">${escapeHTML(data.quantity || '')}</span>
-                    </div>
-                </div>
-            `;
-        }
-
-        // --- 完了タスクのアーカイブ処理 ---
-        window.archiveDoneTasks = async function() {
-            const doneTasks = currentTasksData.filter(task => task.status === 'done');
-            if (doneTasks.length === 0) {
-                alert("アーカイブ対象の完了タスクはありません。");
-                return;
-            }
-
-            if (!confirm(`完了している ${doneTasks.length} 件のタスクをアーカイブして非表示にしますか？`)) {
-                return;
-            }
-
-            try {
-                const batch = writeBatch(db);
-                doneTasks.forEach(task => {
-                    const docRef = doc(db, "fba_tasks", task.id);
-                    batch.update(docRef, { status: 'archived' });
-                });
-                await batch.commit();
-            } catch (e) {
-                console.error("Error archiving tasks: ", e);
-                alert("アーカイブに失敗しました。");
-            }
-        };
-
-        // --- アーカイブ一覧モーダルの制御 ---
-        window.openArchiveModal = async function() {
-            document.getElementById('archiveModal').classList.remove('hidden');
-            document.getElementById('archiveModal').classList.add('flex');
-            await fetchArchivedTasks();
-        }
-
-        window.closeArchiveModal = function() {
-            document.getElementById('archiveModal').classList.remove('flex');
-            document.getElementById('archiveModal').classList.add('hidden');
-        }
-
-        async function fetchArchivedTasks() {
-            const listContainer = document.getElementById('archiveTaskList');
-            listContainer.innerHTML = '<p class="text-center text-slate-400 py-8 text-sm">読み込み中...</p>';
-
-            try {
-                const q = query(collection(db, "fba_tasks"), where("status", "==", "archived"));
-                const snapshot = await getDocs(q);
-                allArchivedTasksData = [];
-
-                snapshot.forEach((docSnap) => {
-                    allArchivedTasksData.push({ id: docSnap.id, ...docSnap.data() });
-                });
-
-                renderArchiveList(allArchivedTasksData);
-            } catch (e) {
-                console.error("Error fetching archived tasks: ", e);
-                listContainer.innerHTML = '<p class="text-center text-red-500 py-8 text-sm">アーカイブの取得に失敗しました。</p>';
-            }
-        }
-
-        window.filterArchiveTasks = function(planId) {
-            if (planId === 'all') {
-                renderArchiveList(allArchivedTasksData);
-            } else {
-                const filtered = allArchivedTasksData.filter(task => task.planId === planId);
-                renderArchiveList(filtered);
-            }
-        }
-
-        function renderArchiveList(tasks) {
-            const listContainer = document.getElementById('archiveTaskList');
-            if (tasks.length === 0) {
-                listContainer.innerHTML = '<p class="text-center text-slate-400 py-8 text-sm">アーカイブされたタスクはありません。</p>';
-                return;
-            }
-
-            // 新しい順にソート (createdAtがある場合)
-            tasks.sort((a, b) => {
-                const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-                const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-                return timeB - timeA;
-            });
-
-            let html = '';
-            tasks.forEach(task => {
-                const planTitle = allPlansMap[task.planId] || '不明な案件';
-                const isPick = task.taskName === 'ピック';
-                const badgeColor = isPick ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-indigo-100 text-indigo-900 border-indigo-300';
-
-                html += `
-                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                        <div class="space-y-1">
-                            <div class="flex items-center gap-2">
-                                <span class="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded">${escapeHTML(planTitle)}</span>
-                                <span class="text-xs font-extrabold px-2 py-0.5 rounded border ${badgeColor}">${escapeHTML(task.taskName || '作業')}</span>
-                            </div>
-                            <div class="font-bold text-slate-900 text-sm">${escapeHTML(task.productName || '')}</div>
-                            <div class="text-xs text-slate-500">数量: <span class="font-bold text-slate-700">${escapeHTML(task.quantity || '')}</span></div>
-                        </div>
-                        <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
-                            <button onclick="restoreTask('${task.id}')" class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-lg border border-blue-200 transition">未着手に戻す</button>
-                            <button onclick="deleteArchivedTask('${task.id}')" class="text-xs bg-red-50 hover:bg-red-100 text-red-600 font-bold px-3 py-1.5 rounded-lg border border-red-200 transition">完全削除</button>
-                        </div>
-                    </div>
-                `;
-            });
-            listContainer.innerHTML = html;
-        }
-
-        window.restoreTask = async function(id) {
-            if (!confirm("このタスクを「未着手 (To Do)」に戻しますか？")) return;
-            try {
-                const docRef = doc(db, "fba_tasks", id);
-                await updateDoc(docRef, { status: 'todo' });
-                await fetchArchivedTasks();
-            } catch (e) {
-                console.error("Error restoring task: ", e);
-                alert("復元に失敗しました。");
-            }
-        }
-
-        window.deleteArchivedTask = async function(id) {
-            if (!confirm("このアーカイブタスクを完全に削除しますか？")) return;
-            try {
-                await deleteDoc(doc(db, "fba_tasks", id));
-                await fetchArchivedTasks();
-            } catch (e) {
-                console.error("Error deleting archived task: ", e);
-                alert("削除に失敗しました。");
-            }
-        }
-
-        // --- ドラッグ＆ドロップ処理 ---
-        window.dragStart = function(event, id) {
-            event.dataTransfer.setData('text/plain', id);
-            event.target.classList.add('dragging');
-            event.target.addEventListener('dragend', () => {
-                event.target.classList.remove('dragging');
-            }, { once: true });
-        };
-
-        window.allowDrop = function(event) {
-            event.preventDefault();
-            event.currentTarget.classList.add('drag-over');
-        };
-
-        window.removeDropStyle = function(event) {
-            event.currentTarget.classList.remove('drag-over');
-        };
-
-        window.dropTask = async function(event, newStatus) {
-            event.preventDefault();
-            event.currentTarget.classList.remove('drag-over');
-
-            const id = event.dataTransfer.getData('text/plain');
-            if (!id) return;
-
-            try {
-                const docRef = doc(db, "fba_tasks", id);
-                await updateDoc(docRef, { status: newStatus });
-            } catch (e) {
-                console.error("Error updating status: ", e);
-            }
-        };
-
-        // --- 商品名と件数から「ピック」「梱包」のカードを自動で2枚生成 ---
-        window.handleAddTask = async function(event) {
-            event.preventDefault();
-            if (!currentPlanId) {
-                alert("先に案件を選択してください。");
-                return;
-            }
-
-            const productName = document.getElementById('taskProductName').value;
-            const quantity = document.getElementById('taskQuantity').value;
-
-            try {
-                // 1. ピック用カードを追加
-                await addDoc(collection(db, "fba_tasks"), {
-                    planId: currentPlanId,
-                    productName,
-                    taskName: 'ピック',
-                    quantity,
-                    status: 'todo',
-                    createdAt: serverTimestamp()
-                });
-
-                // 2. 梱包用カードを追加
-                await addDoc(collection(db, "fba_tasks"), {
-                    planId: currentPlanId,
-                    productName,
-                    taskName: '梱包',
-                    quantity,
-                    status: 'todo',
-                    createdAt: serverTimestamp()
-                });
-
-                // フォームをリセット
-                document.getElementById('taskProductName').value = '';
-                document.getElementById('taskQuantity').value = '';
-            } catch (e) {
-                console.error("Error adding tasks: ", e);
-                alert("タスクの自動生成に失敗しました。");
-            }
-        };
-
-        // --- 作業カードの削除 ---
-        window.deleteTask = async function(id) {
-            if (confirm("この作業カードを削除してもよろしいですか？")) {
-                try {
-                    await deleteDoc(doc(db, "fba_tasks", id));
-                } catch (e) {
-                    console.error("Error deleting task: ", e);
-                }
-            }
-        };
-
-        // --- 新規案件（プラン）の作成 ---
-        window.handleCreatePlan = async function(event) {
-            event.preventDefault();
-            const title = document.getElementById('planTitle').value;
-
-            try {
-                const docRef = await addDoc(collection(db, "fba_plans"), {
-                    title,
-                    createdAt: serverTimestamp()
-                });
-                closePlanModal();
-                document.getElementById('planTitle').value = '';
-                await loadPlans();
-                document.getElementById('planSelector').value = docRef.id;
-                switchPlan(docRef.id);
-            } catch (e) {
-                console.error("Error creating plan: ", e);
-                alert("案件の作成に失敗しました。");
-            }
-        };
-
-        window.openPlanModal = function() {
-            document.getElementById('planModal').classList.remove('hidden');
-            document.getElementById('planModal').classList.add('flex');
-        }
-        window.closePlanModal = function() {
-            document.getElementById('planModal').classList.remove('flex');
-            document.getElementById('planModal').classList.add('hidden');
-        }
-
-        function escapeHTML(str) {
-            return str.replace(/[&<>'"]/g, 
-                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
-            );
-        }
-
-        loadPlans();
-    </script>
+  // ---------- 起動 ----------
+  loadPlans().catch((e) => {
+    console.error(e);
+    $('loading').innerHTML = '<p>案件を読み込めませんでした。通信状況を確認して、ページを再読み込みしてください。</p>';
+  });
+</script>
 </body>
 </html>
