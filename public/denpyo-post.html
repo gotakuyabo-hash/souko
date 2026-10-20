@@ -10,12 +10,14 @@
             --bg-color: #f8fafc;
             --card-bg: #ffffff;
             --text-color: #1e293b;
+            --sub-color: #64748b;
             --border-color: #cbd5e1;
             --danger-color: #ef4444;
+            --success-color: #16a34a;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
             background-color: var(--bg-color);
             color: var(--text-color);
             padding: 16px;
@@ -39,16 +41,12 @@
             overflow: hidden;
             margin-bottom: 12px;
         }
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
+        video { width: 100%; height: 100%; object-fit: cover; }
         .scan-overlay {
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 80%; height: 60px;
+            width: 85%; height: 45%;
             border: 2px dashed rgba(255,255,255,0.8);
             border-radius: 6px;
             pointer-events: none;
@@ -68,17 +66,16 @@
             margin-bottom: 8px;
         }
         .btn:active { opacity: 0.9; }
-        .btn-secondary {
-            background-color: #64748b;
-        }
-        .btn-danger {
-            background-color: var(--danger-color);
-            padding: 4px 8px;
-            font-size: 0.75rem;
+        .btn:disabled { opacity: 0.5; cursor: default; }
+        .btn-secondary { background-color: #64748b; }
+        .btn-small {
+            padding: 6px 10px;
+            font-size: 0.8rem;
             width: auto;
             margin: 0;
             display: inline-block;
         }
+        .btn-danger { background-color: var(--danger-color); }
         form label {
             display: block;
             font-size: 0.875rem;
@@ -91,31 +88,41 @@
             padding: 10px;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            font-size: 1rem;
+            font-size: 1rem; /* 16px未満だとiPhoneで入力時に画面がズームするため */
             background: #fff;
+            color: var(--text-color);
         }
-        .filter-container {
-            margin-bottom: 12px;
+        .hint { font-size: 0.75rem; color: var(--sub-color); margin-top: 4px; }
+        #statusMsg { text-align: center; font-size: 0.85rem; color: var(--sub-color); margin-top: 8px; min-height: 1.2em; }
+        #statusMsg.ok { color: var(--success-color); font-weight: bold; }
+        #statusMsg.err { color: var(--danger-color); font-weight: bold; }
+        .history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .history-head h3 { font-size: 1rem; }
+        .filter-container { margin-bottom: 8px; }
+        .summary {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            padding: 8px 4px;
+            border-bottom: 2px solid #e2e8f0;
         }
-        .history-list {
-            list-style: none;
-        }
+        .summary strong { font-size: 1rem; }
+        .history-list { list-style: none; }
         .history-item {
-            padding: 12px;
+            padding: 12px 4px;
             border-bottom: 1px solid #e2e8f0;
             font-size: 0.875rem;
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
+            gap: 8px;
         }
         .history-item:last-child { border-bottom: none; }
-        .meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
-        .file-input-wrap {
-            margin-bottom: 8px;
-        }
-        .file-input-wrap input {
-            display: none;
-        }
+        .history-item .body { min-width: 0; word-break: break-all; }
+        .meta { font-size: 0.75rem; color: var(--sub-color); margin-top: 2px; }
+        .empty { color: var(--sub-color); text-align: center; padding: 8px; }
+        .file-input-wrap { margin-bottom: 8px; }
+        .file-input-wrap input { display: none; }
         dialog {
             border: none;
             border-radius: 12px;
@@ -123,51 +130,13 @@
             max-width: 400px;
             width: 90%;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin: auto;
         }
-        dialog::backdrop {
-            background: rgba(0, 0, 0, 0.5);
-        }
-        .dialog-buttons {
-            display: flex;
-            gap: 8px;
-            margin-top: 16px;
-        }
+        dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+        #dialogMessage { font-size: 0.875rem; color: var(--sub-color); white-space: pre-line; }
+        .dialog-buttons { display: flex; gap: 8px; margin-top: 16px; }
+        .dialog-buttons .btn { margin: 0; }
     </style>
-
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-            authDomain: "souko-2de57.firebaseapp.com",
-            projectId: "souko-2de57",
-            storageBucket: "souko-2de57.firebasestorage.app",
-            messagingSenderId: "642116656086",
-            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-            measurementId: "G-8WG8GWQGCR"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        window.db = db;
-        window.collection = collection;
-        window.addDoc = addDoc;
-        window.getDocs = getDocs;
-        window.deleteDoc = deleteDoc;
-        window.doc = doc;
-        window.query = query;
-        window.orderBy = orderBy;
-        window.limit = limit;
-        window.serverTimestamp = serverTimestamp;
-
-        window.addEventListener('DOMContentLoaded', () => {
-            if (window.loadHistoryFromFirestore) {
-                window.loadHistoryFromFirestore();
-            }
-        });
-    </script>
 </head>
 <body>
 
@@ -178,99 +147,304 @@
             <video id="camera" autoplay playsinline muted></video>
             <div class="scan-overlay"></div>
         </div>
-        <button class="btn" id="startCameraBtn">カメラを起動する</button>
-        
+        <button type="button" class="btn" id="startCameraBtn">カメラを起動する</button>
+
         <div class="file-input-wrap">
             <label class="btn btn-secondary" for="fileInput">画像ファイルから読み取る</label>
             <input type="file" id="fileInput" accept="image/*">
         </div>
-        <p id="statusMsg" style="text-align: center; font-size: 0.85rem; color: #64748b; margin-top: 8px;"></p>
+        <p id="statusMsg"></p>
     </div>
 
     <div class="card">
-        <form id="logForm">
+        <form id="logForm" novalidate>
             <label for="trackingNumber">送り状番号</label>
-            <input type="text" id="trackingNumber" placeholder="スキャンまたは手入力" required>
+            <input type="text" id="trackingNumber" placeholder="スキャンまたは手入力" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <p class="hint">ハイフンや全角数字は自動で整えます</p>
 
             <label for="amount">請求金額 (円)</label>
-            <input type="number" id="amount" placeholder="例: 1200">
+            <input type="number" id="amount" placeholder="例: 1200" inputmode="numeric" min="0" step="1">
 
             <label for="memo">宛先・メモ</label>
             <textarea id="memo" rows="2" placeholder="〇〇様 / 返送品など"></textarea>
 
-            <button type="submit" class="btn" style="margin-top: 16px;">Firebaseに記録を保存</button>
+            <button type="submit" class="btn" id="saveBtn" style="margin-top: 16px;">記録を保存する</button>
         </form>
     </div>
 
     <div class="card">
-        <h3 style="font-size: 1rem; margin-bottom: 8px;">クラウド保存履歴</h3>
+        <div class="history-head">
+            <h3>クラウド保存履歴</h3>
+            <button type="button" class="btn btn-secondary btn-small" id="csvBtn">CSVで保存</button>
+        </div>
         <div class="filter-container">
-            <select id="monthFilter">
-                <option value="">すべての月を表示</option>
-            </select>
+            <select id="monthFilter"></select>
+        </div>
+        <div class="summary">
+            <span id="summaryCount">0件</span>
+            <span>合計 <strong id="summaryTotal">0</strong> 円</span>
         </div>
         <ul id="historyList" class="history-list">
-            <li style="color: #64748b; text-align: center; padding: 8px;">読み込み中...</li>
+            <li class="empty">読み込み中...</li>
         </ul>
     </div>
 
     <dialog id="confirmDialog">
-        <p style="font-weight: bold; margin-bottom: 8px;">削除の確認</p>
-        <p id="confirmMessage" style="font-size: 0.875rem; color: #64748b; margin-bottom: 16px;">この記録を削除してもよろしいですか？</p>
+        <p id="dialogTitle" style="font-weight: bold; margin-bottom: 8px;"></p>
+        <p id="dialogMessage"></p>
         <div class="dialog-buttons">
-            <button type="button" class="btn btn-secondary" id="cancelDeleteBtn" style="margin: 0;">キャンセル</button>
-            <button type="button" class="btn btn-danger" id="executeDeleteBtn" style="width: 100%; margin: 0;">削除する</button>
+            <button type="button" class="btn btn-secondary" id="dialogCancelBtn">キャンセル</button>
+            <button type="button" class="btn" id="dialogOkBtn">OK</button>
         </div>
     </dialog>
 
-    <script>
-        const video = document.getElementById('camera');
-        const startCameraBtn = document.getElementById('startCameraBtn');
-        const fileInput = document.getElementById('fileInput');
-        const trackingInput = document.getElementById('trackingNumber');
-        const statusMsg = document.getElementById('statusMsg');
-        const logForm = document.getElementById('logForm');
-        const historyList = document.getElementById('historyList');
-        const monthFilter = document.getElementById('monthFilter');
-        const confirmDialog = document.getElementById('confirmDialog');
-        const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
-        const executeDeleteBtn = document.getElementById('executeDeleteBtn');
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ===== Firebase設定（変更なし） =====
+        const firebaseConfig = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+            measurementId: "G-8WG8GWQGCR"
+        };
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const invoicesCol = collection(db, "invoices");
+
+        // ===== 設定値 =====
+        const SCAN_INTERVAL = 350;   // 何ミリ秒ごとに読み取るか
+        const REQUIRED_MATCHES = 2;  // 同じ番号を何回連続で読んだら確定するか
+        const MONTHS_IN_FILTER = 24; // 月の絞り込みに何か月分出すか
+        const RECENT_LIMIT = 100;    // 「最新」表示の件数
+        // iPhoneなどBarcodeDetector非対応端末用の読み取りライブラリ
+        const ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+
+        // ===== 画面要素 =====
+        const $ = (id) => document.getElementById(id);
+        const video = $('camera');
+        const startCameraBtn = $('startCameraBtn');
+        const fileInput = $('fileInput');
+        const trackingInput = $('trackingNumber');
+        const amountInput = $('amount');
+        const memoInput = $('memo');
+        const saveBtn = $('saveBtn');
+        const statusMsg = $('statusMsg');
+        const logForm = $('logForm');
+        const historyList = $('historyList');
+        const monthFilter = $('monthFilter');
+        const summaryCount = $('summaryCount');
+        const summaryTotal = $('summaryTotal');
+        const csvBtn = $('csvBtn');
 
         let mediaStream = null;
         let scanning = false;
-        let barcodeDetector = null;
-        let allHistoryData = [];
-        let targetDeleteId = null;
-
-        // 安定化のための変数
         let lastScanTime = 0;
-        const scanInterval = 350; // 350ミリ秒に1回だけスキャンを実行
         let lastDetectedValue = "";
         let matchCount = 0;
-        const requiredMatches = 2; // 同じバーコードを2回連続で検出したら確定
+        let currentData = [];
+        const workCanvas = document.createElement('canvas');
+        const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
 
-        if ('BarcodeDetector' in window) {
-            BarcodeDetector.getSupportedFormats().then(formats => {
-                barcodeDetector = new BarcodeDetector({ formats: formats.length ? formats : ['code_128', 'ean_13', 'qr_code'] });
-            }).catch(() => {});
+        // ===== 共通関数 =====
+        function setStatus(text, type = "") {
+            statusMsg.textContent = text;
+            statusMsg.className = type;
         }
 
+        function escapeHtml(str) {
+            return String(str ?? "").replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // 送り状番号を整える（全角→半角、ハイフン・空白除去、NW-7の開始/終了文字除去）
+        function normalizeTracking(raw) {
+            let v = String(raw ?? "").trim();
+            v = v.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+            v = v.replace(/[\s\-‐‑–—－ー]/g, "");
+            v = v.replace(/^[A-Da-d](\d+)[A-Da-d]$/, "$1");
+            return v.toUpperCase();
+        }
+
+        // 送り状番号らしい形か（国内：10〜14桁の数字／国際郵便：EJ123456789JP形式）
+        function isValidTracking(v) {
+            return /^\d{10,14}$/.test(v) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(v);
+        }
+
+        // 日本時間の年月 "2026-10" と、その月のUTC範囲
+        function jstYm(date) {
+            const j = new Date(date.getTime() + 9 * 3600 * 1000);
+            return `${j.getUTCFullYear()}-${String(j.getUTCMonth() + 1).padStart(2, '0')}`;
+        }
+        function jstMonthRange(ym) {
+            const [y, m] = ym.split('-').map(Number);
+            const start = new Date(Date.UTC(y, m - 1, 1) - 9 * 3600 * 1000).toISOString();
+            const end = new Date(Date.UTC(y, m, 1) - 9 * 3600 * 1000).toISOString();
+            return { start, end };
+        }
+        function formatJst(iso) {
+            const d = new Date(iso);
+            if (isNaN(d)) return "";
+            return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // 確認ダイアログ（OKならtrue）
+        function confirmBox(title, message, okLabel = "OK", danger = false) {
+            const dlg = $('confirmDialog');
+            $('dialogTitle').textContent = title;
+            $('dialogMessage').textContent = message;
+            const okBtn = $('dialogOkBtn');
+            const cancelBtn = $('dialogCancelBtn');
+            okBtn.textContent = okLabel;
+            okBtn.classList.toggle('btn-danger', danger);
+            return new Promise(resolve => {
+                const done = (result) => {
+                    okBtn.onclick = cancelBtn.onclick = null;
+                    dlg.oncancel = null;
+                    if (dlg.open) dlg.close();
+                    resolve(result);
+                };
+                okBtn.onclick = () => done(true);
+                cancelBtn.onclick = () => done(false);
+                dlg.oncancel = (e) => { e.preventDefault(); done(false); };
+                dlg.showModal();
+            });
+        }
+
+        // ===== バーコード読み取り（Android：標準機能／iPhone：ZXing） =====
+        let detectorPromise = null;
+
+        function loadZXing() {
+            return new Promise((resolve, reject) => {
+                if (window.ZXing) return resolve(window.ZXing);
+                const s = document.createElement('script');
+                s.src = ZXING_URL;
+                s.onload = () => window.ZXing ? resolve(window.ZXing) : reject(new Error("ZXing not found"));
+                s.onerror = () => reject(new Error("読み取りライブラリを読み込めませんでした"));
+                document.head.appendChild(s);
+            });
+        }
+
+        async function createDetector() {
+            if ('BarcodeDetector' in window) {
+                try {
+                    const supported = await BarcodeDetector.getSupportedFormats();
+                    const wanted = ['codabar', 'code_128', 'itf', 'code_39', 'ean_13', 'qr_code'].filter(f => supported.includes(f));
+                    if (wanted.length) {
+                        const det = new BarcodeDetector({ formats: wanted });
+                        return {
+                            name: 'native',
+                            detect: async (canvas) => (await det.detect(canvas)).map(b => b.rawValue)
+                        };
+                    }
+                } catch (e) { /* 使えなければZXingへ */ }
+            }
+            const ZX = await loadZXing();
+            const hints = new Map();
+            hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
+                ZX.BarcodeFormat.CODABAR, ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.ITF,
+                ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE
+            ]);
+            hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+            const reader = new ZX.MultiFormatReader();
+            reader.setHints(hints);
+            return {
+                name: 'zxing',
+                detect: async (canvas) => {
+                    try {
+                        const lum = new ZX.HTMLCanvasElementLuminanceSource(canvas);
+                        const bmp = new ZX.BinaryBitmap(new ZX.HybridBinarizer(lum));
+                        const result = reader.decodeWithState(bmp);
+                        return result ? [result.getText()] : [];
+                    } catch (e) {
+                        return []; // 見つからない場合も例外になるため空で返す
+                    } finally {
+                        reader.reset();
+                    }
+                }
+            };
+        }
+
+        function getDetector() {
+            if (!detectorPromise) {
+                detectorPromise = createDetector().catch(err => { detectorPromise = null; throw err; });
+            }
+            return detectorPromise;
+        }
+
+        // 読み取り結果から送り状番号として正しいものだけを拾う
+        function pickTracking(values) {
+            for (const raw of values) {
+                const v = normalizeTracking(raw);
+                if (isValidTracking(v)) return v;
+            }
+            return null;
+        }
+
+        // 映像や画像をキャンバスに描く（cropRatio: 中央をどれだけ切り出すか）
+        function drawToCanvas(source, srcW, srcH, cropW = 1, cropH = 1, maxW = 1280, rotate = 0) {
+            const sw = Math.round(srcW * cropW);
+            const sh = Math.round(srcH * cropH);
+            const sx = Math.round((srcW - sw) / 2);
+            const sy = Math.round((srcH - sh) / 2);
+            const scale = Math.min(1, maxW / Math.max(sw, sh));
+            const dw = Math.round(sw * scale);
+            const dh = Math.round(sh * scale);
+            if (rotate) {
+                workCanvas.width = dh; workCanvas.height = dw;
+                workCtx.save();
+                workCtx.translate(dh / 2, dw / 2);
+                workCtx.rotate(rotate * Math.PI / 180);
+                workCtx.drawImage(source, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
+                workCtx.restore();
+            } else {
+                workCanvas.width = dw; workCanvas.height = dh;
+                workCtx.drawImage(source, sx, sy, sw, sh, 0, 0, dw, dh);
+            }
+            return workCanvas;
+        }
+
+        function onScanSuccess(value) {
+            trackingInput.value = value;
+            setStatus(`読み取りました：${value}`, "ok");
+            if (navigator.vibrate) navigator.vibrate(100);
+            amountInput.focus();
+        }
+
+        // ===== カメラ =====
         startCameraBtn.addEventListener('click', async () => {
             if (scanning) { stopCamera(); return; }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                setStatus("この端末・ブラウザではカメラが使えません（https で開いているか確認してください）", "err");
+                return;
+            }
+            startCameraBtn.disabled = true;
+            setStatus("準備中...");
             try {
+                await getDetector();
                 mediaStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: { exact: 'environment' } }
-                }).catch(() => navigator.mediaDevices.getUserMedia({ video: true }));
+                    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
                 video.srcObject = mediaStream;
                 await video.play();
                 scanning = true;
                 lastDetectedValue = "";
                 matchCount = 0;
-                startCameraBtn.innerText = "カメラを停止する";
-                statusMsg.innerText = "バーコードを枠内に合わせてください";
+                startCameraBtn.textContent = "カメラを停止する";
+                setStatus("バーコードを枠内に合わせてください");
                 requestAnimationFrame(scanVideoFrame);
             } catch (err) {
-                statusMsg.innerText = "カメラの起動に失敗しました";
+                stopCamera();
+                const msg = (err && err.name === 'NotAllowedError')
+                    ? "カメラの使用が許可されていません。ブラウザの設定で許可してください"
+                    : "カメラを起動できませんでした：" + (err?.message || err);
+                setStatus(msg, "err");
+            } finally {
+                startCameraBtn.disabled = false;
             }
         });
 
@@ -281,193 +455,255 @@
             }
             video.srcObject = null;
             scanning = false;
-            startCameraBtn.innerText = "カメラを起動する";
-            statusMsg.innerText = "";
+            startCameraBtn.textContent = "カメラを起動する";
         }
+
+        // 画面を閉じた・アプリを切り替えたらカメラを止める
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && scanning) { stopCamera(); setStatus(""); }
+        });
 
         async function scanVideoFrame(timestamp) {
             if (!scanning) return;
-
-            // 前回のスキャンから一定時間経過している場合のみ処理を実行（速度・負荷調整）
-            if (timestamp - lastScanTime >= scanInterval) {
+            if (timestamp - lastScanTime >= SCAN_INTERVAL && video.readyState >= video.HAVE_ENOUGH_DATA) {
                 lastScanTime = timestamp;
-
-                if (video.readyState === video.HAVE_ENOUGH_DATA && barcodeDetector) {
-                    try {
-                        const barcodes = await barcodeDetector.detect(video);
-                        if (barcodes.length > 0) {
-                            const val = barcodes[0].rawValue;
-                            statusMsg.innerText = `読み取り中... (${val})`;
-
-                            if (val === lastDetectedValue) {
-                                matchCount++;
-                            } else {
-                                lastDetectedValue = val;
-                                matchCount = 1;
-                            }
-
-                            // 指定回数連続で一致したら確定
-                            if (matchCount >= requiredMatches) {
-                                trackingInput.value = val;
-                                statusMsg.innerText = `検出成功: ${val}`;
-                                stopCamera();
-                                return;
-                            }
+                try {
+                    const detector = await getDetector();
+                    // 枠のあたり（中央）を切り出して読み取る
+                    const canvas = drawToCanvas(video, video.videoWidth, video.videoHeight, 0.9, 0.6, 1280);
+                    const val = pickTracking(await detector.detect(canvas));
+                    if (!scanning) return;
+                    if (val) {
+                        if (val === lastDetectedValue) {
+                            matchCount++;
                         } else {
-                            // 見つからなかった場合はカウンタをリセット
-                            matchCount = 0;
-                            lastDetectedValue = "";
-                            statusMsg.innerText = "バーコードを枠内に合わせてください";
+                            lastDetectedValue = val;
+                            matchCount = 1;
                         }
-                    } catch (e) {}
-                }
+                        setStatus(`読み取り中...（${val}）`);
+                        if (matchCount >= REQUIRED_MATCHES) {
+                            stopCamera();
+                            onScanSuccess(val);
+                            return;
+                        }
+                    } else {
+                        matchCount = 0;
+                        lastDetectedValue = "";
+                        setStatus("バーコードを枠内に合わせてください");
+                    }
+                } catch (e) { /* 1コマの失敗は無視して続ける */ }
             }
-
             requestAnimationFrame(scanVideoFrame);
         }
 
+        // ===== 画像ファイルから読み取り =====
         fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
-            if (!file || !barcodeDetector) return;
-            statusMsg.innerText = "画像を解析中...";
-            const img = document.createElement('img');
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                img.src = event.target.result;
-                img.onload = async () => {
-                    try {
-                        const barcodes = await barcodeDetector.detect(img);
-                        if (barcodes.length > 0) {
-                            trackingInput.value = barcodes[0].rawValue;
-                            statusMsg.innerText = `検出成功: ${barcodes[0].rawValue}`;
-                        } else {
-                            statusMsg.innerText = "バーコードが検出されませんでした";
-                        }
-                    } catch (err) {
-                        statusMsg.innerText = "解析エラー";
-                    }
-                };
-            };
-            reader.readAsDataURL(file);
+            fileInput.value = ""; // 同じ画像を続けて選べるように
+            if (!file) return;
+            if (scanning) stopCamera();
+            setStatus("画像を解析中...");
+            try {
+                const detector = await getDetector();
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
+                URL.revokeObjectURL(url);
+
+                // 全体 → 中央切り出し → 90度回転 の順で試す
+                const attempts = [
+                    [1, 1, 1600, 0],
+                    [0.8, 0.5, 1600, 0],
+                    [1, 1, 1600, 90]
+                ];
+                let found = null;
+                for (const [cw, ch, mw, rot] of attempts) {
+                    const canvas = drawToCanvas(img, img.naturalWidth, img.naturalHeight, cw, ch, mw, rot);
+                    found = pickTracking(await detector.detect(canvas));
+                    if (found) break;
+                }
+                if (found) onScanSuccess(found);
+                else setStatus("送り状番号のバーコードが見つかりませんでした。明るい場所で、バーコードが大きく写るように撮影してください", "err");
+            } catch (err) {
+                setStatus("画像を読み取れませんでした：" + (err?.message || "形式を確認してください"), "err");
+            }
         });
 
+        // ===== 保存 =====
         logForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const num = trackingInput.value.trim();
-            const amount = document.getElementById('amount').value.trim();
-            const memo = document.getElementById('memo').value.trim();
+            const num = normalizeTracking(trackingInput.value);
+            const amountRaw = amountInput.value.trim();
+            const memo = memoInput.value.trim();
 
-            if (!num || !window.db) return;
+            if (!num) {
+                setStatus("送り状番号を入力してください", "err");
+                trackingInput.focus();
+                return;
+            }
+            const amount = amountRaw === "" ? 0 : Number(amountRaw);
+            if (!Number.isInteger(amount) || amount < 0) {
+                setStatus("請求金額は0以上の整数で入力してください", "err");
+                amountInput.focus();
+                return;
+            }
+            trackingInput.value = num;
 
+            saveBtn.disabled = true;
             try {
-                statusMsg.innerText = "クラウドに保存中...";
-                await window.addDoc(window.collection(window.db, "invoices"), {
+                if (!isValidTracking(num)) {
+                    const ok = await confirmBox("番号の確認", `「${num}」は送り状番号の形式と違うようです。\nこのまま保存しますか？`, "保存する");
+                    if (!ok) { setStatus(""); return; }
+                }
+
+                setStatus("登録済みか確認中...");
+                const dupSnap = await getDocs(query(invoicesCol, where("number", "==", num), limit(1)));
+                if (!dupSnap.empty) {
+                    const d = dupSnap.docs[0].data();
+                    const ok = await confirmBox(
+                        "登録済みの番号です",
+                        `「${num}」はすでに登録されています。\n登録日時：${formatJst(d.createdAt)}\n金額：${(d.amount || 0).toLocaleString()}円\n\nそれでも追加で保存しますか？`,
+                        "追加で保存する"
+                    );
+                    if (!ok) { setStatus("保存を取りやめました"); return; }
+                }
+
+                setStatus("保存中...");
+                await addDoc(invoicesCol, {
                     number: num,
-                    amount: amount ? Number(amount) : 0,
-                    memo: memo || "",
+                    amount: amount,
+                    memo: memo,
                     createdAt: new Date().toISOString()
                 });
-
-                statusMsg.innerText = "保存完了しました！";
+                setStatus(`保存しました：${num}`, "ok");
                 logForm.reset();
-                window.loadHistoryFromFirestore();
+
+                // 今月を表示していなければ今月に切り替えて、保存した記録が見えるようにする
+                const thisMonth = jstYm(new Date());
+                if (monthFilter.value !== 'recent' && monthFilter.value !== thisMonth) monthFilter.value = thisMonth;
+                loadHistory();
             } catch (err) {
-                statusMsg.innerText = "保存に失敗しました: " + err.message;
+                setStatus("保存できませんでした：" + (err?.message || err), "err");
+            } finally {
+                saveBtn.disabled = false;
             }
         });
 
-        window.loadHistoryFromFirestore = async function() {
-            if (!window.db) return;
-            try {
-                const q = window.query(window.collection(window.db, "invoices"), window.orderBy("createdAt", "desc"), window.limit(100));
-                const querySnapshot = await window.getDocs(q);
-                
-                allHistoryData = [];
-                querySnapshot.forEach((docSnap) => {
-                    allHistoryData.push({ id: docSnap.id, ...docSnap.data() });
-                });
-
-                updateMonthFilterOptions();
-                renderHistoryList();
-            } catch (err) {
-                historyList.innerHTML = '<li style="color: #ef4444; text-align: center; padding: 8px;">履歴の読み込みに失敗しました</li>';
+        // ===== 履歴 =====
+        function buildMonthOptions() {
+            const now = new Date();
+            const nowJ = new Date(now.getTime() + 9 * 3600 * 1000);
+            let y = nowJ.getUTCFullYear();
+            let m = nowJ.getUTCMonth() + 1;
+            const opts = [];
+            for (let i = 0; i < MONTHS_IN_FILTER; i++) {
+                const ym = `${y}-${String(m).padStart(2, '0')}`;
+                opts.push(`<option value="${ym}">${y}年${m}月${i === 0 ? '（今月）' : ''}</option>`);
+                m--; if (m === 0) { m = 12; y--; }
             }
-        };
+            opts.push(`<option value="recent">最新${RECENT_LIMIT}件（月をまたいで表示）</option>`);
+            monthFilter.innerHTML = opts.join('');
+            monthFilter.value = jstYm(now);
+        }
 
-        function updateMonthFilterOptions() {
-            const months = new Set();
-            allHistoryData.forEach(item => {
-                if (item.createdAt) {
-                    const date = new Date(item.createdAt);
-                    if (!isNaN(date)) {
-                        const y = date.getFullYear();
-                        const m = String(date.getMonth() + 1).padStart(2, '0');
-                        months.add(`${y}-${m}`);
-                    }
+        async function loadHistory() {
+            const sel = monthFilter.value;
+            historyList.innerHTML = '<li class="empty">読み込み中...</li>';
+            try {
+                let q;
+                if (sel === 'recent') {
+                    q = query(invoicesCol, orderBy("createdAt", "desc"), limit(RECENT_LIMIT));
+                } else {
+                    const { start, end } = jstMonthRange(sel);
+                    q = query(invoicesCol, where("createdAt", ">=", start), where("createdAt", "<", end), orderBy("createdAt", "desc"));
                 }
-            });
-
-            const sortedMonths = Array.from(months).sort().reverse();
-            const currentSelected = monthFilter.value;
-
-            monthFilter.innerHTML = '<option value="">すべての月を表示</option>' + 
-                sortedMonths.map(ym => {
-                    const [y, m] = ym.split('-');
-                    return `<option value="${ym}">${y}年${parseInt(m, 10)}月</option>`;
-                }).join('');
-
-            if (months.has(currentSelected)) {
-                monthFilter.value = currentSelected;
+                const snap = await getDocs(q);
+                if (monthFilter.value !== sel) return; // 読み込み中に月が変わった場合
+                currentData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                renderHistory();
+            } catch (err) {
+                currentData = [];
+                renderSummary();
+                historyList.innerHTML = `<li class="empty" style="color: var(--danger-color);">履歴を読み込めませんでした：${escapeHtml(err?.message || err)}</li>`;
             }
         }
 
-        function renderHistoryList() {
-            const selectedMonth = monthFilter.value;
-            const filteredData = allHistoryData.filter(item => {
-                if (!selectedMonth || !item.createdAt) return true;
-                return item.createdAt.startsWith(selectedMonth);
-            });
+        function renderSummary() {
+            const total = currentData.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+            summaryCount.textContent = `${currentData.length}件`;
+            summaryTotal.textContent = total.toLocaleString();
+        }
 
-            if (filteredData.length === 0) {
-                historyList.innerHTML = '<li style="color: #64748b; text-align: center; padding: 8px;">記録はありません</li>';
+        function renderHistory() {
+            renderSummary();
+            if (currentData.length === 0) {
+                historyList.innerHTML = '<li class="empty">この期間の記録はありません</li>';
                 return;
             }
-
-            historyList.innerHTML = filteredData.map(item => `
+            historyList.innerHTML = currentData.map(item => `
                 <li class="history-item">
-                    <div>
-                        <strong>${item.number}</strong> (${item.amount ? item.amount + '円' : '金額未設定'})<br>
-                        <span>${item.memo || 'メモなし'}</span>
-                        <div class="meta">${new Date(item.createdAt).toLocaleString()}</div>
+                    <div class="body">
+                        <strong>${escapeHtml(item.number)}</strong>（${item.amount ? Number(item.amount).toLocaleString() + '円' : '金額未設定'}）<br>
+                        <span>${escapeHtml(item.memo || 'メモなし')}</span>
+                        <div class="meta">${escapeHtml(formatJst(item.createdAt))}</div>
                     </div>
-                    <button class="btn btn-danger" onclick="openDeleteDialog('${item.id}')">削除</button>
+                    <button type="button" class="btn btn-danger btn-small" data-id="${escapeHtml(item.id)}">削除</button>
                 </li>
             `).join('');
         }
 
-        monthFilter.addEventListener('change', renderHistoryList);
-
-        window.openDeleteDialog = function(id) {
-            targetDeleteId = id;
-            confirmDialog.showModal();
-        };
-
-        cancelDeleteBtn.addEventListener('click', () => {
-            targetDeleteId = null;
-            confirmDialog.close();
-        });
-
-        executeDeleteBtn.addEventListener('click', async () => {
-            if (!targetDeleteId || !window.db) return;
+        historyList.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-id]');
+            if (!btn) return;
+            const id = btn.dataset.id;
+            const item = currentData.find(x => x.id === id);
+            const ok = await confirmBox(
+                "削除の確認",
+                `${item ? item.number + ' の' : 'この'}記録を削除してもよろしいですか？\n削除すると元に戻せません。`,
+                "削除する",
+                true
+            );
+            if (!ok) return;
             try {
-                await window.deleteDoc(window.doc(window.db, "invoices", targetDeleteId));
-                confirmDialog.close();
-                targetDeleteId = null;
-                window.loadHistoryFromFirestore();
+                await deleteDoc(doc(db, "invoices", id));
+                setStatus("削除しました", "ok");
+                loadHistory();
             } catch (err) {
-                alert("削除に失敗しました: " + err.message);
+                setStatus("削除できませんでした：" + (err?.message || err), "err");
             }
         });
+
+        monthFilter.addEventListener('change', loadHistory);
+
+        // ===== CSV出力（Excelで文字化けしないようBOM付き） =====
+        csvBtn.addEventListener('click', () => {
+            if (currentData.length === 0) {
+                setStatus("出力する記録がありません", "err");
+                return;
+            }
+            const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+            const rows = [["登録日時", "送り状番号", "請求金額", "宛先・メモ"]];
+            [...currentData].reverse().forEach(item => {
+                rows.push([formatJst(item.createdAt), item.number, Number(item.amount) || 0, item.memo || ""]);
+            });
+            const total = currentData.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+            rows.push(["合計", `${currentData.length}件`, total, ""]);
+            const csv = "\uFEFF" + rows.map(r => r.map(q).join(",")).join("\r\n");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const label = monthFilter.value === 'recent' ? '最新' : monthFilter.value;
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `着払い台帳_${label}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        });
+
+        // ===== 起動時 =====
+        buildMonthOptions();
+        loadHistory();
+        getDetector().catch(() => {}); // 読み取り機能を先に準備しておく
     </script>
 </body>
 </html>
