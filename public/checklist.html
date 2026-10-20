@@ -1,923 +1,1080 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>日次報告チェックリスト</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background: #f4f6f8; font-family: sans-serif; padding: 12px; color: #1e293b; }
-        .card { background: white; padding: 16px; border-radius: 8px; max-width: 900px; margin: 0 auto 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .section-title { font-size: 1rem; color: #2c3e50; background: #eef2f7; padding: 10px 12px; border-left: 4px solid #3498db; margin: 20px 0 12px 0; border-radius: 0 6px 6px 0; font-weight: bold; }
-        .form-group { padding: 12px 12px 12px 42px; border: 1px solid #dcdde1; border-radius: 8px; background: #fff; position: relative; margin-bottom: 12px; }
-        .form-group input[type="text"], .form-group textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; box-sizing: border-box; resize: vertical; background: #fff; margin-top: 4px; }
-        .form-group textarea { height: 80px; }
-        .field-title-input { width: 100%; font-weight: bold; font-size: 0.9rem; padding: 6px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 6px; background: #fafafa; }
-        .checkbox-card { border: 1px dashed #e74c3c; background: #fdf7f7; }
-        .bullet-card { border: 1px dashed #3498db; background: #f7fbfe; }
-        .link-card { border: 1px dashed #27ae60; background: #f0fdf4; }
-        .checkbox-label { display: flex; align-items: center; font-weight: 600; cursor: pointer; color: #c0392b; font-size: 0.95rem; width: 100%; }
-        .checkbox-label input[type="checkbox"] { transform: scale(1.4); margin-right: 12px; cursor: pointer; }
-        .sort-buttons { position: absolute; top: 10px; left: 8px; display: flex; flex-direction: column; gap: 3px; }
-        .btn-sort { background: #bdc3c7; color: white; border: none; border-radius: 4px; width: 26px; height: 24px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
-        .btn-del-item { position: absolute; top: 10px; right: 10px; background: #e74c3c; color: white; border: none; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; z-index: 10; }
-        .btn-add-group { display: flex; gap: 6px; margin-top: 8px; }
-        .btn-add { flex: 1; padding: 8px 4px; background: #ebf5fb; color: #2980b9; border: 1px dashed #3498db; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; }
-        .btn-add-bullet { background: #f0fdf4; color: #27ae60; border: 1px dashed #27ae60; }
-        .btn-add-check { background: #fef5f5; color: #c0392b; border: 1px dashed #e74c3c; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>日次報告チェックリスト</title>
+<style>
+:root{
+  --bg:#eef1ee; --surface:#ffffff; --surface-2:#f5f7f5; --ink:#1f2a33; --muted:#66727c; --line:#d5dbd7;
+  --primary:#1f5f8b; --primary-ink:#ffffff; --ok:#2e8b57; --ok-soft:#e4f3ea; --warn:#a86a12;
+  --danger:#c0392b; --danger-soft:#fbeceb; --tape:#f2c230; --tape-dark:#2b2b2b;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#13181c; --surface:#1c2328; --surface-2:#232c33; --ink:#e5eaee; --muted:#9aa6b0; --line:#34414b;
+    --primary:#4d9bd5; --primary-ink:#0f1a22; --ok:#4cbf85; --ok-soft:#1d3128; --warn:#e0a84a;
+    --danger:#ef6b5c; --danger-soft:#3a2321; color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:16px; line-height:1.55; padding-bottom:calc(80px + env(safe-area-inset-bottom,0px));
+}
+button,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+.wrap{max-width:760px;margin:0 auto;padding:0 12px}
 
-        .service-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
-        .service-name-input { flex: 1; min-width: 0; padding: 8px; font-size: 14px; border: 1px solid #ced4da; border-radius: 4px; font-weight: bold; color: #495057; background: #fff; }
-        .count-input { width: 95px; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 16px; text-align: center; }
-        .action-btns { display: flex; gap: 4px; }
-        .action-btns button { padding: 6px 8px; font-size: 12px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .btn-delete { background-color: #dc3545 !important; }
-        .total-box { background-color: #e9ecef; padding: 12px; border-radius: 6px; text-align: right; font-size: 16px; font-weight: bold; margin-top: 16px; }
-        .total-box span { color: #007bff; font-size: 22px; margin-left: 8px; }
+/* ===== ヘッダー（固定） ===== */
+.topbar{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
+.row1{display:flex;align-items:center;gap:10px;padding:10px 0 6px}
+.back{color:var(--primary);font-weight:700;text-decoration:none;font-size:14px;white-space:nowrap}
+.apptitle{font-size:16px;font-weight:800;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.staff-chip{font-size:12px;font-weight:700;background:var(--danger-soft);color:var(--danger);border-radius:999px;padding:3px 10px;white-space:nowrap}
 
-        .btn-undo {
-            background-color: #e67e22; color: #fff; border: none; border-radius: 4px;
-            padding: 8px 12px; font-size: 13px; font-weight: bold; cursor: pointer; white-space: nowrap;
-            display: none;
-        }
-        .btn-undo:active { background-color: #d35400; }
+.datebar{display:flex;align-items:center;gap:6px;padding:4px 0 8px}
+.datefield{flex:1;display:flex;align-items:center;gap:8px;min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:4px 10px}
+.datefield input{border:0;background:transparent;font-size:17px;font-weight:700;min-width:0;flex:1;padding:4px 0}
+.date-note{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap}
+.date-note.is-today{color:var(--ok)}
 
-        .save-status-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 8px;
-            margin-bottom: 12px;
-            height: 24px;
-        }
-        .save-status {
-            font-size: 12px;
-            color: #666;
-            text-align: right;
-            flex-grow: 1;
-        }
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-bottom:8px}
+.tab{position:relative;border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:8px 10px;text-align:left;cursor:pointer;min-height:52px}
+.tab[aria-selected="true"]{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.tab-title{display:block;font-weight:800;font-size:14px}
+.tab-sub{display:block;font-size:12px;opacity:.85}
+.tab-badge{position:absolute;top:-7px;right:6px;background:var(--danger);color:#fff;font-size:11px;font-weight:800;min-width:20px;height:20px;padding:0 6px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid var(--surface)}
 
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
-            z-index: 1000; display: none; padding: 16px;
-        }
-        .modal-content {
-            background: #fff; width: 100%; max-width: 320px; border-radius: 8px; padding: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-align: center;
-        }
-        .modal-header { font-size: 16px; font-weight: bold; color: #e74c3c; margin-bottom: 12px; justify-content: center; display: flex; align-items: center; }
-        .confirm-modal-buttons {
-            display: flex;
-            gap: 10px;
-            margin-top: 16px;
-        }
-        .confirm-modal-buttons button {
-            flex: 1;
-            padding: 10px;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-            border: none;
-            font-size: 15px;
-        }
-        .btn-confirm-yes { background-color: #e74c3c; color: #fff; }
-        .btn-confirm-no { background-color: #cbd5e1; color: #334155; }
+.statusbar{display:flex;align-items:center;gap:8px;padding:0 0 8px;min-height:40px}
+.status{flex:1;font-size:13px;color:var(--muted);min-width:0}
+.status[data-state="dirty"],.status[data-state="saving"],.status[data-state="pending"]{color:var(--warn);font-weight:700}
+.status[data-state="saved"],.status[data-state="remote"]{color:var(--ok);font-weight:700}
+.status[data-state="error"]{color:var(--danger);font-weight:700}
 
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
+/* ===== ボタン ===== */
+.btn{min-height:40px;padding:8px 14px;border-radius:9px;border:1px solid var(--line);background:var(--surface);font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+.btn:disabled{opacity:.45;cursor:default}
+.btn-primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.btn-undo{background:#e67e22;border-color:#e67e22;color:#fff}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn-ghost{background:transparent}
+.btn-block{width:100%}
+.icon-btn{width:40px;height:40px;flex:none;border-radius:9px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.icon-btn:disabled{opacity:.3;cursor:default}
+.icon-btn.danger{color:var(--danger);border-color:var(--danger)}
 
-        .tab-btn-wrapper {
-            position: relative;
-            flex: 1;
-        }
-        .notification-badge {
-            position: absolute;
-            top: -6px;
-            right: 4px;
-            background-color: #ef4444;
-            color: white;
-            font-size: 0.65rem;
-            font-weight: bold;
-            min-width: 18px;
-            height: 18px;
-            padding: 0 4px;
-            border-radius: 9px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            border: 2px solid #f4f6f8;
-            pointer-events: none;
-            display: none;
-        }
-    </style>
+/* ===== 共通パネル ===== */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
+.panel-pad{padding:14px}
+.muted{color:var(--muted)} .small{font-size:13px}
+.empty{color:var(--muted);font-size:14px;padding:14px;margin:0}
+.lbl{display:block;font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
+.text-in,.field input,.field textarea,.title-in,.url-in{
+  width:100%;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)
+}
+.field textarea{resize:vertical;min-height:80px;line-height:1.5}
+
+/* 概要カード */
+.overview{display:grid;gap:12px}
+.ov-row{display:flex;gap:10px;align-items:flex-end}
+.ov-row > div{flex:1;min-width:0}
+.progress-head{display:flex;justify-content:space-between;font-size:14px;font-weight:700;margin-bottom:6px}
+.bar{height:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.bar > i{display:block;height:100%;width:0;background:var(--ok);transition:width .25s}
+@media (prefers-reduced-motion: reduce){.bar > i{transition:none}}
+
+/* ===== セクション ===== */
+.sec{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
+.sec-head{width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--surface-2);border:0;cursor:pointer;text-align:left;min-height:56px}
+.sec-label{flex:1;min-width:0}
+.sec-time{display:block;font-size:12px;font-weight:700;color:var(--muted)}
+.sec-name{display:block;font-size:16px;font-weight:800}
+.sec-count{font-size:13px;font-weight:800;padding:3px 9px;border-radius:999px;background:var(--surface);border:1px solid var(--line);white-space:nowrap}
+.sec-count.is-done{background:var(--ok);border-color:var(--ok);color:#fff}
+.chev{font-weight:800;color:var(--muted);width:18px;text-align:center}
+/* いまの時間帯：床のトラテープ */
+.sec.is-now{border-color:var(--tape);border-width:2px}
+.sec.is-now .sec-head{
+  padding-left:24px;
+  background:repeating-linear-gradient(-45deg,var(--tape) 0 9px,var(--tape-dark) 9px 18px) left top / 10px 100% no-repeat, var(--surface-2);
+}
+.now-tag{font-size:12px;font-weight:800;background:var(--tape);color:#1d1d1d;border-radius:999px;padding:3px 9px;white-space:nowrap}
+
+.check{display:flex;align-items:center;gap:14px;padding:14px;border-top:1px solid var(--line);cursor:pointer;min-height:56px}
+.check input{width:26px;height:26px;flex:none;accent-color:var(--ok);cursor:pointer;margin:0}
+.check-title{font-weight:700}
+.check.is-on{background:var(--ok-soft)}
+.check.is-on .check-title{color:var(--muted);text-decoration:line-through}
+.field{padding:12px 14px;border-top:1px solid var(--line)}
+.field > label{display:block;font-size:14px;font-weight:700;margin-bottom:6px}
+.field.is-filled > label::after{content:" ✓";color:var(--ok)}
+.bullet{display:flex;gap:6px;padding:12px 14px;border-top:1px solid var(--line)}
+.bullet .dot{color:var(--primary);font-weight:800}
+.linkrow{padding:10px 14px;border-top:1px solid var(--line)}
+.linkbtn{display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:9px;background:var(--primary);color:var(--primary-ink);font-weight:800;text-decoration:none}
+
+/* 編集モード */
+.eitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-top:1px dashed var(--line)}
+.eitem-main{flex:1;min-width:0;display:grid;gap:6px}
+.eitem-ctrl{display:flex;gap:4px;flex:none}
+.type-chip{justify-self:start;font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line)}
+.type-chip.t-checkbox{color:var(--danger)} .type-chip.t-link{color:var(--ok)} .type-chip.t-bullet{color:var(--primary)}
+.addbar{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface-2)}
+.add-btn{flex:1 1 30%;min-height:38px;border:1px dashed var(--primary);color:var(--primary);background:var(--surface);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
+.edit-note{font-size:13px;color:var(--muted);margin:12px 2px}
+
+/* ===== 出荷件数 ===== */
+.totals{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;margin:12px 0}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:right}
+.tile-k{display:block;font-size:12px;font-weight:700;color:var(--muted);text-align:left}
+.tile-v{font-size:22px;font-weight:800}
+.tile.is-main{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.tile.is-main .tile-k{color:inherit;opacity:.85}
+.tile.is-main .tile-v{font-size:28px}
+.srow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);min-height:60px}
+.srow:first-child{border-top:0}
+.sname{flex:1;min-width:0;font-weight:700}
+.count-in{width:120px;font-size:22px;font-weight:800;text-align:right;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.unit{font-size:13px;color:var(--muted)}
+.srow.is-edit .title-in{flex:1;min-width:0}
+.addrow{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line);background:var(--surface-2)}
+.panel-foot{display:flex;gap:8px;margin:12px 0}
+.panel-foot .btn{flex:1}
+
+/* ===== モーダル・トースト ===== */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:100}
+.modal-box{background:var(--surface);border-radius:14px;width:100%;max-width:360px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.modal-box.wide{max-width:640px;max-height:85vh;display:flex;flex-direction:column}
+.modal-title{font-size:17px;font-weight:800;margin:0 0 10px}
+.modal-actions{display:flex;gap:8px;margin-top:16px}
+.modal-actions .btn{flex:1;min-height:46px}
+.hist-scroll{overflow:auto;flex:1;margin:4px -4px 0;padding:0 4px}
+.hist{width:100%;border-collapse:collapse;font-size:14px}
+.hist td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top}
+.hist .m-row td{background:var(--surface-2);font-weight:800;font-size:13px;padding:8px}
+.hist .d-btn{background:none;border:0;color:var(--primary);font-weight:800;text-decoration:underline;cursor:pointer;padding:0;white-space:nowrap}
+.hist .t{text-align:right;font-weight:800;white-space:nowrap}
+.chip{display:inline-block;font-size:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin:0 4px 4px 0}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:10px;font-size:14px;font-weight:700;z-index:200;max-width:calc(100% - 32px)}
+.toast.error{background:var(--danger);color:#fff}
+
+@media (max-width:420px){
+  .totals{grid-template-columns:1fr 1fr}
+  .tile.is-main{grid-column:1 / -1}
+  .count-in{width:100px}
+}
+</style>
 </head>
 <body>
-    <div style="max-width: 900px; margin: 0 auto;">
-        <a href="index.html" class="text-blue-600 font-bold mb-4 inline-block">← ポータルサイトに戻る</a>
-        
-        <div class="flex gap-2 mb-4">
-            <div class="tab-btn-wrapper">
-                <button id="tabBtn-checklist" onclick="switchTab('checklist')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow">📋 日次報告チェックリスト</button>
-                <div id="badge-checklist" class="notification-badge">0</div>
-            </div>
-            <div class="tab-btn-wrapper">
-                <button id="tabBtn-shukka" onclick="switchTab('shukka')" class="w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm">📊 出荷件数 日別集計</button>
-                <div id="badge-shukka" class="notification-badge">0</div>
-            </div>
-        </div>
 
-        <div id="content-checklist" class="tab-content active">
-            <div class="card">
-                <div class="flex justify-between items-center border-b pb-3 mb-4">
-                    <div>
-                        <h1 class="text-xl font-bold text-slate-800">📋 倉庫管理者 日次報告チェックリスト</h1>
-                        <p class="text-xs text-gray-500">Firestoreリアルタイム同期版</p>
-                    </div>
-                    <button onclick="saveChecklistData()" class="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm">💾 クラウド保存</button>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6 bg-slate-50 p-3 rounded-lg">
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">対象日</label>
-                        <input type="date" id="commonDate" onchange="onDateChange(this.value)" class="w-full p-2 border rounded bg-white">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">管理者名</label>
-                        <input type="text" id="reporterName" placeholder="氏名を入力" class="w-full p-2 border rounded bg-white">
-                    </div>
-                    <div class="flex items-end">
-                        <button onclick="onDateChange(document.getElementById('commonDate').value)" class="w-full bg-cyan-600 text-white p-2 rounded font-bold text-sm hover:bg-cyan-700">データを読み込む</button>
-                    </div>
-                </div>
-
-                <div class="save-status-container">
-                    <button type="button" class="btn-undo" id="btn-undo-checklist">↩️ 変更をもとに戻す</button>
-                    <div class="save-status" id="status-msg-checklist"></div>
-                </div>
-
-                <div class="section-title">■ 出勤時〜10:00｜立ち上げ確認</div>
-                <div class="dynamic-list" id="list-morning"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('morning', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('morning', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('morning', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="section-title">■ 11:00〜12:00｜午前進捗確認</div>
-                <div class="dynamic-list" id="list-noon"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('noon', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('noon', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('noon', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="section-title">■ 13:00〜14:00｜午後立ち上げ</div>
-                <div class="dynamic-list" id="list-afternoon"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('afternoon', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('afternoon', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('afternoon', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="section-title">■ 15:00〜｜当日出荷の山場</div>
-                <div class="dynamic-list" id="list-peak"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('peak', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('peak', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('peak', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="section-title">■ 17:00〜｜締め・翌日準備</div>
-                <div class="dynamic-list" id="list-evening"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('evening', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('evening', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('evening', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="section-title">■ 終業時振り返り（1分）</div>
-                <div class="dynamic-list" id="list-reflection"></div>
-                <div class="btn-add-group">
-                    <button onclick="addItem('reflection', 'text')" class="btn-add">＋ 項目を追加</button>
-                    <button onclick="addItem('reflection', 'bullet')" class="btn-add btn-add-bullet">＋ ・項目を追加</button>
-                    <button onclick="addItem('reflection', 'checkbox')" class="btn-add btn-add-check">＋ チェックを追加</button>
-                </div>
-
-                <div class="mt-6 text-center">
-                    <button onclick="saveChecklistData()" class="w-full bg-emerald-600 text-white p-3 rounded-lg font-bold text-lg hover:bg-emerald-700">💾 この日のデータを保存する</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="content-shukka" class="tab-content">
-            <div class="card" style="max-width: 900px;">
-                <h1 class="text-lg font-bold text-slate-800 mb-1">📊 出荷件数 日別集計・サービス管理</h1>
-                <p class="text-xs text-gray-500 mb-3">Firestoreリアルタイム同期版</p>
-
-                <div class="grid grid-cols-2 gap-2 mb-4">
-                    <div class="bg-slate-100 p-3 rounded-lg text-right">
-                        <div class="text-xs text-gray-500 font-bold">週次合計 (<span id="weekRange">--</span>)</div>
-                        <span id="weekTotal" class="text-lg font-bold text-blue-600">0</span> 件
-                    </div>
-                    <div class="bg-slate-100 p-3 rounded-lg text-right">
-                        <div class="text-xs text-gray-500 font-bold">月次合計 (<span id="monthRange">--</span>)</div>
-                        <span id="monthTotal" class="text-lg font-bold text-emerald-600">0</span> 件
-                    </div>
-                </div>
-
-                <div class="save-status-container">
-                    <button type="button" class="btn-undo" id="btn-undo-shukka">↩️ 変更をもとに戻す</button>
-                    <div class="save-status" id="shukkaMsg"></div>
-                </div>
-
-                <p class="text-xs text-gray-500 mb-3">※サービス名の変更、並び替え（↑↓）、削除、新規追加が可能です</p>
-
-                <div id="serviceList"></div>
-
-                <div class="flex gap-2 mt-4 pt-4 border-t border-dashed">
-                    <input type="text" id="newServiceName" placeholder="追加するサービス名" class="flex-1 p-2 border rounded text-sm min-w-0">
-                    <button onclick="addService()" class="bg-cyan-600 text-white px-3 py-2 rounded font-bold text-xs whitespace-nowrap">サービス追加</button>
-                </div>
-
-                <div class="total-box">
-                    総合計 (日別): <span id="grandTotal">0</span> 件
-                </div>
-
-                <div class="flex gap-2 mt-5">
-                    <button id="clearBtn" class="bg-gray-500 text-white p-3 rounded font-bold text-sm flex-1">入力クリア</button>
-                    <button onclick="saveShukkaData()" class="bg-emerald-600 text-white p-3 rounded font-bold text-sm flex-[2]">データを保存</button>
-                </div>
-
-                <div class="mt-4 text-center border-t border-dashed pt-4">
-                    <button onclick="openHistoryModal()" class="w-full bg-slate-600 text-white p-3 rounded font-bold text-sm hover:bg-slate-700">🗓 過去の履歴一覧を見る</button>
-                </div>
-            </div>
-        </div>
+<header class="topbar">
+  <div class="wrap">
+    <div class="row1">
+      <a href="index.html" class="back">← ポータル</a>
+      <h1 class="apptitle">倉庫管理者 日次報告</h1>
+      <span class="staff-chip" id="staffChip" hidden>📨 スタッフ依頼 未対応 <span id="staffCount">0</span>件</span>
     </div>
 
-    <div class="modal-overlay" id="confirm-modal">
-        <div class="modal-content">
-            <div class="modal-header">⚠️ 削除の確認</div>
-            <div style="font-size: 15px; color: #333; margin: 10px 0 20px 0;" id="confirm-msg">
-                本当にこの項目を削除しますか？
-            </div>
-            <div class="confirm-modal-buttons">
-                <button type="button" class="btn-confirm-no" id="confirm-no">キャンセル</button>
-                <button type="button" class="btn-confirm-yes" id="confirm-yes">削除する</button>
-            </div>
-        </div>
+    <div class="datebar">
+      <button type="button" class="icon-btn" id="prevDay" aria-label="前の日">◀</button>
+      <label class="datefield">
+        <input type="date" id="dateInput" aria-label="対象日">
+        <span class="date-note" id="dateNote"></span>
+      </label>
+      <button type="button" class="icon-btn" id="nextDay" aria-label="次の日">▶</button>
+      <button type="button" class="btn btn-ghost" id="todayBtn">今日</button>
     </div>
 
-    <div class="modal-overlay" id="history-modal">
-        <div class="modal-content" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding: 16px;">
-            <div class="modal-header">🗓 出荷件数 過去の履歴</div>
-            <div style="overflow-y: auto; text-align: left; margin-bottom: 15px; flex: 1;" id="history-list-container">
-                <p class="text-center text-sm text-gray-500">読み込み中...</p>
-            </div>
-            <button type="button" class="bg-slate-200 text-slate-800 p-3 rounded-lg font-bold w-full" onclick="document.getElementById('history-modal').style.display='none'">閉じる</button>
-        </div>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab" role="tab" id="tabBtn-checklist" aria-selected="true">
+        <span class="tab-title">📋 チェックリスト</span>
+        <span class="tab-sub" id="tabSub-checklist">読み込み中…</span>
+        <span class="tab-badge" id="badge-checklist" hidden>0</span>
+      </button>
+      <button type="button" class="tab" role="tab" id="tabBtn-shukka" aria-selected="false">
+        <span class="tab-title">📊 出荷件数</span>
+        <span class="tab-sub" id="tabSub-shukka">読み込み中…</span>
+      </button>
     </div>
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, getDocs, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    <div class="statusbar">
+      <button type="button" class="btn btn-undo" id="undoBtn" hidden>↩ 元に戻す（<span id="undoCount">0</span>）</button>
+      <div class="status" id="statusText" data-state="idle" aria-live="polite">自動保存オン</div>
+      <button type="button" class="btn" id="saveNowBtn">💾 今すぐ保存</button>
+    </div>
+  </div>
+</header>
 
-        const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
+<main class="wrap">
+  <!-- ===== チェックリスト ===== -->
+  <section id="tab-checklist">
+    <div class="panel panel-pad overview">
+      <div class="ov-row">
+        <div>
+          <label class="lbl" for="reporterName">管理者名</label>
+          <input type="text" id="reporterName" class="text-in" placeholder="氏名を入力" autocomplete="name">
+        </div>
+        <button type="button" class="btn" id="clEditBtn">✏️ 項目を編集</button>
+      </div>
+      <div>
+        <div class="progress-head"><span>チェックの進み具合</span><span id="clProgressText">0 / 0</span></div>
+        <div class="bar"><i id="clProgressBar"></i></div>
+      </div>
+    </div>
+    <p class="edit-note" id="clEditNote" hidden>編集中です。項目名の変更・並び替え・削除・追加ができます。終わったら「編集を終える」を押してください。</p>
+    <div id="clSections"><p class="empty">読み込み中…</p></div>
+    <div id="clResetWrap" hidden>
+      <button type="button" class="btn btn-ghost btn-block" id="clResetBtn">この日の項目を初期設定に戻す</button>
+    </div>
+  </section>
 
-        function updatePortalBadge(cardId, count) {
-            const STORAGE_KEY = 'warehouse_portal_v7_data';
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                try {
-                    const portalData = JSON.parse(saved);
-                    const card = portalData.cards.find(c => c.id === cardId);
-                    if (card) {
-                        card.badge = count;
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify(portalData));
-                    }
-                } catch (e) {
-                    console.error("Portal badge update error:", e);
-                }
-            }
+  <!-- ===== 出荷件数 ===== -->
+  <section id="tab-shukka" hidden>
+    <div class="totals">
+      <div class="tile is-main"><span class="tile-k">この日の合計</span><span class="tile-v" id="skDay">0</span> 件</div>
+      <div class="tile"><span class="tile-k">週 <span id="skWeekRange">--</span></span><span class="tile-v" id="skWeek">—</span> 件</div>
+      <div class="tile"><span class="tile-k">月 <span id="skMonthRange">--</span></span><span class="tile-v" id="skMonth">—</span> 件</div>
+    </div>
+    <div class="ov-row" style="justify-content:flex-end;margin-top:4px">
+      <button type="button" class="btn" id="skEditBtn">✏️ サービスを編集</button>
+    </div>
+    <p class="edit-note" id="skEditNote" hidden>サービス名の変更・並び替え・削除・追加ができます。名前を変えても過去の記録とのつながりは保たれます。</p>
+    <div class="panel" id="skList"><p class="empty">読み込み中…</p></div>
+    <div class="panel-foot">
+      <button type="button" class="btn" id="skClearBtn">件数を空にする</button>
+      <button type="button" class="btn" id="skHistoryBtn">🗓 過去の記録</button>
+    </div>
+  </section>
+</main>
+
+<!-- 確認ダイアログ -->
+<div class="modal" id="confirmModal" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modal-box">
+    <p class="modal-title" id="confirmTitle">確認</p>
+    <p id="confirmMsg" style="margin:0;white-space:pre-line"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirmNo">キャンセル</button>
+      <button type="button" class="btn btn-danger" id="confirmYes">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 履歴 -->
+<div class="modal" id="historyModal" hidden role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+  <div class="modal-box wide">
+    <p class="modal-title" id="historyTitle">🗓 出荷件数の記録</p>
+    <p class="small muted" style="margin:0 0 6px">日付を押すと、その日を開きます。</p>
+    <div class="hist-scroll" id="historyBody"></div>
+    <div class="modal-actions"><button type="button" class="btn" id="historyClose">閉じる</button></div>
+  </div>
+</div>
+
+<!-- ログイン（REQUIRE_LOGIN = true のときだけ表示） -->
+<div class="modal" id="loginModal" hidden role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <p class="modal-title">ログインしてください</p>
+    <p class="small muted" style="margin:0">社内のGoogleアカウントでログインすると使えます。</p>
+    <p class="small" id="loginErr" style="color:var(--danger)"></p>
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="loginBtn">Googleでログイン</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+/* =========================================================
+   設定
+   ========================================================= */
+// true にするとGoogleログイン必須になります。
+// 先にFirebaseコンソールで「Authentication → Google」を有効化し、
+// Firestoreのルールをログイン必須に変更してから切り替えてください。
+const REQUIRE_LOGIN = false;
+
+const FIREBASE_CONFIG = { apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" };
+const PORTAL_STORAGE_KEY = 'warehouse_portal_v7_data';
+
+const app = initializeApp(FIREBASE_CONFIG);
+const db = getFirestore(app);
+const CLIENT_ID = 'c_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+const SECTIONS = [
+  { key: 'morning',    time: '出勤時〜10:00', name: '立ち上げ確認',     from: 0,  to: 11 },
+  { key: 'noon',       time: '11:00〜12:00', name: '午前進捗確認',     from: 11, to: 13 },
+  { key: 'afternoon',  time: '13:00〜14:00', name: '午後立ち上げ',     from: 13, to: 15 },
+  { key: 'peak',       time: '15:00〜',      name: '当日出荷の山場',   from: 15, to: 17 },
+  { key: 'evening',    time: '17:00〜',      name: '締め・翌日準備',   from: 17, to: 24 },
+  { key: 'reflection', time: '終業時',       name: '振り返り（1分）',  from: null, to: null }
+];
+
+const DEFAULTS = {
+  morning: [
+    { title: "① 物量チェック（最重要） / 前回想定との差分", value: "", type: "text", placeholder: "例：＋500件、想定内 など" },
+    { title: "② メンバー配置表の最終チェック / 判断内容（誰に何を依頼）", value: "", type: "textarea", placeholder: "配置の狙いや特記事項を入力" },
+    { title: "③ チャット・連絡確認 / 注意点・共有事項", value: "", type: "textarea", placeholder: "共有事項を入力" }
+  ],
+  noon: [
+    { title: "遅れ／詰まり", value: "", type: "text", placeholder: "現状の遅れや詰まり具合" },
+    { title: "実施フォロー", value: "", type: "text", placeholder: "打った対策やフォロー内容" }
+  ],
+  afternoon: [
+    { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
+    { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" },
+    { title: "RSショップ スプレッドシートを開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk", type: "link" }
+  ],
+  peak: [
+    { title: "当日出荷の山場・記入欄", value: "", type: "textarea", placeholder: "ピークタイムの状況" },
+    { title: "フジックス入庫確認", checked: false, type: "checkbox" },
+    { title: "medishopee出荷報告確認", checked: false, type: "checkbox" }
+  ],
+  evening: [
+    { title: "受注反映履歴確認", checked: false, type: "checkbox" },
+    { title: "冷凍の集荷を確認しました", checked: false, type: "checkbox" },
+    { title: "ニッシントーアチャット報告確認", checked: false, type: "checkbox" },
+    { title: "Amazonバッグ発注確認", checked: false, type: "checkbox" },
+    { title: "Amazonバッグ発注サイトを開く T-APO", url: "https://amazonexteu.qualtrics.com/jfe/form/SV_0d1npxtVhWVA6Dc?Q_CHL=qr", type: "link" },
+    { title: "翌日物量見込み（バック）：（ ）杯", value: "", type: "text", placeholder: "例：1200杯" },
+    { title: "注意点", value: "", type: "textarea", placeholder: "翌日に向けた注意点" }
+  ],
+  reflection: [
+    { title: "今日一番詰まった工程", value: "", type: "text", placeholder: "最もボトルネックになった工程" },
+    { title: "明日気をつける点", value: "", type: "textarea", placeholder: "翌日への申し送り" }
+  ]
+};
+const DEFAULT_SERVICES = ['サービス1', 'サービス2', 'サービス3', 'サービス4', 'サービス5', 'サービス6', 'サービス7', 'サービス8'];
+const TYPE_LABEL = { text: '記入欄', textarea: '記入欄（複数行）', checkbox: 'チェック', bullet: '・箇条書き', link: 'リンク' };
+
+/* =========================================================
+   小さな道具
+   ========================================================= */
+const $ = id => document.getElementById(id);
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'value') el.value = v;
+    else if (k === 'checked') el.checked = v;
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) {
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+const fmt = n => Number(n || 0).toLocaleString('ja-JP');
+const toNum = v => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+function todayJST() { return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); }
+function hourJST() { return Number(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo', hour: 'numeric', hour12: false })) % 24; }
+function hhmm() { return new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }); }
+function parseDate(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function fmtD(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function shortDate(s) { const d = parseDate(s); return `${d.getMonth() + 1}/${d.getDate()}(${DOW[d.getDay()]})`; }
+function weekRange(s) {
+  const d = parseDate(s); const dow = d.getDay();
+  const mon = addDays(d, dow === 0 ? -6 : 1 - dow); const sun = addDays(mon, 6);
+  return { start: fmtD(mon), end: fmtD(sun), label: `${mon.getMonth() + 1}/${mon.getDate()}〜${sun.getMonth() + 1}/${sun.getDate()}` };
+}
+function monthRange(s) {
+  const [y, m] = s.split('-').map(Number); const last = new Date(y, m, 0).getDate(); const mm = String(m).padStart(2, '0');
+  return { start: `${y}-${mm}-01`, end: `${y}-${mm}-${String(last).padStart(2, '0')}`, label: `${m}月` };
+}
+function hashId(str) { let h = 5381; for (const ch of str) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0; return 'n_' + h.toString(36); }
+function isTyping(rootId) {
+  const a = document.activeElement;
+  return !!a && $(rootId).contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
+}
+function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.max(t.scrollHeight + 2, 80) + 'px'; }
+
+let toastTimer = null;
+function toast(msg, kind = '') {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast' + (kind ? ' ' + kind : ''); t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, kind === 'error' ? 4500 : 2200);
+}
+
+let confirmCb = null;
+function confirmDialog(msg, okLabel, onOk) {
+  $('confirmMsg').textContent = msg; $('confirmYes').textContent = okLabel || '削除する';
+  confirmCb = onOk; $('confirmModal').hidden = false; $('confirmNo').focus();
+}
+$('confirmNo').onclick = () => { $('confirmModal').hidden = true; confirmCb = null; };
+$('confirmYes').onclick = () => { $('confirmModal').hidden = true; const cb = confirmCb; confirmCb = null; if (cb) cb(); };
+
+/* =========================================================
+   保存状態の表示
+   ========================================================= */
+let activeTab = 'checklist';
+const status = { checklist: { state: 'idle', time: '', msg: '' }, shukka: { state: 'idle', time: '', msg: '' } };
+function setStatus(tab, state, msg = '') {
+  status[tab] = { state, time: state === 'saved' ? hhmm() : status[tab].time, msg };
+  if (tab === activeTab) renderStatus();
+}
+function renderStatus() {
+  const s = status[activeTab];
+  const text = {
+    idle: s.time ? `保存済み（${s.time}）` : '自動保存オン（入力すると自動で保存されます）',
+    dirty: '入力中…まもなく自動保存します',
+    saving: '保存中…',
+    saved: `保存しました（${s.time}）`,
+    remote: '他の端末での更新を反映しました',
+    pending: '他の端末で更新がありました。入力欄から離れると反映します',
+    error: s.msg || '保存できませんでした。通信状況を確認して「今すぐ保存」を押してください'
+  }[s.state];
+  const el = $('statusText'); el.textContent = text; el.dataset.state = s.state;
+  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
+  $('undoBtn').hidden = saver.undo.length === 0;
+  $('undoCount').textContent = saver.undo.length;
+}
+
+/* 自動保存＋元に戻す（履歴を最大30回分保持） */
+class Saver {
+  constructor(tab, getJSON, write) { this.tab = tab; this.getJSON = getJSON; this.write = write; this.timer = null; this.savedJSON = null; this.undo = []; }
+  get dirty() { return this.timer !== null; }
+  touch() { setStatus(this.tab, 'dirty'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 1500); }
+  async flush({ pushUndo = true } = {}) {
+    clearTimeout(this.timer); this.timer = null;
+    const cur = this.getJSON();
+    if (cur == null) return;
+    if (cur === this.savedJSON) { if (status[this.tab].state === 'dirty') setStatus(this.tab, 'idle'); return; }
+    if (pushUndo && this.savedJSON != null) { this.undo.push(this.savedJSON); if (this.undo.length > 30) this.undo.shift(); }
+    this.savedJSON = cur;
+    setStatus(this.tab, 'saving');
+    try { await this.write(JSON.parse(cur)); setStatus(this.tab, 'saved'); }
+    catch (e) { console.error(e); this.savedJSON = null; setStatus(this.tab, 'error'); }
+  }
+  reset(json) { clearTimeout(this.timer); this.timer = null; this.savedJSON = json; this.undo = []; if (this.tab === activeTab) renderStatus(); }
+}
+
+/* =========================================================
+   チェックリスト
+   ========================================================= */
+const CL = { date: null, state: null, edit: false, unsub: null, pendingRemote: null, collapsed: {} };
+CL.saver = new Saver('checklist',
+  () => CL.state ? JSON.stringify(CL.state) : null,
+  async st => {
+    await setDoc(doc(db, 'warehouse_reports', st.date), {
+      date: st.date, name: st.name || '未設定', sections: st.sections,
+      updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
+    });
+    if (st.name) { try { localStorage.setItem('checklist_reporter_name', st.name); } catch (e) {} }
+  });
+
+function normItem(it, key) {
+  const type = ['text', 'textarea', 'checkbox', 'bullet', 'link'].includes(it?.type) ? it.type : 'text';
+  const o = { type, title: String(it?.title ?? '') };
+  if (type === 'checkbox') o.checked = !!it.checked;
+  if (type === 'link') o.url = String(it.url ?? '');
+  if (type === 'text' || type === 'textarea') {
+    o.value = String(it.value ?? '');
+    const ph = it.placeholder || DEFAULTS[key].find(d => d.title === o.title)?.placeholder;
+    if (ph) o.placeholder = ph;
+  }
+  return o;
+}
+function normSections(src) {
+  const out = {};
+  for (const s of SECTIONS) {
+    const arr = Array.isArray(src?.[s.key]) ? src[s.key] : DEFAULTS[s.key];
+    out[s.key] = arr.map(it => normItem(it, s.key));
+  }
+  return out;
+}
+function blankOut(secs) {
+  const c = clone(secs);
+  for (const k in c) c[k].forEach(it => { if ('value' in it) it.value = ''; if ('checked' in it) it.checked = false; });
+  return c;
+}
+function savedName() { try { return localStorage.getItem('checklist_reporter_name') || ''; } catch (e) { return ''; } }
+
+// 記録がない日は「直前の記録日の項目構成」を引き継ぐ（入力内容とチェックは空にする）
+async function loadTemplate(date) {
+  try {
+    const qs = await getDocs(query(collection(db, 'warehouse_reports'), where(documentId(), '<', date), orderBy(documentId(), 'desc'), limit(1)));
+    if (!qs.empty) return blankOut(normSections(qs.docs[0].data().sections));
+  } catch (e) { console.warn('template', e); }
+  return blankOut(normSections(null));
+}
+
+function clLoad(date) {
+  if (CL.unsub) CL.unsub();
+  CL.date = date; CL.state = null; CL.pendingRemote = null;
+  CL.saver.reset(null);
+  renderChecklist();
+  CL.unsub = onSnapshot(doc(db, 'warehouse_reports', date), async snap => {
+    if (CL.date !== date || snap.metadata.hasPendingWrites) return;
+    if (snap.exists()) {
+      const d = snap.data();
+      if (CL.state && d.updatedBy === CLIENT_ID) return; // 自分の保存の反映は無視
+      const st = { date, name: (d.name === '未設定' ? '' : d.name) || '', sections: normSections(d.sections) };
+      const json = JSON.stringify(st);
+      if (!CL.state) { clApply(st, false); return; }
+      if (json === CL.saver.savedJSON || json === JSON.stringify(CL.state)) return;
+      if (CL.saver.dirty) return; // 自分の入力を優先（このあと保存される）
+      if (activeTab === 'checklist' && isTyping('tab-checklist')) { CL.pendingRemote = st; setStatus('checklist', 'pending'); return; }
+      clApply(st, true);
+    } else if (!CL.state) {
+      const sections = await loadTemplate(date);
+      if (CL.date !== date || CL.state) return;
+      CL.state = { date, name: savedName(), sections };
+      CL.saver.reset(JSON.stringify(CL.state));
+      renderChecklist();
+    }
+  }, err => {
+    console.error(err);
+    setStatus('checklist', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（権限がありません）。ログイン設定を確認してください' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
+  });
+}
+function clApply(st, remote) {
+  CL.state = st; CL.saver.reset(JSON.stringify(st)); renderChecklist();
+  if (remote) setStatus('checklist', 'remote');
+}
+function clTouched() { CL.pendingRemote = null; CL.saver.touch(); updateProgress(); }
+
+function currentSectionKey() {
+  if (CL.date !== todayJST()) return null;
+  const hr = hourJST();
+  return SECTIONS.find(s => s.from != null && hr >= s.from && hr < s.to)?.key || null;
+}
+
+function renderChecklist() {
+  const root = $('clSections');
+  root.replaceChildren();
+  $('clEditBtn').textContent = CL.edit ? '✓ 編集を終える' : '✏️ 項目を編集';
+  $('clEditBtn').className = CL.edit ? 'btn btn-primary' : 'btn';
+  $('clEditNote').hidden = !CL.edit;
+  $('clResetWrap').hidden = !CL.edit || !CL.state;
+  if (document.activeElement !== $('reporterName')) $('reporterName').value = CL.state?.name ?? '';
+  if (!CL.state) { root.append(h('p', { class: 'empty' }, '読み込み中…')); updateProgress(); return; }
+
+  const nowKey = currentSectionKey();
+  for (const sec of SECTIONS) {
+    const items = CL.state.sections[sec.key];
+    const checks = items.filter(i => i.type === 'checkbox');
+    const done = checks.filter(i => i.checked).length;
+    const isNow = sec.key === nowKey;
+    const collapsed = !!CL.collapsed[sec.key];
+
+    const head = h('button', { type: 'button', class: 'sec-head', 'aria-expanded': String(!collapsed), onclick: () => { CL.collapsed[sec.key] = !collapsed; renderChecklist(); } },
+      h('span', { class: 'sec-label' }, h('span', { class: 'sec-time' }, sec.time), h('span', { class: 'sec-name' }, sec.name)),
+      isNow ? h('span', { class: 'now-tag' }, 'いまの時間帯') : null,
+      checks.length ? h('span', { class: 'sec-count' + (done === checks.length ? ' is-done' : '') }, `✓ ${done}/${checks.length}`) : null,
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, collapsed ? '＋' : '－'));
+
+    const body = [];
+    if (!collapsed) {
+      items.forEach((it, i) => body.push(CL.edit ? clItemEdit(sec.key, it, i, items.length) : clItemView(sec.key, it, i)));
+      if (!items.length && !CL.edit) body.push(h('p', { class: 'empty' }, '項目がありません。「項目を編集」から追加できます。'));
+      if (CL.edit) body.push(clAddBar(sec.key));
+    }
+    root.append(h('section', { class: 'sec' + (isNow ? ' is-now' : ''), id: 'sec-' + sec.key }, head, body));
+  }
+  requestAnimationFrame(() => root.querySelectorAll('textarea').forEach(autoGrow));
+  updateProgress();
+}
+
+function clItemView(key, it, i) {
+  if (it.type === 'checkbox') {
+    return h('label', { class: 'check' + (it.checked ? ' is-on' : '') },
+      h('input', { type: 'checkbox', checked: !!it.checked, onchange: e => { it.checked = e.target.checked; clTouched(); renderChecklist(); } }),
+      h('span', { class: 'check-title' }, it.title || '（名前のないチェック）'));
+  }
+  if (it.type === 'bullet') return h('div', { class: 'bullet' }, h('span', { class: 'dot', 'aria-hidden': 'true' }, '・'), h('span', {}, it.title));
+  if (it.type === 'link') {
+    const ok = /^https?:\/\//i.test(it.url || '');
+    return h('div', { class: 'linkrow' }, ok
+      ? h('a', { class: 'linkbtn', href: it.url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', it.title || 'リンクを開く')
+      : h('p', { class: 'small muted', style: 'margin:0' }, `🔗 ${it.title || 'リンク'}：リンク先が未設定です（「項目を編集」で設定できます）`));
+  }
+  const id = `f-${key}-${i}`;
+  const input = it.type === 'textarea'
+    ? h('textarea', { id, rows: '3', placeholder: it.placeholder || '内容を入力', value: it.value || '' })
+    : h('input', { id, type: 'text', placeholder: it.placeholder || '内容を入力', value: it.value || '' });
+  const wrap = h('div', { class: 'field' + ((it.value || '').trim() ? ' is-filled' : '') }, h('label', { for: id }, it.title || '（名前のない項目）'), input);
+  input.addEventListener('input', e => {
+    it.value = e.target.value; clTouched();
+    wrap.classList.toggle('is-filled', !!it.value.trim());
+    if (it.type === 'textarea') autoGrow(e.target);
+  });
+  return wrap;
+}
+
+function clItemEdit(key, it, i, n) {
+  const title = h('input', { type: 'text', class: 'title-in', placeholder: '項目名', value: it.title || '', 'aria-label': '項目名' });
+  title.addEventListener('input', e => { it.title = e.target.value; clTouched(); });
+  const extra = [];
+  if (it.type === 'link') {
+    const url = h('input', { type: 'url', class: 'url-in', inputmode: 'url', placeholder: 'リンク先 https://…', value: it.url || '', 'aria-label': 'リンク先URL' });
+    url.addEventListener('input', e => { it.url = e.target.value.trim(); clTouched(); });
+    extra.push(url);
+  }
+  return h('div', { class: 'eitem' },
+    h('div', { class: 'eitem-main' }, h('span', { class: 'type-chip t-' + it.type }, TYPE_LABEL[it.type]), title, extra),
+    h('div', { class: 'eitem-ctrl' },
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': '上へ', disabled: i === 0, onclick: () => clMove(key, i, -1) }, '▲'),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': '下へ', disabled: i === n - 1, onclick: () => clMove(key, i, 1) }, '▼'),
+      h('button', { type: 'button', class: 'icon-btn danger', 'aria-label': '削除', onclick: () => clDelete(key, i) }, '✕')));
+}
+
+function clAddBar(key) {
+  const mk = (type, label) => h('button', { type: 'button', class: 'add-btn', onclick: () => clAdd(key, type) }, '＋ ' + label);
+  return h('div', { class: 'addbar' }, mk('checkbox', 'チェック'), mk('text', '記入欄'), mk('textarea', '記入欄（複数行）'), mk('bullet', '・箇条書き'), mk('link', 'リンク'));
+}
+function clAdd(key, type) {
+  const it = { type, title: '' };
+  if (type === 'checkbox') it.checked = false;
+  if (type === 'link') it.url = '';
+  if (type === 'text' || type === 'textarea') it.value = '';
+  CL.state.sections[key].push(it);
+  CL.collapsed[key] = false;
+  renderChecklist();
+  const ins = document.querySelectorAll(`#sec-${key} .title-in`);
+  ins[ins.length - 1]?.focus();
+  clTouched();
+}
+function clMove(key, i, dir) {
+  const arr = CL.state.sections[key]; const j = i + dir;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  renderChecklist(); CL.saver.flush();
+}
+function clDelete(key, i) {
+  const it = CL.state.sections[key][i];
+  confirmDialog(`「${it.title || 'この項目'}」を削除しますか？`, '削除する', () => {
+    CL.state.sections[key].splice(i, 1); renderChecklist(); CL.saver.flush();
+  });
+}
+
+function updateProgress() {
+  let total = 0, done = 0;
+  if (CL.state) for (const k in CL.state.sections) CL.state.sections[k].forEach(it => { if (it.type === 'checkbox') { total++; if (it.checked) done++; } });
+  $('clProgressText').textContent = `${done} / ${total}`;
+  $('clProgressBar').style.width = total ? (done / total * 100) + '%' : '0%';
+  const remain = total - done;
+  const badge = $('badge-checklist');
+  badge.hidden = !CL.state || remain === 0;
+  badge.textContent = remain > 99 ? '99+' : remain;
+  $('tabSub-checklist').textContent = !CL.state ? '読み込み中…' : (total === 0 ? 'チェック項目なし' : remain === 0 ? 'すべて完了' : `残り ${remain}件`);
+}
+
+$('reporterName').addEventListener('input', e => { if (!CL.state) return; CL.state.name = e.target.value.trim(); clTouched(); });
+$('clEditBtn').onclick = () => { CL.edit = !CL.edit; if (!CL.edit) CL.saver.flush(); renderChecklist(); };
+$('clResetBtn').onclick = () => confirmDialog('この日の項目を初期設定に戻しますか？入力した内容とチェックも消えます（「元に戻す」で取り消せます）。', '初期設定に戻す', () => {
+  CL.state.sections = blankOut(normSections(null)); renderChecklist(); CL.saver.flush();
+});
+
+/* =========================================================
+   出荷件数
+   ========================================================= */
+const SK = { date: null, state: null, services: [], records: new Map(), recordsLoaded: false, edit: false, unsub: null, pendingRemote: null, pendingServices: null };
+function skStateJSON() {
+  if (!SK.state) return null;
+  const counts = {};
+  SK.services.forEach(s => { const v = SK.state.counts[s.id]; counts[s.id] = (typeof v === 'number' && !isNaN(v)) ? v : ''; });
+  return JSON.stringify({ date: SK.state.date, counts });
+}
+// 保存形式：従来どおり「サービス名: 件数」を残しつつ（他の画面・旧版との互換）、
+// _meta にサービスID基準の件数と名前を保存する（名前を変えても過去の記録とつながる）
+SK.saver = new Saver('shukka', skStateJSON, async st => {
+  const top = {}, counts = {}, names = {};
+  SK.services.forEach(s => {
+    const v = st.counts[s.id];
+    names[s.id] = s.name;
+    if (typeof v === 'number') { counts[s.id] = v; top[s.name] = v; } else top[s.name] = '';
+  });
+  await setDoc(doc(db, 'shukka_records', st.date), { ...top, _meta: { counts, names, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID } });
+});
+
+function reconcileServices(d) {
+  const items = Array.isArray(d?.items) ? d.items.filter(x => x && x.id && typeof x.name === 'string') : null;
+  const names = Array.isArray(d?.services) ? d.services.filter(x => typeof x === 'string' && x.trim()) : null;
+  if (items && (!names || items.map(x => x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id: x.id, name: x.name }));
+  const src = names && names.length ? names : (items ? items.map(x => x.name) : DEFAULT_SERVICES);
+  const used = new Set();
+  return src.map(name => {
+    const hit = items?.find(x => x.name === name && !used.has(x.id));
+    const id = hit ? hit.id : hashId(name);
+    used.add(id); return { id, name };
+  });
+}
+async function saveServices() {
+  try {
+    await setDoc(doc(db, 'settings', 'shukka_services'), {
+      services: SK.services.map(s => s.name), items: SK.services.map(s => ({ id: s.id, name: s.name })),
+      updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
+    });
+  } catch (e) { console.error(e); toast('サービスの設定を保存できませんでした。通信状況を確認してください', 'error'); }
+}
+function watchServices() {
+  return new Promise(resolve => {
+    let first = true;
+    onSnapshot(doc(db, 'settings', 'shukka_services'), snap => {
+      const d = snap.exists() ? snap.data() : null;
+      if (!first && (snap.metadata.hasPendingWrites || d?.updatedBy === CLIENT_ID)) return;
+      const list = reconcileServices(d);
+      if (first) { SK.services = list; first = false; resolve(); return; }
+      if (activeTab === 'shukka' && isTyping('tab-shukka')) { SK.pendingServices = list; return; }
+      SK.services = list; renderShukka();
+    }, err => { console.error(err); if (first) { SK.services = reconcileServices(null); first = false; resolve(); } });
+  });
+}
+
+function recordToCounts(data) {
+  const out = {};
+  if (data?._meta?.counts) { for (const [id, v] of Object.entries(data._meta.counts)) out[id] = toNum(v); return out; }
+  for (const [k, v] of Object.entries(data || {})) {
+    if (k.startsWith('_')) continue;
+    const s = SK.services.find(x => x.name === k);
+    if (s) out[s.id] = (v === '' || v == null) ? '' : toNum(v);
+  }
+  return out;
+}
+function recordBreakdown(data) {
+  const out = [];
+  if (data?._meta?.counts) {
+    for (const [id, v] of Object.entries(data._meta.counts)) {
+      const n = toNum(v); if (n <= 0) continue;
+      out.push({ name: SK.services.find(s => s.id === id)?.name || data._meta.names?.[id] || '（削除したサービス）', n });
+    }
+  } else {
+    for (const [k, v] of Object.entries(data || {})) { if (k.startsWith('_')) continue; const n = toNum(v); if (n > 0) out.push({ name: k, n }); }
+  }
+  return out;
+}
+const recordTotal = data => recordBreakdown(data).reduce((a, x) => a + x.n, 0);
+
+function skLoad(date) {
+  if (SK.unsub) SK.unsub();
+  SK.date = date; SK.state = null; SK.records = new Map(); SK.recordsLoaded = false; SK.pendingRemote = null;
+  SK.saver.reset(null);
+  renderShukka();
+  const w = weekRange(date), m = monthRange(date);
+  const start = w.start < m.start ? w.start : m.start;
+  const end = w.end > m.end ? w.end : m.end;
+  SK.unsub = onSnapshot(query(collection(db, 'shukka_records'), where(documentId(), '>=', start), where(documentId(), '<=', end)), snap => {
+    if (SK.date !== date) return;
+    SK.records = new Map(snap.docs.map(d => [d.id, d.data()]));
+    SK.recordsLoaded = true;
+    const data = SK.records.get(date);
+    const st = { date, counts: recordToCounts(data) };
+    if (!SK.state) { SK.state = st; SK.saver.reset(skStateJSON()); renderShukka(); return; }
+    renderTotals();
+    if (snap.metadata.hasPendingWrites || data?._meta?.updatedBy === CLIENT_ID) return;
+    const prev = SK.state; SK.state = st; const json = skStateJSON(); SK.state = prev;
+    if (json === SK.saver.savedJSON || json === skStateJSON()) return;
+    if (SK.saver.dirty) return;
+    if (activeTab === 'shukka' && isTyping('tab-shukka')) { SK.pendingRemote = st; setStatus('shukka', 'pending'); return; }
+    skApply(st, true);
+  }, err => {
+    console.error(err);
+    setStatus('shukka', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（権限がありません）。ログイン設定を確認してください' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
+  });
+}
+function skApply(st, remote) {
+  SK.state = st; SK.saver.reset(skStateJSON()); renderShukka();
+  if (remote) setStatus('shukka', 'remote');
+}
+function skTouched() { SK.pendingRemote = null; SK.saver.touch(); renderTotals(); }
+function skForceSaveDay() {
+  if (!SK.state) return;
+  const hasAny = Object.values(SK.state.counts).some(v => typeof v === 'number') || SK.records.has(SK.date);
+  if (!hasAny) return;
+  SK.saver.savedJSON = null; SK.saver.flush({ pushUndo: false });
+}
+
+function liveDayTotal() {
+  if (!SK.state) return 0;
+  return SK.services.reduce((a, s) => { const v = SK.state.counts[s.id]; return a + (typeof v === 'number' && !isNaN(v) ? v : 0); }, 0);
+}
+function renderTotals() {
+  const day = liveDayTotal();
+  $('skDay').textContent = fmt(day);
+  $('tabSub-shukka').textContent = SK.state ? `この日 ${fmt(day)}件` : '読み込み中…';
+  if (!SK.date) return;
+  const w = weekRange(SK.date), m = monthRange(SK.date);
+  $('skWeekRange').textContent = w.label; $('skMonthRange').textContent = m.label;
+  if (!SK.recordsLoaded) { $('skWeek').textContent = '—'; $('skMonth').textContent = '—'; return; }
+  let wt = 0, mt = 0;
+  for (const [id, data] of SK.records) {
+    if (id === SK.date) continue;
+    const t = recordTotal(data);
+    if (id >= w.start && id <= w.end) wt += t;
+    if (id >= m.start && id <= m.end) mt += t;
+  }
+  $('skWeek').textContent = fmt(wt + day); $('skMonth').textContent = fmt(mt + day);
+}
+
+function validateName(name, exceptIdx) {
+  if (!name) return 'サービス名を入力してください';
+  if (name.startsWith('_')) return '「_」で始まる名前は使えません';
+  if (SK.services.some((s, i) => i !== exceptIdx && s.name === name)) return '同じ名前のサービスがすでにあります';
+  return '';
+}
+
+function renderShukka() {
+  const list = $('skList');
+  list.replaceChildren();
+  $('skEditBtn').textContent = SK.edit ? '✓ 編集を終える' : '✏️ サービスを編集';
+  $('skEditBtn').className = SK.edit ? 'btn btn-primary' : 'btn';
+  $('skEditNote').hidden = !SK.edit;
+  if (!SK.state) { list.append(h('p', { class: 'empty' }, '読み込み中…')); renderTotals(); return; }
+
+  SK.services.forEach((s, i) => {
+    if (SK.edit) {
+      const name = h('input', { type: 'text', class: 'title-in', value: s.name, 'aria-label': 'サービス名' });
+      name.addEventListener('change', e => skRename(i, e.target));
+      list.append(h('div', { class: 'srow is-edit' }, name,
+        h('div', { class: 'eitem-ctrl' },
+          h('button', { type: 'button', class: 'icon-btn', 'aria-label': '上へ', disabled: i === 0, onclick: () => skMove(i, -1) }, '▲'),
+          h('button', { type: 'button', class: 'icon-btn', 'aria-label': '下へ', disabled: i === SK.services.length - 1, onclick: () => skMove(i, 1) }, '▼'),
+          h('button', { type: 'button', class: 'icon-btn danger', 'aria-label': '削除', onclick: () => skDelete(i) }, '✕'))));
+    } else {
+      const v = SK.state.counts[s.id];
+      const inp = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', class: 'count-in', placeholder: '0', value: typeof v === 'number' ? String(v) : '', 'aria-label': `${s.name}の件数` });
+      inp.addEventListener('input', e => {
+        const raw = e.target.value.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
+        if (raw !== e.target.value) e.target.value = raw;
+        SK.state.counts[s.id] = raw === '' ? '' : parseInt(raw, 10);
+        skTouched();
+      });
+      inp.addEventListener('focus', e => e.target.select());
+      list.append(h('label', { class: 'srow' }, h('span', { class: 'sname' }, s.name), inp, h('span', { class: 'unit' }, '件')));
+    }
+  });
+  if (!SK.services.length) list.append(h('p', { class: 'empty' }, 'サービスがありません。「サービスを編集」から追加してください。'));
+  if (SK.edit) {
+    const addIn = h('input', { type: 'text', class: 'title-in', placeholder: '追加するサービス名', 'aria-label': '追加するサービス名' });
+    addIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); skAdd(addIn); } });
+    list.append(h('div', { class: 'addrow' }, addIn, h('button', { type: 'button', class: 'btn btn-primary', onclick: () => skAdd(addIn) }, '追加')));
+  }
+  renderTotals();
+}
+
+async function skRename(i, el) {
+  const nv = el.value.trim();
+  if (nv === SK.services[i].name) return;
+  const err = validateName(nv, i);
+  if (err) { toast(err, 'error'); el.value = SK.services[i].name; return; }
+  SK.services[i].name = nv;
+  await saveServices(); skForceSaveDay();
+  toast('サービス名を変更しました');
+}
+async function skAdd(input) {
+  const name = input.value.trim();
+  const err = validateName(name, -1);
+  if (err) { toast(err, 'error'); return; }
+  const id = 's_' + Math.random().toString(36).slice(2, 10);
+  SK.services.push({ id, name });
+  if (SK.state) SK.state.counts[id] = '';
+  await saveServices();
+  renderShukka();
+  document.querySelector('#skList .addrow .title-in')?.focus();
+  toast(`「${name}」を追加しました`);
+}
+async function skMove(i, dir) {
+  const j = i + dir; if (j < 0 || j >= SK.services.length) return;
+  [SK.services[i], SK.services[j]] = [SK.services[j], SK.services[i]];
+  renderShukka(); await saveServices();
+}
+function skDelete(i) {
+  if (SK.services.length <= 1) { toast('サービスは最低1つ必要です', 'error'); return; }
+  const s = SK.services[i];
+  confirmDialog(`「${s.name}」を削除しますか？\n${shortDate(SK.date)}の件数からも外れます。過去の日の記録はそのまま残ります。`, '削除する', async () => {
+    SK.services.splice(i, 1);
+    if (SK.state) delete SK.state.counts[s.id];
+    SK.saver.undo = [];
+    renderShukka();
+    await saveServices(); skForceSaveDay();
+  });
+}
+
+$('skEditBtn').onclick = () => {
+  SK.edit = !SK.edit;
+  if (!SK.edit && SK.pendingServices) { SK.services = SK.pendingServices; SK.pendingServices = null; }
+  renderShukka();
+};
+$('skClearBtn').onclick = () => {
+  if (!SK.state) return;
+  confirmDialog(`${shortDate(SK.date)}の件数をすべて空にしますか？（「元に戻す」で取り消せます）`, '空にする', () => {
+    SK.services.forEach(s => { SK.state.counts[s.id] = ''; });
+    renderShukka(); SK.saver.flush();
+  });
+};
+
+/* 履歴 */
+async function openHistory() {
+  const body = $('historyBody');
+  $('historyModal').hidden = false;
+  body.replaceChildren(h('p', { class: 'empty' }, '読み込み中…'));
+  try {
+    const qs = await getDocs(collection(db, 'shukka_records'));
+    const rows = qs.docs
+      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d.id))
+      .map(d => { const items = recordBreakdown(d.data()); return { date: d.id, items, total: items.reduce((a, x) => a + x.n, 0) }; })
+      .filter(r => r.total > 0)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (!rows.length) { body.replaceChildren(h('p', { class: 'empty' }, '保存されている記録はまだありません。件数を入力すると自動で記録されます。')); return; }
+    const months = new Map();
+    rows.forEach(r => { const k = r.date.slice(0, 7); if (!months.has(k)) months.set(k, []); months.get(k).push(r); });
+    const table = h('table', { class: 'hist' });
+    for (const [k, list] of months) {
+      const [y, m] = k.split('-').map(Number);
+      const sum = list.reduce((a, r) => a + r.total, 0);
+      table.append(h('tr', { class: 'm-row' }, h('td', { colspan: '3' }, `${y}年${m}月　合計 ${fmt(sum)}件（記録 ${list.length}日）`)));
+      list.forEach(r => table.append(h('tr', {},
+        h('td', {}, h('button', { type: 'button', class: 'd-btn', onclick: () => { $('historyModal').hidden = true; switchTab('shukka'); goDate(r.date); } }, shortDate(r.date))),
+        h('td', { class: 't' }, fmt(r.total)),
+        h('td', {}, r.items.map(x => h('span', { class: 'chip' }, `${x.name} ${fmt(x.n)}`))))));
+    }
+    body.replaceChildren(table);
+  } catch (e) {
+    console.error(e);
+    body.replaceChildren(h('p', { class: 'empty', style: 'color:var(--danger)' }, '記録を読み込めませんでした。通信状況を確認して、もう一度開いてください。'));
+  }
+}
+$('skHistoryBtn').onclick = openHistory;
+$('historyClose').onclick = () => { $('historyModal').hidden = true; };
+
+/* =========================================================
+   スタッフ依頼（未対応件数）
+   ========================================================= */
+function updatePortalBadge(cardId, count) {
+  try {
+    const saved = localStorage.getItem(PORTAL_STORAGE_KEY);
+    if (!saved) return;
+    const portal = JSON.parse(saved);
+    const card = portal.cards?.find(c => c.id === cardId);
+    if (card) { card.badge = count; localStorage.setItem(PORTAL_STORAGE_KEY, JSON.stringify(portal)); }
+  } catch (e) { console.warn('portal badge', e); }
+}
+function watchStaff() {
+  onSnapshot(query(collection(db, 'staff_requests'), orderBy('createdAt', 'desc')), snap => {
+    const n = snap.docs.filter(d => d.data().status !== 'completed').length;
+    $('staffChip').hidden = n === 0;
+    $('staffCount').textContent = n > 99 ? '99+' : n;
+    updatePortalBadge('checklist', n); // ポータル側のバッジはこれまで通り
+  }, e => console.warn('staff_requests', e));
+}
+
+/* =========================================================
+   タブ・日付・共通操作
+   ========================================================= */
+function switchTab(t) {
+  activeTab = t;
+  for (const k of ['checklist', 'shukka']) {
+    $('tab-' + k).hidden = k !== t;
+    $('tabBtn-' + k).setAttribute('aria-selected', String(k === t));
+  }
+  try { localStorage.setItem('checklist_active_tab', t); } catch (e) {}
+  if (t === 'checklist') requestAnimationFrame(() => document.querySelectorAll('#clSections textarea').forEach(autoGrow));
+  renderStatus();
+}
+$('tabBtn-checklist').onclick = () => switchTab('checklist');
+$('tabBtn-shukka').onclick = () => switchTab('shukka');
+
+function updateDateNote(date) {
+  const today = todayJST(); const d = parseDate(date);
+  const note = $('dateNote');
+  note.textContent = `${DOW[d.getDay()]}曜` + (date === today ? '・今日' : '');
+  note.className = 'date-note' + (date === today ? ' is-today' : '');
+  $('todayBtn').disabled = date === today;
+}
+async function goDate(date) {
+  if (!date) return;
+  await Promise.all([CL.saver.flush(), SK.saver.flush()]); // 前の日の入力を先に保存
+  $('dateInput').value = date;
+  updateDateNote(date);
+  clLoad(date); skLoad(date);
+  renderStatus();
+}
+$('dateInput').addEventListener('change', e => goDate(e.target.value));
+$('prevDay').onclick = () => goDate(fmtD(addDays(parseDate($('dateInput').value || todayJST()), -1)));
+$('nextDay').onclick = () => goDate(fmtD(addDays(parseDate($('dateInput').value || todayJST()), 1)));
+$('todayBtn').onclick = () => goDate(todayJST());
+
+$('saveNowBtn').onclick = async () => {
+  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
+  if (saver.savedJSON === saver.getJSON() && status[activeTab].state !== 'error') { toast('保存済みです'); return; }
+  await saver.flush();
+  if (status[activeTab].state === 'saved') toast('保存しました');
+};
+$('undoBtn').onclick = () => {
+  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
+  const prev = saver.undo.pop(); if (!prev) return;
+  const st = JSON.parse(prev);
+  if (activeTab === 'checklist') { CL.state = st; renderChecklist(); }
+  else { SK.state = { date: st.date, counts: st.counts }; renderShukka(); }
+  saver.flush({ pushUndo: false });
+  toast('1つ前の状態に戻しました');
+};
+
+// 入力欄から離れたら、保留していた他端末の更新を反映
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (CL.pendingRemote && !CL.saver.dirty && !isTyping('tab-checklist')) { const st = CL.pendingRemote; CL.pendingRemote = null; clApply(st, true); }
+  if (!isTyping('tab-shukka')) {
+    if (SK.pendingServices && !SK.edit) { SK.services = SK.pendingServices; SK.pendingServices = null; renderShukka(); }
+    if (SK.pendingRemote && !SK.saver.dirty) { const st = SK.pendingRemote; SK.pendingRemote = null; skApply(st, true); }
+  }
+}, 60));
+
+// 画面を閉じる・アプリを切り替えるときは、待たずに保存
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { CL.saver.flush(); SK.saver.flush(); } });
+window.addEventListener('beforeunload', e => {
+  if (CL.saver.dirty || SK.saver.dirty) { CL.saver.flush(); SK.saver.flush(); e.preventDefault(); e.returnValue = ''; }
+});
+
+// 「いまの時間帯」の表示を5分ごとに更新（入力中・編集中は待つ）
+setInterval(() => { if (CL.state && !CL.edit && !isTyping('tab-checklist') && CL.date === todayJST()) renderChecklist(); }, 5 * 60 * 1000);
+
+/* =========================================================
+   ログイン（任意）
+   ========================================================= */
+async function ensureLogin() {
+  if (!REQUIRE_LOGIN) return;
+  const m = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+  const auth = m.getAuth(app);
+  try { await m.getRedirectResult(auth); } catch (e) { console.warn(e); }
+  await new Promise(resolve => {
+    let done = false;
+    m.onAuthStateChanged(auth, user => {
+      if (user) { $('loginModal').hidden = true; if (!done) { done = true; resolve(user); } return; }
+      $('loginModal').hidden = false;
+      $('loginBtn').onclick = async () => {
+        $('loginErr').textContent = '';
+        const provider = new m.GoogleAuthProvider();
+        try { await m.signInWithPopup(auth, provider); }
+        catch (e) {
+          if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request'].includes(e.code)) await m.signInWithRedirect(auth, provider);
+          else $('loginErr').textContent = `ログインできませんでした（${e.code}）`;
         }
-
-        function setBadgeCount(tabKey, count) {
-            const badge = document.getElementById(`badge-${tabKey}`);
-            if (!badge) return;
-            if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : count;
-                badge.style.display = 'flex';
-            } else {
-                badge.style.display = 'none';
-            }
-        }
-
-        function watchStaffRequestsBadge() {
-            try {
-                onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), (snapshot) => {
-                    const requests = snapshot.docs.map(doc => doc.data());
-                    const pendingCount = requests.filter(r => r.status !== 'completed').length;
-                    
-                    setBadgeCount('checklist', pendingCount);
-                    updatePortalBadge('checklist', pendingCount);
-                });
-            } catch (e) {
-                console.log("Badge watch error:", e);
-            }
-        }
-
-        const confirmModal = document.getElementById('confirm-modal');
-        const confirmMsg = document.getElementById('confirm-msg');
-        const confirmYes = document.getElementById('confirm-yes');
-        const confirmNo = document.getElementById('confirm-no');
-        let pendingDeleteCallback = null;
-
-        function showConfirmDialog(message, callback) {
-            confirmMsg.textContent = message;
-            pendingDeleteCallback = callback;
-            confirmModal.style.display = 'flex';
-        }
-
-        confirmYes.onclick = () => {
-            confirmModal.style.display = 'none';
-            if (pendingDeleteCallback) {
-                pendingDeleteCallback();
-                pendingDeleteCallback = null;
-            }
-        };
-
-        confirmNo.onclick = () => {
-            confirmModal.style.display = 'none';
-            pendingDeleteCallback = null;
-        };
-
-        window.switchTab = (tabName) => {
-            const btnChecklist = document.getElementById('tabBtn-checklist');
-            const btnShukka = document.getElementById('tabBtn-shukka');
-            const contentChecklist = document.getElementById('content-checklist');
-            const contentShukka = document.getElementById('content-shukka');
-
-            if (tabName === 'checklist') {
-                btnChecklist.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
-                btnShukka.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
-                contentChecklist.classList.add('active');
-                contentShukka.classList.remove('active');
-            } else {
-                btnShukka.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-blue-600 text-white shadow";
-                btnChecklist.className = "w-full py-3 px-4 rounded-lg font-bold text-sm bg-slate-200 text-slate-700 shadow-sm";
-                contentShukka.classList.add('active');
-                contentChecklist.classList.remove('active');
-            }
-        };
-
-        window.onDateChange = (date) => {
-            loadChecklistByDate(date);
-            loadShukkaByDate(date);
-        };
-
-        let autoSaveTimerChecklist = null;
-        let lastSavedStateChecklist = null;
-        const undoBtnChecklist = document.getElementById('btn-undo-checklist');
-        const reporterNameInput = document.getElementById('reporterName');
-
-        const defaultSections = {
-            morning: [
-                { title: "① 物量チェック（最重要） / 前回想定との差分", value: "", type: "text", placeholder: "例：＋500件、想定内 など" },
-                { title: "② メンバー配置表の最終チェック / 判断内容（誰に何を依頼）", value: "", type: "textarea", placeholder: "配置の狙いや特記事項を入力" },
-                { title: "③ チャット・連絡確認 / 注意点・共有事項", value: "", type: "textarea", placeholder: "共有事項を入力" }
-            ],
-            noon: [
-                { title: "遅れ／詰まり", value: "", type: "text", placeholder: "現状の遅れや詰まり具合" },
-                { title: "実施フォロー", value: "", type: "text", placeholder: "打った対策やフォロー内容" }
-            ],
-            afternoon: [
-                { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
-                { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" },
-                { title: "RSショップ スプレッドシートを開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk", type: "link" }
-            ],
-            peak: [
-                { title: "当日出荷の山場・記入欄", value: "", type: "textarea", placeholder: "ピークタイムの状況" },
-                { title: "フジックス入庫確認", checked: false, type: "checkbox" },
-                { title: "medishopee出荷報告確認", checked: false, type: "checkbox" }
-            ],
-            evening: [
-                { title: "受注反映履歴確認", checked: false, type: "checkbox" },
-                { title: "冷凍の集荷を確認しました", checked: false, type: "checkbox" },
-                { title: "ニッシントーアチャット報告確認", checked: false, type: "checkbox" },
-                { title: "Amazonバッグ発注確認", checked: false, type: "checkbox" },
-                { title: "Amazonバッグ発注サイトを開く T-APO", url: "https://amazonexteu.qualtrics.com/jfe/form/SV_0d1npxtVhWVA6Dc?Q_CHL=qr", type: "link" },
-                { title: "翌日物量見込み（バック）：（ ）杯", value: "", type: "text", placeholder: "例：1200杯" },
-                { title: "注意点", value: "", type: "textarea", placeholder: "翌日に向けた注意点" }
-            ],
-            reflection: [
-                { title: "今日一番詰まった工程", value: "", type: "text", placeholder: "最もボトルネックになった工程" },
-                { title: "明日気をつける点", value: "", type: "textarea", placeholder: "翌日への申し送り" }
-            ]
-        };
-
-        window.removeElement = (elem) => {
-            showConfirmDialog("この項目を削除しますか？", () => {
-                elem.remove();
-                executeAutoSaveChecklist(true);
-            });
-        };
-
-        window.moveItem = (elem, direction) => {
-            const card = elem.closest('.item-card');
-            if (!card) return;
-            if (direction === 'up' && card.previousElementSibling) card.parentNode.insertBefore(card, card.previousElementSibling);
-            else if (direction === 'down' && card.nextElementSibling) card.parentNode.insertBefore(card.nextElementSibling, card);
-            executeAutoSaveChecklist(true);
-        };
-
-        window.addItem = (sectionKey, itemType = 'text', itemData = null) => {
-            const listContainer = document.getElementById(`list-${sectionKey}`);
-            const div = document.createElement('div');
-            const typeVal = (itemData && itemData.type != null) ? itemData.type : itemType;
-            const titleVal = (itemData && itemData.title != null) ? itemData.title : '';
-            const valueVal = (itemData && itemData.value != null) ? itemData.value : '';
-            const checkedVal = (itemData && itemData.checked != null) ? itemData.checked : false;
-            const urlVal = (itemData && itemData.url != null) ? itemData.url : '';
-            const placeholderVal = (itemData && itemData.placeholder != null) ? itemData.placeholder : '内容を入力';
-
-            const sortBtns = `<div class="sort-buttons"><button type="button" class="btn-sort" onclick="moveItem(this, 'up')">▲</button><button type="button" class="btn-sort" onclick="moveItem(this, 'down')">▼</button></div>`;
-
-            if (typeVal === 'checkbox') {
-                div.className = 'form-group item-card checkbox-card';
-                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><label class="checkbox-label"><input type="checkbox" class="field-check-input" ${checkedVal ? 'checked' : ''}><input type="text" class="field-title-input" placeholder="チェック項目名" value="${titleVal}" style="margin:0; background:transparent; border:none; border-bottom:1px solid #ccc;"></label>`;
-            } else if (typeVal === 'bullet') {
-                div.className = 'form-group item-card bullet-card';
-                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 1.2rem; font-weight: bold; color: #3498db;">・</span><input type="text" class="field-title-input" placeholder="箇条書き項目" value="${titleVal}" style="margin:0; flex:1;"></div>`;
-            } else if (typeVal === 'link') {
-                div.className = 'form-group item-card link-card';
-                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button>
-                    <input type="text" class="field-title-input" placeholder="リンク表示名" value="${titleVal}" style="margin-bottom:6px;">
-                    <input type="hidden" class="field-url-input" value="${urlVal}">
-                    <a href="${urlVal}" target="_blank" class="inline-block bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm hover:bg-emerald-700">🔗 ${titleVal || 'スプレッドシートを開く'}</a>`;
-            } else {
-                div.className = 'form-group item-card';
-                div.innerHTML = `${sortBtns}<button type="button" class="btn-del-item" onclick="removeElement(this.parentElement)">✕ 削除</button><input type="text" class="field-title-input" placeholder="項目名" value="${titleVal}">` + (typeVal === 'textarea' ? `<textarea class="field-value-input" placeholder="${placeholderVal}">${valueVal}</textarea>` : `<input type="text" class="field-value-input" placeholder="${placeholderVal}" value="${valueVal}">`);
-            }
-            listContainer.appendChild(div);
-            setupInputEvents(div);
-            if (!itemData) executeAutoSaveChecklist(true);
-        };
-
-        function renderSections(dataObj) {
-            ['morning', 'noon', 'afternoon', 'peak', 'evening', 'reflection'].forEach(key => {
-                document.getElementById(`list-${key}`).innerHTML = '';
-                (dataObj && dataObj[key] ? dataObj[key] : defaultSections[key]).forEach(item => addItem(key, item.type, item));
-            });
-        }
-
-        function getCurrentChecklistState() {
-            const currentName = reporterNameInput.value.trim();
-            const sectionsData = {};
-            ['morning', 'noon', 'afternoon', 'peak', 'evening', 'reflection'].forEach(key => {
-                const items = [];
-                document.querySelectorAll(`#list-${key} .item-card`).forEach(card => {
-                    const titleElem = card.querySelector('.field-title-input');
-                    const title = titleElem ? titleElem.value.trim() : '';
-                    if (card.classList.contains('checkbox-card')) {
-                        const checkElem = card.querySelector('.field-check-input');
-                        items.push({ title, checked: checkElem ? checkElem.checked : false, type: 'checkbox' });
-                    } else if (card.classList.contains('bullet-card')) {
-                        items.push({ title, type: 'bullet' });
-                    } else if (card.classList.contains('link-card')) {
-                        const urlElem = card.querySelector('.field-url-input');
-                        items.push({ title, url: urlElem ? urlElem.value : '', type: 'link' });
-                    } else {
-                        const valElem = card.querySelector('.field-value-input');
-                        items.push({ title, value: valElem ? valElem.value.trim() : '', type: valElem && valElem.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text' });
-                    }
-                });
-                sectionsData[key] = items;
-            });
-            return { name: currentName, sections: sectionsData };
-        }
-
-        function setupInputEvents(container) {
-            const inputs = container.querySelectorAll('input, textarea');
-            inputs.forEach(input => {
-                input.addEventListener('input', triggerAutoSaveChecklist);
-                input.addEventListener('change', triggerAutoSaveChecklist);
-            });
-        }
-
-        function triggerAutoSaveChecklist() {
-            const msg = document.getElementById('status-msg-checklist');
-            msg.className = "block text-center font-bold text-amber-500 text-sm mb-4";
-            msg.innerText = "変更を検出し待機中...";
-
-            clearTimeout(autoSaveTimerChecklist);
-            autoSaveTimerChecklist = setTimeout(async () => {
-                await executeAutoSaveChecklist(true);
-            }, 1500);
-        }
-
-        async function executeAutoSaveChecklist(isAuto = true) {
-            const date = document.getElementById('commonDate').value;
-            if (!date) return;
-            const currentState = getCurrentChecklistState();
-
-            if (currentState.name) {
-                localStorage.setItem('checklist_reporter_name', currentState.name);
-            }
-
-            lastSavedStateChecklist = currentState;
-            undoBtnChecklist.style.display = 'inline-block';
-
-            try {
-                await setDoc(doc(db, "warehouse_reports", date), {
-                    date, name: currentState.name || "未設定", sections: currentState.sections, updatedAt: new Date().toISOString()
-                });
-                const msg = document.getElementById('status-msg-checklist');
-                msg.className = "block text-center font-bold text-emerald-600 text-sm mb-4";
-                msg.innerText = isAuto ? "自動保存しました" : "保存しました";
-                setTimeout(() => {
-                    if (msg.innerText.includes("保存しました")) msg.innerText = '';
-                }, 2000);
-            } catch (err) {
-                console.error(err);
-                const msg = document.getElementById('status-msg-checklist');
-                msg.className = "block text-center font-bold text-red-600 text-sm mb-4";
-                msg.innerText = "保存に失敗しました";
-            }
-        }
-
-        undoBtnChecklist.addEventListener('click', () => {
-            if (lastSavedStateChecklist) {
-                reporterNameInput.value = lastSavedStateChecklist.name || '';
-                renderSections(lastSavedStateChecklist.sections);
-                const msg = document.getElementById('status-msg-checklist');
-                msg.className = "block text-center font-bold text-emerald-600 text-sm mb-4";
-                msg.innerText = "直前の状態に戻しました";
-                undoBtnChecklist.style.display = 'none';
-                executeAutoSaveChecklist(true);
-            }
-        });
-
-        window.loadChecklistByDate = async (date) => {
-            if (!date) return;
-            try {
-                const docSnap = await getDoc(doc(db, "warehouse_reports", date));
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    reporterNameInput.value = data.name || '';
-                    renderSections(data.sections);
-                    lastSavedStateChecklist = { name: data.name || '', sections: data.sections };
-                } else {
-                    const savedName = localStorage.getItem('checklist_reporter_name');
-                    reporterNameInput.value = savedName ? savedName : '';
-                    renderSections(null);
-                    lastSavedStateChecklist = getCurrentChecklistState();
-                }
-                undoBtnChecklist.style.display = 'none';
-            } catch(err) { console.error(err); }
-        };
-
-        window.saveChecklistData = async () => {
-            clearTimeout(autoSaveTimerChecklist);
-            const date = document.getElementById('commonDate').value;
-            if (!date) { alert('対象日を選択してください。'); return; }
-            await executeAutoSaveChecklist(false);
-            const msg = document.getElementById('status-msg-checklist');
-            msg.className = "block text-center font-bold text-emerald-600 text-sm mb-4";
-            msg.innerText = "チェックリストをクラウドに保存しました！";
-            setTimeout(() => msg.innerText = '', 2500);
-        };
-
-        const defaultServices = ['サービス1', 'サービス2', 'サービス3', 'サービス4', 'サービス5', 'サービス6', 'サービス7', 'サービス8'];
-        let currentServices = [];
-        let autoSaveTimerShukka = null;
-        let lastSavedStateShukka = {};
-        const undoBtnShukka = document.getElementById('btn-undo-shukka');
-
-        async function initShukkaServices() {
-            try {
-                const docSnap = await getDoc(doc(db, "settings", "shukka_services"));
-                currentServices = docSnap.exists() && docSnap.data().services ? docSnap.data().services : [...defaultServices];
-            } catch(e) { currentServices = [...defaultServices]; }
-            renderServices({});
-        }
-
-        function getCurrentShukkaInputs() {
-            const counts = {};
-            document.querySelectorAll('.service-row').forEach(row => {
-                const name = row.querySelector('.service-name-input').value;
-                const val = row.querySelector('.count-input').value;
-                if (name) counts[name] = val === '' ? '' : Number(val);
-            });
-            return counts;
-        }
-
-        function renderServices(counts = {}) {
-            const container = document.getElementById('serviceList');
-            container.innerHTML = '';
-            currentServices.forEach((name, index) => {
-                const val = counts[name] !== undefined ? counts[name] : '';
-                container.innerHTML += `<div class="service-row">
-                    <input type="text" class="service-name-input" data-index="${index}" value="${name}">
-                    <input type="number" class="count-input" min="0" placeholder="0" value="${val}" inputmode="numeric">
-                    <div class="action-btns">
-                        <button onclick="moveService(${index}, -1)">↑</button>
-                        <button onclick="moveService(${index}, 1)">↓</button>
-                        <button type="button" class="btn-delete" onclick="confirmDeleteService(${index})">削除</button>
-                    </div>
-                </div>`;
-            });
-            calcTotal();
-            setupNameChangeEvents();
-            setupShukkaAutoSaveEvents();
-        }
-
-        window.calcTotal = () => {
-            let total = 0;
-            document.querySelectorAll('.count-input').forEach(input => {
-                const val = parseInt(input.value, 10);
-                if (!isNaN(val)) total += val;
-            });
-            document.getElementById('grandTotal').textContent = total.toLocaleString();
-        };
-
-        function parseDate(dateStr) {
-            const [y, m, d] = dateStr.split('-').map(Number);
-            return new Date(y, m - 1, d);
-        }
-
-        function formatDate(date) {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-        }
-
-        function getWeekDates(dateStr) {
-            const d = parseDate(dateStr);
-            const day = d.getDay();
-            const diffToMonday = day === 0 ? -6 : 1 - day;
-            const monday = new Date(d);
-            monday.setDate(d.getDate() + diffToMonday);
-
-            const dates = [];
-            for (let i = 0; i < 7; i++) {
-                const temp = new Date(monday);
-                temp.setDate(monday.getDate() + i);
-                dates.push(formatDate(temp));
-            }
-            return {
-                dates: dates,
-                rangeText: `${monday.getMonth()+1}/${monday.getDate()}〜${parseDate(dates[6]).getMonth()+1}/${parseDate(dates[6]).getDate()}`
-            };
-        }
-
-        function getMonthDates(dateStr) {
-            const [y, m] = dateStr.split('-').map(Number);
-            const lastDay = new Date(y, m, 0).getDate();
-            const dates = [];
-            for (let i = 1; i <= lastDay; i++) {
-                dates.push(`${y}-${String(m).padStart(2, '0')}-${String(i).padStart(2, '0')}`);
-            }
-            return {
-                dates: dates,
-                rangeText: `${y}年${m}月`
-            };
-        }
-
-        async function loadPeriodTotals(dateStr) {
-            if (!dateStr) return;
-            const weekInfo = getWeekDates(dateStr);
-            const monthInfo = getMonthDates(dateStr);
-
-            document.getElementById('weekRange').textContent = weekInfo.rangeText;
-            document.getElementById('monthRange').textContent = monthInfo.rangeText;
-
-            let weekTotal = 0;
-            const weekSnaps = await Promise.all(weekInfo.dates.map(d => getDoc(doc(db, "shukka_records", d))));
-            weekSnaps.forEach(snap => {
-                if (snap.exists()) {
-                    Object.values(snap.data()).forEach(val => {
-                        const num = parseInt(val, 10);
-                        if (!isNaN(num)) weekTotal += num;
-                    });
-                }
-            });
-            document.getElementById('weekTotal').textContent = weekTotal.toLocaleString();
-
-            let monthTotal = 0;
-            const monthSnaps = await Promise.all(monthInfo.dates.map(d => getDoc(doc(db, "shukka_records", d))));
-            monthSnaps.forEach(snap => {
-                if (snap.exists()) {
-                    Object.values(snap.data()).forEach(val => {
-                        const num = parseInt(val, 10);
-                        if (!isNaN(num)) monthTotal += num;
-                    });
-                }
-            });
-            document.getElementById('monthTotal').textContent = monthTotal.toLocaleString();
-        }
-
-        function setupShukkaAutoSaveEvents() {
-            document.querySelectorAll('.count-input').forEach(input => {
-                input.addEventListener('input', () => {
-                    calcTotal();
-                    const msg = document.getElementById('shukkaMsg');
-                    msg.className = "text-amber-500 font-bold text-xs";
-                    msg.innerText = "変更を検出し待機中...";
-
-                    clearTimeout(autoSaveTimerShukka);
-                    autoSaveTimerShukka = setTimeout(async () => {
-                        await executeAutoSaveShukka(true);
-                    }, 1500);
-                });
-            });
-        }
-
-        async function executeAutoSaveShukka(isAuto = true) {
-            const date = document.getElementById('commonDate').value;
-            if (!date) return;
-
-            lastSavedStateShukka = getCurrentShukkaInputs();
-            undoBtnShukka.style.display = 'inline-block';
-
-            try {
-                await setDoc(doc(db, "shukka_records", date), lastSavedStateShukka);
-                loadPeriodTotals(date);
-                const msg = document.getElementById('shukkaMsg');
-                msg.className = "text-emerald-600 font-bold text-xs";
-                msg.innerText = isAuto ? "自動保存しました" : "保存しました";
-                setTimeout(() => {
-                    if (msg.innerText.includes("保存しました")) msg.innerText = '';
-                }, 2000);
-            } catch (e) {
-                console.error(e);
-                const msg = document.getElementById('shukkaMsg');
-                msg.className = "text-red-600 font-bold text-xs";
-                msg.innerText = "保存に失敗しました";
-            }
-        }
-
-        undoBtnShukka.addEventListener('click', () => {
-            if (lastSavedStateShukka) {
-                renderServices(lastSavedStateShukka);
-                const msg = document.getElementById('shukkaMsg');
-                msg.className = "text-emerald-600 font-bold text-xs";
-                msg.innerText = "直前の状態に戻しました";
-                undoBtnShukka.style.display = 'none';
-                executeAutoSaveShukka(true);
-            }
-        });
-
-        function setupNameChangeEvents() {
-            document.querySelectorAll('.service-name-input').forEach(input => {
-                input.addEventListener('change', async function() {
-                    const idx = this.getAttribute('data-index');
-                    const newName = this.value.trim();
-                    if (!newName) { alert('サービス名を入力してください'); renderServices(getCurrentShukkaInputs()); return; }
-                    currentServices[idx] = newName;
-                    await setDoc(doc(db, "settings", "shukka_services"), { services: currentServices });
-                    renderServices(getCurrentShukkaInputs());
-                });
-            });
-        }
-
-        window.addService = async () => {
-            const input = document.getElementById('newServiceName');
-            const name = input.value.trim();
-            if (!name) { alert('追加するサービス名を入力してください'); return; }
-            currentServices.push(name);
-            await setDoc(doc(db, "settings", "shukka_services"), { services: currentServices });
-            input.value = '';
-            renderServices(getCurrentShukkaInputs());
-        };
-
-        window.moveService = async (index, dir) => {
-            const newIdx = index + dir;
-            if (newIdx < 0 || newIdx >= currentServices.length) return;
-            const counts = getCurrentShukkaInputs();
-            const temp = currentServices[index];
-            currentServices[index] = currentServices[newIdx];
-            currentServices[newIdx] = temp;
-            await setDoc(doc(db, "settings", "shukka_services"), { services: currentServices });
-            renderServices(counts);
-        };
-
-        window.confirmDeleteService = (index) => {
-            if (currentServices.length <= 1) { alert('サービスは最低1つ必要です。'); return; }
-            showConfirmDialog(`「${currentServices[index]}」を削除しますか？`, async () => {
-                const counts = getCurrentShukkaInputs();
-                currentServices.splice(index, 1);
-                await setDoc(doc(db, "settings", "shukka_services"), { services: currentServices });
-                renderServices(counts);
-            });
-        };
-
-        window.loadShukkaByDate = async (date) => {
-            if (!date) return;
-            try {
-                const docSnap = await getDoc(doc(db, "shukka_records", date));
-                const data = docSnap.exists() ? docSnap.data() : {};
-                renderServices(data);
-                lastSavedStateShukka = data;
-                undoBtnShukka.style.display = 'none';
-                await loadPeriodTotals(date);
-            } catch(e) { renderServices({}); }
-        };
-
-        window.saveShukkaData = async () => {
-            clearTimeout(autoSaveTimerShukka);
-            const date = document.getElementById('commonDate').value;
-            if (!date) { alert('対象日を選択してください。'); return; }
-            await executeAutoSaveShukka(false);
-            const msg = document.getElementById('shukkaMsg');
-            msg.className = "text-emerald-600 font-bold text-xs";
-            msg.innerText = "データをクラウドに保存しました！";
-            setTimeout(() => msg.innerText = '', 2500);
-        };
-
-        document.getElementById('clearBtn').addEventListener('click', () => {
-            showConfirmDialog('入力された件数をクリアしますか？', () => {
-                document.querySelectorAll('.count-input').forEach(input => input.value = '');
-                calcTotal();
-                saveShukkaData();
-            });
-        });
-
-        window.openHistoryModal = async () => {
-            const modal = document.getElementById('history-modal');
-            const container = document.getElementById('history-list-container');
-            modal.style.display = 'flex';
-            container.innerHTML = '<p class="text-center text-sm text-gray-500 mt-4">データを読み込んでいます...</p>';
-
-            try {
-                const querySnapshot = await getDocs(collection(db, "shukka_records"));
-                const records = [];
-                querySnapshot.forEach((doc) => {
-                    records.push({ date: doc.id, data: doc.data() });
-                });
-
-                records.sort((a, b) => b.date.localeCompare(a.date));
-
-                if (records.length === 0) {
-                    container.innerHTML = '<p class="text-center text-sm text-gray-500 mt-4">保存されている履歴がありません。</p>';
-                    return;
-                }
-
-                let html = '<table class="w-full text-sm border-collapse mt-2">';
-                html += '<tr class="bg-slate-100"><th class="border p-2 text-center whitespace-nowrap">日付</th><th class="border p-2 text-center whitespace-nowrap">合計</th><th class="border p-2 text-left">内訳</th></tr>';
-
-                records.forEach(record => {
-                    let total = 0;
-                    let breakdown = [];
-                    for (const [service, count] of Object.entries(record.data)) {
-                        const num = parseInt(count, 10);
-                        if (!isNaN(num) && num > 0) {
-                            total += num;
-                            breakdown.push(`<span class="inline-block mr-2">${service}:<b class="ml-1">${num}</b></span>`);
-                        }
-                    }
-                    
-                    if (total === 0) return;
-
-                    html += `<tr>
-                        <td class="border p-2 font-bold text-center text-blue-600 underline cursor-pointer" onclick="loadSpecificDate('${record.date}')">${record.date.replace('202', '2')}</td>
-                        <td class="border p-2 text-right font-bold text-lg">${total.toLocaleString()}</td>
-                        <td class="border p-2 text-xs text-gray-700 leading-relaxed">${breakdown.join('')}</td>
-                    </tr>`;
-                });
-                html += '</table>';
-                container.innerHTML = html;
-
-            } catch (error) {
-                container.innerHTML = '<p class="text-center text-sm text-red-500 mt-4">データの取得に失敗しました。</p>';
-            }
-        };
-
-        window.loadSpecificDate = (date) => {
-            document.getElementById('history-modal').style.display = 'none';
-            document.getElementById('commonDate').value = date;
-            onDateChange(date);
-        };
-
-        window.onload = async () => {
-            const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
-            document.getElementById('commonDate').value = today;
-
-            const savedName = localStorage.getItem('checklist_reporter_name');
-            if (savedName) {
-                reporterNameInput.value = savedName;
-            }
-            reporterNameInput.addEventListener('input', triggerAutoSaveChecklist);
-            reporterNameInput.addEventListener('change', triggerAutoSaveChecklist);
-
-            await loadChecklistByDate(today);
-            await initShukkaServices();
-            await loadShukkaByDate(today);
-
-            watchStaffRequestsBadge();
-        };
-    </script>
+      };
+    });
+  });
+}
+
+/* =========================================================
+   起動
+   ========================================================= */
+(async () => {
+  await ensureLogin();
+  watchStaff();
+  await watchServices();
+  let tab = 'checklist';
+  try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
+  switchTab(tab);
+  goDate(todayJST());
+})();
+</script>
 </body>
 </html>
