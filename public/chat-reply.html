@@ -24,7 +24,6 @@
         window.addDoc = addDoc;
         window.serverTimestamp = serverTimestamp;
 
-        // 🚀 スタッフ間連絡アプリへの登録（Firestore: staff_requests）
         window.registerToStaffApp = async function(btnEl) {
             const roomId = document.getElementById('linkRoomId').value;
             const roomName = document.getElementById('linkRoomName').value;
@@ -73,7 +72,6 @@
     </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 pb-16 text-xs">
-    <!-- ヘッダー -->
     <div class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-20">
         <div class="max-w-md mx-auto flex items-center justify-between">
             <h1 class="text-sm font-bold">🚀 未読バーストコックピット</h1>
@@ -84,9 +82,7 @@
         </div>
     </div>
 
-    <!-- メインコンテンツ -->
     <div class="max-w-md mx-auto p-3 space-y-3">
-        <!-- アカウント選択 ＆ タブ切り替え -->
         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5">
             <select id="accountSelect" onchange="refreshCurrentView()" class="w-full border border-slate-300 rounded-lg p-2 text-xs bg-indigo-50 font-bold text-indigo-950">
                 <option value="5435a05ddd195c46ca688d021e45bbce" selected>ラクロジスタッフアカウント</option>
@@ -99,7 +95,6 @@
                 <button id="tabNormal" onclick="switchMode('normal')" class="py-1.5 text-[11px] font-bold rounded-md text-slate-600 cursor-pointer">📁 通常</button>
             </div>
 
-            <!-- 一括操作バー -->
             <div id="batchActionBar" class="space-y-2 pt-2 border-t border-slate-100">
                 <div class="flex items-center justify-between">
                     <label class="flex items-center gap-1.5 font-bold cursor-pointer text-slate-600">
@@ -117,7 +112,6 @@
             </div>
         </div>
 
-        <!-- 各モードコンテナ -->
         <div id="burstModeContainer" class="space-y-3"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
         <div id="normalModeContainer" class="space-y-3" style="display:none;">
@@ -131,10 +125,8 @@
         </div>
     </div>
 
-    <!-- モーダル群 -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/60 z-40 hidden" onclick="closeAllModals()"></div>
 
-    <!-- 🔑 セラー情報モーダル -->
     <div id="modalSellerInfo" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-sm bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900 text-xs">🔑 紐づくセラー情報</h2>
@@ -151,7 +143,6 @@
         </div>
     </div>
 
-    <!-- 🔗 スタッフ間連絡モーダル -->
     <div id="modalLinkCopy" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-11/12 max-w-md bg-white rounded-xl shadow-2xl z-50 hidden flex-col">
         <div class="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-xl">
             <h2 class="font-bold text-indigo-900 text-xs">🔗 スタッフ間連絡に登録</h2>
@@ -466,7 +457,6 @@
                 roomMembersCache[roomId] = roomData.members || [];
                 if (msgs.length === 0) { container.innerHTML = '<div class="bg-white p-6 rounded-xl text-center text-xs shadow-sm border">メッセージなし</div>'; return; }
                 const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
-                // 通常タブは20件表示
                 container.innerHTML = buildCardContent(roomId, roomObj?.name || "ルーム", msgs, roomData.members || [], 20, true);
             } catch (e) { container.innerHTML = `<div class="text-xs text-red-500 bg-white p-4 rounded-xl shadow-sm border">エラー: ${e.message}</div>`; }
         }
@@ -514,9 +504,10 @@
             }
         }
 
-        // 🤖 個別チャットごとにAI返信文を生成する関数
         window.generateAiReplyForMessage = async function(msgKey, roomId, btnEl) {
             const textarea = document.getElementById(`reply_text_${msgKey}`);
+            const promptInput = document.getElementById(`custom_prompt_${msgKey}`);
+            const customPrompt = promptInput ? promptInput.value.trim() : "";
             const roomName = document.querySelector(`[data-room-id="${roomId}"]`)?.closest('.burst-card')?.getAttribute('data-room-name') || "ルーム";
             const targetMessageText = window.messageStore[msgKey] || "";
 
@@ -527,7 +518,8 @@
                 const data = await callApi("generate_ai_reply", {
                     room_id: roomId,
                     room_name: roomName,
-                    context: targetMessageText
+                    context: targetMessageText,
+                    custom_prompt: customPrompt
                 });
 
                 const aiReply = data.ai_reply || "";
@@ -540,6 +532,7 @@
                         roomName: roomName,
                         context: targetMessageText,
                         aiGeneratedText: aiReply,
+                        customPrompt: customPrompt,
                         status: 'generated',
                         createdAt: window.serverTimestamp()
                     });
@@ -565,7 +558,6 @@
             } catch (e) { console.error("自動添削保存失敗:", e); }
         }
 
-        // 各チャットブロックごとに個別返信欄とボタンを持たせる構造
         function buildCardContent(roomId, roomName, messages, members, displayCount = 1, isNormalTab = false) {
             let chatHistoryHtml = '';
             let latestMsg = {};
@@ -607,13 +599,15 @@
                             </button>
                         </div>
 
-                        <!-- 🤖 チャットごとの個別AI返信・送信エリア -->
                         <div class="mt-2 pt-2 border-t border-slate-200 space-y-2 bg-indigo-50/50 p-2 rounded-lg">
                             <div class="flex items-center gap-1.5">
                                 <select id="member_select_${msgKey}" class="flex-1 border rounded p-1 text-[11px] bg-white font-bold">
                                     ${memberOptions}
                                 </select>
                                 <button onclick="insertMentionForMsg('${msgKey}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-2.5 py-1 rounded shrink-0 cursor-pointer">To追加</button>
+                            </div>
+                            <div>
+                                <input type="text" id="custom_prompt_${msgKey}" placeholder="追加の指示（例：アスタリスクを含めないで、丁寧にお断り）" class="w-full border rounded p-1.5 text-xs bg-white">
                             </div>
                             <div>
                                 <button onclick="generateAiReplyForMessage('${msgKey}', '${roomId}', this)" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[11px] font-bold py-1.5 px-2 rounded shadow-sm cursor-pointer transition">
@@ -640,7 +634,7 @@
             }
 
             chatHistoryHtml = `
-                <div class="space-y-3 max-h-[450px] overflow-y-auto pr-1 w-full box-border">
+                <div class="space-y-3 w-full box-border">
                     <div class="text-[10px] font-bold text-slate-400">💬 メッセージ (${chatCount}件)</div>
                     ${batchCopyHeaderBtn}
                     ${chatHistoryHtml}
