@@ -1,702 +1,1525 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>統合ポータルアプリ</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background: #f4f6f8; font-family: sans-serif; color: #1e293b; padding-bottom: 40px; }
-        .card { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; margin-bottom: 16px; }
-        
-        /* タブメニュー */
-        .main-tabs { display: flex; overflow-x: auto; background: white; border-bottom: 1px solid #cbd5e1; position: sticky; top: 0; z-index: 50; }
-        .main-tab { flex: 1; text-align: center; padding: 12px 8px; font-weight: bold; font-size: 14px; color: #64748b; cursor: pointer; white-space: nowrap; border-bottom: 3px solid transparent; transition: all 0.2s; }
-        .main-tab.active { color: #2563eb; border-bottom-color: #2563eb; background: #eff6ff; }
-        .tab-content { display: none; padding: 16px; max-width: 800px; margin: 0 auto; }
-        .tab-content.active { display: block; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>統合ポータルアプリ</title>
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --ink:#1C2733; --sub:#5B6877; --line:#D5DCE3;
+  --blue:#1F5FAD; --blue-soft:#E6EEF8;
+  --red:#C8362E; --red-soft:#FBEAE8;
+  --amber:#B87A06; --amber-soft:#FBF2DF;
+  --green:#2E7D4F; --green-soft:#E5F3EA;
+  --gray-soft:#F3F5F7;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",Meiryo,sans-serif;font-size:15px;line-height:1.55;-webkit-tap-highlight-color:transparent;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:none;background:none}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+[hidden]{display:none!important}
 
-        /* モーダル */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; display: none; padding: 16px; }
-        .modal-content { background: #fff; width: 100%; max-width: 320px; border-radius: 8px; padding: 20px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .image-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 2000; display: none; padding: 16px; cursor: pointer; }
-        .image-modal-content { max-width: 100%; max-height: 100%; border-radius: 8px; object-fit: contain; }
-    </style>
+/* ヘッダー */
+.topbar{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top,0px)) 14px 8px;display:flex;align-items:center;gap:10px}
+.topbar h1{font-size:16px;margin:0;flex:1;font-weight:700}
+.me-chip{background:var(--gray-soft);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:700;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.me-chip.unset{background:var(--amber-soft);border-color:#E8CF94;color:var(--amber)}
+
+/* 下部タブ */
+.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--surface);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-btn{flex:1;padding:8px 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px;font-weight:700;color:var(--sub);position:relative}
+.nav-btn .ico{font-size:21px;line-height:1.2}
+.nav-btn.active{color:var(--blue)}
+.nav-btn.active::before{content:"";position:absolute;top:0;left:22%;right:22%;height:3px;border-radius:0 0 3px 3px;background:var(--blue)}
+.nav-badge{position:absolute;top:4px;left:calc(50% + 8px);min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:var(--red);color:#fff;font-size:11px;line-height:19px;text-align:center}
+
+/* 共通レイアウト */
+.tab-content{display:none;max-width:760px;margin:0 auto;padding:12px 12px 24px}
+.tab-content.active{display:block}
+.toolbar{display:flex;gap:8px;margin-bottom:10px}
+.search{flex:1;min-width:0;height:42px;border:1px solid var(--line);border-radius:var(--radius);padding:0 12px;background:var(--surface)}
+.btn{height:42px;padding:0 14px;border-radius:var(--radius);font-weight:700;font-size:14px;white-space:nowrap}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-green{background:var(--green);color:#fff}
+.btn-sub{background:var(--gray-soft);border:1px solid var(--line)}
+.btn:disabled{opacity:.55}
+.btn-sm{height:34px;padding:0 10px;font-size:13px;border-radius:8px;font-weight:700}
+.btn-sm.edit{color:var(--amber);background:var(--amber-soft)}
+.btn-sm.del{color:var(--red);background:var(--red-soft)}
+.btn-sm.plain{background:var(--gray-soft);border:1px solid var(--line)}
+.btn-sm.ok{background:var(--green);color:#fff}
+.btn-sm.blue{background:var(--blue-soft);color:var(--blue)}
+
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:700;color:var(--sub);white-space:nowrap}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip .n{font-weight:400;margin-left:3px;opacity:.85}
+.chip.warn .n{color:var(--red);font-weight:700;opacity:1}
+.chip.on.warn .n{color:#FFB4AE}
+
+.seg{display:flex;background:#DCE2E8;border-radius:var(--radius);padding:3px;margin-bottom:10px}
+.seg button{flex:1;height:36px;border-radius:8px;font-size:13px;font-weight:700;color:var(--sub)}
+.seg button.on{background:var(--surface);color:var(--blue);box-shadow:0 1px 2px rgba(28,39,51,.15)}
+
+.meta-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--sub);margin:2px 2px 8px;flex-wrap:wrap}
+.meta-row select{height:32px;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:0 6px;font-size:12px}
+.link-btn{color:var(--blue);font-weight:700;font-size:12px;padding:4px 0}
+
+/* フォーム */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px;border-top:4px solid var(--blue)}
+.panel h2{font-size:15px;margin:0 0 10px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.field{margin-bottom:10px}
+.field label,.lbl{display:block;font-size:12px;font-weight:700;color:var(--sub);margin-bottom:3px}
+.inp{width:100%;min-height:40px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff}
+textarea.inp{resize:vertical}
+.check{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;padding:6px 0}
+.check input{width:20px;height:20px}
+.prio{display:flex;gap:6px}
+.prio button{flex:1;height:40px;border-radius:8px;border:1px solid var(--line);font-weight:700;font-size:13px;background:#fff;color:var(--sub)}
+.prio button.on.normal{background:var(--blue-soft);border-color:var(--blue);color:var(--blue)}
+.prio button.on.urgent{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+.img-btns{display:flex;gap:6px;margin-bottom:6px}
+.img-btns label{height:36px;padding:0 12px;border-radius:8px;display:inline-flex;align-items:center;font-size:13px;font-weight:700;cursor:pointer;background:var(--gray-soft);border:1px solid var(--line)}
+.previews{display:flex;flex-wrap:wrap;gap:8px}
+.pv{position:relative}
+.pv img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
+.pv button{position:absolute;top:-7px;right:-7px;width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;font-size:13px;line-height:24px}
+.form-actions{display:flex;gap:8px;margin-top:6px}
+.form-actions .btn{flex:1}
+.forward{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.forward .btn{width:100%;background:var(--blue-soft);color:var(--blue)}
+
+/* カード */
+.list{display:flex;flex-direction:column;gap:8px}
+.item{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+.item.s-blue{border-left-color:var(--blue)}
+.item.s-red{border-left-color:var(--red)}
+.item.s-amber{border-left-color:#E0A526}
+.item.s-green{border-left-color:var(--green)}
+.item.done{background:#F7F8FA}
+.item.unread{box-shadow:0 0 0 2px rgba(31,95,173,.25)}
+.item-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px}
+.tags{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--gray-soft);color:var(--sub);white-space:nowrap}
+.tag.blue{background:var(--blue-soft);color:var(--blue)}
+.tag.red{background:var(--red-soft);color:var(--red)}
+.tag.amber{background:var(--amber-soft);color:var(--amber)}
+.tag.green{background:var(--green-soft);color:var(--green)}
+.tag.new{background:var(--blue);color:#fff}
+.when{font-size:11px;color:var(--sub);white-space:nowrap;text-align:right}
+.item-title{font-weight:700;font-size:15px;margin:2px 0}
+.body{font-size:14px;white-space:pre-wrap;word-break:break-word}
+.body.clamp{max-height:4.7em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent)}
+.more-link{font-size:12px;color:var(--blue);font-weight:700;padding:4px 0}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer}
+.readers{font-size:11px;color:var(--sub);margin-top:4px}
+.done-box{background:var(--green-soft);color:#1E5536;border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0;white-space:pre-wrap}
+.complete-row{display:flex;gap:6px;margin-top:8px}
+.complete-row .inp{min-height:36px;padding:6px 10px;font-size:13px}
+.actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;border-top:1px solid #E9EDF1;margin-top:8px;padding-top:8px}
+.actions .spacer{flex:1}
+.mat-lines{margin:4px 0 0;padding:0;list-style:none;font-size:14px}
+.mat-lines li{display:flex;gap:8px;padding:3px 0;border-bottom:1px dotted #E1E6EB}
+.mat-lines li:last-child{border-bottom:none}
+.mat-lines .q{margin-left:auto;font-weight:700;white-space:nowrap}
+.mat-lines .m{color:var(--sub);font-size:12px}
+.empty{text-align:center;color:var(--sub);font-size:13px;padding:28px 10px;background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius)}
+.more-btn{display:block;width:100%;margin-top:10px;height:42px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface);font-weight:700;color:var(--blue)}
+
+/* 資材行 */
+.mat-row{display:flex;gap:6px;align-items:flex-start;background:var(--gray-soft);border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px}
+.mat-row.err{border-color:var(--red);background:var(--red-soft)}
+.mat-row .rm{width:30px;height:36px;color:var(--red);font-weight:700}
+.mat-row .cols{flex:1;display:flex;flex-direction:column;gap:4px}
+.mat-row .sub{display:flex;gap:4px}
+.mat-row .inp{min-height:36px;padding:6px 8px;font-size:14px}
+.mat-row .m-unit{width:70px;flex:none}
+.stepper{display:flex;flex:none;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.stepper button{width:38px;height:38px;font-size:18px;font-weight:700;color:var(--blue);background:var(--blue-soft)}
+.stepper .m-qty{width:52px;border:none;border-radius:0;text-align:center;min-height:38px;padding:0 2px}
+.pick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px}
+.pick{position:relative;min-height:46px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:#fff;font-size:13px;font-weight:700;text-align:left;line-height:1.3}
+.pick small{display:block;font-weight:400;color:var(--sub);font-size:11px}
+.pick.in{border-color:var(--green);background:var(--green-soft)}
+.pick .cnt{position:absolute;top:-7px;right:-5px;background:var(--green);color:#fff;border-radius:999px;font-size:11px;padding:0 6px;line-height:18px}
+.hint{font-size:12px;color:var(--sub);background:var(--gray-soft);border:1px dashed var(--line);border-radius:8px;padding:10px}
+.wh-checks{display:flex;flex-wrap:wrap;gap:4px 14px}
+.wh-checks label{display:flex;align-items:center;gap:6px;font-size:14px;padding:4px 0}
+.wh-checks input{width:18px;height:18px}
+.master-list{margin-top:12px;border-top:1px solid var(--line)}
+.m-item{display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid #E9EDF1}
+.m-item .info{flex:1;min-width:0}
+.m-item .nm{font-weight:700;font-size:14px}
+.m-item .ord{display:flex;flex-direction:column;gap:2px}
+.m-item .ord button{width:30px;height:22px;border-radius:5px;background:var(--gray-soft);border:1px solid var(--line);font-size:11px}
+.m-item .ord button:disabled{opacity:.3}
+#mat-items:empty::before{content:"上のボタンから選ぶか、下の「手入力」で追加してください";display:block;font-size:12px;color:var(--sub);padding:10px;border:1px dashed var(--line);border-radius:8px;margin-bottom:6px}
+.add-row{width:100%;height:40px;border:1px dashed #9DB6D6;border-radius:8px;background:var(--blue-soft);color:var(--blue);font-weight:700;font-size:13px;margin-bottom:10px}
+
+/* モーダル */
+.overlay{position:fixed;inset:0;background:rgba(20,28,38,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.overlay.show{display:flex}
+.dialog{background:var(--surface);width:100%;max-width:360px;border-radius:12px;padding:18px}
+.dialog h3{margin:0 0 10px;font-size:16px}
+.dialog .form-actions{margin-top:12px}
+.img-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:2000;padding:16px}
+.img-overlay.show{display:flex}
+.img-overlay img{max-width:100%;max-height:100%;border-radius:8px;object-fit:contain}
+
+.toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;font-weight:700;z-index:3000;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90%;text-align:center}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
 </head>
 <body>
 
-    <!-- メインタブナビゲーション -->
-    <nav class="main-tabs shadow-sm">
-        <div id="tab-btn-notes" class="main-tab active" onclick="switchAppTab('notes')">📓 共有ノート</div>
-        <div id="tab-btn-staff" class="main-tab" onclick="switchAppTab('staff')">💬 依頼・伝言</div>
-        <div id="tab-btn-mat" class="main-tab" onclick="switchAppTab('mat')">📦 資材発注</div>
-    </nav>
+<header class="topbar">
+  <h1 id="page-title">📓 共有ノート</h1>
+  <button id="me-btn" class="me-chip" onclick="openNameModal()">👤 名前を設定</button>
+</header>
 
-    <!-- ==================== 1. チーム共有ノート ==================== -->
-    <div id="app-notes" class="tab-content active">
-        <div class="card">
-            <h2 id="note-form-title" class="font-bold mb-4">📢 新規ノート登録</h2>
-            <form id="note-form">
-                <input type="hidden" id="note-edit-id">
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                    <div><label class="text-xs font-bold text-gray-700">日付</label><input type="date" id="note-date" class="w-full p-2 border rounded mt-1 text-sm bg-white" required></div>
-                    <div>
-                        <label class="text-xs font-bold text-gray-700">カテゴリ</label>
-                        <select id="note-cat" class="w-full p-2 border rounded mt-1 text-sm bg-white">
-                            <option value="一般連絡">一般連絡</option><option value="重要・要確認">重要・要確認</option><option value="決定事項">決定事項</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="mb-3"><label class="text-xs font-bold text-gray-700">タイトル</label><input type="text" id="note-title" class="w-full p-2 border rounded mt-1 text-sm bg-white" required></div>
-                <div class="mb-3"><label class="text-xs font-bold text-gray-700">本文</label><textarea id="note-content" class="w-full p-2 border rounded mt-1 text-sm bg-white" rows="3" required></textarea></div>
-                
-                <div class="mb-3">
-                    <label class="text-xs font-bold text-gray-700 mb-1 block">画像添付 (複数可)</label>
-                    <div class="flex gap-2 mb-2">
-                        <label class="bg-indigo-600 text-white text-xs px-3 py-2 rounded cursor-pointer">📷 撮影<input type="file" id="note-camera" accept="image/*" capture="environment" multiple class="hidden"></label>
-                        <label class="bg-gray-200 text-gray-700 text-xs px-3 py-2 rounded cursor-pointer">📁 選択<input type="file" id="note-file" accept="image/*" multiple class="hidden"></label>
-                    </div>
-                    <div id="note-previews" class="flex flex-wrap gap-2"></div>
-                </div>
-                
-                <div class="flex gap-2">
-                    <button type="button" id="note-cancel-btn" class="hidden flex-1 bg-gray-300 p-2 rounded text-sm font-bold" onclick="resetNoteForm()">キャンセル</button>
-                    <button type="submit" id="note-submit-btn" class="flex-1 bg-blue-600 text-white p-2 rounded text-sm font-bold">保存する</button>
-                </div>
-            </form>
-            <div class="pt-3 mt-3 border-t">
-                <button type="button" onclick="openNoteToStaffModal()" class="w-full bg-indigo-600 text-white p-2 rounded text-xs font-bold">🚀 この内容を「依頼・伝言」に送る</button>
-            </div>
+<!-- ==================== 1. 共有ノート ==================== -->
+<section id="app-notes" class="tab-content active">
+  <div class="toolbar">
+    <input type="search" id="note-search" class="search" placeholder="🔍 キーワード検索">
+    <button class="btn btn-primary" onclick="openNoteForm()">＋ ノート</button>
+  </div>
+
+  <div class="panel" id="note-panel" hidden>
+    <h2 id="note-form-title">📢 新しいノート</h2>
+    <form id="note-form">
+      <input type="hidden" id="note-edit-id">
+      <div class="grid2">
+        <div class="field"><label for="note-date">日付</label><input type="date" id="note-date" class="inp" required></div>
+        <div class="field"><label for="note-cat">カテゴリ</label>
+          <select id="note-cat" class="inp">
+            <option value="一般連絡">一般連絡</option><option value="重要・要確認">重要・要確認</option><option value="決定事項">決定事項</option>
+          </select>
         </div>
-        <div class="card bg-slate-50"><input type="text" id="note-search" placeholder="🔍 キーワード検索..." class="w-full p-2 border rounded text-sm bg-white"></div>
-        <div id="note-list" class="space-y-3"></div>
+      </div>
+      <div class="field"><label for="note-title">タイトル</label><input type="text" id="note-title" class="inp" required></div>
+      <div class="field"><label for="note-content">本文</label><textarea id="note-content" class="inp" rows="4" required></textarea></div>
+      <label class="check"><input type="checkbox" id="note-pinned"> 📌 一覧の上に固定する</label>
+      <div class="field">
+        <span class="lbl">画像（複数可）</span>
+        <div class="img-btns">
+          <label>📷 撮影<input type="file" id="note-camera" accept="image/*" capture="environment" multiple hidden></label>
+          <label>📁 選択<input type="file" id="note-file" accept="image/*" multiple hidden></label>
+        </div>
+        <div id="note-previews" class="previews"></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-sub" onclick="closeNoteForm()">閉じる</button>
+        <button type="submit" id="note-submit-btn" class="btn btn-primary">保存する</button>
+      </div>
+    </form>
+    <div class="forward"><button type="button" class="btn" onclick="openNoteToStaffModal()">🚀 この内容を「依頼・伝言」にも送る</button></div>
+  </div>
+
+  <div class="chips" id="note-chips"></div>
+  <div class="meta-row"><span id="note-count"></span><button class="link-btn" id="note-readall" onclick="markAllNotesRead()">すべて確認済みにする</button></div>
+  <div id="note-list" class="list"></div>
+  <button id="note-more" class="more-btn" onclick="showMore('notes')" hidden>もっと見る</button>
+</section>
+
+<!-- ==================== 2. 依頼・伝言 ==================== -->
+<section id="app-staff" class="tab-content">
+  <div class="toolbar">
+    <input type="search" id="staff-search" class="search" placeholder="🔍 キーワード検索">
+    <button class="btn btn-primary" onclick="openStaffForm()">＋ 依頼</button>
+  </div>
+
+  <div class="panel" id="staff-panel" hidden>
+    <h2 id="staff-form-title">✍️ 新しい依頼・伝言</h2>
+    <form id="staff-form">
+      <input type="hidden" id="staff-edit-id">
+      <div class="grid2">
+        <div class="field"><label for="staff-from">From（依頼者）</label><input type="text" id="staff-from" class="inp" required></div>
+        <div class="field"><label for="staff-to">To（宛先）</label><input type="text" id="staff-to" class="inp" list="name-list" placeholder="名前 or 全員" required></div>
+      </div>
+      <div class="field"><label for="staff-task">内容</label><textarea id="staff-task" class="inp" rows="3" required></textarea></div>
+      <div class="grid2">
+        <div class="field"><span class="lbl">優先度</span>
+          <div class="prio" id="staff-prio">
+            <button type="button" data-v="normal" class="normal on">通常</button>
+            <button type="button" data-v="urgent" class="urgent">🔥 急ぎ</button>
+          </div>
+        </div>
+        <div class="field"><label for="staff-due">期限（任意）</label><input type="date" id="staff-due" class="inp"></div>
+      </div>
+      <div class="field">
+        <span class="lbl">画像（複数可）</span>
+        <div class="img-btns">
+          <label>📷 撮影<input type="file" id="staff-camera" accept="image/*" capture="environment" multiple hidden></label>
+          <label>📁 選択<input type="file" id="staff-file" accept="image/*" multiple hidden></label>
+        </div>
+        <div id="staff-previews" class="previews"></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-sub" onclick="closeStaffForm()">閉じる</button>
+        <button type="submit" id="staff-submit-btn" class="btn btn-primary">送信する</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="seg">
+    <button id="staff-tab-active" class="on" onclick="switchStaffTab('active')">未完了</button>
+    <button id="staff-tab-history" onclick="switchStaffTab('history')">完了履歴</button>
+  </div>
+  <div class="chips" id="staff-chips"></div>
+  <div class="meta-row">
+    <span id="staff-count"></span>
+    <span>
+      <select id="staff-sort" aria-label="並び順">
+        <option value="priority">優先順</option><option value="new">新しい順</option><option value="old">古い順</option>
+      </select>
+      <select id="staff-period" aria-label="表示期間" hidden>
+        <option value="7">完了から7日</option><option value="30">完了から30日</option><option value="all">すべての期間</option>
+      </select>
+    </span>
+  </div>
+  <div id="staff-list" class="list"></div>
+  <button id="staff-more" class="more-btn" onclick="showMore('staff')" hidden>もっと見る</button>
+</section>
+
+<!-- ==================== 3. 資材発注 ==================== -->
+<section id="app-mat" class="tab-content">
+  <div class="toolbar">
+    <select id="mat-wh-filter" class="search" aria-label="倉庫で絞り込み">
+      <option value="">🏭 すべての倉庫</option><option value="調布1F">調布1F</option><option value="調布地下">調布地下</option><option value="本庄">本庄</option><option value="新潟">新潟</option>
+    </select>
+    <button class="btn btn-sub" onclick="openMaster()" aria-label="資材マスタ">⚙ 資材登録</button>
+    <button class="btn btn-primary" onclick="openMatForm()">＋ 発注</button>
+  </div>
+
+  <div class="panel" id="master-panel" hidden style="border-top-color:var(--amber)">
+    <h2 id="master-form-title">⚙ よく使う資材を登録</h2>
+    <p style="font-size:12px;color:var(--sub);margin:-4px 0 10px">登録した資材は、発注依頼の画面にボタンで表示されます。全員で共通です。</p>
+    <input type="hidden" id="master-edit-id">
+    <div class="field"><label for="master-name">資材名</label><input type="text" id="master-name" class="inp" placeholder="例：60サイズ段ボール"></div>
+    <div class="grid2">
+      <div class="field"><label for="master-unit">単位</label><input type="text" id="master-unit" class="inp" list="unit-list" placeholder="個"></div>
+      <div class="field"><label for="master-qty">1回の基本数量</label><input type="number" id="master-qty" class="inp" min="1" step="1" inputmode="numeric" value="1"></div>
     </div>
-
-    <!-- ==================== 2. スタッフ間 依頼・伝言 ==================== -->
-    <div id="app-staff" class="tab-content">
-        <div class="card">
-            <h2 id="staff-form-title" class="font-bold mb-4">✍️ 新規依頼・伝言</h2>
-            <form id="staff-form">
-                <input type="hidden" id="staff-edit-id">
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                    <div><label class="text-xs font-bold text-gray-700">From (依頼者)</label><input type="text" id="staff-from" class="w-full p-2 border rounded mt-1 text-sm bg-white" required></div>
-                    <div><label class="text-xs font-bold text-gray-700">To (宛先)</label><input type="text" id="staff-to" class="w-full p-2 border rounded mt-1 text-sm bg-white" required></div>
-                </div>
-                <div class="mb-3"><label class="text-xs font-bold text-gray-700">タスク内容</label><textarea id="staff-task" class="w-full p-2 border rounded mt-1 text-sm bg-white" rows="2" required></textarea></div>
-                
-                <div class="mb-3">
-                    <label class="text-xs font-bold text-gray-700 mb-1 block">画像添付 (複数可)</label>
-                    <div class="flex gap-2 mb-2">
-                        <label class="bg-indigo-600 text-white text-xs px-3 py-2 rounded cursor-pointer">📷 撮影<input type="file" id="staff-camera" accept="image/*" capture="environment" multiple class="hidden"></label>
-                        <label class="bg-gray-200 text-gray-700 text-xs px-3 py-2 rounded cursor-pointer">📁 選択<input type="file" id="staff-file" accept="image/*" multiple class="hidden"></label>
-                    </div>
-                    <div id="staff-previews" class="flex flex-wrap gap-2"></div>
-                </div>
-
-                <div class="flex gap-2">
-                    <button type="button" id="staff-cancel-btn" class="hidden flex-1 bg-gray-300 p-2 rounded text-sm font-bold" onclick="resetStaffForm()">キャンセル</button>
-                    <button type="submit" id="staff-submit-btn" class="flex-1 bg-blue-600 text-white p-2 rounded text-sm font-bold">送信する</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="flex rounded bg-gray-200 p-1 mb-3">
-            <button id="staff-tab-active" onclick="switchStaffTab('active')" class="flex-1 px-4 py-2 text-xs font-bold rounded bg-white text-blue-600 shadow-sm">未完了</button>
-            <button id="staff-tab-history" onclick="switchStaffTab('history')" class="flex-1 px-4 py-2 text-xs font-bold rounded text-gray-600">完了履歴 (7日)</button>
-        </div>
-        <div class="mb-3"><input type="text" id="staff-search" placeholder="🔍 キーワード検索..." class="w-full p-2 border rounded text-sm bg-white"></div>
-        <div id="staff-list" class="space-y-3"></div>
+    <div class="field"><span class="lbl">使う倉庫（どれも選ばない＝全倉庫で表示）</span>
+      <div class="wh-checks" id="master-wh">
+        <label><input type="checkbox" value="調布1F"> 調布1F</label>
+        <label><input type="checkbox" value="調布地下"> 調布地下</label>
+        <label><input type="checkbox" value="本庄"> 本庄</label>
+        <label><input type="checkbox" value="新潟"> 新潟</label>
+      </div>
     </div>
-
-    <!-- ==================== 3. 資材発注依頼 ==================== -->
-    <div id="app-mat" class="tab-content">
-        <div class="card">
-            <h2 id="mat-form-title" class="font-bold mb-3">📦 発注依頼を作成</h2>
-            <input type="hidden" id="mat-edit-id">
-            <div class="grid grid-cols-2 gap-2 mb-3">
-                <div><label class="text-xs font-bold text-gray-700">依頼日</label><input type="date" id="mat-date" class="w-full p-2 border rounded mt-1 text-sm bg-white"></div>
-                <div>
-                    <label class="text-xs font-bold text-gray-700">倉庫名</label>
-                    <select id="mat-req" class="w-full p-2 border rounded mt-1 text-sm bg-white">
-                        <option value="調布1F">調布1F</option>
-                        <option value="調布地下">調布地下</option>
-                        <option value="本庄">本庄</option>
-                    </select>
-                </div>
-            </div>
-            <div id="mat-items" class="space-y-2 mb-3"></div>
-            <button onclick="addMatRow()" class="w-full bg-sky-50 text-sky-700 p-2 border border-dashed border-sky-300 rounded font-bold text-xs mb-3">＋ 資材を追加</button>
-            <div class="flex gap-2">
-                <button type="button" id="mat-cancel-btn" class="hidden flex-1 bg-gray-300 p-2.5 rounded font-bold text-sm" onclick="resetMatForm()">キャンセル</button>
-                <button onclick="saveMatOrder()" id="mat-submit-btn" class="flex-1 bg-emerald-600 text-white p-2.5 rounded font-bold text-sm">💾 保存する</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3 class="font-bold mb-3 text-sm">⏳ 発注履歴</h3>
-            <div class="flex flex-wrap gap-1 mb-3 pb-3 border-b">
-                <button onclick="filterMat('today')" class="bg-gray-100 px-3 py-1.5 rounded text-xs">今日</button>
-                <button onclick="filterMat('7days')" class="bg-gray-100 px-3 py-1.5 rounded text-xs">過去7日</button>
-                <button onclick="filterMat('all')" class="bg-gray-200 px-3 py-1.5 rounded text-xs font-bold ml-auto">すべて表示</button>
-            </div>
-            <div id="mat-list" class="space-y-3"></div>
-        </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-sub" onclick="closeMaster()">閉じる</button>
+      <button type="button" id="master-submit-btn" class="btn btn-primary" onclick="saveMaster()">追加する</button>
     </div>
+    <div class="master-list" id="master-list"></div>
+    <button type="button" class="more-btn" id="master-import" onclick="importMasterFromHistory()">📥 過去の発注から資材を取り込む</button>
+  </div>
 
-    <!-- ==================== グローバル モーダル ==================== -->
-    <div class="modal-overlay" id="confirm-modal">
-        <div class="modal-content">
-            <div class="text-lg font-bold text-rose-600 mb-2">⚠️ 確認</div>
-            <div id="confirm-msg" class="text-sm mb-4 text-gray-700">削除しますか？</div>
-            <div class="flex gap-2">
-                <button id="confirm-no" class="flex-1 bg-gray-200 p-2 rounded font-bold text-gray-700">キャンセル</button>
-                <button id="confirm-yes" class="flex-1 bg-rose-600 p-2 rounded font-bold text-white">削除する</button>
-            </div>
+  <div class="panel" id="mat-panel" hidden>
+    <h2 id="mat-form-title">📦 発注依頼を作成</h2>
+    <input type="hidden" id="mat-edit-id">
+    <div class="grid2">
+      <div class="field"><label for="mat-date">依頼日</label><input type="date" id="mat-date" class="inp"></div>
+      <div class="field"><label for="mat-req">倉庫名</label>
+        <select id="mat-req" class="inp"><option value="調布1F">調布1F</option><option value="調布地下">調布地下</option><option value="本庄">本庄</option><option value="新潟">新潟</option></select>
+      </div>
+    </div>
+    <div class="field"><span class="lbl">よく使う資材（タップで追加・もう一度タップで数量アップ）</span>
+      <div id="mat-picks" class="pick-grid"></div>
+    </div>
+    <span class="lbl">発注する資材</span>
+    <div id="mat-items"></div>
+    <button type="button" class="add-row" onclick="addMatRow()">＋ 一覧にない資材を手入力</button>
+    <div class="form-actions">
+      <button type="button" class="btn btn-sub" onclick="closeMatForm()">閉じる</button>
+      <button type="button" id="mat-submit-btn" class="btn btn-green" onclick="saveMatOrder()">💾 保存する</button>
+    </div>
+  </div>
+
+  <div class="chips" id="mat-status-chips"></div>
+  <div class="chips" id="mat-period-chips"></div>
+  <div class="meta-row"><span id="mat-count"></span></div>
+  <div id="mat-list" class="list"></div>
+  <button id="mat-more" class="more-btn" onclick="showMore('mat')" hidden>もっと見る</button>
+</section>
+
+<!-- 下部タブ -->
+<nav class="bottom-nav">
+  <button id="tab-btn-notes" class="nav-btn active" onclick="switchAppTab('notes')"><span class="ico">📓</span>共有ノート<span class="nav-badge" id="badge-notes" hidden></span></button>
+  <button id="tab-btn-staff" class="nav-btn" onclick="switchAppTab('staff')"><span class="ico">💬</span>依頼・伝言<span class="nav-badge" id="badge-staff" hidden></span></button>
+  <button id="tab-btn-mat" class="nav-btn" onclick="switchAppTab('mat')"><span class="ico">📦</span>資材発注<span class="nav-badge" id="badge-mat" hidden></span></button>
+</nav>
+
+<datalist id="name-list"></datalist>
+<datalist id="mat-name-list"></datalist>
+<datalist id="unit-list"><option value="個"><option value="箱"><option value="枚"><option value="巻"><option value="袋"><option value="束"><option value="ケース"><option value="本"></datalist>
+
+<!-- 確認モーダル -->
+<div class="overlay" id="confirm-modal">
+  <div class="dialog">
+    <h3>⚠️ 確認</h3>
+    <div id="confirm-msg" style="font-size:14px"></div>
+    <div class="form-actions">
+      <button id="confirm-no" class="btn btn-sub">キャンセル</button>
+      <button id="confirm-yes" class="btn" style="background:var(--red);color:#fff">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 名前設定 -->
+<div class="overlay" id="name-modal">
+  <div class="dialog">
+    <h3>👤 あなたの名前</h3>
+    <p style="font-size:13px;color:var(--sub);margin:0 0 10px">「自分宛て」の絞り込みや、確認済みの記録に使います。この端末に保存されます。</p>
+    <input type="text" id="name-input" class="inp" list="name-list" placeholder="例：伊藤">
+    <div class="form-actions">
+      <button class="btn btn-sub" onclick="closeModal('name-modal')">あとで</button>
+      <button class="btn btn-primary" onclick="saveName()">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ノート→依頼 転送 -->
+<div class="overlay" id="note-staff-modal">
+  <div class="dialog">
+    <h3>🚀 依頼・伝言に送る</h3>
+    <div class="field"><label for="ns-to">To（宛先）</label><input type="text" id="ns-to" value="全員" class="inp" list="name-list"></div>
+    <div class="field"><label for="ns-memo">追記メモ</label><textarea id="ns-memo" rows="2" class="inp"></textarea></div>
+    <label class="check"><input type="checkbox" id="ns-urgent"> 🔥 急ぎにする</label>
+    <label class="check"><input type="checkbox" id="ns-save" checked> ノートとしても保存する</label>
+    <div class="form-actions">
+      <button class="btn btn-sub" onclick="closeModal('note-staff-modal')">キャンセル</button>
+      <button class="btn btn-primary" id="ns-send-btn" onclick="submitNoteToStaff()">送信する</button>
+    </div>
+  </div>
+</div>
+
+<div class="img-overlay" id="image-modal" onclick="this.classList.remove('show')"><img id="modal-img" src="" alt="拡大画像"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp, arrayUnion, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+const $ = id => document.getElementById(id);
+const PAGE = 30;
+
+/* ==================== 日付ユーティリティ（日本時間＝端末時刻で計算） ==================== */
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayStr = () => ymd(new Date());
+const daysAgoStr = n => { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); };
+const ms = t => t && t.toMillis ? t.toMillis() : (t ? new Date(t).getTime() : 0);
+const md = s => { if (!s) return ''; const p = s.split('-'); return `${Number(p[1])}/${Number(p[2])}`; };
+const fmtTs = t => { const m = ms(t); if (!m) return ''; const d = new Date(m); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const daysSince = t => { const m = ms(t); return m ? Math.floor((Date.now() - m) / 86400000) : 0; };
+
+function esc(str) {
+  if (str === undefined || str === null) return '';
+  return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+/* ==================== ユーザー名・確認済み判定 ==================== */
+const getMe = () => (localStorage.getItem('app_user_name') || '').trim();
+// 名前を初めて設定した時刻より前の投稿は「確認済み」扱い（過去分で未読が溢れないように）
+const getBaseline = () => Number(localStorage.getItem('app_read_baseline') || 0);
+
+function isRead(item) {
+  const me = getMe();
+  if (!me) return true;
+  if ((item.readBy || []).includes(me)) return true;
+  if (item.from && item.from === me) return true;
+  if (item.author && item.author === me) return true;
+  return ms(item.createdAt) && ms(item.createdAt) < getBaseline();
+}
+function splitNames(s) { return String(s || '').split(/[,、，\s・/]+/).filter(Boolean); }
+function isForMe(s) {
+  const me = getMe();
+  if (!me) return false;
+  const names = splitNames(s.to);
+  return names.includes('全員') || names.includes(me);
+}
+
+function renderMe() {
+  const me = getMe();
+  const b = $('me-btn');
+  b.textContent = me ? `👤 ${me}` : '👤 名前を設定';
+  b.classList.toggle('unset', !me);
+}
+window.openNameModal = () => { $('name-input').value = getMe(); openModal('name-modal'); setTimeout(() => $('name-input').focus(), 50); };
+window.saveName = () => {
+  const v = $('name-input').value.trim();
+  if (!v) return toast('名前を入力してください');
+  setMe(v);
+  closeModal('name-modal');
+  toast(`「${v}」で設定しました`);
+};
+function setMe(v) {
+  localStorage.setItem('app_user_name', v);
+  if (!localStorage.getItem('app_read_baseline')) localStorage.setItem('app_read_baseline', String(Date.now()));
+  renderMe();
+  if (!$('staff-edit-id').value && !$('staff-from').value) $('staff-from').value = v;
+  renderAll();
+}
+
+/* ==================== 共通UI ==================== */
+function openModal(id) { $(id).classList.add('show'); }
+window.closeModal = id => $(id).classList.remove('show');
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+let confirmCallback = null;
+function showConfirm(msg, callback, okLabel = '削除する', danger = true) {
+  $('confirm-msg').textContent = msg;
+  const yes = $('confirm-yes');
+  yes.textContent = okLabel;
+  yes.style.background = danger ? 'var(--red)' : 'var(--blue)';
+  confirmCallback = callback;
+  openModal('confirm-modal');
+}
+$('confirm-no').onclick = () => closeModal('confirm-modal');
+$('confirm-yes').onclick = async () => {
+  closeModal('confirm-modal');
+  if (confirmCallback) { try { await confirmCallback(); } catch (e) { alert('エラー: ' + e.message); } }
+};
+
+// 画像クリックで拡大（URLをonclick文字列に埋め込まない）
+document.addEventListener('click', e => {
+  const img = e.target.closest('img.thumb');
+  if (img) { $('modal-img').src = img.dataset.full; $('image-modal').classList.add('show'); }
+});
+
+// 長文の開閉
+window.toggleBody = (id, btn) => {
+  const el = $(id);
+  const open = el.classList.toggle('clamp');
+  btn.textContent = open ? '続きを読む ▾' : '折りたたむ ▴';
+};
+
+function thumbsHtml(urls) {
+  if (!urls || !urls.length) return '';
+  return `<div class="thumbs">${urls.map(u => `<img class="thumb" src="${esc(u)}" data-full="${esc(u)}" loading="lazy" alt="添付画像">`).join('')}</div>`;
+}
+function bodyHtml(id, text) {
+  const t = String(text || '');
+  const long = t.length > 80 || t.split('\n').length >= 4;
+  return `<div id="body_${id}" class="body ${long ? 'clamp' : ''}">${esc(t)}</div>` +
+    (long ? `<button type="button" class="more-link" onclick="toggleBody('body_${id}', this)">続きを読む ▾</button>` : '');
+}
+
+const TITLES = { notes: '📓 共有ノート', staff: '💬 依頼・伝言', mat: '📦 資材発注' };
+window.switchAppTab = (tabId) => {
+  document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  $(`tab-btn-${tabId}`).classList.add('active');
+  $(`app-${tabId}`).classList.add('active');
+  $('page-title').textContent = TITLES[tabId];
+  localStorage.setItem('app_last_tab', tabId);
+  window.scrollTo(0, 0);
+};
+
+/* ==================== バッジ（実際の件数をそのまま反映） ==================== */
+function updatePortalBadge(appId, count) {
+  const STORAGE_KEY = 'warehouse_portal_v7_data';
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return;
+  try {
+    const data = JSON.parse(saved);
+    const card = data.cards.find(c => c.id === appId);
+    if (card) { card.badge = count; localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+  } catch (e) { console.error('Badge update error:', e); }
+}
+function setNavBadge(id, n) { const b = $(id); b.hidden = !n; b.textContent = n > 99 ? '99+' : n; }
+
+function refreshBadges() {
+  const me = getMe();
+  const unreadNotes = allNotes.filter(n => !isRead(n)).length;
+  const pending = allStaff.filter(s => s.status !== 'completed');
+  const staffCount = me ? pending.filter(s => isForMe(s)).length : pending.length;
+  const matCount = allMat.filter(m => m.status === '未発注').length;
+  setNavBadge('badge-notes', unreadNotes);
+  setNavBadge('badge-staff', staffCount);
+  setNavBadge('badge-mat', matCount);
+  updatePortalBadge('notes', unreadNotes + staffCount);
+  updatePortalBadge('zaico', matCount);
+}
+
+/* ==================== 画像（圧縮・アップロード・後片付け） ==================== */
+async function compressImage(file, maxWidth = 1200, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        canvas.toBlob(blob => resolve(new File([blob], file.name, { type: 'image/jpeg' })), 'image/jpeg', quality);
+      };
+      img.onerror = reject;
+      img.src = event.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+async function uploadAll(files, folder) {
+  const urls = [];
+  for (const file of files) {
+    const compressed = await compressImage(file);
+    const r = ref(storage, `${folder}/${Date.now()}_${Math.random().toString(36).substring(2)}`);
+    await uploadBytes(r, compressed);
+    urls.push(await getDownloadURL(r));
+  }
+  return urls;
+}
+// 他のノート・依頼でまだ使われている画像は消さない（ノート転送で同じ画像を共有しているため）
+function isImageUsed(url, exclude) {
+  const inNotes = allNotes.some(n => !(exclude.col === 'notes' && n.id === exclude.id) && (n.imageUrls || []).includes(url));
+  const inStaff = allStaff.some(s => !(exclude.col === 'staff' && s.id === exclude.id) && (s.imageUrls || []).includes(url));
+  return inNotes || inStaff;
+}
+async function cleanupImages(urls, exclude) {
+  for (const url of urls || []) {
+    if (isImageUsed(url, exclude)) continue;
+    try { await deleteObject(ref(storage, url)); } catch (e) { console.warn('画像削除スキップ:', e.code || e.message); }
+  }
+}
+
+/* 画像プレビュー（フォーム共通） */
+const pics = { note: { files: [], existing: [] }, staff: { files: [], existing: [] } };
+function renderPreviews(kind) {
+  const c = $(`${kind}-previews`);
+  const p = pics[kind];
+  c.innerHTML =
+    p.existing.map((u, i) => `<div class="pv"><img src="${esc(u)}" alt=""><button type="button" aria-label="画像を外す" onclick="removePic('${kind}','existing',${i})">×</button></div>`).join('') +
+    p.files.map((f, i) => `<div class="pv"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" aria-label="画像を外す" onclick="removePic('${kind}','files',${i})">×</button></div>`).join('');
+}
+window.removePic = (kind, type, i) => { pics[kind][type].splice(i, 1); renderPreviews(kind); };
+['note', 'staff'].forEach(kind => {
+  [`${kind}-camera`, `${kind}-file`].forEach(id => {
+    $(id).addEventListener('change', e => {
+      Array.from(e.target.files).forEach(f => pics[kind].files.push(f));
+      renderPreviews(kind); e.target.value = '';
+    });
+  });
+});
+
+/* 表示件数（もっと見る） */
+const limits = { notes: PAGE, staff: PAGE, mat: PAGE };
+window.showMore = (k) => { limits[k] += PAGE; renderAll(); };
+function resetLimit(k) { limits[k] = PAGE; }
+
+/* 宛先候補 */
+function refreshNameList() {
+  const set = new Set(['全員']);
+  allStaff.forEach(s => { splitNames(s.from).forEach(n => set.add(n)); splitNames(s.to).forEach(n => set.add(n)); });
+  const me = getMe(); if (me) set.add(me);
+  $('name-list').innerHTML = [...set].map(n => `<option value="${esc(n)}">`).join('');
+}
+
+/* ==================== 1. 共有ノート ==================== */
+let allNotes = [];
+let noteFilter = 'all';
+$('note-date').value = todayStr();
+
+window.openNoteForm = () => { $('note-panel').hidden = false; $('note-title').focus(); };
+window.closeNoteForm = () => { resetNoteForm(); $('note-panel').hidden = true; };
+window.resetNoteForm = () => {
+  $('note-form').reset();
+  $('note-date').value = todayStr();
+  $('note-edit-id').value = '';
+  pics.note = { files: [], existing: [] }; renderPreviews('note');
+  $('note-form-title').textContent = '📢 新しいノート';
+  $('note-submit-btn').textContent = '保存する';
+};
+
+function noteFormData(imageUrls) {
+  return {
+    date: $('note-date').value,
+    category: $('note-cat').value,
+    title: $('note-title').value.trim(),
+    content: $('note-content').value,
+    pinned: $('note-pinned').checked,
+    imageUrls
+  };
+}
+// ノートを保存（新規 or 更新）し、使わなくなった画像を片付ける
+async function saveNote(imageUrls) {
+  const data = noteFormData(imageUrls);
+  const editId = $('note-edit-id').value;
+  const me = getMe();
+  if (editId) {
+    const before = allNotes.find(n => n.id === editId);
+    data.updatedAt = serverTimestamp();
+    await updateDoc(doc(db, 'shared_notes', editId), data);
+    const removed = (before?.imageUrls || []).filter(u => !imageUrls.includes(u));
+    await cleanupImages(removed, { col: 'notes', id: editId });
+  } else {
+    data.createdAt = serverTimestamp();
+    data.author = me;
+    data.readBy = me ? [me] : [];
+    await addDoc(collection(db, 'shared_notes'), data);
+  }
+}
+
+$('note-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('note-submit-btn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    const uploaded = await uploadAll(pics.note.files, 'notes');
+    await saveNote([...pics.note.existing, ...uploaded]);
+    closeNoteForm();
+    toast('ノートを保存しました');
+    btn.textContent = '保存する';
+  } catch (err) { alert('エラー: ' + err.message); btn.textContent = label; }
+  btn.disabled = false;
+});
+
+onSnapshot(query(collection(db, 'shared_notes'), orderBy('createdAt', 'desc')), snap => {
+  allNotes = snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+  renderNotes(); refreshBadges();
+});
+
+$('note-search').addEventListener('input', () => { resetLimit('notes'); renderNotes(); });
+
+const NOTE_CAT = {
+  '重要・要確認': { stripe: 's-red', tag: 'red' },
+  '決定事項': { stripe: 's-green', tag: 'green' },
+  '一般連絡': { stripe: 's-blue', tag: 'blue' }
+};
+
+function renderNoteChips() {
+  const c = (f) => allNotes.filter(f).length;
+  const chips = [
+    ['all', 'すべて', allNotes.length],
+    ['unread', '未確認', c(n => !isRead(n)), true],
+    ['pinned', '📌 固定', c(n => n.pinned)],
+    ['重要・要確認', '重要・要確認', c(n => n.category === '重要・要確認')],
+    ['決定事項', '決定事項', c(n => n.category === '決定事項')],
+    ['一般連絡', '一般連絡', c(n => n.category === '一般連絡')]
+  ];
+  $('note-chips').innerHTML = chips.map(([k, l, n, warn]) =>
+    `<button class="chip ${noteFilter === k ? 'on' : ''} ${warn && n ? 'warn' : ''}" onclick="setNoteFilter('${k}')">${l}<span class="n">${n}</span></button>`).join('');
+}
+window.setNoteFilter = (k) => { noteFilter = k; resetLimit('notes'); renderNotes(); };
+
+function renderNotes() {
+  renderNoteChips();
+  const me = getMe();
+  const kw = $('note-search').value.trim().toLowerCase();
+  let list = allNotes.filter(n => {
+    if (noteFilter === 'unread' && isRead(n)) return false;
+    if (noteFilter === 'pinned' && !n.pinned) return false;
+    if (NOTE_CAT[noteFilter] && n.category !== noteFilter) return false;
+    if (kw && !(`${n.title || ''} ${n.content || ''} ${n.category || ''}`).toLowerCase().includes(kw)) return false;
+    return true;
+  });
+  // 固定 → 新しい順
+  list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || ms(b.createdAt) - ms(a.createdAt));
+
+  const unreadCount = allNotes.filter(n => !isRead(n)).length;
+  $('note-readall').hidden = !me || !unreadCount;
+  $('note-count').textContent = `${list.length}件`;
+
+  const shown = list.slice(0, limits.notes);
+  $('note-more').hidden = list.length <= limits.notes;
+  $('note-list').innerHTML = shown.map(n => {
+    const cat = NOTE_CAT[n.category] || NOTE_CAT['一般連絡'];
+    const read = isRead(n);
+    const readers = (n.readBy || []);
+    return `
+    <article class="item ${cat.stripe} ${read ? '' : 'unread'}">
+      <div class="item-head">
+        <div class="tags">
+          ${read ? '' : '<span class="tag new">未確認</span>'}
+          ${n.pinned ? '<span class="tag amber">📌 固定</span>' : ''}
+          <span class="tag ${cat.tag}">${esc(n.category)}</span>
         </div>
-    </div>
-    <div class="image-modal-overlay" id="image-modal" onclick="document.getElementById('image-modal').style.display='none'">
-        <img class="image-modal-content" id="modal-img" src="">
-    </div>
-    <div class="modal-overlay" id="note-staff-modal">
-        <div class="modal-content text-left">
-            <h3 class="font-bold text-center mb-3">🚀 スタッフアプリへ転送</h3>
-            <div class="mb-2"><label class="text-xs font-bold">To (宛先)</label><input type="text" id="ns-to" value="全員" class="w-full border p-2 rounded text-sm mt-1"></div>
-            <div class="mb-3"><label class="text-xs font-bold">追記メモ</label><textarea id="ns-memo" rows="2" class="w-full border p-2 rounded text-sm mt-1"></textarea></div>
-            <div class="flex gap-2">
-                <button onclick="document.getElementById('note-staff-modal').style.display='none'" class="flex-1 bg-gray-200 p-2 rounded font-bold text-xs">キャンセル</button>
-                <button onclick="submitNoteToStaff()" class="flex-1 bg-indigo-600 text-white p-2 rounded font-bold text-xs">送信する</button>
-            </div>
+        <div class="when">${esc(md(n.date))}${n.author ? `<br>${esc(n.author)}` : ''}</div>
+      </div>
+      <div class="item-title">${esc(n.title)}</div>
+      ${bodyHtml('n' + n.id, n.content)}
+      ${thumbsHtml(n.imageUrls)}
+      ${readers.length ? `<div class="readers">✓ 確認済み（${readers.length}人）：${esc(readers.join('、'))}</div>` : ''}
+      <div class="actions">
+        ${me && !read ? `<button class="btn-sm ok" onclick="markNoteRead('${n.id}')">✓ 確認しました</button>` : ''}
+        <span class="spacer"></span>
+        <button class="btn-sm plain" onclick="togglePin('${n.id}')">${n.pinned ? '固定を外す' : '📌 固定'}</button>
+        <button class="btn-sm edit" onclick="editNote('${n.id}')">編集</button>
+        <button class="btn-sm del" onclick="delNote('${n.id}')">削除</button>
+      </div>
+    </article>`;
+  }).join('') || `<div class="empty">${noteFilter === 'unread' ? '未確認のノートはありません 👍' : '該当するノートはありません。「＋ ノート」から登録できます。'}</div>`;
+}
+
+window.markNoteRead = async (id) => {
+  const me = getMe(); if (!me) return openNameModal();
+  await updateDoc(doc(db, 'shared_notes', id), { readBy: arrayUnion(me) });
+};
+window.markAllNotesRead = () => {
+  const me = getMe(); if (!me) return openNameModal();
+  const targets = allNotes.filter(n => !isRead(n));
+  showConfirm(`未確認のノート${targets.length}件を、すべて確認済みにしますか？`, async () => {
+    await Promise.all(targets.map(n => updateDoc(doc(db, 'shared_notes', n.id), { readBy: arrayUnion(me) })));
+    toast('すべて確認済みにしました');
+  }, '確認済みにする', false);
+};
+window.togglePin = (id) => {
+  const n = allNotes.find(x => x.id === id);
+  updateDoc(doc(db, 'shared_notes', id), { pinned: !n.pinned });
+};
+window.editNote = (id) => {
+  const n = allNotes.find(x => x.id === id);
+  if (!n) return;
+  $('note-edit-id').value = id;
+  $('note-date').value = n.date || todayStr();
+  $('note-cat').value = n.category || '一般連絡';
+  $('note-title').value = n.title || '';
+  $('note-content').value = n.content || '';
+  $('note-pinned').checked = !!n.pinned;
+  pics.note = { files: [], existing: [...(n.imageUrls || [])] }; renderPreviews('note');
+  $('note-form-title').textContent = '✏️ ノートを編集';
+  $('note-submit-btn').textContent = '更新する';
+  $('note-panel').hidden = false;
+  window.scrollTo(0, 0);
+};
+window.delNote = (id) => showConfirm('このノートを削除しますか？', async () => {
+  const n = allNotes.find(x => x.id === id);
+  await deleteDoc(doc(db, 'shared_notes', id));
+  await cleanupImages(n?.imageUrls, { col: 'notes', id });
+  toast('削除しました');
+});
+
+window.openNoteToStaffModal = () => {
+  if (!$('note-title').value.trim()) return toast('タイトルを入力してください');
+  openModal('note-staff-modal');
+};
+window.submitNoteToStaff = async () => {
+  const btn = $('ns-send-btn');
+  btn.disabled = true; btn.textContent = '送信中...';
+  try {
+    // 新しく添付した画像もアップロードしてから送る
+    const uploaded = await uploadAll(pics.note.files, 'notes');
+    const urls = [...pics.note.existing, ...uploaded];
+    const title = $('note-title').value.trim();
+    const content = $('note-content').value;
+    const memo = $('ns-memo').value.trim();
+    const me = getMe();
+    if ($('ns-save').checked) await saveNote(urls);
+    await addDoc(collection(db, 'staff_requests'), {
+      from: me || 'ノート連携',
+      to: $('ns-to').value.trim() || '全員',
+      task: `【ノート共有】${title}\n${content}` + (memo ? `\n---\n${memo}` : ''),
+      priority: $('ns-urgent').checked ? 'urgent' : 'normal',
+      due: '',
+      status: 'pending',
+      readBy: me ? [me] : [],
+      createdAt: serverTimestamp(),
+      imageUrls: urls
+    });
+    closeModal('note-staff-modal');
+    $('ns-memo').value = ''; $('ns-urgent').checked = false; $('ns-to').value = '全員';
+    if ($('ns-save').checked) closeNoteForm();
+    else { pics.note.files = []; pics.note.existing = urls; renderPreviews('note'); }
+    toast($('ns-save').checked ? 'ノートを保存し、依頼・伝言に送りました' : '依頼・伝言に送りました');
+  } catch (e) { alert('エラー: ' + e.message); }
+  btn.disabled = false; btn.textContent = '送信する';
+};
+
+/* ==================== 2. 依頼・伝言 ==================== */
+let allStaff = [];
+let staffTab = 'active';
+let staffScope = 'all';
+let staffPrio = 'normal';
+
+document.querySelectorAll('#staff-prio button').forEach(b => b.onclick = () => setStaffPrio(b.dataset.v));
+function setStaffPrio(v) {
+  staffPrio = v;
+  document.querySelectorAll('#staff-prio button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+}
+
+window.openStaffForm = () => {
+  if (!$('staff-from').value) $('staff-from').value = getMe();
+  $('staff-panel').hidden = false;
+  ($('staff-from').value ? $('staff-to') : $('staff-from')).focus();
+};
+window.closeStaffForm = () => { resetStaffForm(); $('staff-panel').hidden = true; };
+window.resetStaffForm = () => {
+  $('staff-form').reset();
+  $('staff-edit-id').value = '';
+  $('staff-from').value = getMe();
+  setStaffPrio('normal');
+  pics.staff = { files: [], existing: [] }; renderPreviews('staff');
+  $('staff-form-title').textContent = '✍️ 新しい依頼・伝言';
+  $('staff-submit-btn').textContent = '送信する';
+};
+
+$('staff-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('staff-submit-btn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '送信中...';
+  const from = $('staff-from').value.trim();
+  if (!getMe() && from) { setMe(from); }
+  try {
+    const uploaded = await uploadAll(pics.staff.files, 'requests');
+    const imageUrls = [...pics.staff.existing, ...uploaded];
+    const data = {
+      from,
+      to: $('staff-to').value.trim(),
+      task: $('staff-task').value,
+      priority: staffPrio,
+      due: $('staff-due').value || '',
+      imageUrls
+    };
+    const editId = $('staff-edit-id').value;
+    if (editId) {
+      const before = allStaff.find(s => s.id === editId);
+      data.updatedAt = serverTimestamp();
+      await updateDoc(doc(db, 'staff_requests', editId), data);
+      const removed = (before?.imageUrls || []).filter(u => !imageUrls.includes(u));
+      await cleanupImages(removed, { col: 'staff', id: editId });
+      toast('依頼を更新しました');
+    } else {
+      data.status = 'pending';
+      data.createdAt = serverTimestamp();
+      data.readBy = from ? [from] : [];
+      await addDoc(collection(db, 'staff_requests'), data);
+      toast('依頼を送信しました');
+    }
+    closeStaffForm();
+    btn.textContent = '送信する';
+  } catch (err) { alert('エラー: ' + err.message); btn.textContent = label; }
+  btn.disabled = false;
+});
+
+onSnapshot(query(collection(db, 'staff_requests'), orderBy('createdAt', 'desc')), snap => {
+  allStaff = snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+  refreshNameList(); renderStaff(); renderNotes(); refreshBadges();
+});
+
+window.switchStaffTab = (tab) => {
+  staffTab = tab;
+  $('staff-tab-active').classList.toggle('on', tab === 'active');
+  $('staff-tab-history').classList.toggle('on', tab === 'history');
+  $('staff-sort').hidden = tab !== 'active';
+  $('staff-period').hidden = tab !== 'history';
+  resetLimit('staff'); renderStaff();
+};
+$('staff-search').addEventListener('input', () => { resetLimit('staff'); renderStaff(); });
+$('staff-sort').addEventListener('change', () => { resetLimit('staff'); renderStaff(); });
+$('staff-period').addEventListener('change', () => { resetLimit('staff'); renderStaff(); });
+window.setStaffScope = (k) => { staffScope = k; resetLimit('staff'); renderStaff(); };
+
+function dueState(s) {
+  if (!s.due || s.status === 'completed') return '';
+  const t = todayStr();
+  if (s.due < t) return 'over';
+  if (s.due === t) return 'today';
+  return 'later';
+}
+const isHot = s => s.status !== 'completed' && (s.priority === 'urgent' || dueState(s) === 'over' || dueState(s) === 'today');
+const isStale = s => s.status !== 'completed' && daysSince(s.createdAt) >= 3;
+
+function inPeriod(s) {
+  const p = $('staff-period').value;
+  if (p === 'all') return true;
+  const done = ms(s.completedAt);
+  if (!done) return true;
+  return Date.now() - done <= Number(p) * 86400000;
+}
+
+function renderStaffChips(base) {
+  const me = getMe();
+  const chips = [['all', 'すべて', base.length]];
+  if (me) {
+    chips.push(['mine', '自分宛て', base.filter(isForMe).length]);
+    chips.push(['sent', '自分が依頼', base.filter(s => s.from === me).length]);
+  }
+  if (staffTab === 'active') {
+    if (me) chips.push(['unread', '未確認', base.filter(s => isForMe(s) && !isRead(s)).length, true]);
+    chips.push(['hot', '🔥 急ぎ・期限', base.filter(isHot).length, true]);
+    chips.push(['stale', '⏳ 3日以上', base.filter(isStale).length, true]);
+  }
+  if (!chips.some(c => c[0] === staffScope)) staffScope = 'all';
+  $('staff-chips').innerHTML = chips.map(([k, l, n, warn]) =>
+    `<button class="chip ${staffScope === k ? 'on' : ''} ${warn && n ? 'warn' : ''}" onclick="setStaffScope('${k}')">${l}<span class="n">${n}</span></button>`).join('');
+}
+
+function staffRank(s) {
+  if (s.priority === 'urgent') return 0;
+  const d = dueState(s);
+  if (d === 'over') return 1;
+  if (d === 'today') return 2;
+  if (isForMe(s) && !isRead(s)) return 3;
+  if (isStale(s)) return 4;
+  return 5;
+}
+
+function renderStaff() {
+  const me = getMe();
+  const kw = $('staff-search').value.trim().toLowerCase();
+  let base = allStaff.filter(s => staffTab === 'active' ? s.status !== 'completed' : (s.status === 'completed' && inPeriod(s)));
+  if (kw) base = base.filter(s => `${s.from || ''} ${s.to || ''} ${s.task || ''} ${s.completedNote || ''}`.toLowerCase().includes(kw));
+  renderStaffChips(base);
+
+  let list = base.filter(s => {
+    switch (staffScope) {
+      case 'mine': return isForMe(s);
+      case 'sent': return s.from === me;
+      case 'unread': return isForMe(s) && !isRead(s);
+      case 'hot': return isHot(s);
+      case 'stale': return isStale(s);
+      default: return true;
+    }
+  });
+
+  if (staffTab === 'history') {
+    list.sort((a, b) => ms(b.completedAt) - ms(a.completedAt));
+  } else {
+    const sort = $('staff-sort').value;
+    if (sort === 'new') list.sort((a, b) => ms(b.createdAt) - ms(a.createdAt));
+    else if (sort === 'old') list.sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
+    else list.sort((a, b) => staffRank(a) - staffRank(b) || (a.due || '9999') .localeCompare(b.due || '9999') || ms(b.createdAt) - ms(a.createdAt));
+  }
+
+  $('staff-count').textContent = `${list.length}件`;
+  const shown = list.slice(0, limits.staff);
+  $('staff-more').hidden = list.length <= limits.staff;
+
+  $('staff-list').innerHTML = shown.map(s => {
+    const comp = s.status === 'completed';
+    const d = dueState(s);
+    const forMe = isForMe(s);
+    const read = isRead(s);
+    const age = daysSince(s.createdAt);
+    let stripe = 's-blue';
+    if (comp) stripe = 's-green';
+    else if (s.priority === 'urgent' || d === 'over') stripe = 's-red';
+    else if (d === 'today' || isStale(s)) stripe = 's-amber';
+    const readers = (s.readBy || []).filter(n => n !== s.from);
+
+    const tags = [
+      forMe && !read && !comp ? '<span class="tag new">未確認</span>' : '',
+      s.priority === 'urgent' && !comp ? '<span class="tag red">🔥 急ぎ</span>' : '',
+      d === 'over' ? `<span class="tag red">期限切れ ${esc(md(s.due))}</span>` : '',
+      d === 'today' ? '<span class="tag amber">今日まで</span>' : '',
+      d === 'later' ? `<span class="tag">期限 ${esc(md(s.due))}</span>` : '',
+      !comp && age >= 3 ? `<span class="tag amber">⏳ ${age}日経過</span>` : ''
+    ].join('');
+
+    return `
+    <article class="item ${stripe} ${comp ? 'done' : ''} ${forMe && !read && !comp ? 'unread' : ''}">
+      <div class="item-head">
+        <div class="tags">
+          <span class="tag blue">F: ${esc(s.from)}</span>
+          <span class="tag" style="background:#E9E6F7;color:#4A3F99">T: ${esc(s.to)}</span>
         </div>
-    </div>
+        <div class="when">${esc(fmtTs(s.createdAt))}</div>
+      </div>
+      ${tags ? `<div class="tags" style="margin-bottom:4px">${tags}</div>` : ''}
+      ${bodyHtml('s' + s.id, s.task)}
+      ${thumbsHtml(s.imageUrls)}
+      ${readers.length ? `<div class="readers">✓ 確認済み：${esc(readers.join('、'))}</div>` : ''}
+      ${comp ? `
+        <div class="done-box">✅ 完了${s.completedBy ? `（${esc(s.completedBy)}）` : ''} ${esc(fmtTs(s.completedAt))}${s.completedNote ? `\n${esc(s.completedNote)}` : ''}</div>
+        <div class="actions">
+          <button class="btn-sm plain" onclick="staffStatus('${s.id}','pending')">未完了に戻す</button>
+          <button class="btn-sm del" onclick="delStaff('${s.id}')">削除</button>
+        </div>` : `
+        <div class="complete-row">
+          <input type="text" id="snote_${s.id}" class="inp" placeholder="対応メモ（任意）">
+          <button class="btn-sm ok" onclick="staffStatus('${s.id}','completed')">完了</button>
+        </div>
+        <div class="actions">
+          ${me && !read ? `<button class="btn-sm blue" onclick="markStaffRead('${s.id}')">👀 確認しました</button>` : ''}
+          <span class="spacer"></span>
+          <button class="btn-sm edit" onclick="editStaff('${s.id}')">編集</button>
+          <button class="btn-sm del" onclick="delStaff('${s.id}')">削除</button>
+        </div>`}
+    </article>`;
+  }).join('') || `<div class="empty">${staffTab === 'active' ? '未完了の依頼はありません 👍' : 'この期間の完了履歴はありません。期間を「すべての期間」にすると古い履歴も見られます。'}</div>`;
+}
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+window.markStaffRead = async (id) => {
+  const me = getMe(); if (!me) return openNameModal();
+  await updateDoc(doc(db, 'staff_requests', id), { readBy: arrayUnion(me) });
+};
+window.staffStatus = async (id, status) => {
+  const me = getMe();
+  const data = { status, completedAt: status === 'completed' ? serverTimestamp() : null };
+  if (status === 'completed') {
+    data.completedNote = ($(`snote_${id}`)?.value || '').trim();
+    data.completedBy = me;
+    if (me) data.readBy = arrayUnion(me);
+  }
+  try {
+    await updateDoc(doc(db, 'staff_requests', id), data);
+    toast(status === 'completed' ? '完了にしました' : '未完了に戻しました');
+  } catch (e) { alert('エラー: ' + e.message); }
+};
+window.editStaff = (id) => {
+  const s = allStaff.find(x => x.id === id);
+  if (!s) return;
+  $('staff-edit-id').value = id;
+  $('staff-from').value = s.from || '';
+  $('staff-to').value = s.to || '';
+  $('staff-task').value = s.task || '';
+  $('staff-due').value = s.due || '';
+  setStaffPrio(s.priority === 'urgent' ? 'urgent' : 'normal');
+  pics.staff = { files: [], existing: [...(s.imageUrls || [])] }; renderPreviews('staff');
+  $('staff-form-title').textContent = '✏️ 依頼を編集';
+  $('staff-submit-btn').textContent = '更新する';
+  $('staff-panel').hidden = false;
+  window.scrollTo(0, 0);
+};
+window.delStaff = (id) => showConfirm('この依頼を削除しますか？', async () => {
+  const s = allStaff.find(x => x.id === id);
+  await deleteDoc(doc(db, 'staff_requests', id));
+  await cleanupImages(s?.imageUrls, { col: 'staff', id });
+  toast('削除しました');
+});
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-            authDomain: "souko-2de57.firebaseapp.com",
-            projectId: "souko-2de57",
-            storageBucket: "souko-2de57.firebasestorage.app"
-        };
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const storage = getStorage(app);
+/* ==================== 3. 資材発注 ==================== */
+let allMat = [];
+let matPeriod = 'all';
+let matStatus = 'all';
+$('mat-date').value = todayStr();
 
-        // ==================== ポータルバッジ連動用ヘルパー関数 ====================
-        function updatePortalBadge(appId, count) {
-            const STORAGE_KEY = 'warehouse_portal_v7_data';
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                try {
-                    const data = JSON.parse(saved);
-                    const card = data.cards.find(c => c.id === appId);
-                    if (card) {
-                        card.badge = count;
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-                    }
-                } catch (e) {
-                    console.error("Badge update error:", e);
-                }
-            }
-        }
+window.openMatForm = () => { closeMaster(); $('mat-panel').hidden = false; renderPicks(); };
+window.closeMatForm = () => { resetMatForm(); $('mat-panel').hidden = true; };
 
-        // ==================== 共通ユーティリティ ====================
-        window.switchAppTab = (tabId) => {
-            document.querySelectorAll('.main-tab').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.getElementById(`tab-btn-${tabId}`).classList.add('active');
-            document.getElementById(`app-${tabId}`).classList.add('active');
+window.addMatRow = (item = null) => {
+  const name = item ? item.name : '';
+  const qty = item ? item.qty : 1;
+  const unit = item ? (item.unit || '個') : '';
+  const memo = item ? (item.memo || '') : '';
+  $('mat-items').insertAdjacentHTML('beforeend', `
+    <div class="mat-row">
+      <button type="button" class="rm" aria-label="この行を消す" onclick="removeMatRow(this)">✕</button>
+      <div class="cols">
+        <input type="text" class="m-name inp" placeholder="資材名" list="mat-name-list" value="${esc(name)}">
+        <div class="sub">
+          <div class="stepper">
+            <button type="button" aria-label="1減らす" onclick="stepQty(this,-1)">−</button>
+            <input type="number" class="m-qty inp" placeholder="数量" min="1" step="1" inputmode="numeric" value="${esc(qty)}">
+            <button type="button" aria-label="1増やす" onclick="stepQty(this,1)">＋</button>
+          </div>
+          <input type="text" class="m-unit inp" placeholder="単位" list="unit-list" value="${esc(unit)}">
+        </div>
+        <input type="text" class="m-memo inp" placeholder="備考（任意）" value="${esc(memo)}">
+      </div>
+    </div>`);
+  renderPicks();
+  return $('mat-items').lastElementChild;
+};
+window.removeMatRow = (btn) => { btn.closest('.mat-row').remove(); renderPicks(); };
+window.stepQty = (btn, d) => {
+  const inp = btn.parentElement.querySelector('.m-qty');
+  const v = Math.max(1, (parseInt(inp.value, 10) || 0) + d);
+  inp.value = v; renderPicks();
+};
+// 手入力でマスタの資材名を選んだら、単位を自動で入れる
+$('mat-items').addEventListener('change', e => {
+  if (!e.target.classList.contains('m-name')) return;
+  const m = allMaster.find(x => x.name === e.target.value.trim());
+  const unitInp = e.target.closest('.mat-row').querySelector('.m-unit');
+  if (m && !unitInp.value) unitInp.value = m.unit || '個';
+  renderPicks();
+});
+$('mat-items').addEventListener('input', e => { if (e.target.classList.contains('m-qty')) renderPicks(); });
+$('mat-req').addEventListener('change', () => renderPicks());
 
-            if (tabId === 'notes') updatePortalBadge('notes', 0);
-            if (tabId === 'staff') updatePortalBadge('notes', 0);
-            if (tabId === 'mat') updatePortalBadge('zaico', 0);
-        };
+window.resetMatForm = () => {
+  $('mat-edit-id').value = '';
+  $('mat-date').value = todayStr();
+  $('mat-req').value = '調布1F';
+  $('mat-items').innerHTML = '';
+  if (!allMaster.length) addMatRow();
+  $('mat-form-title').textContent = '📦 発注依頼を作成';
+  $('mat-submit-btn').textContent = '💾 保存する';
+  renderPicks();
+};
 
-        window.openImage = (url) => {
-            document.getElementById('modal-img').src = url;
-            document.getElementById('image-modal').style.display = 'flex';
-        };
+/* よく使う資材ボタン */
+function rowsByName() {
+  const map = {};
+  document.querySelectorAll('#mat-items .mat-row').forEach(r => {
+    const n = r.querySelector('.m-name').value.trim();
+    if (n) map[n] = r;
+  });
+  return map;
+}
+function renderPicks() {
+  const box = $('mat-picks');
+  if (!box) return;
+  const wh = $('mat-req').value;
+  const list = allMaster.filter(m => !(m.warehouses || []).length || m.warehouses.includes(wh));
+  if (!allMaster.length) {
+    box.innerHTML = '<div class="hint" style="grid-column:1/-1">「⚙ 資材登録」からよく使う資材を登録すると、ここにボタンで表示されます。</div>';
+    return;
+  }
+  if (!list.length) {
+    box.innerHTML = `<div class="hint" style="grid-column:1/-1">${esc(wh)}で使う資材はまだ登録されていません。</div>`;
+    return;
+  }
+  const rows = rowsByName();
+  box.innerHTML = list.map(m => {
+    const r = rows[m.name];
+    const q = r ? r.querySelector('.m-qty').value : '';
+    return `<button type="button" class="pick ${r ? 'in' : ''}" onclick="pickMaster('${m.id}')">${esc(m.name)}<small>${esc(m.defaultQty || 1)}${esc(m.unit || '個')}ずつ</small>${r ? `<span class="cnt">${esc(q)}</span>` : ''}</button>`;
+  }).join('');
+}
+window.pickMaster = (id) => {
+  const m = allMaster.find(x => x.id === id);
+  if (!m) return;
+  const step = Number(m.defaultQty) || 1;
+  const existing = rowsByName()[m.name];
+  if (existing) {
+    const q = existing.querySelector('.m-qty');
+    q.value = (parseInt(q.value, 10) || 0) + step;
+  } else {
+    // 空の行があればそこに入れる
+    const blank = [...document.querySelectorAll('#mat-items .mat-row')].find(r => !r.querySelector('.m-name').value.trim());
+    if (blank) {
+      blank.querySelector('.m-name').value = m.name;
+      blank.querySelector('.m-qty').value = step;
+      blank.querySelector('.m-unit').value = m.unit || '個';
+    } else {
+      addMatRow({ name: m.name, qty: step, unit: m.unit || '個', memo: '' });
+    }
+  }
+  renderPicks();
+};
 
-        let confirmCallback = null;
-        window.showConfirm = (msg, callback) => {
-            document.getElementById('confirm-msg').textContent = msg;
-            confirmCallback = callback;
-            document.getElementById('confirm-modal').style.display = 'flex';
-        };
-        document.getElementById('confirm-no').onclick = () => document.getElementById('confirm-modal').style.display = 'none';
-        document.getElementById('confirm-yes').onclick = () => {
-            document.getElementById('confirm-modal').style.display = 'none';
-            if (confirmCallback) confirmCallback();
-        };
+/* ==================== 資材マスタ（material_master） ==================== */
+let allMaster = [];
+addMatRow();   // マスタ読込前の初期行（マスタがあれば読込後に消える）
+onSnapshot(collection(db, 'material_master'), snap => {
+  allMaster = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.sort ?? 9999) - (b.sort ?? 9999) || String(a.name).localeCompare(String(b.name), 'ja'));
+  $('mat-name-list').innerHTML = allMaster.map(m => `<option value="${esc(m.name)}">`).join('');
+  const rows = document.querySelectorAll('#mat-items .mat-row');
+  if (allMaster.length && rows.length === 1 && !rows[0].querySelector('.m-name').value.trim() && !$('mat-edit-id').value) {
+    $('mat-items').innerHTML = '';   // ボタンで選べるので、最初の空行は消しておく
+  }
+  renderPicks(); renderMaster();
+}, err => console.warn('資材マスタ読込エラー:', err.message));
 
-        function escapeHtml(str) {
-            if(!str) return '';
-            return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-        }
+window.openMaster = () => { $('mat-panel').hidden = true; $('master-panel').hidden = false; renderMaster(); window.scrollTo(0, 0); };
+window.closeMaster = () => { resetMasterForm(); $('master-panel').hidden = true; };
+function resetMasterForm() {
+  $('master-edit-id').value = '';
+  $('master-name').value = '';
+  $('master-unit').value = '';
+  $('master-qty').value = 1;
+  document.querySelectorAll('#master-wh input').forEach(c => c.checked = false);
+  $('master-form-title').textContent = '⚙ よく使う資材を登録';
+  $('master-submit-btn').textContent = '追加する';
+}
 
-        async function compressImage(file, maxWidth = 1200, quality = 0.8) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = (event) => {
-                    const img = new Image();
-                    img.src = event.target.result;
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let { width, height } = img;
-                        if (width > maxWidth) {
-                            height = Math.round((height * maxWidth) / width);
-                            width = maxWidth;
-                        }
-                        canvas.width = width; canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, width, height);
-                        canvas.toBlob(blob => resolve(new File([blob], file.name, { type: 'image/jpeg' })), 'image/jpeg', quality);
-                    };
-                };
-                reader.onerror = reject;
-            });
-        }
+function renderMaster() {
+  const box = $('master-list');
+  if (!box) return;
+  box.innerHTML = allMaster.map((m, i) => `
+    <div class="m-item">
+      <div class="ord">
+        <button type="button" aria-label="上へ" onclick="moveMaster(${i},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button type="button" aria-label="下へ" onclick="moveMaster(${i},1)" ${i === allMaster.length - 1 ? 'disabled' : ''}>▼</button>
+      </div>
+      <div class="info">
+        <div class="nm">${esc(m.name)}</div>
+        <div class="tags">
+          <span class="tag">${esc(m.defaultQty || 1)}${esc(m.unit || '個')}ずつ</span>
+          ${(m.warehouses || []).length ? m.warehouses.map(w => `<span class="tag blue">${esc(w)}</span>`).join('') : '<span class="tag">全倉庫</span>'}
+        </div>
+      </div>
+      <button class="btn-sm edit" onclick="editMaster('${m.id}')">編集</button>
+      <button class="btn-sm del" onclick="delMaster('${m.id}')">削除</button>
+    </div>`).join('') || '<div class="hint" style="margin-top:10px">まだ登録がありません。上のフォームから追加するか、下のボタンで過去の発注から取り込めます。</div>';
+}
 
-        // ==================== 1. ノート機能 ====================
-        let noteFiles = [], noteExistingImgs = [], allNotes = [];
-        document.getElementById('note-date').valueAsDate = new Date();
+window.saveMaster = async () => {
+  const name = $('master-name').value.trim();
+  const unit = $('master-unit').value.trim() || '個';
+  const qty = Number($('master-qty').value);
+  const editId = $('master-edit-id').value;
+  if (!name) return toast('資材名を入力してください');
+  if (!Number.isInteger(qty) || qty < 1) return toast('基本数量は1以上の整数で入力してください');
+  if (allMaster.some(m => m.name === name && m.id !== editId)) return toast('同じ名前の資材がすでに登録されています');
+  const warehouses = [...document.querySelectorAll('#master-wh input:checked')].map(c => c.value);
+  const data = { name, unit, defaultQty: qty, warehouses };
+  try {
+    if (editId) {
+      await updateDoc(doc(db, 'material_master', editId), data);
+      toast('資材を更新しました');
+    } else {
+      data.sort = allMaster.length ? Math.max(...allMaster.map(m => m.sort ?? 0)) + 1 : 0;
+      await addDoc(collection(db, 'material_master'), data);
+      toast(`「${name}」を登録しました`);
+    }
+    resetMasterForm();
+    $('master-name').focus();
+  } catch (e) { alert('エラー: ' + e.message); }
+};
+window.editMaster = (id) => {
+  const m = allMaster.find(x => x.id === id);
+  if (!m) return;
+  $('master-edit-id').value = id;
+  $('master-name').value = m.name;
+  $('master-unit').value = m.unit || '個';
+  $('master-qty').value = m.defaultQty || 1;
+  document.querySelectorAll('#master-wh input').forEach(c => c.checked = (m.warehouses || []).includes(c.value));
+  $('master-form-title').textContent = '✏️ 資材を編集';
+  $('master-submit-btn').textContent = '更新する';
+  window.scrollTo(0, 0);
+};
+window.delMaster = (id) => {
+  const m = allMaster.find(x => x.id === id);
+  showConfirm(`「${m?.name}」を登録から外しますか？（過去の発注履歴は消えません）`, async () => {
+    await deleteDoc(doc(db, 'material_master', id));
+    toast('登録から外しました');
+  }, '外す');
+};
+window.moveMaster = async (i, d) => {
+  const arr = [...allMaster];
+  const j = i + d;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  const batch = writeBatch(db);
+  arr.forEach((m, idx) => { if (m.sort !== idx) batch.update(doc(db, 'material_master', m.id), { sort: idx }); });
+  try { await batch.commit(); } catch (e) { alert('エラー: ' + e.message); }
+};
+window.importMasterFromHistory = () => {
+  const have = new Set(allMaster.map(m => m.name));
+  const found = new Map();
+  allMat.forEach(o => (o.itemsData || []).forEach(it => {
+    const n = String(it.name || '').trim();
+    if (!n || have.has(n)) return;
+    const f = found.get(n) || { count: 0, unit: it.unit || '個', whs: new Set() };
+    f.count++; if (o.warehouse) f.whs.add(o.warehouse);
+    found.set(n, f);
+  }));
+  if (!found.size) return toast('取り込める新しい資材はありません');
+  // よく使われている順に並べる
+  const list = [...found.entries()].sort((a, b) => b[1].count - a[1].count);
+  showConfirm(`過去の発注から${list.length}件の資材が見つかりました。まとめて登録しますか？（あとで編集・削除できます）`, async () => {
+    let sort = allMaster.length ? Math.max(...allMaster.map(m => m.sort ?? 0)) + 1 : 0;
+    const batch = writeBatch(db);
+    list.slice(0, 400).forEach(([name, f]) => {
+      batch.set(doc(collection(db, 'material_master')), { name, unit: f.unit, defaultQty: 1, warehouses: [], sort: sort++ });
+    });
+    await batch.commit();
+    toast(`${Math.min(list.length, 400)}件を登録しました`);
+  }, '登録する', false);
+};
 
-        function renderNotePreviews() {
-            const container = document.getElementById('note-previews');
-            container.innerHTML = '';
-            noteExistingImgs.forEach((url, i) => {
-                container.innerHTML += `<div class="relative"><img src="${url}" class="h-16 w-16 object-cover rounded border"><button type="button" onclick="noteExistingImgs.splice(${i},1);renderNotePreviews()" class="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-5 h-5 text-xs">×</button></div>`;
-            });
-            noteFiles.forEach((file, i) => {
-                const url = URL.createObjectURL(file);
-                container.innerHTML += `<div class="relative"><img src="${url}" class="h-16 w-16 object-cover rounded border"><button type="button" onclick="noteFiles.splice(${i},1);renderNotePreviews()" class="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-5 h-5 text-xs">×</button></div>`;
-            });
-        }
+/* 過去の発注と同じ内容で、新しく依頼を作る */
+window.reorderMat = (id) => {
+  const m = allMat.find(x => x.id === id);
+  if (!m) return;
+  closeMaster();
+  resetMatForm();
+  $('mat-req').value = m.warehouse || '調布1F';
+  $('mat-items').innerHTML = '';
+  (m.itemsData && m.itemsData.length ? m.itemsData : [{}]).forEach(it => addMatRow(it.name ? it : null));
+  $('mat-form-title').textContent = '📦 発注依頼を作成（前回の内容をコピー）';
+  $('mat-panel').hidden = false;
+  renderPicks();
+  window.scrollTo(0, 0);
+  toast('内容をコピーしました。数量を確認して保存してください');
+};
 
-        ['note-camera', 'note-file'].forEach(id => {
-            document.getElementById(id).addEventListener('change', e => {
-                Array.from(e.target.files).forEach(f => noteFiles.push(f));
-                renderNotePreviews(); e.target.value = '';
-            });
-        });
+window.saveMatOrder = async () => {
+  const warehouse = $('mat-req').value;
+  const editId = $('mat-edit-id').value;
+  const itemsText = [], itemsData = [];
+  let hasError = false;
+  document.querySelectorAll('.mat-row').forEach(r => {
+    r.classList.remove('err');
+    const name = r.querySelector('.m-name').value.trim();
+    const qtyRaw = r.querySelector('.m-qty').value.trim();
+    const memo = r.querySelector('.m-memo').value.trim();
+    const unit = r.querySelector('.m-unit').value.trim() || '個';
+    if (!name) return;
+    const qty = Number(qtyRaw);
+    if (!qtyRaw || !Number.isInteger(qty) || qty < 1) { r.classList.add('err'); hasError = true; return; }
+    itemsText.push(`・${name} : ${qty}${unit}` + (memo ? ` (${memo})` : ''));
+    itemsData.push({ name, qty, unit, memo });
+  });
+  if (hasError) return toast('数量は1以上の整数で入力してください（赤枠の行）');
+  if (itemsData.length === 0) return toast('資材名を入力してください');
 
-        window.resetNoteForm = () => {
-            document.getElementById('note-form').reset();
-            document.getElementById('note-date').valueAsDate = new Date();
-            document.getElementById('note-edit-id').value = '';
-            noteFiles = []; noteExistingImgs = []; renderNotePreviews();
-            document.getElementById('note-form-title').textContent = "📢 新規ノート登録";
-            document.getElementById('note-cancel-btn').classList.add('hidden');
-        };
+  const btn = $('mat-submit-btn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    const data = {
+      date: $('mat-date').value || todayStr(),
+      warehouse,
+      text: `■倉庫名: ${warehouse}\n` + itemsText.join('\n'),
+      itemsData
+    };
+    if (editId) {
+      data.updatedAt = serverTimestamp();
+      await updateDoc(doc(db, 'material_orders', editId), data);
+      toast('発注依頼を更新しました');
+    } else {
+      data.createdAt = serverTimestamp();
+      data.status = '未発注';
+      data.createdBy = getMe();
+      await addDoc(collection(db, 'material_orders'), data);
+      toast('発注依頼を保存しました');
+    }
+    closeMatForm();   // ここでボタン表示も「保存する」に戻る
+  } catch (e) {
+    alert('エラー: ' + e.message);
+    btn.textContent = editId ? '💾 更新する' : '💾 保存する';
+  }
+  btn.disabled = false;
+};
 
-        document.getElementById('note-form').addEventListener('submit', async e => {
-            e.preventDefault();
-            const btn = document.getElementById('note-submit-btn');
-            btn.disabled = true; btn.textContent = "保存中...";
-            try {
-                let uploadedUrls = [];
-                for (const file of noteFiles) {
-                    const compressed = await compressImage(file);
-                    const refPath = ref(storage, `notes/${Date.now()}_${Math.random().toString(36).substring(2)}`);
-                    await uploadBytes(refPath, compressed);
-                    uploadedUrls.push(await getDownloadURL(refPath));
-                }
-                const finalUrls = [...noteExistingImgs, ...uploadedUrls];
-                const data = {
-                    date: document.getElementById('note-date').value,
-                    category: document.getElementById('note-cat').value,
-                    title: document.getElementById('note-title').value,
-                    content: document.getElementById('note-content').value,
-                    imageUrls: finalUrls
-                };
-                const editId = document.getElementById('note-edit-id').value;
-                if(editId) {
-                    await updateDoc(doc(db, "shared_notes", editId), data);
-                } else {
-                    data.createdAt = serverTimestamp();
-                    await addDoc(collection(db, "shared_notes"), data);
-                }
-                resetNoteForm();
-            } catch(e) { alert("エラー: " + e.message); }
-            btn.disabled = false; btn.textContent = "保存する";
-        });
+onSnapshot(query(collection(db, 'material_orders'), orderBy('createdAt', 'desc')), snap => {
+  allMat = snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+  renderMat(); refreshBadges();   // 選んでいる絞り込みはそのまま維持
+});
 
-        onSnapshot(query(collection(db, "shared_notes"), orderBy("createdAt", "desc")), snap => {
-            allNotes = snap.docs.map(d => ({id: d.id, ...d.data()}));
-            renderNotes();
-        });
+window.setMatPeriod = (k) => { matPeriod = k; resetLimit('mat'); renderMat(); };
+window.setMatStatus = (k) => { matStatus = k; resetLimit('mat'); renderMat(); };
+$('mat-wh-filter').addEventListener('change', () => { resetLimit('mat'); renderMat(); });
 
-        document.getElementById('note-search').addEventListener('input', () => renderNotes());
+function renderMat() {
+  const wh = $('mat-wh-filter').value;
+  const today = todayStr();
+  const past7 = daysAgoStr(7);
+  const byWh = allMat.filter(m => !wh || (m.warehouse || m.requester) === wh);
+  const inPer = m => matPeriod === 'today' ? m.date === today : matPeriod === '7days' ? (m.date >= past7 && m.date <= today) : true;
+  const base = byWh.filter(inPer);
 
-        function renderNotes() {
-            const kw = document.getElementById('note-search').value.toLowerCase();
-            const list = document.getElementById('note-list');
-            list.innerHTML = allNotes.filter(n => (n.title+n.content).toLowerCase().includes(kw)).map(n => {
-                const imgs = (n.imageUrls || []).map(url => `<img src="${url}" onclick="openImage('${url}')" class="h-16 w-16 object-cover rounded cursor-pointer border">`).join('');
-                return `
-                <div class="card !mb-2 !p-3">
-                    <div class="flex justify-between text-xs mb-1">
-                        <span class="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${n.category}</span>
-                        <span class="text-gray-500">${n.date}</span>
-                    </div>
-                    <div class="font-bold text-sm mb-1">${escapeHtml(n.title)}</div>
-                    <div class="text-xs text-gray-700 whitespace-pre-wrap mb-2">${escapeHtml(n.content)}</div>
-                    <div class="flex gap-2 mb-2">${imgs}</div>
-                    <div class="flex gap-2 justify-end pt-2 border-t">
-                        <button onclick="editNote('${n.id}')" class="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded font-bold">編集</button>
-                        <button onclick="delNote('${n.id}')" class="text-xs text-rose-600 bg-rose-50 px-2 py-1 rounded font-bold">削除</button>
-                    </div>
-                </div>`;
-            }).join('') || '<div class="text-center text-xs text-gray-500 py-4">ノートがありません</div>';
-        }
+  const st = [['all', 'すべて', base.length], ['未発注', '未発注', base.filter(m => m.status === '未発注').length, true], ['発注済み', '発注済み', base.filter(m => m.status === '発注済み').length]];
+  $('mat-status-chips').innerHTML = st.map(([k, l, n, warn]) => `<button class="chip ${matStatus === k ? 'on' : ''} ${warn && n ? 'warn' : ''}" onclick="setMatStatus('${k}')">${l}<span class="n">${n}</span></button>`).join('');
+  const pr = [['today', '今日'], ['7days', '過去7日'], ['all', '全期間']];
+  $('mat-period-chips').innerHTML = pr.map(([k, l]) => `<button class="chip ${matPeriod === k ? 'on' : ''}" onclick="setMatPeriod('${k}')">📅 ${l}</button>`).join('');
 
-        window.editNote = (id) => {
-            const n = allNotes.find(x => x.id === id);
-            document.getElementById('note-edit-id').value = id;
-            document.getElementById('note-date').value = n.date;
-            document.getElementById('note-cat').value = n.category;
-            document.getElementById('note-title').value = n.title;
-            document.getElementById('note-content').value = n.content;
-            noteExistingImgs = n.imageUrls || []; noteFiles = []; renderNotePreviews();
-            document.getElementById('note-form-title').textContent = "✏️ ノート編集";
-            document.getElementById('note-cancel-btn').classList.remove('hidden');
-            window.scrollTo(0,0);
-        };
-        window.delNote = (id) => showConfirm("このノートを削除しますか？", () => deleteDoc(doc(db, "shared_notes", id)));
+  let list = base.filter(m => matStatus === 'all' || m.status === matStatus);
+  // 未発注を上に、その中は古い順（放置を防ぐ）／発注済みは新しい順
+  list.sort((a, b) => {
+    const pa = a.status === '未発注' ? 0 : 1, pb = b.status === '未発注' ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return pa === 0 ? ms(a.createdAt) - ms(b.createdAt) : ms(b.createdAt) - ms(a.createdAt);
+  });
 
-        window.openNoteToStaffModal = () => {
-            if(!document.getElementById('note-title').value) return alert("タイトルを入力してください");
-            document.getElementById('note-staff-modal').style.display='flex';
-        };
-        window.submitNoteToStaff = async () => {
-            const title = document.getElementById('note-title').value;
-            const content = document.getElementById('note-content').value;
-            const memo = document.getElementById('ns-memo').value;
-            const from = localStorage.getItem('app_user_name') || "ノート連携";
-            try {
-                await addDoc(collection(db, "staff_requests"), {
-                    from: from, to: document.getElementById('ns-to').value,
-                    task: `【ノート共有】${title}\n${content}\n---\n${memo}`,
-                    status: 'pending', createdAt: serverTimestamp(), imageUrls: noteExistingImgs
-                });
-                alert('依頼・伝言に送信しました！');
-                document.getElementById('note-staff-modal').style.display='none';
-            } catch(e) { alert(e.message); }
-        };
+  $('mat-count').textContent = `${list.length}件`;
+  const shown = list.slice(0, limits.mat);
+  $('mat-more').hidden = list.length <= limits.mat;
 
-        // ==================== 2. 依頼・伝言機能 ====================
-        let staffFiles = [], staffExistingImgs = [], allStaff = [], staffTab = 'active';
-        const savedName = localStorage.getItem('app_user_name');
-        if(savedName) document.getElementById('staff-from').value = savedName;
+  $('mat-list').innerHTML = shown.map(m => {
+    const done = m.status === '発注済み';
+    const whName = m.warehouse || m.requester || '未設定';
+    const age = daysSince(m.createdAt);
+    const stale = !done && age >= 2;
+    const lines = (m.itemsData && m.itemsData.length)
+      ? `<ul class="mat-lines">${m.itemsData.map(it => `<li><span>${esc(it.name)}${it.memo ? `<br><span class="m">${esc(it.memo)}</span>` : ''}</span><span class="q">${esc(it.qty)}${esc(it.unit || '個')}</span></li>`).join('')}</ul>`
+      : `<div class="body">${esc(m.text)}</div>`;
+    return `
+    <article class="item ${done ? 's-green done' : stale ? 's-amber' : 's-red'}">
+      <div class="item-head">
+        <div class="tags">
+          <span class="tag ${done ? 'green' : 'red'}">${esc(m.status)}</span>
+          <span class="tag">🏭 ${esc(whName)}</span>
+          ${stale ? `<span class="tag amber">⏳ ${age}日経過</span>` : ''}
+        </div>
+        <div class="when">📅 ${esc(md(m.date))}${m.createdBy ? `<br>${esc(m.createdBy)}` : ''}</div>
+      </div>
+      ${lines}
+      ${done && (m.orderedBy || m.orderedAt) ? `<div class="readers">発注済み：${esc(m.orderedBy || '')} ${esc(fmtTs(m.orderedAt))}</div>` : ''}
+      <div class="actions">
+        ${done
+          ? `<button class="btn-sm plain" onclick="revertMat('${m.id}')">↩ 未発注に戻す</button>`
+          : `<button class="btn-sm ok" onclick="updateMatStatus('${m.id}')">✅ 発注済みにする</button>`}
+        <span class="spacer"></span>
+        <button class="btn-sm blue" onclick="reorderMat('${m.id}')">📋 同じ内容で依頼</button>
+        <button class="btn-sm edit" onclick="editMat('${m.id}')">編集</button>
+        <button class="btn-sm del" onclick="delMat('${m.id}')">削除</button>
+      </div>
+    </article>`;
+  }).join('') || '<div class="empty">該当する発注依頼はありません。絞り込みを変えるか、「＋ 発注依頼」から作成できます。</div>';
+}
 
-        function renderStaffPreviews() {
-            const container = document.getElementById('staff-previews');
-            container.innerHTML = '';
-            staffExistingImgs.forEach((url, i) => {
-                container.innerHTML += `<div class="relative"><img src="${url}" class="h-16 w-16 object-cover rounded border"><button type="button" onclick="staffExistingImgs.splice(${i},1);renderStaffPreviews()" class="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-5 h-5 text-xs">×</button></div>`;
-            });
-            staffFiles.forEach((file, i) => {
-                const url = URL.createObjectURL(file);
-                container.innerHTML += `<div class="relative"><img src="${url}" class="h-16 w-16 object-cover rounded border"><button type="button" onclick="staffFiles.splice(${i},1);renderStaffPreviews()" class="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-5 h-5 text-xs">×</button></div>`;
-            });
-        }
+window.editMat = (id) => {
+  const m = allMat.find(x => x.id === id);
+  if (!m) return;
+  $('mat-edit-id').value = id;
+  $('mat-date').value = m.date || todayStr();
+  $('mat-req').value = m.warehouse || '調布1F';
+  $('mat-items').innerHTML = '';
+  if (m.itemsData && m.itemsData.length) m.itemsData.forEach(item => addMatRow(item));
+  else addMatRow();
+  $('mat-form-title').textContent = '✏️ 発注依頼を編集';
+  $('mat-submit-btn').textContent = '💾 更新する';
+  closeMaster();
+  $('mat-panel').hidden = false;
+  renderPicks();
+  window.scrollTo(0, 0);
+};
+window.updateMatStatus = async (id) => {
+  await updateDoc(doc(db, 'material_orders', id), { status: '発注済み', orderedAt: serverTimestamp(), orderedBy: getMe() });
+  toast('発注済みにしました');
+};
+window.revertMat = (id) => showConfirm('この依頼を「未発注」に戻しますか？', async () => {
+  await updateDoc(doc(db, 'material_orders', id), { status: '未発注', orderedAt: null, orderedBy: '' });
+  toast('未発注に戻しました');
+}, '未発注に戻す', false);
+window.delMat = (id) => showConfirm('発注履歴を削除しますか？', async () => {
+  await deleteDoc(doc(db, 'material_orders', id));
+  toast('削除しました');
+});
 
-        ['staff-camera', 'staff-file'].forEach(id => {
-            document.getElementById(id).addEventListener('change', e => {
-                Array.from(e.target.files).forEach(f => staffFiles.push(f));
-                renderStaffPreviews(); e.target.value = '';
-            });
-        });
+/* ==================== 起動 ==================== */
+function renderAll() { renderNotes(); renderStaff(); renderMat(); refreshBadges(); refreshNameList(); }
+renderMe();
+$('staff-from').value = getMe();
+const lastTab = localStorage.getItem('app_last_tab');
+if (lastTab && TITLES[lastTab]) switchAppTab(lastTab);
+if (!getMe()) setTimeout(openNameModal, 400);
 
-        window.resetStaffForm = () => {
-            document.getElementById('staff-form').reset();
-            document.getElementById('staff-edit-id').value = '';
-            if(localStorage.getItem('app_user_name')) document.getElementById('staff-from').value = localStorage.getItem('app_user_name');
-            staffFiles = []; staffExistingImgs = []; renderStaffPreviews();
-            document.getElementById('staff-form-title').textContent = "✍️ 新規依頼・伝言";
-            document.getElementById('staff-cancel-btn').classList.add('hidden');
-        };
-
-        document.getElementById('staff-form').addEventListener('submit', async e => {
-            e.preventDefault();
-            const btn = document.getElementById('staff-submit-btn');
-            btn.disabled = true; btn.textContent = "送信中...";
-            localStorage.setItem('app_user_name', document.getElementById('staff-from').value);
-            
-            try {
-                let uploadedUrls = [];
-                for (const file of staffFiles) {
-                    const compressed = await compressImage(file);
-                    const refPath = ref(storage, `requests/${Date.now()}_${Math.random().toString(36).substring(2)}`);
-                    await uploadBytes(refPath, compressed);
-                    uploadedUrls.push(await getDownloadURL(refPath));
-                }
-                const data = {
-                    from: document.getElementById('staff-from').value,
-                    to: document.getElementById('staff-to').value,
-                    task: document.getElementById('staff-task').value,
-                    imageUrls: [...staffExistingImgs, ...uploadedUrls]
-                };
-                const editId = document.getElementById('staff-edit-id').value;
-                if(editId) {
-                    await updateDoc(doc(db, "staff_requests", editId), data);
-                } else {
-                    data.status = 'pending'; data.createdAt = serverTimestamp();
-                    await addDoc(collection(db, "staff_requests"), data);
-                }
-                resetStaffForm();
-            } catch(e) { alert("エラー: " + e.message); }
-            btn.disabled = false; btn.textContent = "送信する";
-        });
-
-        onSnapshot(query(collection(db, "staff_requests"), orderBy("createdAt", "desc")), snap => {
-            allStaff = snap.docs.map(d => ({id: d.id, ...d.data()}));
-            const pendingCount = allStaff.filter(s => s.status !== 'completed').length;
-            updatePortalBadge('notes', pendingCount);
-            renderStaff();
-        });
-
-        window.switchStaffTab = (tab) => {
-            staffTab = tab;
-            document.getElementById('staff-tab-active').className = `flex-1 px-4 py-2 text-xs font-bold rounded ${tab==='active'?'bg-white text-blue-600 shadow-sm':'text-gray-600'}`;
-            document.getElementById('staff-tab-history').className = `flex-1 px-4 py-2 text-xs font-bold rounded ${tab==='history'?'bg-white text-blue-600 shadow-sm':'text-gray-600'}`;
-            renderStaff();
-        };
-
-        document.getElementById('staff-search').addEventListener('input', () => renderStaff());
-
-        window.toggleTask = (id) => {
-            const container = document.getElementById(`task_container_${id}`);
-            const btn = document.getElementById(`btn_${id}`);
-            if (container.classList.contains('max-h-20')) {
-                container.classList.remove('max-h-20', 'overflow-hidden');
-                btn.textContent = '折りたたむ ▴';
-            } else {
-                container.classList.add('max-h-20', 'overflow-hidden');
-                btn.textContent = '続きを読む ▾';
-            }
-        };
-
-        function renderStaff() {
-            const kw = document.getElementById('staff-search').value.toLowerCase();
-            const now = Date.now();
-            let filtered = allStaff.filter(s => {
-                if(staffTab === 'active') return s.status !== 'completed';
-                if(s.status !== 'completed') return false;
-                if(!s.completedAt) return true;
-                return (now - s.completedAt.toMillis()) <= 7*24*60*60*1000;
-            });
-            if(kw) filtered = filtered.filter(s => (s.from+s.to+s.task+(s.completedNote||'')).toLowerCase().includes(kw));
-
-            const list = document.getElementById('staff-list');
-            list.innerHTML = filtered.map(s => {
-                const imgs = (s.imageUrls || []).map(url => `<img src="${url}" onclick="openImage('${url}')" class="h-16 w-16 object-cover rounded cursor-pointer border">`).join('');
-                const isComp = s.status === 'completed';
-                const taskText = escapeHtml(s.task);
-                const isLong = s.task.length > 80 || s.task.split('\n').length >= 3;
-
-                return `
-                <div class="card !mb-2 !p-3 ${isComp?'bg-gray-50':''}">
-                    <div class="flex justify-between items-center text-xs mb-2">
-                        <div class="flex gap-1">
-                            <span class="bg-blue-100 text-blue-800 px-1.5 rounded">F: ${escapeHtml(s.from)}</span>
-                            <span class="bg-indigo-100 text-indigo-800 px-1.5 rounded">T: ${escapeHtml(s.to)}</span>
-                        </div>
-                        <span class="text-gray-400">${s.createdAt ? new Date(s.createdAt.toDate()).toLocaleDateString() : ''}</span>
-                    </div>
-                    
-                    <div class="relative mb-2">
-                        <div id="task_container_${s.id}" class="text-sm text-gray-800 whitespace-pre-wrap ${isLong ? 'max-h-20 overflow-hidden' : ''}">${taskText}</div>
-                        ${isLong ? `<button type="button" id="btn_${s.id}" onclick="toggleTask('${s.id}')" class="text-xs text-blue-600 font-bold mt-1 block">続きを読む ▾</button>` : ''}
-                    </div>
-
-                    <div class="flex gap-2 mb-2">${imgs}</div>
-                    
-                    ${isComp ? `
-                        <div class="bg-emerald-50 text-emerald-900 p-2 rounded text-xs mb-2">✅ 完了<br>${escapeHtml(s.completedNote||'')}</div>
-                        <div class="flex justify-end gap-2"><button onclick="staffStatus('${s.id}','pending')" class="text-xs bg-gray-200 px-2 py-1 rounded">未完了に戻す</button><button onclick="delStaff('${s.id}')" class="text-xs text-rose-600 bg-rose-50 px-2 py-1 rounded font-bold">削除</button></div>
-                    ` : `
-                        <div class="flex gap-2 items-center mb-2">
-                            <input type="text" id="snote_${s.id}" placeholder="対応メモ..." class="flex-1 border p-1.5 rounded text-xs">
-                            <button onclick="staffStatus('${s.id}','completed')" class="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded font-bold whitespace-nowrap">完了</button>
-                        </div>
-                        <div class="flex justify-end gap-2 border-t pt-2">
-                            <button onclick="editStaff('${s.id}')" class="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded font-bold">編集</button>
-                            <button onclick="delStaff('${s.id}')" class="text-xs text-rose-600 bg-rose-50 px-2 py-1 rounded font-bold">削除</button>
-                        </div>
-                    `}
-                </div>`;
-            }).join('') || '<div class="text-center text-xs text-gray-500 py-4">データがありません</div>';
-        }
-
-        window.staffStatus = async (id, status) => {
-            const data = { status, completedAt: status==='completed'?serverTimestamp():null };
-            if(status === 'completed') data.completedNote = document.getElementById(`snote_${id}`).value;
-            await updateDoc(doc(db, "staff_requests", id), data);
-        };
-        window.editStaff = (id) => {
-            const s = allStaff.find(x => x.id === id);
-            document.getElementById('staff-edit-id').value = id;
-            document.getElementById('staff-from').value = s.from;
-            document.getElementById('staff-to').value = s.to;
-            document.getElementById('staff-task').value = s.task;
-            staffExistingImgs = s.imageUrls || []; staffFiles = []; renderStaffPreviews();
-            document.getElementById('staff-form-title').textContent = "✏️ 依頼編集";
-            document.getElementById('staff-cancel-btn').classList.remove('hidden');
-            window.scrollTo(0,0);
-        };
-        window.delStaff = (id) => showConfirm("この依頼を削除しますか？", () => deleteDoc(doc(db, "staff_requests", id)));
-
-        // ==================== 3. 資材発注機能 ====================
-        let allMat = [];
-        document.getElementById('mat-date').valueAsDate = new Date();
-
-        window.addMatRow = (itemData = null) => {
-            const name = itemData ? itemData.name : '';
-            const qty = itemData ? itemData.qty : 1;
-            const memo = itemData ? itemData.memo : '';
-
-            document.getElementById('mat-items').insertAdjacentHTML('beforeend', `
-                <div class="mat-row p-2 border rounded bg-slate-50 relative flex gap-2 items-center">
-                    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 font-bold px-1">✕</button>
-                    <div class="flex-1">
-                        <input type="text" class="m-name w-full p-1.5 border rounded text-xs bg-white mb-1" placeholder="資材名" value="${escapeHtml(name)}">
-                        <div class="flex gap-1">
-                            <input type="number" class="m-qty w-16 p-1.5 border rounded text-xs bg-white" placeholder="数量" value="${qty}">
-                            <input type="text" class="m-memo flex-1 p-1.5 border rounded text-xs bg-white" placeholder="備考" value="${escapeHtml(memo)}">
-                        </div>
-                    </div>
-                </div>
-            `);
-        };
-        addMatRow();
-
-        window.resetMatForm = () => {
-            document.getElementById('mat-edit-id').value = '';
-            document.getElementById('mat-date').valueAsDate = new Date();
-            document.getElementById('mat-req').value = '調布1F';
-            document.getElementById('mat-items').innerHTML = '';
-            addMatRow();
-            document.getElementById('mat-form-title').textContent = "📦 発注依頼を作成";
-            document.getElementById('mat-cancel-btn').classList.add('hidden');
-            document.getElementById('mat-submit-btn').textContent = "💾 保存する";
-        };
-
-        window.saveMatOrder = async () => {
-            const warehouse = document.getElementById('mat-req').value;
-            const editId = document.getElementById('mat-edit-id').value;
-            
-            const rows = document.querySelectorAll('.mat-row');
-            const itemsText = [], itemsData = [];
-            rows.forEach(r => {
-                const name = r.querySelector('.m-name').value.trim();
-                const qty = Number(r.querySelector('.m-qty').value) || 1;
-                const memo = r.querySelector('.m-memo').value.trim();
-                if(name) {
-                    itemsText.push(`・${name} : ${qty}個 (${memo})`);
-                    itemsData.push({name, qty, memo});
-                }
-            });
-
-            if(itemsData.length === 0) return alert('資材名を入力してください。');
-
-            const btn = document.getElementById('mat-submit-btn');
-            btn.disabled = true; btn.textContent = "保存中...";
-            try {
-                const data = {
-                    date: document.getElementById('mat-date').value,
-                    warehouse: warehouse,
-                    text: `■倉庫名: ${warehouse}\n` + itemsText.join('\n'),
-                    itemsData: itemsData
-                };
-
-                if (editId) {
-                    // 編集時の上書き
-                    await updateDoc(doc(db, "material_orders", editId), data);
-                    alert("発注依頼を更新しました！");
-                } else {
-                    // 新規作成時
-                    data.createdAt = serverTimestamp();
-                    data.status = "未発注";
-                    await addDoc(collection(db, "material_orders"), data);
-                    alert("発注依頼を保存しました！");
-                }
-                resetMatForm();
-            } catch(e) { alert(e.message); }
-            btn.disabled = false; 
-            btn.textContent = editId ? "💾 更新する" : "💾 保存する";
-        };
-
-        onSnapshot(query(collection(db, "material_orders"), orderBy("createdAt", "desc")), snap => {
-            allMat = snap.docs.map(d => ({id: d.id, ...d.data()}));
-            const pendingMatCount = allMat.filter(m => m.status === "未発注").length;
-            updatePortalBadge('zaico', pendingMatCount);
-            filterMat('all');
-        });
-
-        window.filterMat = (type) => {
-            const today = new Date().toISOString().split('T')[0];
-            let filtered = allMat;
-            if(type === 'today') filtered = allMat.filter(m => m.date === today);
-            if(type === '7days') {
-                const d7 = new Date(); d7.setDate(d7.getDate()-7);
-                const past = d7.toISOString().split('T')[0];
-                filtered = allMat.filter(m => m.date >= past && m.date <= today);
-            }
-            
-            const list = document.getElementById('mat-list');
-            list.innerHTML = filtered.map(m => {
-                const isDone = m.status === "発注済み";
-                const warehouseDisplay = m.warehouse || m.requester || '未設定';
-                return `
-                <div class="p-3 border rounded text-sm ${isDone?'bg-gray-100 opacity-75':''}">
-                    <div class="flex justify-between items-center font-bold mb-2">
-                        <span class="text-xs">📅 ${m.date} (${escapeHtml(warehouseDisplay)})</span>
-                        <span class="${isDone?'text-emerald-600':'text-red-600'} text-xs">${m.status}</span>
-                    </div>
-                    <div class="whitespace-pre-wrap text-xs text-gray-700 mb-2">${escapeHtml(m.text)}</div>
-                    <div class="flex gap-2 border-t pt-2 mt-2 justify-end">
-                        ${!isDone ? `<button onclick="updateMatStatus('${m.id}')" class="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded font-bold">✅ 発注済みにする</button>` : ''}
-                        <button onclick="editMat('${m.id}')" class="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded font-bold">編集</button>
-                        <button onclick="delMat('${m.id}')" class="text-xs text-rose-600 bg-rose-50 px-2 py-1 rounded font-bold">削除</button>
-                    </div>
-                </div>`;
-            }).join('') || '<div class="text-center text-xs text-gray-500 py-4">発注履歴がありません</div>';
-        };
-
-        window.editMat = (id) => {
-            const m = allMat.find(x => x.id === id);
-            if (!m) return;
-            
-            document.getElementById('mat-edit-id').value = id;
-            document.getElementById('mat-date').value = m.date || new Date().toISOString().split('T')[0];
-            document.getElementById('mat-req').value = m.warehouse || '調布1F';
-            
-            // 登録されている資材行を復元
-            const itemsContainer = document.getElementById('mat-items');
-            itemsContainer.innerHTML = '';
-            
-            if (m.itemsData && m.itemsData.length > 0) {
-                m.itemsData.forEach(item => {
-                    addMatRow(item);
-                });
-            } else {
-                // itemsDataがない古いデータの場合のフォールバック
-                addMatRow();
-            }
-
-            document.getElementById('mat-form-title').textContent = "✏️ 発注依頼を編集";
-            document.getElementById('mat-cancel-btn').classList.remove('hidden');
-            document.getElementById('mat-submit-btn').textContent = "💾 更新する";
-            window.scrollTo(0, 0);
-        };
-
-        window.updateMatStatus = (id) => updateDoc(doc(db, "material_orders", id), {status: "発注済み"});
-        window.delMat = (id) => showConfirm("発注履歴を削除しますか？", () => deleteDoc(doc(db, "material_orders", id)));
-
-    </script>
+// 日付をまたいで開きっぱなしでも「今日」「期限」の判定がずれないよう、1分ごとに再判定
+let lastDay = todayStr();
+setInterval(() => {
+  if (todayStr() !== lastDay) {
+    lastDay = todayStr();
+    if (!$('note-edit-id').value) $('note-date').value = lastDay;
+    if (!$('mat-edit-id').value) $('mat-date').value = lastDay;
+    renderAll();
+  }
+}, 60000);
+</script>
 </body>
 </html>
