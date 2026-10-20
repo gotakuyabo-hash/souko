@@ -10,8 +10,10 @@
         .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); max-width: 800px; margin: 0 auto 20px auto; }
         .back-link { display: inline-block; margin-bottom: 12px; color: #2563eb; text-decoration: none; font-weight: bold; font-size: 14px; }
         .time-val { font-family: monospace; font-size: 38px; font-weight: bold; color: #2ecc71; text-align: center; margin: 15px 0; }
+        .time-val.running { color: #e67e22; }
         .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-        .form-group input, .form-group select { padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; background: #fff; }
+        /* 【修正⑧】iPhoneで入力時に画面が拡大されないよう16pxに */
+        .form-group input, .form-group select { padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; background: #fff; }
 
         .sub-tab-container { display: flex; gap: 5px; margin-bottom: 12px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; overflow-x: auto; }
         .sub-tab-btn { padding: 6px 12px; font-size: 12px; font-weight: bold; background: #e2e8f0; color: #4a5568; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
@@ -29,6 +31,10 @@
         table.log-table th { background-color: #f7fafc; color: #4a5568; }
         .num-col { text-align: right !important; }
         .btn-del-row { background: #e74c3c; color: white; border: none; border-radius: 3px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status-msg { display: none; font-size: 12px; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px; }
+        .status-msg.error { display: block; background: #fdecea; color: #b42318; border: 1px solid #f5c2c0; }
+        .filter-note { font-size: 11px; color: #64748b; margin-bottom: 8px; }
     </style>
 </head>
 <body>
@@ -48,7 +54,7 @@
                 <div class="form-group"><label class="text-xs font-bold">作業内容</label><input type="text" id="task" placeholder="例: ピッキング" list="task-list">
                     <datalist id="task-list"><option value="入荷・検品"><option value="ピッキング"><option value="梱包"><option value="ラベル作成"></datalist>
                 </div>
-                <div class="form-group"><label class="text-xs font-bold">処理件数</label><input type="number" id="count" value="1" min="1"></div>
+                <div class="form-group"><label class="text-xs font-bold">処理件数</label><input type="number" id="count" value="1" min="1" inputmode="numeric"></div>
             </div>
             <div class="form-group"><label class="text-xs font-bold">備考・メモ</label><input type="text" id="memo" placeholder="例: 特になし"></div>
 
@@ -64,6 +70,16 @@
         <!-- ログ・集計カード -->
         <div class="card">
             <h3 class="font-bold mb-3 text-base">📊 実績表示・絞り込み集計</h3>
+            <div id="status-msg" class="status-msg"></div>
+
+            <!-- 【修正⑤】絞り込みを全タブ共通にするため、タブの上に移動 -->
+            <div class="filter-bar">
+                <div class="form-group"><label class="text-[11px] font-bold">📅 日付</label><select id="filter-date"><option value="ALL">すべて</option></select></div>
+                <div class="form-group"><label class="text-[11px] font-bold">🏷️ サービス</label><select id="filter-service"><option value="ALL">すべて</option></select></div>
+                <div class="form-group"><label class="text-[11px] font-bold">👤 担当者</label><select id="filter-worker"><option value="ALL">すべて</option></select></div>
+            </div>
+            <div class="filter-note">※ 上の絞り込みは、日別・サービス別・担当者別の集計にも反映されます</div>
+
             <div class="sub-tab-container">
                 <button class="sub-tab-btn active" data-subtab="view-filter">絞り込み・詳細</button>
                 <button class="sub-tab-btn" data-subtab="view-date">日別集計</button>
@@ -74,11 +90,6 @@
 
             <!-- ① 絞り込み・詳細 -->
             <div id="view-filter" class="sub-tab-content">
-                <div class="filter-bar">
-                    <div class="form-group"><label class="text-[11px] font-bold">📅 日付</label><select id="filter-date"><option value="ALL">すべて</option></select></div>
-                    <div class="form-group"><label class="text-[11px] font-bold">🏷️ サービス</label><select id="filter-service"><option value="ALL">すべて</option></select></div>
-                    <div class="form-group"><label class="text-[11px] font-bold">👤 担当者</label><select id="filter-worker"><option value="ALL">すべて</option></select></div>
-                </div>
                 <div class="stat-summary-box">
                     <div class="stat-box"><div class="stat-label">総件数</div><div class="stat-value" id="stat-total-count">0 件</div></div>
                     <div class="stat-box"><div class="stat-label">総時間</div><div class="stat-value" id="stat-total-time">00:00:00</div></div>
@@ -107,9 +118,9 @@
                 <div class="table-responsive"><table class="log-table"><thead><tr><th>担当者</th><th class="num-col">総件数</th><th class="num-col">総時間</th><th class="num-col">平均</th><th class="num-col">回数</th></tr></thead><tbody id="summary-worker-tbody"></tbody></table></div>
             </div>
 
-            <!-- ⑤ 全履歴 -->
+            <!-- ⑤ 全履歴（絞り込みに関係なく全件表示） -->
             <div id="view-raw" class="sub-tab-content" style="display: none;">
-                <div class="flex justify-between items-center mb-2"><span class="text-xs text-gray-500">全ログ一覧</span><button id="btn-clear-timer" class="bg-rose-600 text-white px-2.5 py-1 rounded text-xs font-bold">全ログ消去</button></div>
+                <div class="flex justify-between items-center mb-2"><span class="text-xs text-gray-500">全ログ一覧（絞り込みに関係なく全件）</span><button id="btn-clear-timer" class="bg-rose-600 text-white px-2.5 py-1 rounded text-xs font-bold">全ログ消去</button></div>
                 <div class="table-responsive"><table class="log-table"><thead><tr><th>日時</th><th>担当</th><th>サービス</th><th>内容</th><th class="num-col">件数</th><th class="num-col">時間</th><th class="num-col">平均</th><th>備考</th><th>削除</th></tr></thead><tbody id="log-tbody"></tbody></table></div>
             </div>
         </div>
@@ -117,8 +128,23 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         const db = getFirestore(initializeApp({ apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" }));
+
+        const $ = (id) => document.getElementById(id);
+        const STORAGE_KEY = 'timer_state_v1';
+
+        // 【修正⑦】入力文字をHTMLとして解釈させないためのエスケープ
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function showError(msg) {
+            const box = $('status-msg');
+            box.textContent = msg;
+            box.className = 'status-msg error';
+        }
+        function clearError() { $('status-msg').className = 'status-msg'; }
 
         // サブタブ切り替え
         document.querySelectorAll('.sub-tab-btn').forEach(btn => {
@@ -131,7 +157,8 @@
         });
 
         let timerInterval = null, startTime = 0, elapsedTime = 0, isRunning = false, timerRecords = [];
-        const display = document.getElementById('time-display');
+        const display = $('time-display');
+        const formIds = ['worker', 'service', 'task', 'count', 'memo'];
 
         function formatTime(ms) {
             const totalSec = Math.floor(ms / 1000);
@@ -141,101 +168,238 @@
             return `${hrs}:${mins}:${secs}`;
         }
 
-        document.getElementById('btn-start').onclick = () => {
-            if (!isRunning) { isRunning = true; startTime = Date.now() - elapsedTime; timerInterval = setInterval(() => { elapsedTime = Date.now() - startTime; display.textContent = formatTime(elapsedTime); }, 200); document.getElementById('btn-start').disabled = true; document.getElementById('btn-stop').disabled = false; }
-        };
-        document.getElementById('btn-stop').onclick = () => { isRunning = false; clearInterval(timerInterval); document.getElementById('btn-start').disabled = false; document.getElementById('btn-stop').disabled = true; };
-        document.getElementById('btn-reset').onclick = () => { document.getElementById('btn-stop').click(); elapsedTime = 0; display.textContent = "00:00:00"; };
+        // 【修正③】タイマー状態と入力内容をブラウザに保存（リロードしても続きから再開）
+        function saveState() {
+            try {
+                const form = {};
+                formIds.forEach(id => form[id] = $(id).value);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ isRunning, startTime, elapsedTime, form }));
+            } catch (e) { /* 保存できない環境では何もしない */ }
+        }
+        function loadState() {
+            try {
+                const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+                if (!s) return;
+                if (s.form) formIds.forEach(id => { if (s.form[id] !== undefined) $(id).value = s.form[id]; });
+                elapsedTime = Number(s.elapsedTime) || 0;
+                if (s.isRunning && s.startTime) {
+                    startTime = Number(s.startTime);
+                    startTicking();
+                } else {
+                    display.textContent = formatTime(elapsedTime);
+                }
+            } catch (e) { /* 読めなければ初期状態のまま */ }
+        }
+        formIds.forEach(id => $(id).addEventListener('input', saveState));
 
-        document.getElementById('btn-save-timer').onclick = async () => {
-            const worker = document.getElementById('worker').value.trim() || "未設定";
-            const service = document.getElementById('service').value.trim() || "共通";
-            const task = document.getElementById('task').value.trim() || "作業";
-            const count = parseInt(document.getElementById('count').value, 10) || 1;
-            const memo = document.getElementById('memo').value.trim() || "-";
+        function updateButtons() {
+            $('btn-start').disabled = isRunning;
+            $('btn-stop').disabled = !isRunning;
+            display.classList.toggle('running', isRunning);
+        }
+
+        function startTicking() {
+            isRunning = true;
+            clearInterval(timerInterval);
+            const tick = () => { elapsedTime = Date.now() - startTime; display.textContent = formatTime(elapsedTime); };
+            tick();
+            timerInterval = setInterval(tick, 200);
+            updateButtons();
+        }
+
+        function startTimer() {
+            if (isRunning) return;
+            startTime = Date.now() - elapsedTime;
+            startTicking();
+            saveState();
+        }
+        function stopTimer() {
+            if (!isRunning) return;
+            elapsedTime = Date.now() - startTime;
+            isRunning = false;
+            clearInterval(timerInterval);
+            display.textContent = formatTime(elapsedTime);
+            updateButtons();
+            saveState();
+        }
+        function resetTimer() {
+            isRunning = false;
+            clearInterval(timerInterval);
+            elapsedTime = 0;
+            startTime = 0;
+            display.textContent = "00:00:00";
+            updateButtons();
+            saveState();
+        }
+
+        $('btn-start').onclick = startTimer;
+        $('btn-stop').onclick = stopTimer;
+        $('btn-reset').onclick = () => {
+            if (elapsedTime > 0 && !confirm('計測中の時間をリセットしますか？')) return;
+            resetTimer();
+        };
+
+        $('btn-save-timer').onclick = async () => {
+            // 【修正②】計測中・0秒のときの確認
+            if (isRunning) {
+                if (!confirm('計測中です。ストップして保存しますか？')) return;
+                stopTimer();
+            }
+            if (elapsedTime < 1000) {
+                alert('計測時間が0秒です。「開始」を押して計測してから保存してください。');
+                return;
+            }
+
+            const worker = $('worker').value.trim() || "未設定";
+            const service = $('service').value.trim() || "共通";
+            const task = $('task').value.trim() || "作業";
+            // 【修正⑩】件数は1以上に補正
+            const count = Math.max(1, parseInt($('count').value, 10) || 1);
+            const memo = $('memo').value.trim() || "-";
             const now = new Date();
             const dateOnlyStr = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
             const timeStr = `${dateOnlyStr} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
             const totalSec = Math.floor(elapsedTime / 1000);
-            const avgSec = count > 0 ? (totalSec / count).toFixed(1) : 0;
+            const avgSecNum = Number((totalSec / count).toFixed(1));
 
-            await addDoc(collection(db, "timer_logs"), {
-                createdAt: serverTimestamp(), date: timeStr, dateOnly: dateOnlyStr, worker, service, task, count, timeMs: elapsedTime, timeFormatted: formatTime(elapsedTime), avgSec: `${avgSec}秒/件`, memo
-            });
-            document.getElementById('memo').value = ''; document.getElementById('btn-reset').click(); alert("作業実績を保存しました！");
+            // 【修正①】二重保存防止
+            const btn = $('btn-save-timer');
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+
+            // 【修正④】保存失敗時の表示
+            try {
+                await addDoc(collection(db, "timer_logs"), {
+                    createdAt: serverTimestamp(), date: timeStr, dateOnly: dateOnlyStr, worker, service, task, count,
+                    timeMs: elapsedTime, timeFormatted: formatTime(elapsedTime),
+                    avgSec: `${avgSecNum}秒/件`,   // 既存データとの互換用（表示用の文字）
+                    avgSecNum,                       // 【修正⑨】集計しやすい数値
+                    memo
+                });
+                $('memo').value = '';
+                resetTimer();
+                alert("作業実績を保存しました！");
+            } catch (err) {
+                console.error(err);
+                alert('保存できませんでした。通信状況を確認して、もう一度「作業実績をクラウド保存」を押してください。\n（計測した時間はそのまま残っています）');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '作業実績をクラウド保存';
+            }
         };
 
+        // 【修正④】読み込み失敗時の表示
         onSnapshot(query(collection(db, "timer_logs"), orderBy("createdAt", "desc")), (snapshot) => {
+            clearError();
             timerRecords = [];
             snapshot.forEach(docSnap => timerRecords.push({ id: docSnap.id, ...docSnap.data() }));
             renderAllViews();
+        }, (err) => {
+            console.error(err);
+            showError('実績データを読み込めませんでした。通信状況を確認して、ページを再読み込みしてください。');
         });
 
+        function fillSelect(id, values, current) {
+            const exists = values.includes(current);
+            $(id).innerHTML = '<option value="ALL">すべて</option>' +
+                values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+            $(id).value = exists ? current : 'ALL';
+        }
+
+        const jaSort = (a, b) => String(a).localeCompare(String(b), 'ja');
+
         function renderAllViews() {
-            const dates = [...new Set(timerRecords.map(r => r.dateOnly))].sort().reverse();
-            const services = [...new Set(timerRecords.map(r => r.service))].sort();
-            const workers = [...new Set(timerRecords.map(r => r.worker))].sort();
+            const dates = [...new Set(timerRecords.map(r => r.dateOnly))].filter(Boolean).sort().reverse();
+            const services = [...new Set(timerRecords.map(r => r.service))].filter(Boolean).sort(jaSort);
+            const workers = [...new Set(timerRecords.map(r => r.worker))].filter(Boolean).sort(jaSort);
 
-            const fDate = document.getElementById('filter-date').value;
-            const fServ = document.getElementById('filter-service').value;
-            const fWork = document.getElementById('filter-worker').value;
+            fillSelect('filter-date', dates, $('filter-date').value);
+            fillSelect('filter-service', services, $('filter-service').value);
+            fillSelect('filter-worker', workers, $('filter-worker').value);
 
-            document.getElementById('filter-date').innerHTML = '<option value="ALL">すべて</option>' + dates.map(d => `<option value="${d}" ${d===fDate?'selected':''}>${d}</option>`).join('');
-            document.getElementById('filter-service').innerHTML = '<option value="ALL">すべて</option>' + services.map(s => `<option value="${s}" ${s===fServ?'selected':''}>${s}</option>`).join('');
-            document.getElementById('filter-worker').innerHTML = '<option value="ALL">すべて</option>' + workers.map(w => `<option value="${w}" ${w===fWork?'selected':''}>${w}</option>`).join('');
+            const fDate = $('filter-date').value, fServ = $('filter-service').value, fWork = $('filter-worker').value;
+            const filtered = timerRecords.filter(r =>
+                (fDate === 'ALL' || r.dateOnly === fDate) &&
+                (fServ === 'ALL' || r.service === fServ) &&
+                (fWork === 'ALL' || r.worker === fWork));
 
-            const filtered = timerRecords.filter(r => (document.getElementById('filter-date').value === 'ALL' || r.dateOnly === document.getElementById('filter-date').value) && (document.getElementById('filter-service').value === 'ALL' || r.service === document.getElementById('filter-service').value) && (document.getElementById('filter-worker').value === 'ALL' || r.worker === document.getElementById('filter-worker').value));
+            const rowHtml = (r) => `<td>${esc(r.date)}</td><td>${esc(r.worker)}</td><td>${esc(r.service)}</td><td>${esc(r.task)}</td><td class="num-col">${esc(r.count)}</td><td class="num-col">${esc(r.timeFormatted)}</td><td class="num-col">${esc(r.avgSec)}</td><td>${esc(r.memo)}</td>`;
 
             // 1. 絞り込み詳細
             let tCount = 0, tMs = 0;
-            const fTbody = document.getElementById('filtered-tbody'); fTbody.innerHTML = '';
-            filtered.forEach(r => {
-                tCount += Number(r.count) || 0; tMs += r.timeMs || 0;
-                fTbody.innerHTML += `<tr><td>${r.date}</td><td>${r.worker}</td><td>${r.service}</td><td>${r.task}</td><td class="num-col">${r.count}</td><td class="num-col">${r.timeFormatted}</td><td class="num-col">${r.avgSec}</td><td>${r.memo}</td></tr>`;
-            });
-            document.getElementById('stat-total-count').textContent = `${tCount} 件`;
-            document.getElementById('stat-total-time').textContent = formatTime(tMs);
-            document.getElementById('stat-avg-sec').textContent = `${tCount > 0 ? (Math.floor(tMs/1000)/tCount).toFixed(1) : 0} 秒/件`;
+            filtered.forEach(r => { tCount += Number(r.count) || 0; tMs += Number(r.timeMs) || 0; });
+            $('filtered-tbody').innerHTML = filtered.length
+                ? filtered.map(r => `<tr>${rowHtml(r)}</tr>`).join('')
+                : '<tr><td colspan="8" class="text-center text-gray-400">該当する記録はありません</td></tr>';
+            $('stat-total-count').textContent = `${tCount} 件`;
+            $('stat-total-time').textContent = formatTime(tMs);
+            $('stat-avg-sec').textContent = `${tCount > 0 ? (Math.floor(tMs/1000)/tCount).toFixed(1) : '0.0'} 秒/件`;
 
-            // 2. 全履歴
-            const logTbody = document.getElementById('log-tbody'); logTbody.innerHTML = '';
-            timerRecords.forEach(r => {
-                logTbody.innerHTML += `<tr><td>${r.date}</td><td>${r.worker}</td><td>${r.service}</td><td>${r.task}</td><td class="num-col">${r.count}</td><td class="num-col">${r.timeFormatted}</td><td class="num-col">${r.avgSec}</td><td>${r.memo}</td><td><button class="btn-del-row" onclick="delRecord('${r.id}')">×</button></td></tr>`;
-            });
+            // 2. 全履歴（全件）
+            $('log-tbody').innerHTML = timerRecords.length
+                ? timerRecords.map(r => `<tr>${rowHtml(r)}<td><button class="btn-del-row" data-id="${esc(r.id)}">×</button></td></tr>`).join('')
+                : '<tr><td colspan="9" class="text-center text-gray-400">まだ記録がありません</td></tr>';
 
-            // 3. 集計テーブルの生成ヘルパー
-            renderSummaryTable('dateOnly', 'summary-date-tbody');
-            renderSummaryTable('service', 'summary-service-tbody');
-            renderSummaryTable('worker', 'summary-worker-tbody');
+            // 3. 集計（【修正⑤】絞り込み結果で集計／【修正⑥】日付だけ新しい順、他はあいうえお順）
+            renderSummaryTable(filtered, 'dateOnly', 'summary-date-tbody', true);
+            renderSummaryTable(filtered, 'service', 'summary-service-tbody', false);
+            renderSummaryTable(filtered, 'worker', 'summary-worker-tbody', false);
         }
 
-        function renderSummaryTable(key, tbodyId) {
+        function renderSummaryTable(records, key, tbodyId, newestFirst) {
             const map = {};
-            timerRecords.forEach(r => {
+            records.forEach(r => {
                 const k = r[key] || '未設定';
                 if (!map[k]) map[k] = { count: 0, ms: 0, times: 0 };
                 map[k].count += Number(r.count) || 0;
-                map[k].ms += r.timeMs || 0;
+                map[k].ms += Number(r.timeMs) || 0;
                 map[k].times += 1;
             });
-            const tbody = document.getElementById(tbodyId); tbody.innerHTML = '';
-            Object.keys(map).sort().reverse().forEach(k => {
+            let keys = Object.keys(map);
+            keys = newestFirst ? keys.sort().reverse() : keys.sort(jaSort);
+            $(tbodyId).innerHTML = keys.length ? keys.map(k => {
                 const d = map[k];
-                const avg = d.count > 0 ? (Math.floor(d.ms/1000)/d.count).toFixed(1) : 0;
-                tbody.innerHTML += `<tr><td class="font-bold">${k}</td><td class="num-col">${d.count} 件</td><td class="num-col">${formatTime(d.ms)}</td><td class="num-col">${avg} 秒/件</td><td class="num-col">${d.times} 回</td></tr>`;
-            });
+                const avg = d.count > 0 ? (Math.floor(d.ms/1000)/d.count).toFixed(1) : '0.0';
+                return `<tr><td class="font-bold">${esc(k)}</td><td class="num-col">${d.count} 件</td><td class="num-col">${formatTime(d.ms)}</td><td class="num-col">${avg} 秒/件</td><td class="num-col">${d.times} 回</td></tr>`;
+            }).join('') : '<tr><td colspan="5" class="text-center text-gray-400">該当する記録はありません</td></tr>';
         }
 
-        document.getElementById('filter-date').onchange = renderAllViews;
-        document.getElementById('filter-service').onchange = renderAllViews;
-        document.getElementById('filter-worker').onchange = renderAllViews;
+        $('filter-date').onchange = renderAllViews;
+        $('filter-service').onchange = renderAllViews;
+        $('filter-worker').onchange = renderAllViews;
 
-        window.delRecord = async (id) => { if(confirm('このログを削除しますか？')) await deleteDoc(doc(db, "timer_logs", id)); };
-        document.getElementById('btn-clear-timer').onclick = async () => {
-            if(confirm('すべての作業ログを削除しますか？')) {
-                for(const r of timerRecords) { await deleteDoc(doc(db, "timer_logs", r.id)); }
+        // 個別削除（エスケープ対応のためクリックをまとめて受け取る形に変更）
+        $('log-tbody').addEventListener('click', async (e) => {
+            const btn = e.target.closest('.btn-del-row');
+            if (!btn) return;
+            if (!confirm('このログを削除しますか？')) return;
+            try { await deleteDoc(doc(db, "timer_logs", btn.dataset.id)); }
+            catch (err) { console.error(err); alert('削除できませんでした。通信状況を確認してください。'); }
+        });
+
+        // 全ログ消去（まとめて削除で高速化）
+        $('btn-clear-timer').onclick = async () => {
+            if (!timerRecords.length) return;
+            if (!confirm(`すべての作業ログ（${timerRecords.length}件）を削除しますか？\nこの操作は元に戻せません。`)) return;
+            const btn = $('btn-clear-timer');
+            btn.disabled = true;
+            try {
+                const ids = timerRecords.map(r => r.id);
+                for (let i = 0; i < ids.length; i += 400) {
+                    const batch = writeBatch(db);
+                    ids.slice(i, i + 400).forEach(id => batch.delete(doc(db, "timer_logs", id)));
+                    await batch.commit();
+                }
+            } catch (err) {
+                console.error(err);
+                alert('一部のログを削除できませんでした。もう一度お試しください。');
+            } finally {
+                btn.disabled = false;
             }
         };
+
+        updateButtons();
+        loadState();
     </script>
 </body>
 </html>
