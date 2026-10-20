@@ -2,11 +2,14 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>出荷実績 ＆ 議事録・タスク管理（Firestore同期版）</title>
-<script src="https://cdn.tailwindcss.com"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Tailwind削除に伴う最小限のリセット（見た目を維持するため） */
+  html { line-height: 1.5; }
+  button, input, textarea { font-family: inherit; font-size: inherit; line-height: inherit; margin: 0; }
+  button { background: transparent; border: 0; }
   body {
     width: 100%;
     max-width: 600px;
@@ -109,6 +112,16 @@
   }
   .metrics-input-wrapper input[readonly] { background: #e9ecef; color: #27ae60; }
   .unit { font-size: 14px; color: #555; font-weight: bold; }
+  .ship-source-note {
+    font-size: 12px; color: #7f8c8d; margin-top: 8px; line-height: 1.6;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  }
+  .ship-source-note:empty { display: none; }
+  .ship-source-note.is-diff { color: #d35400; }
+  .btn-apply-ship {
+    padding: 4px 10px; font-size: 12px; font-weight: bold; color: #fff;
+    background: #2980b9; border-radius: 4px; cursor: pointer;
+  }
 
   .meeting-tabs-container {
     display: flex;
@@ -387,7 +400,7 @@
   <div class="header">
     <div class="badge-wrapper">
       <span>📊 出荷実績 ＆ 議事録メモ</span>
-      <div id="header-badge" class="notification-badge">0</div>
+      <div id="header-badge" class="notification-badge" title="全日付の未完了タスク数">0</div>
     </div>
     <a href="index.html">🏠 ポータルへ戻る</a>
   </div>
@@ -400,7 +413,7 @@
 
   <button type="button" class="btn-save-log btn-save-top" id="btn-save-top">💾 クラウドに保存（Firestore同期）</button>
   <div class="save-status-container">
-    <button type="button" class="btn-undo" id="btn-undo">↩️ 変更をもとに戻す</button>
+    <button type="button" class="btn-undo" id="btn-undo">↩️ 開いた時点に戻す</button>
     <div class="save-status" id="save-status"></div>
   </div>
 
@@ -428,6 +441,7 @@
       </div>
     </div>
   </div>
+  <div class="ship-source-note" id="ship-source-note"></div>
 
   <div class="section-title">📝 議事録・タスクメモ</div>
 
@@ -457,7 +471,7 @@
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal-content" style="max-width: 320px; text-align: center;">
     <div class="modal-header" style="justify-content: center; color: #e74c3c;">⚠️ 削除の確認</div>
-    <div style="font-size: 15px; color: #333; margin: 10px 0 20px 0;" id="confirm-msg">
+    <div style="font-size: 15px; color: #333; margin: 10px 0 20px 0; white-space: pre-line;" id="confirm-msg">
       本当にこの項目を削除しますか？
     </div>
     <div class="confirm-modal-buttons">
@@ -469,7 +483,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, collection, getDocs, runTransaction, query, where, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -483,56 +497,120 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+  const COLLECTION = "shipment_meetings";
+
+  // =========================================================
+  // 状態管理
+  // =========================================================
+  // 【修正3】日本時間（端末のローカル時刻）で今日の日付を作る
+  function getLocalDateStr(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
   const dateInput = document.getElementById('today-date');
-  dateInput.value = new Date().toISOString().split('T')[0];
+  dateInput.value = getLocalDateStr();
 
+  // 【修正1】画面に表示中の日付は dateInput ではなくこの変数で管理する
+  let currentDate = null;          // 読み込み完了した日付（保存先）
+  let isLoading = false;           // 読み込み中は保存しない
   let autoSaveTimer = null;
+  let saveChain = Promise.resolve(); // 保存を順番に1つずつ実行するための列
+  let lastKnownUpdatedAt = null;   // 【修正6】最後に読み込み/保存した時のupdatedAt
+  let conflictPending = false;     // 他端末との競合ダイアログ表示中
+
+  // 【修正2】「開いた時点」の状態
+  let loadedState = null;
+
+  // 【修正4】日付ごとの未完了タスク数（表示中の日付以外の分）
+  const uncompletedByDate = {};
+
   const saveStatusEl = document.getElementById('save-status');
   const undoBtn = document.getElementById('btn-undo');
 
-  let lastSavedState = null;
-
+  // =========================================================
+  // 確認ダイアログ（ボタン文言を切り替えられるように拡張）
+  // =========================================================
   const confirmModal = document.getElementById('confirm-modal');
+  const confirmTitle = confirmModal.querySelector('.modal-header');
   const confirmMsg = document.getElementById('confirm-msg');
   const confirmYes = document.getElementById('confirm-yes');
   const confirmNo = document.getElementById('confirm-no');
-  let pendingDeleteCallback = null;
+  let pendingYes = null;
+  let pendingNo = null;
 
-  function showConfirmDialog(message, callback) {
+  function showConfirmDialog(message, onYes, options = {}) {
+    confirmTitle.textContent = options.title || '⚠️ 削除の確認';
     confirmMsg.textContent = message;
-    pendingDeleteCallback = callback;
+    confirmYes.textContent = options.yesText || '削除する';
+    confirmNo.textContent = options.noText || 'キャンセル';
+    pendingYes = onYes;
+    pendingNo = options.onNo || null;
     confirmModal.style.display = 'flex';
   }
 
   confirmYes.onclick = () => {
     confirmModal.style.display = 'none';
-    if (pendingDeleteCallback) {
-      pendingDeleteCallback();
-      pendingDeleteCallback = null;
-    }
+    const cb = pendingYes;
+    pendingYes = pendingNo = null;
+    if (cb) cb();
   };
 
   confirmNo.onclick = () => {
     confirmModal.style.display = 'none';
-    pendingDeleteCallback = null;
+    const cb = pendingNo;
+    pendingYes = pendingNo = null;
+    if (cb) cb();
   };
 
-  // 💡 確実かつ常に未完了タスク数を計算してバッジを更新する関数
+  // =========================================================
+  // 未完了タスクバッジ（全日付分を集計）
+  // =========================================================
+  function countUncompletedInData(data) {
+    let count = 0;
+    (data.meetings || []).forEach(m => {
+      (m.topics || []).forEach(t => {
+        (t.tasks || []).forEach(task => {
+          if (!task.completed) count++;
+        });
+      });
+    });
+    return count;
+  }
+
+  function countUncompletedInDOM() {
+    let count = 0;
+    document.querySelectorAll('.task-item .t-task-checkbox').forEach(cb => {
+      if (!cb.checked) count++;
+    });
+    return count;
+  }
+
+  // 全日付のデータを読み込んで、日付ごとの未完了数を更新
+  async function refreshAllUncompletedCounts() {
+    try {
+      const snap = await getDocs(collection(db, COLLECTION));
+      snap.forEach(d => {
+        uncompletedByDate[d.id] = countUncompletedInData(d.data());
+      });
+      updateUncompletedBadge();
+      return snap;
+    } catch (e) {
+      console.error("未完了タスク集計エラー:", e);
+      return null;
+    }
+  }
+
   function updateUncompletedBadge() {
-    let uncompletedCount = 0;
-    document.querySelectorAll('.task-item').forEach(taskEl => {
-      const checkbox = taskEl.querySelector('.t-task-checkbox');
-      if (checkbox && !checkbox.checked) {
-        uncompletedCount++;
-      }
+    // 表示中の日付は画面上の最新状態、それ以外は集計済みの値を使う
+    let total = isLoading ? 0 : countUncompletedInDOM();
+    Object.keys(uncompletedByDate).forEach(date => {
+      if (date !== currentDate) total += uncompletedByDate[date];
     });
 
-    // ヘッダーのバッジ更新
     const badge = document.getElementById('header-badge');
     if (badge) {
-      if (uncompletedCount > 0) {
-        badge.textContent = uncompletedCount > 99 ? '99+' : uncompletedCount;
+      if (total > 0) {
+        badge.textContent = total > 99 ? '99+' : total;
         badge.style.display = 'flex';
       } else {
         badge.style.display = 'none';
@@ -541,21 +619,24 @@
 
     // ポータル側との同期（localStorage）
     const STORAGE_KEY = 'warehouse_portal_v7_data';
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
         const portalData = JSON.parse(saved);
-        const card = portalData.cards.find(c => c.id === 'meeting');
+        const card = (portalData.cards || []).find(c => c.id === 'meeting');
         if (card) {
-          card.badge = uncompletedCount;
+          card.badge = total;
           localStorage.setItem(STORAGE_KEY, JSON.stringify(portalData));
         }
-      } catch (e) {
-        console.error("Portal badge sync error:", e);
       }
+    } catch (e) {
+      console.error("Portal badge sync error:", e);
     }
   }
 
+  // =========================================================
+  // テキストエリア自動リサイズ・自動保存
+  // =========================================================
   function autoResize(textarea) {
     textarea.style.height = 'auto';
     textarea.style.height = textarea.scrollHeight + 'px';
@@ -575,14 +656,30 @@
   }
 
   function triggerAutoSave() {
+    if (isLoading) return;
     clearTimeout(autoSaveTimer);
     saveStatusEl.textContent = "変更を検知しました...";
-    updateUncompletedBadge(); // 変更時にバッジを再計算
+    undoBtn.style.display = 'inline-block';
+    updateUncompletedBadge();
     autoSaveTimer = setTimeout(() => {
+      autoSaveTimer = null;
       saveDataToCloud(true);
     }, 1500);
   }
 
+  // 自動保存待ちがあれば、今すぐ保存する（日付切り替え前などに使用）
+  async function flushPendingSave() {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+      saveDataToCloud(true);
+    }
+    await saveChain;
+  }
+
+  // =========================================================
+  // データの収集・復元
+  // =========================================================
   function collectCurrentData() {
     const shipCount = parseFloat(document.getElementById('ship-count').value) || 0;
     const errorCount = parseFloat(document.getElementById('error-count').value) || 0;
@@ -629,20 +726,27 @@
     return { shipCount, errorCount, errorRate, meetings };
   }
 
-  function restoreDataToUI(data) {
+  function clearUI() {
+    document.getElementById('ship-count').value = "";
+    document.getElementById('error-count').value = "";
+    calcErrorRate(false);
+    document.getElementById('meeting-list').innerHTML = "";
+  }
+
+  function renderData(data) {
+    clearUI();
     document.getElementById('ship-count').value = data.shipCount !== undefined ? data.shipCount : "";
     document.getElementById('error-count').value = data.errorCount !== undefined ? data.errorCount : "";
     calcErrorRate(false);
 
-    document.getElementById('meeting-list').innerHTML = "";
     if (data.meetings && Array.isArray(data.meetings) && data.meetings.length > 0) {
       data.meetings.forEach(m => addMeetingCard(m));
     } else {
       addMeetingCard();
     }
+    document.querySelectorAll('.topic-item').forEach(updateTopicStatusStyle);
     updateTabs();
     initAutoResize();
-    updateUncompletedBadge(); // 復元時にも更新
   }
 
   function calcErrorRate(triggerSave = true) {
@@ -653,6 +757,15 @@
     if (triggerSave) triggerAutoSave();
   }
 
+  // =========================================================
+  // タブ
+  // =========================================================
+  function activateCard(card) {
+    document.querySelectorAll('#meeting-list .meeting-card').forEach(c => c.classList.remove('active-tab'));
+    card.classList.add('active-tab');
+    updateTabs();
+  }
+
   function updateTabs() {
     const headerContainer = document.getElementById('meeting-tabs-header');
     const meetingList = document.getElementById('meeting-list');
@@ -660,6 +773,10 @@
 
     headerContainer.innerHTML = "";
     if (cards.length === 0) return;
+
+    if (!meetingList.querySelector('.meeting-card.active-tab')) {
+      cards[0].classList.add('active-tab');
+    }
 
     cards.forEach((card, index) => {
       const titleInput = card.querySelector('.m-title');
@@ -669,24 +786,15 @@
       tabBtn.type = "button";
       tabBtn.className = `meeting-tab-btn ${card.classList.contains('active-tab') ? 'active' : ''}`;
       tabBtn.textContent = titleText;
-
-      tabBtn.addEventListener('click', () => {
-        cards.forEach(c => c.classList.remove('active-tab'));
-        card.classList.add('active-tab');
-        updateTabs();
-      });
-
+      tabBtn.addEventListener('click', () => activateCard(card));
       headerContainer.appendChild(tabBtn);
     });
-
-    if (!meetingList.querySelector('.meeting-card.active-tab')) {
-      cards[0].classList.add('active-tab');
-      if (headerContainer.firstChild) {
-        headerContainer.firstChild.classList.add('active');
-      }
-    }
   }
 
+  // =========================================================
+  // 各項目の追加
+  // 【修正5】入力値はHTMLに埋め込まず、作成後に .value で設定する
+  // =========================================================
   function addAttendeeItem(cardElement, val = "") {
     const attendeeList = cardElement.querySelector('.attendee-list');
     if (!attendeeList) return;
@@ -694,9 +802,10 @@
     div.className = 'attendee-item';
     div.innerHTML = `
       <span>👤</span>
-      <input type="text" class="m-attendee-input" placeholder="参加者名を入力" value="${val}">
+      <input type="text" class="m-attendee-input" placeholder="参加者名を入力">
       <button type="button" class="btn-del btn-del-attendee" style="font-size:14px; padding:0 4px;">✕</button>
     `;
+    div.querySelector('.m-attendee-input').value = val;
     div.querySelector('.btn-del-attendee').addEventListener('click', () => {
       showConfirmDialog("この参加者を削除しますか？", () => {
         div.remove();
@@ -714,9 +823,10 @@
     div.className = 'share-sub-item';
     div.innerHTML = `
       <span>・</span>
-      <textarea class="m-share-input" rows="1" placeholder="共有事項を入力">${val}</textarea>
+      <textarea class="m-share-input" rows="1" placeholder="共有事項を入力"></textarea>
       <button type="button" class="btn-del btn-del-sub">✕</button>
     `;
+    div.querySelector('.m-share-input').value = val;
     div.querySelector('.btn-del-sub').addEventListener('click', () => {
       showConfirmDialog("この共有事項を削除しますか？", () => {
         div.remove();
@@ -734,9 +844,10 @@
     div.className = 'topic-sub-item';
     div.innerHTML = `
       <span>・</span>
-      <textarea class="t-sub-input" rows="1" placeholder="箇条書きを追加">${val}</textarea>
+      <textarea class="t-sub-input" rows="1" placeholder="箇条書きを追加"></textarea>
       <button type="button" class="btn-del btn-del-topic-sub" style="font-size:14px; padding:0 4px;">✕</button>
     `;
+    div.querySelector('.t-sub-input').value = val;
     div.querySelector('.btn-del-topic-sub').addEventListener('click', () => {
       showConfirmDialog("この箇条書きを削除しますか？", () => {
         div.remove();
@@ -750,20 +861,13 @@
   function updateTopicStatusStyle(topicElement) {
     const taskItems = topicElement.querySelectorAll('.task-item');
     topicElement.classList.remove('has-tasks', 'all-completed');
-
     if (taskItems.length === 0) return;
 
     let hasUncompleted = false;
     taskItems.forEach(taskEl => {
-      const isChecked = taskEl.querySelector('.t-task-checkbox').checked;
-      if (!isChecked) hasUncompleted = true;
+      if (!taskEl.querySelector('.t-task-checkbox').checked) hasUncompleted = true;
     });
-
-    if (hasUncompleted) {
-      topicElement.classList.add('has-tasks');
-    } else {
-      topicElement.classList.add('all-completed');
-    }
+    topicElement.classList.add(hasUncompleted ? 'has-tasks' : 'all-completed');
   }
 
   function addTaskItem(topicElement, taskData = {}) {
@@ -776,36 +880,36 @@
       <button type="button" class="btn-del btn-del-task">✕</button>
       <div class="task-header-row">
         <label class="task-checkbox-label">
-          <input type="checkbox" class="t-task-checkbox" ${taskData.completed ? 'checked' : ''}>
+          <input type="checkbox" class="t-task-checkbox">
           <span>完了</span>
         </label>
       </div>
       <div class="field-group" style="margin-bottom: 8px;">
         <div class="field-label" style="color: #2980b9;">📝 タスク・アクション内容</div>
-        <textarea class="t-task-name" rows="1" placeholder="例: 作業マニュアルの修正">${taskData.task || ''}</textarea>
+        <textarea class="t-task-name" rows="1" placeholder="例: 作業マニュアルの修正"></textarea>
       </div>
       <div class="task-row">
         <div class="field-group">
           <div class="field-label" style="color: #2980b9;">👤 担当者</div>
-          <input type="text" class="t-task-assignee" placeholder="例: 山田" value="${taskData.assignee || ''}">
+          <input type="text" class="t-task-assignee" placeholder="例: 山田">
         </div>
         <div class="field-group">
           <div class="field-label" style="color: #2980b9;">📅 期限</div>
-          <input type="date" class="t-task-limit" value="${taskData.limit || ''}">
+          <input type="date" class="t-task-limit">
         </div>
       </div>
     `;
 
     const checkbox = div.querySelector('.t-task-checkbox');
-    // 💡 チェックボックス変更時のイベント登録
+    checkbox.checked = !!taskData.completed;
+    div.querySelector('.t-task-name').value = taskData.task || '';
+    div.querySelector('.t-task-assignee').value = taskData.assignee || '';
+    div.querySelector('.t-task-limit').value = taskData.limit || '';
+
     checkbox.addEventListener('change', () => {
-      if (checkbox.checked) {
-        div.classList.add('completed');
-      } else {
-        div.classList.remove('completed');
-      }
+      div.classList.toggle('completed', checkbox.checked);
       updateTopicStatusStyle(topicElement);
-      triggerAutoSave(); // ここで必ずバッジ再計算とオートセーブを実行
+      triggerAutoSave();
     });
 
     div.querySelector('.btn-del-task').addEventListener('click', () => {
@@ -816,14 +920,14 @@
       });
     });
 
-    div.querySelectorAll('input, textarea').forEach(input => {
+    div.querySelectorAll('input:not([type="checkbox"]), textarea').forEach(input => {
       input.addEventListener('input', triggerAutoSave);
     });
 
     taskList.appendChild(div);
     initAutoResize(div);
     updateTopicStatusStyle(topicElement);
-    updateUncompletedBadge(); // タスク追加時にも更新
+    updateUncompletedBadge();
   }
 
   function addTopicItem(cardElement, topicData = {}) {
@@ -836,24 +940,27 @@
       <div class="meeting-row">
         <div class="field-group" style="flex: 2; width: calc(100% - 28px);">
           <div class="field-label">議題タイトル</div>
-          <input type="text" class="t-topic-title" placeholder="例: 梱包ミスの再発防止策について" value="${topicData.title || ''}">
+          <input type="text" class="t-topic-title" placeholder="例: 梱包ミスの再発防止策について">
         </div>
       </div>
       <div class="meeting-row" style="margin-top: 8px;">
         <div class="field-group">
           <div class="field-label">🗣️ 発話者</div>
-          <input type="text" class="t-topic-speaker" placeholder="例: 渡辺" value="${topicData.speaker || ''}">
+          <input type="text" class="t-topic-speaker" placeholder="例: 渡辺">
         </div>
       </div>
       <div class="field-group" style="margin-top: 8px;">
         <div class="field-label">💬 議論・決定事項概要</div>
-        <textarea class="t-topic-summary" rows="1" placeholder="議論内容や決定事項を入力">${topicData.summary || ''}</textarea>
+        <textarea class="t-topic-summary" rows="1" placeholder="議論内容や決定事項を入力"></textarea>
       </div>
       <div class="topic-sub-list"></div>
       <button type="button" class="btn-add btn-add-topic-sub">＋ 箇条書き追加</button>
       <div class="task-list"></div>
       <button type="button" class="btn-add btn-add-task">＋ タスク追加</button>
     `;
+    div.querySelector('.t-topic-title').value = topicData.title || '';
+    div.querySelector('.t-topic-speaker').value = topicData.speaker || '';
+    div.querySelector('.t-topic-summary').value = topicData.summary || '';
 
     div.querySelector('.btn-del-topic').addEventListener('click', () => {
       showConfirmDialog("この議題（トピック）を削除しますか？", () => {
@@ -869,14 +976,14 @@
       addTaskItem(div);
       triggerAutoSave();
     });
-    div.querySelectorAll('input, textarea').forEach(input => {
+    div.querySelectorAll('.t-topic-title, .t-topic-speaker').forEach(input => {
       input.addEventListener('input', triggerAutoSave);
     });
 
-    if (topicData.subs && Array.isArray(topicData.subs)) {
+    if (Array.isArray(topicData.subs)) {
       topicData.subs.forEach(subVal => addTopicSubItem(div, subVal));
     }
-    if (topicData.tasks && Array.isArray(topicData.tasks)) {
+    if (Array.isArray(topicData.tasks)) {
       topicData.tasks.forEach(taskObj => addTaskItem(div, taskObj));
     }
 
@@ -894,7 +1001,7 @@
       <div class="meeting-header-row">
         <div class="field-group">
           <div class="field-label">定例タイトル</div>
-          <input type="text" class="m-title" placeholder="例: 第1回 定例ミーティング" value="${meetingData.title || ''}">
+          <input type="text" class="m-title" placeholder="例: 第1回 定例ミーティング">
         </div>
       </div>
 
@@ -914,6 +1021,8 @@
       <div class="topic-list"></div>
       <button type="button" class="btn-add btn-add-topic">＋ 議題追加</button>
     `;
+    const titleInput = card.querySelector('.m-title');
+    titleInput.value = meetingData.title || '';
 
     card.querySelector('.btn-del-meeting').addEventListener('click', () => {
       showConfirmDialog("この定例カード全体を削除しますか？", () => {
@@ -923,7 +1032,6 @@
       });
     });
 
-    const titleInput = card.querySelector('.m-title');
     titleInput.addEventListener('input', () => {
       updateTabs();
       triggerAutoSave();
@@ -942,172 +1050,339 @@
       triggerAutoSave();
     });
 
-    if (meetingData.attendees && Array.isArray(meetingData.attendees)) {
+    if (Array.isArray(meetingData.attendees) && meetingData.attendees.length > 0) {
       meetingData.attendees.forEach(name => addAttendeeItem(card, name));
     } else {
       addAttendeeItem(card);
     }
-
-    if (meetingData.shares && Array.isArray(meetingData.shares)) {
+    if (Array.isArray(meetingData.shares)) {
       meetingData.shares.forEach(shareText => addShareSubItem(card, shareText));
     }
-
-    if (meetingData.topics && Array.isArray(meetingData.topics)) {
+    if (Array.isArray(meetingData.topics)) {
       meetingData.topics.forEach(topicObj => addTopicItem(card, topicObj));
     }
 
     meetingList.appendChild(card);
     updateTabs();
     initAutoResize(card);
-
-    card.querySelectorAll('.topic-item').forEach(topicEl => {
-      updateTopicStatusStyle(topicEl);
-    });
+    card.querySelectorAll('.topic-item').forEach(updateTopicStatusStyle);
+    return card;
   }
 
-  async function loadDataFromCloud(dateStr) {
-    saveStatusEl.textContent = "データを読み込み中...";
-    try {
-      const docRef = doc(db, "shipment_meetings", dateStr);
-      const docSnap = await getDoc(docRef);
 
-      document.getElementById('ship-count').value = "";
-      document.getElementById('error-count').value = "";
-      calcErrorRate(false);
-      document.getElementById('meeting-list').innerHTML = "";
+  // =========================================================
+  // 前週の出荷件数を自動入力
+  // 出荷チェックリストアプリが保存している shukka_records（ドキュメントID＝日付）から、
+  // 登録日の「前の週の月曜〜日曜」の全サービス合計を集計する
+  // =========================================================
+  const shipNoteEl = document.getElementById('ship-source-note');
 
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        document.getElementById('ship-count').value = data.shipCount !== undefined ? data.shipCount : "";
-        document.getElementById('error-count').value = data.errorCount !== undefined ? data.errorCount : "";
-        calcErrorRate(false);
+  function parseDateStr(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+  function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  const toNum = v => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
 
-        if (data.meetings && Array.isArray(data.meetings) && data.meetings.length > 0) {
-          data.meetings.forEach(m => addMeetingCard(m));
-        } else {
-          addMeetingCard();
-        }
-        saveStatusEl.textContent = "データを読み込みました";
-        lastSavedState = collectCurrentData();
-      } else {
-        addMeetingCard();
-        saveStatusEl.textContent = "新規データです";
-        lastSavedState = collectCurrentData();
-      }
+  function prevWeekRange(dateStr) {
+    const d = parseDateStr(dateStr);
+    const dow = d.getDay();
+    const thisMon = addDays(d, dow === 0 ? -6 : 1 - dow);
+    const mon = addDays(thisMon, -7);
+    const sun = addDays(thisMon, -1);
+    return {
+      start: getLocalDateStr(mon),
+      end: getLocalDateStr(sun),
+      label: `${mon.getMonth() + 1}/${mon.getDate()}〜${sun.getMonth() + 1}/${sun.getDate()}`
+    };
+  }
 
-      document.querySelectorAll('.topic-item').forEach(topicEl => {
-        updateTopicStatusStyle(topicEl);
+  // 出荷チェックリスト側と同じ数え方（_meta.counts 優先、なければ「サービス名: 件数」）
+  function shukkaRecordTotal(data) {
+    let total = 0;
+    if (data && data._meta && data._meta.counts) {
+      Object.values(data._meta.counts).forEach(v => { const n = toNum(v); if (n > 0) total += n; });
+    } else {
+      Object.entries(data || {}).forEach(([k, v]) => {
+        if (k.startsWith('_')) return;
+        const n = toNum(v); if (n > 0) total += n;
       });
+    }
+    return total;
+  }
 
-      updateTabs();
-      initAutoResize();
-      updateUncompletedBadge(); // 💡 読み込み完了後にバッジを確実に更新
-      undoBtn.style.display = 'none';
+  async function fetchPrevWeekShipTotal(dateStr) {
+    const r = prevWeekRange(dateStr);
+    const qs = await getDocs(query(
+      collection(db, 'shukka_records'),
+      where(documentId(), '>=', r.start),
+      where(documentId(), '<=', r.end)
+    ));
+    let total = 0, days = 0;
+    qs.forEach(d => { const t = shukkaRecordTotal(d.data()); if (t > 0) { total += t; days++; } });
+    return { ...r, total, days };
+  }
+
+  function setShipNote(text, isDiff = false) {
+    shipNoteEl.className = 'ship-source-note' + (isDiff ? ' is-diff' : '');
+    shipNoteEl.textContent = text;
+  }
+
+  async function autoFillShipCount(dateStr) {
+    if (!dateStr) return;
+    setShipNote('前週の出荷件数を集計中...');
+    let r;
+    try {
+      r = await fetchPrevWeekShipTotal(dateStr);
+    } catch (e) {
+      console.error('出荷件数の集計エラー:', e);
+      if (currentDate === dateStr) setShipNote('前週の出荷件数を取得できませんでした。手入力してください');
+      return;
+    }
+    if (currentDate !== dateStr) return; // 集計中に日付が変わった
+
+    const input = document.getElementById('ship-count');
+    const current = parseFloat(input.value) || 0;
+    const totalStr = r.total.toLocaleString('ja-JP');
+
+    if (r.days === 0) {
+      setShipNote(`${r.label} の出荷記録がありません。手入力してください`);
+      return;
+    }
+
+    if (current === 0) {
+      // 未入力なら自動で入れる（次に何か入力したときに一緒に保存されます）
+      input.value = r.total;
+      calcErrorRate(false);
+      setShipNote(`${r.label} の出荷記録（${r.days}日分）から自動入力しました`);
+    } else if (current === r.total) {
+      setShipNote(`${r.label} の出荷記録（${r.days}日分）と一致しています`);
+    } else {
+      // すでに別の数字が入っている場合は勝手に変えず、選べるようにする
+      setShipNote(`${r.label} の出荷記録の合計は ${totalStr}件です（入力値と違います）`, true);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-apply-ship';
+      btn.textContent = '記録の件数に置き換える';
+      btn.addEventListener('click', () => {
+        input.value = r.total;
+        calcErrorRate(true);
+        setShipNote(`${r.label} の出荷記録（${r.days}日分）の件数に置き換えました`);
+      });
+      shipNoteEl.appendChild(btn);
+    }
+  }
+
+  // =========================================================
+  // 読み込み
+  // =========================================================
+  async function loadDataFromCloud(dateStr) {
+    let loaded = false;
+    isLoading = true;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    saveStatusEl.textContent = "データを読み込み中...";
+    undoBtn.style.display = 'none';
+
+    try {
+      const docSnap = await getDoc(doc(db, COLLECTION, dateStr));
+      const data = docSnap.exists() ? docSnap.data() : {};
+
+      renderData(data);
+      currentDate = dateStr;
+      lastKnownUpdatedAt = data.updatedAt || null;
+      loadedState = collectCurrentData();
+      uncompletedByDate[dateStr] = countUncompletedInData(loadedState);
+
+      saveStatusEl.textContent = docSnap.exists() ? "データを読み込みました" : "新規データです";
+      loaded = true;
     } catch (error) {
       console.error("読み込みエラー:", error);
-      saveStatusEl.textContent = "読み込みに失敗しました";
+      clearUI();
+      currentDate = null; // 読み込めなかった日付には保存しない
+      saveStatusEl.textContent = "読み込みに失敗しました。通信状況を確認して日付を選び直してください";
+    } finally {
+      isLoading = false;
+      updateUncompletedBadge();
     }
+    if (loaded) autoFillShipCount(dateStr);
   }
 
-  async function saveDataToCloud(isAuto = false) {
-    const dateStr = dateInput.value;
-    if (!dateStr) return;
+  // 日付切り替え：保存待ちを先に旧日付へ保存してから読み込む
+  async function switchDate(newDate) {
+    if (!newDate) return;
+    await flushPendingSave();
+    if (currentDate) {
+      uncompletedByDate[currentDate] = countUncompletedInDOM();
+    }
+    dateInput.value = newDate;
+    await loadDataFromCloud(newDate);
+  }
 
-    lastSavedState = collectCurrentData();
-    undoBtn.style.display = 'inline-block';
+  // =========================================================
+  // 保存
+  // 【修正1】保存先の日付と内容は「呼び出した瞬間」に確定させる
+  // 【修正6】他の端末が先に保存していたら上書きせず確認する
+  // =========================================================
+  function saveDataToCloud(isAuto = false, force = false) {
+    if (isLoading || !currentDate) return saveChain;
+    if (conflictPending && !force) return saveChain;
 
+    const dateStr = currentDate;
+    const data = collectCurrentData();
+    uncompletedByDate[dateStr] = countUncompletedInData(data);
     if (!isAuto) saveStatusEl.textContent = "保存中...";
 
-    const { shipCount, errorCount, errorRate, meetings } = lastSavedState;
+    saveChain = saveChain.then(() => doSave(dateStr, data, isAuto, force));
+    return saveChain;
+  }
 
+  async function doSave(dateStr, data, isAuto, force) {
+    const docRef = doc(db, COLLECTION, dateStr);
+    const newUpdatedAt = new Date().toISOString();
     try {
-      const docRef = doc(db, "shipment_meetings", dateStr);
-      await setDoc(docRef, {
-        shipCount,
-        errorCount,
-        errorRate,
-        meetings,
-        updatedAt: new Date().toISOString()
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(docRef);
+        const remoteUpdatedAt = snap.exists() ? (snap.data().updatedAt || null) : null;
+        if (!force && remoteUpdatedAt !== lastKnownUpdatedAt) {
+          throw new Error('CONFLICT');
+        }
+        tx.set(docRef, { ...data, updatedAt: newUpdatedAt });
       });
-      const now = new Date();
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-      saveStatusEl.textContent = isAuto ? `自動保存しました (${timeStr})` : `保存しました (${timeStr})`;
+
+      // 保存中に別の日付へ切り替わっていたら、表示用の情報は更新しない
+      if (dateStr === currentDate) {
+        lastKnownUpdatedAt = newUpdatedAt;
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        saveStatusEl.textContent = isAuto ? `自動保存しました (${timeStr})` : `保存しました (${timeStr})`;
+      }
     } catch (error) {
-      console.error("保存エラー:", error);
-      saveStatusEl.textContent = "保存に失敗しました";
+      if (error.message === 'CONFLICT') {
+        handleConflict(dateStr);
+      } else {
+        console.error("保存エラー:", error);
+        saveStatusEl.textContent = "保存に失敗しました。もう一度「クラウドに保存」を押してください";
+      }
     }
   }
 
+  function handleConflict(dateStr) {
+    if (conflictPending || dateStr !== currentDate) return;
+    conflictPending = true;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    saveStatusEl.textContent = "他の端末でこの日のデータが更新されています";
+
+    showConfirmDialog(
+      "他の端末で、この日のデータが先に更新されています。\n最新の内容を読み込みますか？（この端末での直近の変更は反映されません）",
+      async () => {
+        conflictPending = false;
+        await loadDataFromCloud(dateStr);
+      },
+      {
+        title: '⚠️ 他の端末で更新されています',
+        yesText: '最新を読み込む',
+        noText: 'この端末の内容で上書き',
+        onNo: async () => {
+          conflictPending = false;
+          await saveDataToCloud(false, true);
+        }
+      }
+    );
+  }
+
+  // =========================================================
+  // 【修正2】開いた時点に戻す
+  // =========================================================
   undoBtn.addEventListener('click', () => {
-    if (lastSavedState) {
-      restoreDataToUI(lastSavedState);
-      saveStatusEl.textContent = "直前の状態に戻しました";
+    if (!loadedState) return;
+    showConfirmDialog("このページを開いた時点の内容に戻しますか？", () => {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+      renderData(loadedState);
       undoBtn.style.display = 'none';
-      triggerAutoSave();
-    }
+      saveDataToCloud(false);
+      saveStatusEl.textContent = "開いた時点の内容に戻しました";
+      autoFillShipCount(currentDate);
+      updateUncompletedBadge();
+    }, { title: '↩️ 元に戻す', yesText: '戻す', noText: 'キャンセル' });
   });
 
-  document.getElementById('ship-count').addEventListener('input', () => calcErrorRate(true));
+  // =========================================================
+  // イベント登録
+  // =========================================================
+  document.getElementById('ship-count').addEventListener('input', () => {
+    shipNoteEl.textContent = '';
+    shipNoteEl.className = 'ship-source-note';
+    calcErrorRate(true);
+  });
   document.getElementById('error-count').addEventListener('input', () => calcErrorRate(true));
 
   document.getElementById('btn-add-meeting').addEventListener('click', () => {
-    addMeetingCard();
+    const card = addMeetingCard();
+    activateCard(card); // 追加した定例タブを表示する
     triggerAutoSave();
   });
 
   document.getElementById('btn-save').addEventListener('click', () => saveDataToCloud(false));
   document.getElementById('btn-save-top').addEventListener('click', () => saveDataToCloud(false));
 
-  dateInput.addEventListener('change', (e) => {
-    loadDataFromCloud(e.target.value);
-  });
+  dateInput.addEventListener('change', (e) => switchDate(e.target.value));
 
+  // 開催日一覧
   const modal = document.getElementById('history-modal');
   const historyListContainer = document.getElementById('history-list-container');
 
+  function showHistoryMessage(text, color = '#7f8c8d') {
+    historyListContainer.innerHTML = '';
+    const div = document.createElement('div');
+    div.style.cssText = `text-align: center; color: ${color}; padding: 20px;`;
+    div.textContent = text;
+    historyListContainer.appendChild(div);
+  }
+
   document.getElementById('btn-open-history').addEventListener('click', async () => {
     modal.style.display = 'flex';
-    historyListContainer.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">読み込み中...</div>';
-    try {
-      const querySnapshot = await getDocs(collection(db, "shipment_meetings"));
-      historyListContainer.innerHTML = "";
-      if (querySnapshot.empty) {
-        historyListContainer.innerHTML = '<div style="text-align: center; color: #7f8c8d; padding: 20px;">保存されたデータはありません</div>';
-        return;
-      }
+    showHistoryMessage('読み込み中...');
 
-      const docsData = [];
-      querySnapshot.forEach((d) => {
-        docsData.push({ id: d.id, data: d.data() });
-      });
-
-      docsData.sort((a, b) => b.id.localeCompare(a.id));
-
-      docsData.forEach(item => {
-        const dateStr = item.id;
-        const meetings = item.data.meetings || [];
-        const firstMeetingTitle = meetings.length > 0 && meetings[0].title ? meetings[0].title : "タイトルなし";
-
-        const div = document.createElement('div');
-        div.className = 'history-item';
-        div.innerHTML = `
-          <div>
-            <div style="font-weight: bold; color: #2c3e50;">📅 ${dateStr}</div>
-            <div style="font-size: 12px; color: #7f8c8d; margin-top: 2px;">${firstMeetingTitle}</div>
-          </div>
-          <span style="color: #3498db; font-size: 13px; font-weight: bold;">開く →</span>
-        `;
-        div.addEventListener('click', () => {
-          dateInput.value = dateStr;
-          loadDataFromCloud(dateStr);
-          modal.style.display = 'none';
-        });
-        historyListContainer.appendChild(div);
-      });
-    } catch (err) {
-      console.error("履歴取得エラー:", err);
-      historyListContainer.innerHTML = '<div style="text-align: center; color: #e74c3c; padding: 20px;">読み込みに失敗しました</div>';
+    const querySnapshot = await refreshAllUncompletedCounts();
+    if (!querySnapshot) {
+      showHistoryMessage('読み込みに失敗しました', '#e74c3c');
+      return;
     }
+    if (querySnapshot.empty) {
+      showHistoryMessage('保存されたデータはありません');
+      return;
+    }
+
+    const docsData = [];
+    querySnapshot.forEach(d => docsData.push({ id: d.id, data: d.data() }));
+    docsData.sort((a, b) => b.id.localeCompare(a.id));
+
+    historyListContainer.innerHTML = '';
+    docsData.forEach(item => {
+      const dateStr = item.id;
+      const meetings = item.data.meetings || [];
+      const firstMeetingTitle = meetings.length > 0 && meetings[0].title ? meetings[0].title : "タイトルなし";
+      const uncompleted = countUncompletedInData(item.data);
+
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <div>
+          <div class="h-date" style="font-weight: bold; color: #2c3e50;"></div>
+          <div class="h-title" style="font-size: 12px; color: #7f8c8d; margin-top: 2px;"></div>
+        </div>
+        <span style="color: #3498db; font-size: 13px; font-weight: bold;">開く →</span>
+      `;
+      div.querySelector('.h-date').textContent = `📅 ${dateStr}`;
+      div.querySelector('.h-title').textContent =
+        uncompleted > 0 ? `${firstMeetingTitle}（未完了タスク ${uncompleted}件）` : firstMeetingTitle;
+
+      div.addEventListener('click', () => {
+        modal.style.display = 'none';
+        switchDate(dateStr);
+      });
+      historyListContainer.appendChild(div);
+    });
   });
 
   document.getElementById('modal-x').addEventListener('click', () => modal.style.display = 'none');
@@ -1116,7 +1391,22 @@
     if (e.target === modal) modal.style.display = 'none';
   });
 
-  loadDataFromCloud(dateInput.value);
+  // 画面を閉じる・別アプリに切り替える直前に、保存待ちがあれば保存
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+      saveDataToCloud(true);
+    }
+  });
+
+  // =========================================================
+  // 初期表示
+  // =========================================================
+  (async () => {
+    await loadDataFromCloud(dateInput.value);
+    refreshAllUncompletedCounts();
+  })();
 </script>
 
 </body>
