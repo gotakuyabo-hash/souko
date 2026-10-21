@@ -724,8 +724,98 @@
                     ${rp && rp.mid ? `<label class="flex items-center gap-2 text-sm text-slate-600 py-1 cursor-pointer">
                         <input type="checkbox" id="rp_${key}" checked class="w-5 h-5 accent-indigo-600 shrink-0">
                         <span>${esc(rp.name)}さんのメッセージへの返信として送る（↩）</span></label>` : ''}
+                    ${attachBoxHtml(key)}
                     <button onclick="sendReplyForMessage('${key}', this)" class="btn btn-ok w-full mt-1">${sendLabel || '📤 送信'}</button>
                 </div>`;
+        }
+
+        // ===== ファイル添付（Chatworkは1ファイル5MBまで） =====
+        const attachStore = {};
+        const CW_FILE_MAX = 5 * 1024 * 1024;
+
+        function attachBoxHtml(key) {
+            return `
+                <div>
+                    <label class="btn btn-sub w-full cursor-pointer">📎 ファイルを添付
+                        <input type="file" multiple style="display:none" onchange="addAttach('${key}', this)">
+                    </label>
+                    <div id="attach_list_${key}" class="space-y-1 mt-1"></div>
+                </div>`;
+        }
+        function fmtSize(n) { return n < 1024 * 1024 ? `${Math.max(1, Math.ceil(n / 1024))}KB` : `${(n / 1048576).toFixed(1)}MB`; }
+
+        window.addAttach = function(key, input) {
+            const list = attachStore[key] || (attachStore[key] = []);
+            Array.from(input.files || []).forEach(f => list.push(f));
+            input.value = '';
+            renderAttach(key);
+        };
+        window.removeAttach = function(key, i) {
+            (attachStore[key] || []).splice(i, 1);
+            renderAttach(key);
+        };
+        function renderAttach(key) {
+            const el = document.getElementById(`attach_list_${key}`);
+            if (!el) return;
+            el.innerHTML = (attachStore[key] || []).map((f, i) => {
+                const big = f.size > CW_FILE_MAX && !/^image\/(jpeg|png|webp)$/.test(f.type);
+                return `
+                    <div class="flex items-center gap-2 text-sm ${big ? 'bg-red-50 text-red-700' : 'bg-slate-50'} rounded-lg pl-3 py-1.5">
+                        <span class="shrink-0">${isImageFile(f.name) ? '🖼️' : '📄'}</span>
+                        <span class="flex-1 min-w-0 truncate">${esc(f.name)}</span>
+                        <span class="text-xs shrink-0 ${big ? '' : 'text-slate-400'}">${fmtSize(f.size)}${big ? '（大きすぎ）' : ''}</span>
+                        <button onclick="removeAttach('${key}', ${i})" class="shrink-0 w-10 h-8 text-slate-400 cursor-pointer" aria-label="外す">✕</button>
+                    </div>`;
+            }).join('');
+        }
+
+        // 5MBを超える写真は自動で縮小
+        function shrinkImage(file) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    const scale = Math.min(1, 2400 / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.width * scale);
+                    canvas.height = Math.round(img.height * scale);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    URL.revokeObjectURL(url);
+                    canvas.toBlob(b => b ? resolve(b) : reject(new Error('画像の縮小に失敗しました')), 'image/jpeg', 0.82);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+                img.src = url;
+            });
+        }
+        async function prepareFile(f) {
+            if (f.size <= CW_FILE_MAX) return f;
+            if (/^image\/(jpeg|png|webp)$/.test(f.type)) {
+                const blob = await shrinkImage(f);
+                if (blob.size <= CW_FILE_MAX) return new File([blob], f.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+            }
+            throw new Error(`「${f.name}」は5MBを超えているため送れません（Chatworkの制限）`);
+        }
+        function fileToBase64(f) {
+            return new Promise((resolve, reject) => {
+                const r = new FileReader();
+                r.onload = () => resolve(String(r.result).split(',')[1] || '');
+                r.onerror = () => reject(new Error('ファイルを読み込めませんでした'));
+                r.readAsDataURL(f);
+            });
+        }
+        // 1つ目のファイルに本文を付けて送り、2つ目以降はファイルだけ
+        async function uploadFiles(roomId, files, message, done, btn) {
+            const prepared = [];
+            for (const f of files) prepared.push(await prepareFile(f));   // 先に全部チェック（途中で止まらないように）
+            for (let i = 0; i < prepared.length; i++) {
+                if (btn) btn.textContent = `送信中…（${i + 1}/${prepared.length}）`;
+                const f = prepared[i];
+                await callApi("upload_file", {
+                    room_id: roomId, file_data: await fileToBase64(f), file_name: f.name,
+                    mime_type: f.type || 'application/octet-stream',
+                    message: i === 0 ? message : '', done: done && i === prepared.length - 1
+                });
+            }
         }
 
         window.toggleReply = function(key, btn) {
@@ -1618,6 +1708,7 @@
                     <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
                     <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
                     <textarea id="reply_text_${key}" rows="6" placeholder="送信するメッセージ（直接入力もOK）" class="inp"></textarea>
+                    ${attachBoxHtml(key)}
                     <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok w-full">📤 送信</button>
                 </div>`;
         }
@@ -1648,13 +1739,17 @@
         window.sendComposeMessage = async function(key, btn) {
             const m = window.messageStore[key] || {};
             const finalMsg = document.getElementById(`reply_text_${key}`).value.trim();
-            if (!finalMsg) { showToast("メッセージを入力してください"); return; }
-            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${finalMsg.slice(0, 80)}${finalMsg.length > 80 ? '…' : ''}`)) return;
+            const files = attachStore[key] || [];
+            if (!finalMsg && !files.length) { showToast("メッセージを入力するか、ファイルを添付してください"); return; }
+            const fileNote = files.length ? `\n\n📎 添付 ${files.length}件：${files.map(f => f.name).join('、').slice(0, 80)}` : '';
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${finalMsg.slice(0, 80)}${finalMsg.length > 80 ? '…' : ''}${fileNote}`)) return;
             btn.disabled = true;
             btn.textContent = "送信中…";
             try {
-                await callApi("send_message", { room_id: m.roomId, body: finalMsg });
-                saveSendLog(m, finalMsg, 'compose');
+                if (files.length) await uploadFiles(m.roomId, files, finalMsg, false, btn);
+                else await callApi("send_message", { room_id: m.roomId, body: finalMsg });
+                attachStore[key] = [];
+                if (finalMsg) saveSendLog(m, finalMsg, 'compose');
                 showToast("送信しました");
                 openRoom(m.roomId);
             } catch (e) {
@@ -2348,21 +2443,25 @@
             const m = window.messageStore[key] || {};
             const textarea = document.getElementById(`reply_text_${key}`);
             let finalMsg = textarea.value.trim();
-            if (!finalMsg) { showToast("返信文を入力してください"); return; }
+            const files = attachStore[key] || [];
+            if (!finalMsg && !files.length) { showToast("返信文を入力するか、ファイルを添付してください"); return; }
 
             const rpBox = document.getElementById(`rp_${key}`);
             if (rpBox && rpBox.checked && m.replyTo && m.replyTo.mid) {
                 finalMsg = `[rp aid=${m.replyTo.aid} to=${m.roomId}-${m.replyTo.mid}]${m.replyTo.name}さん\n` + finalMsg;
             }
             const preview = textarea.value.trim();
-            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`)) return;
+            const fileNote = files.length ? `\n\n📎 添付 ${files.length}件：${files.map(f => f.name).join('、').slice(0, 80)}` : '';
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}${fileNote}`)) return;
 
             const done = currentMode !== 'normal';
             btn.disabled = true;
             btn.textContent = "送信中…";
             try {
-                await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
-                saveSendLog(m, finalMsg, 'reply');
+                if (files.length) await uploadFiles(m.roomId, files, finalMsg, true, btn);
+                else await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
+                attachStore[key] = [];
+                if (preview) saveSendLog(m, finalMsg, 'reply');
                 setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
                 markReadInCache([m.roomId]);
                 showToast(done ? "送信して完了にしました" : "送信しました");
