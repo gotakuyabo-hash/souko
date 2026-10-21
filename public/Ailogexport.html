@@ -71,6 +71,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, collection, getDocs, query, where, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
     apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -81,6 +82,29 @@ const app = initializeApp({
     appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
 });
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+// ===== 合言葉ログイン（コックピットと同じ仕組み） =====
+const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
+const SECRET_KEY = "chatwork_cockpit_secret_v1";
+function getSecret() {
+    let s = localStorage.getItem(SECRET_KEY);
+    if (!s) {
+        s = (prompt("合言葉を入力してください") || "").trim();
+        if (s) localStorage.setItem(SECRET_KEY, s);
+    }
+    return s;
+}
+async function ensureLogin(force) {
+    await new Promise(res => { const un = onAuthStateChanged(auth, () => { un(); res(); }); });
+    if (auth.currentUser && !force) return;
+    if (force && auth.currentUser) await signOut(auth);
+    const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify({ action: "get_fb_token", secret: getSecret(), device_id: "export_page" }) });
+    const data = await res.json();
+    if (data.code === "auth") { localStorage.removeItem(SECRET_KEY); throw new Error("合言葉が違います。もう一度読み込んでください"); }
+    if (data.status !== "success") throw new Error(data.message || "ログインに失敗しました");
+    await signInWithCustomToken(auth, data.token);
+}
 
 let aiLogs = [], sendLogs = [], rows = [];
 
@@ -140,10 +164,18 @@ window.loadLogs = async function () {
     btn.textContent = '読み込み中…';
     msg.textContent = '';
     try {
-        [aiLogs, sendLogs] = await Promise.all([
+        await ensureLogin(false);
+        const load = () => Promise.all([
             fetchRange('ai_reply_logs', 'createdAt', aiFrom, to),
             fetchRange('ai_brushup_feedback', 'updatedAt', from, to)
         ]);
+        try {
+            [aiLogs, sendLogs] = await load();
+        } catch (e) {
+            if (e.code !== 'permission-denied') throw e;
+            await ensureLogin(true);      // 通行証が古い時はログインし直して再挑戦
+            [aiLogs, sendLogs] = await load();
+        }
         buildRows();
         renderSummary(from, to);
         document.getElementById('result').style.display = 'block';
