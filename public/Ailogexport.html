@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI添削ログ ダウンロード</title>
+<style>
+    :root { --bg:#f1f5f9; --card:#fff; --text:#1e293b; --sub:#64748b; --line:#e2e8f0; --main:#4f46e5; --ok:#059669; }
+    @media (prefers-color-scheme: dark) {
+        :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --sub:#94a3b8; --line:#334155; --main:#818cf8; --ok:#34d399; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; font-size:15px; line-height:1.6; }
+    main { max-width: 640px; margin: 0 auto; padding: 16px 12px 48px; }
+    h1 { font-size: 20px; margin: 8px 4px 16px; }
+    .card { background:var(--card); border-radius:16px; padding:16px; margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    label { font-size:13px; color:var(--sub); font-weight:700; }
+    input[type=date] { font-size:16px; padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); }
+    button { font-size:15px; font-weight:700; border:0; border-radius:12px; padding:12px 16px; cursor:pointer; color:#fff; background:var(--main); width:100%; }
+    button.ok { background:var(--ok); }
+    button.sub { background:transparent; color:var(--main); border:1px solid var(--line); }
+    button:disabled { opacity:.5; }
+    .stats { display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; }
+    .stat { border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+    .stat .n { font-size:22px; font-weight:800; }
+    .stat .l { font-size:12px; color:var(--sub); font-weight:700; }
+    .note { font-size:13px; color:var(--sub); }
+    .bar { display:flex; height:12px; border-radius:99px; overflow:hidden; background:var(--line); margin-top:8px; }
+    .bar span { display:block; height:100%; }
+    ol { margin:6px 0 0; padding-left: 22px; }
+    .stack > * + * { margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+    <h1>🧾 AI添削ログ ダウンロード</h1>
+
+    <div class="card stack">
+        <div class="row">
+            <div style="flex:1;min-width:140px"><label>開始日</label><br><input type="date" id="fromDate" style="width:100%"></div>
+            <div style="flex:1;min-width:140px"><label>終了日</label><br><input type="date" id="toDate" style="width:100%"></div>
+        </div>
+        <button id="loadBtn" onclick="loadLogs()">ログを読み込む</button>
+        <div id="loadMsg" class="note"></div>
+    </div>
+
+    <div id="result" style="display:none">
+        <div class="card">
+            <div style="font-weight:800;margin-bottom:8px">📊 ざっくり集計</div>
+            <div class="stats" id="stats"></div>
+            <div id="levelBar"></div>
+            <div id="topPrompts" style="margin-top:12px"></div>
+        </div>
+
+        <div class="card stack">
+            <div style="font-weight:800">⬇ ダウンロード（Excelでそのまま開けます）</div>
+            <button class="ok" onclick="downloadAnalysis()">分析用CSV（AI案と送信文の比較）</button>
+            <div class="note">分析を依頼する時は、このファイルを送ってください。</div>
+            <button class="sub" onclick="downloadRaw('ai')">元データ：AI生成ログ</button>
+            <button class="sub" onclick="downloadRaw('send')">元データ：送信ログ</button>
+        </div>
+
+        <div class="card note">
+            ※ 以前の記録（ひもづけ機能を入れる前）は、同じルームで送信の60分前までに作られたAI案を「推定」でひもづけています。<br>
+            ※ ファイルにはお客様とのチャット内容が含まれます。取り扱いにご注意ください。
+        </div>
+    </div>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, getDocs, query, where, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const app = initializeApp({
+    apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+    authDomain: "souko-2de57.firebaseapp.com",
+    projectId: "souko-2de57",
+    storageBucket: "souko-2de57.firebasestorage.app",
+    messagingSenderId: "642116656086",
+    appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
+});
+const db = getFirestore(app);
+
+let aiLogs = [], sendLogs = [], rows = [];
+
+// 初期値：直近30日
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const today = new Date();
+document.getElementById('toDate').value = ymd(today);
+document.getElementById('fromDate').value = ymd(new Date(today.getTime() - 29 * 86400000));
+
+const toDate = v => (v && v.toDate) ? v.toDate() : null;
+const fmt = d => d ? `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
+
+// 宛先・返信マークを外して比較
+function bodyForCompare(t) {
+    return String(t || '')
+        .replace(/^\[(To:\d+|rp aid=\d+ to=\d+-\d+)\][^\n]*\n?/gm, '')
+        .replace(/\[toall\]/gi, '')
+        .trim();
+}
+function editRatio(a, b) {
+    a = String(a).slice(0, 1500); b = String(b).slice(0, 1500);
+    if (!a.length && !b.length) return 0;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+    }
+    return prev[b.length] / Math.max(a.length, b.length);
+}
+const editLevel = r => r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正';
+
+async function fetchRange(name, field, from, to) {
+    const q = query(collection(db, name),
+        where(field, '>=', Timestamp.fromDate(from)),
+        where(field, '<', Timestamp.fromDate(to)),
+        orderBy(field));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => Object.assign({ _id: d.id }, d.data()));
+}
+
+window.loadLogs = async function () {
+    const btn = document.getElementById('loadBtn');
+    const msg = document.getElementById('loadMsg');
+    const fromV = document.getElementById('fromDate').value;
+    const toV = document.getElementById('toDate').value;
+    if (!fromV || !toV) { msg.textContent = '期間を選んでください'; return; }
+    const from = new Date(fromV + 'T00:00:00');
+    const to = new Date(new Date(toV + 'T00:00:00').getTime() + 86400000);
+    // 推定ひもづけ用に、AIログは60分前から取得
+    const aiFrom = new Date(from.getTime() - 60 * 60000);
+
+    btn.disabled = true;
+    btn.textContent = '読み込み中…';
+    msg.textContent = '';
+    try {
+        [aiLogs, sendLogs] = await Promise.all([
+            fetchRange('ai_reply_logs', 'createdAt', aiFrom, to),
+            fetchRange('ai_brushup_feedback', 'updatedAt', from, to)
+        ]);
+        buildRows();
+        renderSummary(from, to);
+        document.getElementById('result').style.display = 'block';
+        msg.textContent = `AI生成ログ ${aiLogs.length} 件、送信ログ ${sendLogs.length} 件を読み込みました。`;
+    } catch (e) {
+        msg.textContent = '読み込みに失敗しました：' + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'ログを読み込む';
+    }
+};
+
+function buildRows() {
+    const byDraft = {};
+    aiLogs.forEach(a => { if (a.draftId) byDraft[a.draftId] = a; });
+    const usedAiIds = new Set();
+
+    rows = sendLogs.map(s => {
+        const sentAt = toDate(s.updatedAt);
+        const sent = s.finalText || bodyForCompare(s.userEditedText);
+        let ai = null, link = 'なし';
+
+        if (s.draftId && byDraft[s.draftId]) {
+            ai = byDraft[s.draftId]; link = 'ID';
+        } else if (s.usedAi === undefined && sentAt) {
+            // 以前の記録：同じルームで60分以内の最新のAI案を推定でひもづけ
+            const cand = aiLogs.filter(a => String(a.roomId) === String(s.roomId) && toDate(a.createdAt)
+                && toDate(a.createdAt) <= sentAt && sentAt - toDate(a.createdAt) <= 60 * 60000 && !usedAiIds.has(a._id));
+            if (cand.length) { ai = cand[cand.length - 1]; link = '推定'; }
+        } else if (s.usedAi && s.aiGeneratedText) {
+            ai = { aiGeneratedText: s.aiGeneratedText, customPrompt: s.customPrompt, context: s.context }; link = 'ID';
+        }
+        if (ai && ai._id) usedAiIds.add(ai._id);
+
+        const aiText = ai ? bodyForCompare(ai.aiGeneratedText) : '';
+        const ratio = ai ? editRatio(aiText, sent) : null;
+        return {
+            sentAt, account: s.account || '', mode: s.mode || (ai && ai.type === 'compose' ? 'compose' : 'reply'),
+            tab: s.tab || '', roomName: s.roomName || (ai && ai.roomName) || '', roomId: s.roomId || '',
+            link, usedAi: !!ai, level: ai ? editLevel(ratio) : '', ratio,
+            aiLen: ai ? aiText.length : '', sentLen: sent.length,
+            genCount: s.generateCount || (ai && ai.generateCount) || (ai ? 1 : 0),
+            prompt: (ai && ai.customPrompt) || '', context: s.context || (ai && ai.context) || '',
+            aiText, sent
+        };
+    });
+
+    // 作ったが送らなかったAI案（期間内のみ）
+    const fromV = new Date(document.getElementById('fromDate').value + 'T00:00:00');
+    const sentDraftIds = new Set(sendLogs.map(s => s.draftId).filter(Boolean));
+    window._unsent = aiLogs.filter(a => toDate(a.createdAt) >= fromV && !usedAiIds.has(a._id) && !(a.draftId && sentDraftIds.has(a.draftId)));
+}
+
+function renderSummary() {
+    const total = rows.length;
+    const withAi = rows.filter(r => r.usedAi);
+    const lv = { 'そのまま': 0, '軽い修正': 0, '大幅修正': 0 };
+    withAi.forEach(r => lv[r.level]++);
+    const avg = withAi.length ? Math.round(withAi.reduce((n, r) => n + r.ratio, 0) / withAi.length * 100) : 0;
+    const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
+    const unsent = window._unsent.length;
+
+    document.getElementById('stats').innerHTML = [
+        ['送信した数', total],
+        ['AIを使った送信', `${withAi.length}（${pct(withAi.length, total)}%）`],
+        ['AI案の平均修正率', `${avg}%`],
+        ['作ったが送らなかったAI案', unsent]
+    ].map(([l, n]) => `<div class="stat"><div class="l">${l}</div><div class="n">${n}</div></div>`).join('');
+
+    const colors = { 'そのまま': '#10b981', '軽い修正': '#f59e0b', '大幅修正': '#ef4444' };
+    document.getElementById('levelBar').innerHTML = withAi.length ? `
+        <div class="note" style="margin-top:12px">AI案の直され方</div>
+        <div class="bar">${Object.keys(lv).map(k => `<span style="width:${pct(lv[k], withAi.length)}%;background:${colors[k]}"></span>`).join('')}</div>
+        <div class="note" style="margin-top:4px">${Object.keys(lv).map(k => `<span style="color:${colors[k]}">●</span> ${k} ${lv[k]}件（${pct(lv[k], withAi.length)}%）`).join('　')}</div>` : '';
+
+    // よく使われたAIへの指示
+    const cnt = {};
+    rows.forEach(r => { const p = String(r.prompt || '').trim(); if (p) cnt[p] = (cnt[p] || 0) + 1; });
+    window._unsent.forEach(a => { const p = String(a.customPrompt || '').trim(); if (p) cnt[p] = (cnt[p] || 0) + 1; });
+    const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    document.getElementById('topPrompts').innerHTML = top.length ? `
+        <div class="note">よく使われた「AIへの指示」</div>
+        <ol>${top.map(([p, n]) => `<li>${p.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}（${n}回）</li>`).join('')}</ol>` : '';
+}
+
+// CSV（Excelで文字化けしないようBOM付き）
+function toCsv(header, data) {
+    const q = v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+    return '\uFEFF' + [header.map(q).join(','), ...data.map(r => r.map(q).join(','))].join('\r\n');
+}
+function download(name, text) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const stamp = () => `${document.getElementById('fromDate').value}_${document.getElementById('toDate').value}`;
+
+window.downloadAnalysis = function () {
+    const header = ['送信日時', 'アカウント', '種類', 'タブ', 'ルーム名', 'ルームID', 'ひもづけ', 'AI使用', '判定', '修正率(%)',
+        'AI案の文字数', '送信文の文字数', 'AI作り直し回数', 'AIへの指示', '元のチャット', 'AI案', '送信文'];
+    const data = rows.map(r => [fmt(r.sentAt), r.account, r.mode === 'compose' ? '新規発信' : '返信', r.tab, r.roomName, r.roomId,
+        r.link, r.usedAi ? 'あり' : 'なし', r.level, r.ratio === null ? '' : Math.round(r.ratio * 100),
+        r.aiLen, r.sentLen, r.genCount, r.prompt, r.context, r.aiText, r.sent]);
+    // 送らなかったAI案も末尾に追加（どんな案が捨てられたかも分析対象）
+    window._unsent.forEach(a => data.push([fmt(toDate(a.createdAt)), a.account || '', a.type === 'compose' ? '新規発信' : '返信', a.tab || '',
+        a.roomName || '', a.roomId || '', '未送信', 'あり', '送らなかった', '', bodyForCompare(a.aiGeneratedText).length, '', a.generateCount || 1,
+        a.customPrompt || '', a.context || '', bodyForCompare(a.aiGeneratedText), '']));
+    download(`AI添削分析_${stamp()}.csv`, toCsv(header, data));
+};
+
+window.downloadRaw = function (kind) {
+    const list = kind === 'ai' ? aiLogs : sendLogs;
+    const keys = Array.from(list.reduce((set, d) => { Object.keys(d).forEach(k => set.add(k)); return set; }, new Set()));
+    const data = list.map(d => keys.map(k => { const v = d[k]; return (v && v.toDate) ? fmt(v.toDate()) : (typeof v === 'object' && v !== null ? JSON.stringify(v) : v); }));
+    download(`${kind === 'ai' ? 'AI生成ログ' : '送信ログ'}_${stamp()}.csv`, toCsv(keys, data));
+};
+</script>
+</body>
+</html>
