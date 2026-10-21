@@ -69,7 +69,12 @@
         <div id="normalModeContainer" style="display:none;">
             <!-- ルーム一覧 -->
             <div id="roomListView">
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <button id="chipAll" onclick="setRoomFilter('all')" class="btn btn-main">すべてのルーム</button>
+                    <button id="chipOption" onclick="setRoomFilter('option')" class="btn btn-sub">🎥 撮影オプション</button>
+                </div>
                 <input type="search" id="roomSearchInput" oninput="renderRoomList()" placeholder="🔍 ルーム名で検索" class="inp mb-3">
+                <div id="optionHeader" class="mb-3" style="display:none;"></div>
                 <div id="roomList" class="bg-white rounded-2xl shadow-sm divide-y divide-slate-100 overflow-hidden"></div>
             </div>
             <!-- ルームの中身 -->
@@ -196,6 +201,7 @@
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
             fetchAllUnreadRooms();
+            setTimeout(() => loadOptionSellers(false), 1500);
         });
 
         // アプリに戻ってきた時に自動更新
@@ -450,6 +456,8 @@
             document.getElementById('laterModeContainer').innerHTML = '';
             document.getElementById('searchResults').innerHTML = '';
             lastSearch = null;
+            setOptionData(null);
+            setTimeout(() => loadOptionSellers(false).then(() => { if (roomFilter === 'option') renderRoomList(); }).catch(() => {}), 1500);
             searchSeq++;
             clearTimeout(searchTimer);
             const sb = document.getElementById('searchBtn');
@@ -576,6 +584,7 @@
                         latest ? (latest[String(id)] || { error: '取得できませんでした' }) : null, unreadOfId(id))
                 ).join('');
                 updateSelectionBar();
+                applyOptionBadges();
             };
             draw(getLaterLocal(), null);
             setStatus('更新中…');
@@ -700,7 +709,7 @@
             return `
                 <div class="flex items-center gap-2">
                     <label class="p-2 -m-2 shrink-0 cursor-pointer"><input type="checkbox" class="room-checkbox w-5 h-5 accent-indigo-600" data-room-id="${safeId(roomId)}"></label>
-                    <h3 class="font-bold text-base truncate flex-1 min-w-0 ml-1">${esc(roomName)}</h3>
+                    <h3 class="font-bold text-base truncate flex-1 min-w-0 ml-1" data-op-room="${safeId(roomId)}">${esc(roomName)}</h3>
                     <span class="shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${badgeCls}">${esc(badge)}</span>
                 </div>`;
         }
@@ -921,6 +930,8 @@
             setStatus(`${allRoomsCache.length} ルーム`);
         }
         window.renderRoomList = function() {
+            if (roomFilter === 'option') { renderOptionList(); return; }
+            document.getElementById('optionHeader').style.display = 'none';
             const kw = document.getElementById('roomSearchInput').value.trim().toLowerCase();
             const rooms = allRoomsCache
                 .filter(r => !kw || String(r.name).toLowerCase().includes(kw))
@@ -933,13 +944,154 @@
                 return `
                     <button onclick="openRoomFromList('${safeId(r.room_id)}')" class="room-row">
                         <span class="flex-1 min-w-0">
-                            <span class="block font-bold text-[15px] truncate">${esc(r.name)}</span>
+                            <span class="block font-bold text-[15px] truncate" data-op-room="${safeId(r.room_id)}">${esc(r.name)}</span>
                             <span class="block text-xs text-slate-400">${fmtTime(r.last_update_time)}</span>
                         </span>
                         ${u > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${u}</span>` : ''}
                         <span class="text-slate-300 shrink-0">›</span>
                     </button>`;
             }).join('') + (rooms.length > shown.length ? `<div class="p-3 text-center text-xs text-slate-400">ほか ${rooms.length - shown.length} 件（検索で絞り込めます）</div>` : '');
+            applyOptionBadges();
+        };
+
+        // ===== 撮影オプションのセラー（連絡用） =====
+        const OPTION_CACHE_KEY = "cw_option_sellers_v1_";
+        const OPTION_CACHE_MS = 6 * 60 * 60 * 1000;   // 6時間ごとに自動で取り直し
+        let roomFilter = 'all';
+        let optionData = null;          // { t, sellers }
+        let optionRoomIds = new Set();
+        let optionLoading = null;
+
+        function setOptionData(d) {
+            optionData = d;
+            optionRoomIds = new Set((d && d.sellers || []).filter(x => x.room_id).map(x => String(x.room_id)));
+        }
+
+        async function loadOptionSellers(force) {
+            const key = OPTION_CACHE_KEY + getAccount();
+            if (!force) {
+                try {
+                    const c = JSON.parse(localStorage.getItem(key));
+                    if (c && c.sellers) {
+                        setOptionData(c);
+                        applyOptionBadges();
+                        if (Date.now() - c.t < OPTION_CACHE_MS) return;
+                    }
+                } catch (e) {}
+            }
+            if (optionLoading) return optionLoading;
+            optionLoading = (async () => {
+                try {
+                    const data = await callApi("get_option_sellers", { label: "動画撮影オプション" });
+                    const d = { t: Date.now(), sellers: data.sellers || [] };
+                    try { localStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
+                    setOptionData(d);
+                    applyOptionBadges();
+                    if (currentMode === 'normal' && roomFilter === 'option') renderOptionList();
+                } finally {
+                    optionLoading = null;
+                }
+            })();
+            return optionLoading;
+        }
+
+        // 撮影オプション◯のセラーのルーム名に 🎥 を付ける
+        function applyOptionBadges() {
+            document.querySelectorAll('[data-op-room]').forEach(el => {
+                const on = optionRoomIds.has(el.getAttribute('data-op-room'));
+                const has = el.querySelector('.op-badge');
+                if (on && !has) el.insertAdjacentHTML('afterbegin', '<span class="op-badge" title="撮影オプションあり">🎥 </span>');
+                if (!on && has) has.remove();
+            });
+        }
+
+        window.setRoomFilter = function(f) {
+            roomFilter = f;
+            document.getElementById('chipAll').className = `btn ${f === 'all' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('chipOption').className = `btn ${f === 'option' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('roomSearchInput').placeholder = f === 'option' ? '🔍 管理番号・ショップ名・ルーム名で検索' : '🔍 ルーム名で検索';
+            renderRoomList();
+            if (f === 'option' && !optionData) {
+                document.getElementById('roomList').innerHTML = '<div class="p-6 text-center text-slate-400">撮影オプションのセラーを読み込み中…</div>';
+                loadOptionSellers(true).catch(e => {
+                    document.getElementById('roomList').innerHTML = `<div class="p-6 text-center text-red-500">取得失敗: ${esc(e.message)}</div>`;
+                });
+            }
+        };
+
+        function filteredOptionSellers() {
+            const kw = toHalf(document.getElementById('roomSearchInput').value.trim()).toLowerCase();
+            return (optionData && optionData.sellers || []).filter(x => !kw ||
+                toHalf([x.kanriNo, x.shopName, x.name, x.room_name].join(' ')).toLowerCase().includes(kw));
+        }
+
+        function renderOptionList() {
+            const head = document.getElementById('optionHeader');
+            const list = document.getElementById('roomList');
+            if (!optionData) return;
+            const all = optionData.sellers || [];
+            const sellers = filteredOptionSellers();
+            const unread = all.filter(x => x.unread_num > 0).length;
+            const noRoom = all.filter(x => !x.room_id).length;
+            const t = new Date(optionData.t);
+
+            head.style.display = 'block';
+            head.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <div class="font-bold text-base">🎥 撮影オプションあり ${all.length}名</div>
+                    <div class="text-xs text-slate-500 mt-1">未読あり ${unread}名${noRoom ? `・ルーム未発見 ${noRoom}名` : ''}・${t.getMonth() + 1}/${t.getDate()} ${hm(t)} 時点</div>
+                    <div class="grid grid-cols-2 gap-2 mt-3">
+                        <button onclick="copyOptionList()" class="btn btn-sub">📋 一覧をコピー</button>
+                        <button onclick="reloadOptionList(this)" class="btn btn-sub">🔄 取り直す</button>
+                    </div>
+                </div>`;
+
+            if (!sellers.length) { list.innerHTML = '<div class="p-6 text-center text-slate-400">該当するセラーがいません</div>'; return; }
+            list.innerHTML = sellers.map(x => {
+                const sub = `${esc(x.kanriNo)}・${esc(x.shopName)}`;
+                if (!x.room_id) {
+                    return `
+                        <div class="room-row opacity-60">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate">${sub}</span>
+                                <span class="block text-xs text-slate-400">Chatworkルームが見つかりません（ルーム名に管理番号がありません）</span>
+                            </span>
+                        </div>`;
+                }
+                return `
+                    <button onclick="openRoomFromList('${safeId(x.room_id)}')" class="room-row">
+                        <span class="flex-1 min-w-0">
+                            <span class="block font-bold text-[15px] truncate">${sub}</span>
+                            <span class="block text-xs text-slate-500 truncate">${esc(x.room_name)}・${fmtTime(x.last_update_time)}</span>
+                        </span>
+                        ${x.unread_num > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${x.unread_num}</span>` : ''}
+                        <span class="text-slate-300 shrink-0">›</span>
+                    </button>`;
+            }).join('');
+        }
+
+        window.reloadOptionList = async function(btn) {
+            btn.disabled = true;
+            btn.textContent = '取得中…';
+            try { await loadOptionSellers(true); showToast('最新の一覧にしました'); }
+            catch (e) { alert('取得に失敗しました: ' + e.message); }
+            finally { btn.disabled = false; btn.textContent = '🔄 取り直す'; }
+        };
+
+        // タブ区切り → スプレッドシートにそのまま貼れる
+        window.copyOptionList = function() {
+            const sellers = filteredOptionSellers();
+            if (!sellers.length) return;
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
+            const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', '未読', '最終更新'].join('\t')];
+            sellers.forEach(x => {
+                const d = x.last_update_time ? new Date(x.last_update_time * 1000) : null;
+                rows.push([x.kanriNo, x.shopName, x.name, x.room_name || '（ルームなし）', x.unread_num || '',
+                    d ? `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}` : ''].map(clean).join('\t'));
+            });
+            navigator.clipboard.writeText(rows.join('\n'))
+                .then(() => showToast(`${sellers.length} 名をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
         };
         window.openRoomFromList = function(roomId) {
             if (currentMode !== 'normal') switchMode('normal');
@@ -975,7 +1127,7 @@
 
                 let html = `
                     <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="font-bold text-base">${esc(roomName)}</div>
+                        <div class="font-bold text-base" data-op-room="${currentRoomId}">${esc(roomName)}</div>
                         <div class="grid grid-cols-4 gap-2 mt-3">
                             <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
                             <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
@@ -1007,6 +1159,7 @@
                 }
                 html += buildComposeBox(currentRoomId, roomName, msgs, members, recent);
                 container.innerHTML = html;
+                applyOptionBadges();
                 setStatus(roomName.length > 8 ? roomName.slice(0, 8) + '…' : roomName);
                 setTimeout(() => container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50);
             } catch (e) {
@@ -1284,6 +1437,7 @@
                 burstCardHtml(r.room_id, r.name, `未読 ${getUnread(r)}`, "bg-red-500 text-white", latest[String(r.room_id)] || { error: '取得できませんでした' }, getUnread(r))
             ).join('');
             updateSelectionBar();
+            applyOptionBadges();
         }
         function bundleSignature(data) {
             const latest = data.latest || {};
