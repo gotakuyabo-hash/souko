@@ -15,10 +15,10 @@
         .btn-main { background: #4f46e5; color: #fff; }
         .btn-ok   { background: #059669; color: #fff; }
         .btn-ai   { background: linear-gradient(90deg, #7c3aed, #4f46e5); color: #fff; }
-        /* 16px以上にしてiPhoneの自動ズームを防ぐ */
         .inp { width: 100%; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fff; }
         .inp:focus { outline: 2px solid #818cf8; outline-offset: 0; border-color: transparent; }
         .clamp { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
+        .clamp-s { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
         .msg-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.7; }
         .tab-btn { height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 700; color: #94a3b8; cursor: pointer; }
         .tab-btn .ico { font-size: 22px; line-height: 1; filter: grayscale(1); opacity: .6; }
@@ -30,9 +30,11 @@
         .sheet-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 20px; font-size: 16px; font-weight: 600; text-align: left; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
         .sheet-row:active { background: #f8fafc; }
         .field-label { font-size: 12px; color: #64748b; font-weight: 700; display: block; margin-bottom: 2px; }
+        .mine { background: #eef2ff; border-radius: 12px; padding: 8px 10px; margin: 0 -4px; }
+        .room-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer; }
+        .room-row:active { background: #f8fafc; }
         #toast { transition: opacity .2s; }
     </style>
-
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800">
 
@@ -48,30 +50,33 @@
         </div>
     </header>
 
-    <!-- トースト通知 -->
-    <div id="toast" class="fixed left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-full shadow-lg pointer-events-none opacity-0" style="top: calc(70px + env(safe-area-inset-top, 0px));"></div>
+    <div id="toast" class="fixed left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-full shadow-lg pointer-events-none opacity-0 text-center" style="top: calc(70px + env(safe-area-inset-top, 0px)); max-width: 90vw;"></div>
 
     <main class="max-w-md mx-auto px-3 pt-3" style="padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));">
 
         <!-- 一覧用ツールバー（未読・後で） -->
-        <div id="listToolbar" class="flex items-center justify-between mb-2 px-1">
-            <label class="flex items-center gap-2 text-sm font-bold text-slate-600 py-2 cursor-pointer">
-                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-5 h-5 accent-indigo-600"> すべて選択
+        <div id="listToolbar" class="flex items-center justify-between mb-2 px-1 gap-2">
+            <label class="flex items-center gap-2 text-sm font-bold text-slate-600 py-2 cursor-pointer shrink-0">
+                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-5 h-5 accent-indigo-600"> すべて
             </label>
-            <button onclick="copyAllUnreadChats(this)" class="text-sm font-bold text-indigo-700 py-2 px-2 cursor-pointer">📋 全部コピー</button>
+            <span id="lastUpdated" class="text-xs text-slate-400 truncate"></span>
+            <button onclick="copyAllUnreadChats()" class="text-sm font-bold text-indigo-700 py-2 px-1 cursor-pointer shrink-0">📋 全部コピー</button>
         </div>
 
         <div id="burstModeContainer" class="space-y-3"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
 
         <div id="normalModeContainer" style="display:none;">
-            <div class="bg-white p-3 rounded-2xl shadow-sm space-y-2">
-                <input type="search" id="roomSearchInput" oninput="filterNormalRooms()" placeholder="🔍 ルーム名で絞り込み" class="inp bg-slate-50">
-                <select id="roomSelect" onchange="loadSingleRoomMessages()" class="inp font-bold">
-                    <option value="">ルームを選択してください</option>
-                </select>
+            <!-- ルーム一覧 -->
+            <div id="roomListView">
+                <input type="search" id="roomSearchInput" oninput="renderRoomList()" placeholder="🔍 ルーム名で検索" class="inp mb-3">
+                <div id="roomList" class="bg-white rounded-2xl shadow-sm divide-y divide-slate-100 overflow-hidden"></div>
             </div>
-            <div id="singleRoomMessageContainer" class="space-y-3 mt-3"></div>
+            <!-- ルームの中身 -->
+            <div id="roomDetailView" style="display:none;">
+                <button onclick="backToRoomList()" class="text-indigo-700 font-bold text-base py-2 px-1 mb-1 cursor-pointer">← ルーム一覧</button>
+                <div id="singleRoomMessageContainer" class="space-y-3"></div>
+            </div>
         </div>
     </main>
 
@@ -149,11 +154,42 @@
 
     <script>
         const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
-        const LATER_KEY = "chatwork_later_rooms_v2";
         const SECRET_KEY = "chatwork_cockpit_secret_v1";
-        const BUNDLE_CACHE_KEY = "cw_unread_bundle_v1_";
+        const BUNDLE_CACHE_KEY = "cw_unread_bundle_v2_";
+        const LATER_CACHE_KEY = "cw_later_cache_v1_";
+        const OLD_LATER_KEY = "chatwork_later_rooms_v2";   // 以前の端末保存（共有化のため移行）
+        const MYIDS_KEY = "cw_my_ids_v1";
+        const AUTO_REFRESH_MS = 30 * 1000;                 // アプリに戻った時、30秒以上経っていれば自動更新
+        const MAX_SHOW = 5;                                // 未読カードに表示する最大件数
 
-        // ===== Firestore（使う時だけ読み込む＝初回表示を軽く） =====
+        let allRoomsCache = [];
+        let roomMembersCache = {};
+        let currentMode = 'burst';
+        let currentRoomId = null;
+        let lastFetchAt = 0;
+        let myIds = new Set(JSON.parse(localStorage.getItem(MYIDS_KEY) || "[]"));
+        window.messageStore = {};
+        window.roomNameMap = {};
+
+        window.addEventListener('DOMContentLoaded', () => {
+            updateLaterBadge();
+            fetchAllUnreadRooms();
+        });
+
+        // アプリに戻ってきた時に自動更新
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (Date.now() - lastFetchAt < AUTO_REFRESH_MS) return;
+            if (currentMode === 'burst') fetchAllUnreadRooms(false);
+            else if (currentMode === 'later') renderLaterRooms(false);
+            else if (!currentRoomId) fetchNormalRooms(true);
+        });
+
+        document.addEventListener('change', e => {
+            if (e.target.classList && e.target.classList.contains('room-checkbox')) updateSelectionBar();
+        });
+
+        // ===== Firestore（使う時だけ読み込む） =====
         const FIREBASE_CONFIG = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
             authDomain: "souko-2de57.firebaseapp.com",
@@ -162,7 +198,7 @@
             messagingSenderId: "642116656086",
             appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
         };
-        const FS_TS = "__SERVER_TIMESTAMP__"; // この値はサーバー時刻に置き換えて保存
+        const FS_TS = "__SERVER_TIMESTAMP__";
         let _fsPromise = null;
         function loadFirestore() {
             if (!_fsPromise) {
@@ -183,81 +219,6 @@
             return f.addDoc(f.collection(f.db, collectionName), doc);
         }
 
-        // 画像を縮小してから保存（Firestoreは1件1MBまでのため）
-        function compressImage(file, maxSize = 1280, quality = 0.7) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                const url = URL.createObjectURL(file);
-                img.onload = () => {
-                    const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-                    const canvas = document.createElement('canvas');
-                    canvas.width = Math.round(img.width * scale);
-                    canvas.height = Math.round(img.height * scale);
-                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-                    URL.revokeObjectURL(url);
-                    resolve(canvas.toDataURL('image/jpeg', quality));
-                };
-                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
-                img.src = url;
-            });
-        }
-
-        window.registerToStaffApp = async function(btnEl) {
-            const roomName = document.getElementById('linkRoomName').value;
-            const senderName = document.getElementById('linkSenderName').value;
-            const messageBody = document.getElementById('linkMessageBody').value;
-            const fromVal = document.getElementById('linkFromInput').value;
-            const toVal = document.getElementById('linkToInput').value;
-            const memoVal = document.getElementById('linkMemoInput').value;
-            const imageInput = document.getElementById('linkImageInput');
-
-            let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}\n\n👤 発言者: ${senderName}\n💬 メッセージ本文:\n${messageBody}`;
-            if (memoVal) taskContent += `\n\n📝 連絡メモ:\n${memoVal}`;
-
-            btnEl.disabled = true;
-            btnEl.textContent = "登録中...";
-            try {
-                let imageUrl = null;
-                if (imageInput && imageInput.files && imageInput.files[0]) {
-                    imageUrl = await compressImage(imageInput.files[0]);
-                }
-                await fsAdd("staff_requests", {
-                    from: fromVal || '未設定',
-                    to: toVal || '未設定',
-                    task: taskContent,
-                    imageUrl: imageUrl,
-                    status: 'pending',
-                    createdAt: FS_TS
-                });
-                document.getElementById('linkMemoInput').value = '';
-                imageInput.value = '';
-                closeAllModals();
-                showToast('スタッフ連絡に登録しました');
-            } catch (error) {
-                alert("登録失敗: " + error.message);
-            } finally {
-                btnEl.disabled = false;
-                btnEl.textContent = "🚀 登録する";
-            }
-        };
-
-        let allRoomsCache = [];
-        let unreadRoomsCache = [];
-        let roomMembersCache = {};
-        let currentMode = 'burst';
-        window.messageStore = {};   // msgKey → { body, sender, roomId, roomName }
-        window.roomNameMap = {};    // roomId → ルーム名
-
-        window.addEventListener('DOMContentLoaded', () => {
-            updateLaterBadge();
-            fetchAllUnreadRooms();
-        });
-
-        // チェックボックスが変わったら選択バーを更新
-        document.addEventListener('change', e => {
-            if (e.target.classList && e.target.classList.contains('room-checkbox')) updateSelectionBar();
-        });
-
         // ===== 共通 =====
         function getAccount() { return document.getElementById('accountSelect').value; }
         function esc(str) {
@@ -267,26 +228,38 @@
         }
         function safeId(id) { return String(id || '').replace(/[^0-9]/g, ''); }
         function getUnread(r) { return Number(r.unread_num !== undefined ? r.unread_num : (r.unread_count || 0)); }
+        function isMine(m) { return !!(m && m.account && myIds.has(String(m.account.account_id))); }
+        function senderName(m) { return m && m.account ? m.account.name : "相手"; }
+        function hm(d) { return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 
         function showToast(msg) {
             const t = document.getElementById('toast');
             t.textContent = msg;
             t.style.opacity = 1;
             clearTimeout(t._timer);
-            t._timer = setTimeout(() => t.style.opacity = 0, 1800);
+            t._timer = setTimeout(() => t.style.opacity = 0, 2200);
         }
-        window.showToast = showToast;
 
         function fmtTime(sec) {
             if (!sec) return '';
             const d = new Date(sec * 1000);
-            const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
-            return d.toDateString() === new Date().toDateString() ? `今日 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+            return d.toDateString() === new Date().toDateString() ? `今日 ${hm(d)}` : `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
         }
 
-        // Chatworkのタグを読みやすく整形
+        function setLastUpdated(fromCache) {
+            const el = document.getElementById('lastUpdated');
+            el.textContent = fromCache ? '前回の内容を表示中…' : `最終更新 ${hm(new Date())}`;
+        }
+
+        function updateMyIds(ids) {
+            if (!Array.isArray(ids)) return;
+            myIds = new Set(ids.map(String));
+            try { localStorage.setItem(MYIDS_KEY, JSON.stringify(ids)); } catch (e) {}
+        }
+
         function cleanBody(b) {
             return String(b || '')
+                .replace(/\[download:\d+\][\s\S]*?\[\/download\]/g, '')
                 .replace(/\[To:\d+\]/g, '@')
                 .replace(/\[toall\]/gi, '@全員 ')
                 .replace(/\[rp aid=\d+ to=\d+-\d+\]/g, '↩ ')
@@ -296,7 +269,6 @@
                 .replace(/\[\/?info\]/g, '')
                 .replace(/\[title\]/g, '【').replace(/\[\/title\]/g, '】\n')
                 .replace(/\[hr\]/g, '──────')
-                .replace(/\[download:\d+\][\s\S]*?\[\/download\]/g, '')
                 .replace(/\[preview[^\]]*\]/g, '')
                 .replace(/\[dtext:[^\]]*\]/g, '')
                 .replace(/\[\/?code\]/g, '')
@@ -305,12 +277,18 @@
                 .trim();
         }
 
+        // AI・コピー用の1行（自社の発言には【自社】を付ける）
+        function lineFor(m) {
+            const files = parseFiles(m.body);
+            const text = cleanBody(m.body) + (files.length ? '\n' + files.map(f => '📎 ' + f.name).join('\n') : '');
+            return `${isMine(m) ? '【自社】' : ''}${senderName(m)}: ${text}`;
+        }
+
         // ===== 添付ファイル =====
-        const fileNameMap = {};   // fileId → 表示名
-        const fileUrlCache = {};  // fileId → { url, t }
+        const fileNameMap = {};
+        const fileUrlCache = {};
         const URL_CACHE_MS = 3 * 60 * 1000;
 
-        // 本文中の [download:ID]ファイル名 (サイズ)[/download] を取り出す
         function parseFiles(raw) {
             const files = [];
             const re = /\[download:(\d+)\]([\s\S]*?)\[\/download\]/g;
@@ -331,16 +309,15 @@
             return `<div class="mt-2 space-y-2">` + files.map(f => {
                 const img = isImageFile(f.base);
                 return `
-                    <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 pl-3">
+                    <div class="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-2 pl-3">
                         <span class="text-xl shrink-0">${img ? '🖼️' : '📄'}</span>
                         <span class="flex-1 min-w-0 text-sm truncate">${esc(f.name)}</span>
                         ${img ? `<button onclick="previewImage('${rid}', '${safeId(f.id)}')" class="btn btn-main shrink-0" style="height:38px">見る</button>` : ''}
-                        <button onclick="downloadFile('${rid}', '${safeId(f.id)}')" class="btn btn-sub shrink-0" style="height:38px" aria-label="ダウンロード">⬇ 保存</button>
+                        <button onclick="downloadFile('${rid}', '${safeId(f.id)}')" class="btn btn-sub shrink-0" style="height:38px">⬇ 保存</button>
                     </div>`;
             }).join('') + `</div>`;
         }
 
-        // ダウンロード用URLを取得（数分間は使い回す）
         async function getFileUrl(roomId, fileId) {
             const c = fileUrlCache[fileId];
             if (c && Date.now() - c.t < URL_CACHE_MS) return c.url;
@@ -379,14 +356,11 @@
                 err.style.display = 'block';
             }
         };
-
         window.closeViewer = function() {
             document.getElementById('imageViewer').style.display = 'none';
             document.getElementById('viewerImg').removeAttribute('src');
             document.body.style.overflow = '';
         };
-
-        // スマホのポップアップブロック対策：先に空タブを開いてからURLを入れる
         window.downloadFile = async function(roomId, fileId) {
             const c = fileUrlCache[fileId];
             if (c && Date.now() - c.t < URL_CACHE_MS) { window.open(c.url, '_blank'); return; }
@@ -401,6 +375,7 @@
             }
         };
 
+        // ===== シート =====
         function openSheet(id) {
             ['sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
             document.getElementById('modalOverlay').style.display = 'block';
@@ -412,6 +387,7 @@
             document.body.style.overflow = '';
         }
 
+        // ===== 通信 =====
         function getSecret() {
             let s = localStorage.getItem(SECRET_KEY);
             if (!s) {
@@ -420,7 +396,6 @@
             }
             return s;
         }
-
         async function callApi(action, params = {}) {
             const body = Object.assign({}, params, { action: action, account: getAccount(), secret: getSecret() });
             const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify(body) });
@@ -430,6 +405,8 @@
                 throw new Error("合言葉が違います。🔄を押して入力し直してください");
             }
             if (data.status !== "success") throw new Error(data.message || "エラー");
+            if (data.my_ids) updateMyIds(data.my_ids);
+            if (data.later) saveLaterLocal(data.later);
             return data;
         }
 
@@ -438,7 +415,6 @@
             el.textContent = text;
             el.className = `shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${cls || 'bg-indigo-500'}`;
         }
-
         function emptyBox(text) {
             return `<div class="bg-white p-10 rounded-2xl text-center text-base font-bold text-slate-500 shadow-sm">${text}</div>`;
         }
@@ -446,19 +422,23 @@
         // ===== 画面切替 =====
         function onAccountChange() {
             allRoomsCache = [];
-            unreadRoomsCache = [];
             roomMembersCache = {};
+            currentRoomId = null;
+            document.getElementById('burstModeContainer').innerHTML = '';
+            document.getElementById('laterModeContainer').innerHTML = '';
             document.getElementById('roomSearchInput').value = '';
             document.getElementById('singleRoomMessageContainer').innerHTML = '';
             updateLaterBadge();
-            refreshCurrentView();
+            if (currentMode === 'normal') backToRoomList();
+            refreshCurrentView(true);
         }
 
         function refreshCurrentView(force) {
             document.getElementById('selectAllCheckbox').checked = false;
             updateSelectionBar();
             if (currentMode === 'burst') fetchAllUnreadRooms(force);
-            else if (currentMode === 'later') renderLaterRooms();
+            else if (currentMode === 'later') renderLaterRooms(force);
+            else if (currentRoomId) openRoom(currentRoomId);
             else fetchNormalRooms(true);
         }
 
@@ -467,40 +447,38 @@
             document.getElementById('selectAllCheckbox').checked = false;
             ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => document.getElementById(id).classList.remove('active'));
             ['burstModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
-            const isList = mode !== 'normal';
-            document.getElementById('listToolbar').style.display = isList ? 'flex' : 'none';
+            document.getElementById('listToolbar').style.display = mode !== 'normal' ? 'flex' : 'none';
 
             if (mode === 'burst') {
                 document.getElementById('tabBurst').classList.add('active');
                 document.getElementById('burstModeContainer').style.display = 'block';
-                fetchAllUnreadRooms();
+                fetchAllUnreadRooms(false);
             } else if (mode === 'later') {
                 document.getElementById('tabLater').classList.add('active');
                 document.getElementById('laterModeContainer').style.display = 'block';
-                renderLaterRooms();
+                renderLaterRooms(false);
             } else {
                 document.getElementById('tabNormal').classList.add('active');
                 document.getElementById('normalModeContainer').style.display = 'block';
-                fetchNormalRooms(false);
+                if (!currentRoomId) fetchNormalRooms(false);
             }
             updateSelectionBar();
             window.scrollTo(0, 0);
         }
 
-        // ===== 選択 =====
+        // ===== 選択・一括既読 =====
+        function activeListId() { return currentMode === 'burst' ? 'burstModeContainer' : 'laterModeContainer'; }
         function updateSelectionBar() {
-            const n = currentMode === 'normal' ? 0 : document.querySelectorAll('.room-checkbox:checked').length;
+            const n = currentMode === 'normal' ? 0 : document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`).length;
             document.getElementById('selectedCount').textContent = n;
             document.getElementById('selectionBar').style.display = n > 0 ? 'block' : 'none';
         }
         window.toggleSelectAll = function(master) {
-            const container = currentMode === 'burst' ? 'burstModeContainer' : 'laterModeContainer';
-            document.querySelectorAll(`#${container} .room-checkbox`).forEach(cb => cb.checked = master.checked);
+            document.querySelectorAll(`#${activeListId()} .room-checkbox`).forEach(cb => cb.checked = master.checked);
             updateSelectionBar();
         };
-
         window.batchMarkAsRead = async function() {
-            const checked = document.querySelectorAll('.room-checkbox:checked');
+            const checked = document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`);
             if (checked.length === 0) return;
             if (!confirm(`${checked.length} 件のルームを既読にしますか？`)) return;
             const ids = Array.from(checked).map(cb => cb.getAttribute('data-room-id'));
@@ -515,46 +493,69 @@
             refreshCurrentView(true);
         };
 
-        // ===== 後で対応 =====
-        function getLaterRooms() { try { return JSON.parse(localStorage.getItem(LATER_KEY)) || {}; } catch (e) { return {}; } }
-        function isLater(roomId) { return (getLaterRooms()[getAccount()] || []).indexOf(String(roomId)) > -1; }
-        function updateLaterBadge() {
-            document.getElementById('laterCountBadge').textContent = (getLaterRooms()[getAccount()] || []).length;
+        // ===== 後で対応（スタッフ全員で共有） =====
+        function getLaterLocal() {
+            try { return JSON.parse(localStorage.getItem(LATER_CACHE_KEY + getAccount())) || []; } catch (e) { return []; }
         }
-        window.toggleLaterRoom = function(roomId) {
-            const later = getLaterRooms();
-            const acc = getAccount();
-            if (!later[acc]) later[acc] = [];
-            const idx = later[acc].indexOf(String(roomId));
-            if (idx > -1) { later[acc].splice(idx, 1); showToast("「後で対応」から外しました"); }
-            else { later[acc].push(String(roomId)); showToast("「後で対応」に入れました"); }
-            localStorage.setItem(LATER_KEY, JSON.stringify(later));
+        function saveLaterLocal(list) {
+            try { localStorage.setItem(LATER_CACHE_KEY + getAccount(), JSON.stringify((list || []).map(String))); } catch (e) {}
             updateLaterBadge();
-            if (currentMode === 'later') renderLaterRooms();
+        }
+        function isLater(roomId) { return getLaterLocal().indexOf(String(roomId)) > -1; }
+        function updateLaterBadge() { document.getElementById('laterCountBadge').textContent = getLaterLocal().length; }
+
+        // 以前この端末だけに保存していた「後で対応」を共有リストへ移す（初回のみ）
+        async function migrateOldLater() {
+            const flag = `cw_later_migrated_${getAccount()}`;
+            if (localStorage.getItem(flag)) return;
+            localStorage.setItem(flag, '1');
+            let old = [];
+            try { old = (JSON.parse(localStorage.getItem(OLD_LATER_KEY)) || {})[getAccount()] || []; } catch (e) {}
+            if (old.length) {
+                try { await callApi("set_later", { room_ids: old, on: true }); } catch (e) {}
+            }
+        }
+
+        window.toggleLaterRoom = async function(roomId) {
+            const on = !isLater(roomId);
+            const before = getLaterLocal();
+            saveLaterLocal(on ? before.concat([String(roomId)]) : before.filter(id => id !== String(roomId)));
+            showToast(on ? "「後で対応」に入れました" : "「後で対応」から外しました");
+            try {
+                await callApi("set_later", { room_ids: [roomId], on: on });
+            } catch (e) {
+                saveLaterLocal(before);
+                alert("「後で対応」の保存に失敗しました: " + e.message);
+            }
+            if (currentMode === 'later') renderLaterRooms(true);
         };
 
-        async function renderLaterRooms() {
+        async function renderLaterRooms(force) {
             const container = document.getElementById('laterModeContainer');
-            const list = getLaterRooms()[getAccount()] || [];
-            if (list.length === 0) {
-                container.innerHTML = emptyBox('☕ 「後で対応」のルームはありません');
-                return;
-            }
-            if (allRoomsCache.length === 0) {
-                try { allRoomsCache = (await callApi("get_rooms")).rooms || []; } catch (e) {}
-            }
             const nameOf = id => (allRoomsCache.find(r => String(r.room_id) === String(id)) || {}).name || `ルームID: ${id}`;
-            const draw = latest => {
+            const unreadOfId = id => getUnread(allRoomsCache.find(r => String(r.room_id) === String(id)) || {});
+            const draw = (list, latest) => {
+                if (list.length === 0) { container.innerHTML = emptyBox('☕ 「後で対応」のルームはありません'); return; }
                 container.innerHTML = list.map(id =>
-                    burstCardHtml(id, nameOf(id), "後で", "bg-amber-100 text-amber-800", latest ? (latest[String(id)] || { error: '取得できませんでした' }) : null)
+                    burstCardHtml(id, nameOf(id), "後で", "bg-amber-100 text-amber-800",
+                        latest ? (latest[String(id)] || { error: '取得できませんでした' }) : null, unreadOfId(id))
                 ).join('');
+                updateSelectionBar();
             };
-            draw(null);
+            draw(getLaterLocal(), null);
+            setStatus('更新中…');
             try {
-                const data = await callApi("get_latest_messages", { room_ids: list });
-                if (currentMode === 'later') draw(data.latest || {});
+                const data = await callApi("get_later_bundle");
+                lastFetchAt = Date.now();
+                if (data.rooms) allRoomsCache = data.rooms;
+                if (currentMode !== 'later') return;
+                if (!force && isUserBusy(container)) { showToast('新着があります。🔄で更新できます'); }
+                else draw(data.later || [], data.latest || {});
+                setStatus(`後で ${(data.later || []).length}`, 'bg-amber-500');
+                setLastUpdated(false);
             } catch (e) {
-                if (currentMode === 'later') draw(Object.fromEntries(list.map(id => [String(id), { error: e.message }])));
+                setStatus('エラー', 'bg-red-500');
+                showToast('取得に失敗しました：' + e.message);
             }
         }
 
@@ -567,60 +568,82 @@
             return html;
         }
 
-        function messageHtml(msgKey, m) {
-            const sender = m.account ? m.account.name : "相手";
-            const avatarUrl = m.account && m.account.avatar_image_url;
-            const avatar = avatarUrl
-                ? `<img src="${esc(avatarUrl)}" alt="" class="w-9 h-9 rounded-full shrink-0 bg-slate-200 object-cover">`
-                : `<div class="w-9 h-9 rounded-full shrink-0 bg-slate-200"></div>`;
-            const st = window.messageStore[msgKey];
-            const body = st.displayBody;
-            const isLong = body.length > 280 || body.split('\n').length > 8;
-            return `
-                <div class="flex items-center gap-2.5">
-                    ${avatar}
-                    <div class="min-w-0">
-                        <div class="font-bold text-sm truncate">${esc(sender)}</div>
-                        <div class="text-xs text-slate-400">${fmtTime(m.send_time)}</div>
-                    </div>
-                </div>
-                <div id="body_${msgKey}" class="chat-msg-body-text msg-body mt-2 ${isLong ? 'clamp' : ''}" ${body ? '' : 'style="display:none"'}>${esc(body)}</div>
-                ${isLong ? `<button onclick="expandBody('${msgKey}', this)" class="text-indigo-600 text-sm font-bold py-1.5 cursor-pointer">続きを読む</button>` : ''}
-                ${attachmentsHtml(st.roomId, st.files)}`;
+        function storeMessage(roomId, roomName, m) {
+            const rid = safeId(roomId);
+            const key = `m_${rid}_${safeId(m.message_id)}_${Math.random().toString(36).slice(2, 6)}`;
+            const files = parseFiles(m.body);
+            const display = cleanBody(m.body);
+            const body = display + (files.length ? (display ? '\n' : '') + files.map(f => '📎 ' + f.name).join('\n') : '');
+            window.messageStore[key] = {
+                body, displayBody: display, files, sender: senderName(m), roomId: rid, roomName,
+                replyTo: isMine(m) ? null : { aid: safeId(m.account && m.account.account_id), mid: safeId(m.message_id), name: senderName(m) }
+            };
+            return key;
         }
 
-        window.expandBody = function(msgKey, btn) {
-            document.getElementById(`body_${msgKey}`).classList.remove('clamp');
+        function messageHtml(key, m, opts = {}) {
+            const st = window.messageStore[key];
+            const mine = isMine(m);
+            const avatarUrl = m.account && m.account.avatar_image_url;
+            const avatar = avatarUrl
+                ? `<img src="${esc(avatarUrl)}" alt="" class="w-8 h-8 rounded-full shrink-0 bg-slate-200 object-cover" loading="lazy">`
+                : `<div class="w-8 h-8 rounded-full shrink-0 bg-slate-200"></div>`;
+            const body = st.displayBody;
+            const clampCls = opts.small ? 'clamp-s' : 'clamp';
+            const isLong = opts.small ? (body.length > 90 || body.split('\n').length > 3) : (body.length > 280 || body.split('\n').length > 8);
+            return `
+                <div class="${mine ? 'mine' : ''}">
+                    <div class="flex items-center gap-2">
+                        ${avatar}
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-sm truncate">${esc(senderName(m))}${mine ? ' <span class="text-[11px] font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded">自社</span>' : ''}</div>
+                            <div class="text-xs text-slate-400">${fmtTime(m.send_time)}</div>
+                        </div>
+                    </div>
+                    <div id="body_${key}" class="chat-msg-body-text msg-body mt-1.5 ${isLong ? clampCls : ''} ${opts.small ? 'text-slate-600' : ''}" ${body ? '' : 'style="display:none"'}>${esc(body)}</div>
+                    ${isLong ? `<button onclick="expandBody('${key}', this)" class="text-indigo-600 text-sm font-bold py-1 cursor-pointer">続きを読む</button>` : ''}
+                    ${attachmentsHtml(st.roomId, st.files)}
+                </div>`;
+        }
+        window.expandBody = function(key, btn) {
+            const el = document.getElementById(`body_${key}`);
+            el.classList.remove('clamp', 'clamp-s');
             btn.remove();
         };
 
-        function replyPanelHtml(msgKey, members) {
+        // 返信欄（宛先 → AI → 本文 → 返信マーク → 送信 の順に上から下へ）
+        function replyPanelHtml(key, members, sendLabel) {
+            const st = window.messageStore[key] || {};
+            const rp = st.replyTo;
             return `
-                <div id="reply_panel_${msgKey}" class="mt-3 pt-3 border-t border-slate-100 space-y-2" style="display:none;">
-                    <input type="text" id="custom_prompt_${msgKey}" placeholder="AIへの指示（任意）例：丁寧にお断り" class="inp bg-slate-50">
-                    <button onclick="generateAiReplyForMessage('${msgKey}', this)" class="btn btn-ai w-full">✨ AIで返信を作成</button>
-                    <textarea id="reply_text_${msgKey}" rows="5" placeholder="返信文" class="inp"></textarea>
+                <div id="reply_panel_${key}" class="mt-3 pt-3 border-t border-slate-100 space-y-2" style="display:none;">
+                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
                     <div class="flex gap-2">
-                        <select id="member_select_${msgKey}" ${members ? 'data-loaded="1"' : ''} onchange="insertMentionForMsg('${msgKey}')" class="inp flex-1 min-w-0 text-[16px]">${memberOptionsHtml(members)}</select>
-                        <button onclick="sendReplyForMessage('${msgKey}', this)" class="btn btn-ok shrink-0 px-5">📤 送信</button>
+                        <input type="text" id="custom_prompt_${key}" placeholder="AIへの指示（任意）例：丁寧にお断り" class="inp flex-1 min-w-0 bg-slate-50">
+                        <button onclick="generateAiReplyForMessage('${key}', this)" class="btn btn-ai shrink-0">✨ AI作成</button>
                     </div>
+                    <textarea id="reply_text_${key}" rows="6" placeholder="返信文" class="inp"></textarea>
+                    ${rp && rp.mid ? `<label class="flex items-center gap-2 text-sm text-slate-600 py-1 cursor-pointer">
+                        <input type="checkbox" id="rp_${key}" checked class="w-5 h-5 accent-indigo-600 shrink-0">
+                        <span>${esc(rp.name)}さんのメッセージへの返信として送る（↩）</span></label>` : ''}
+                    <button onclick="sendReplyForMessage('${key}', this)" class="btn btn-ok w-full mt-1">${sendLabel || '📤 送信'}</button>
                 </div>`;
         }
 
-        window.toggleReply = function(msgKey, btn) {
-            const panel = document.getElementById(`reply_panel_${msgKey}`);
+        window.toggleReply = function(key, btn) {
+            const panel = document.getElementById(`reply_panel_${key}`);
             const open = panel.style.display === 'none';
             panel.style.display = open ? 'block' : 'none';
             btn.textContent = open ? '✕ 閉じる' : '💬 返信';
             if (open) {
-                ensureMembers(msgKey);
+                ensureMembers(key);
                 setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
             }
         };
 
-        async function ensureMembers(msgKey) {
-            const st = window.messageStore[msgKey] || {};
-            const sel = document.getElementById(`member_select_${msgKey}`);
+        async function ensureMembers(key) {
+            const st = window.messageStore[key] || {};
+            const sel = document.getElementById(`member_select_${key}`);
             if (!sel || sel.dataset.loaded) return;
             sel.dataset.loaded = '1';
             let members = roomMembersCache[st.roomId];
@@ -637,17 +660,6 @@
             sel.innerHTML = memberOptionsHtml(members);
         }
 
-        function storeMessage(roomId, roomName, m, idx) {
-            const rid = safeId(roomId);
-            const msgKey = `msg_${rid}_${idx}_${Math.random().toString(36).slice(2, 8)}`;
-            const files = parseFiles(m.body);
-            const display = cleanBody(m.body);
-            // コピー・AI・スタッフ連絡用の本文には添付ファイル名も含める
-            const body = display + (files.length ? (display ? '\n' : '') + files.map(f => '📎 ' + f.name).join('\n') : '');
-            window.messageStore[msgKey] = { body, displayBody: display, files, sender: m.account ? m.account.name : "相手", roomId: rid, roomName };
-            return msgKey;
-        }
-
         // ===== 未読・後でのカード =====
         function cardHeadHtml(roomId, roomName, badge, badgeCls) {
             return `
@@ -658,92 +670,171 @@
                 </div>`;
         }
 
-        // entry = { messages: [...] } / { error } / null(読込中)
-        function burstCardHtml(roomId, roomName, badge, badgeCls, entry) {
+        // entry = { messages:[最大5件] } / { error } / null(読込中)
+        function burstCardHtml(roomId, roomName, badge, badgeCls, entry, unreadNum) {
             const rid = safeId(roomId);
             window.roomNameMap[rid] = roomName;
-            let inner;
-            if (!entry) {
-                inner = '<div class="mt-3 text-sm text-slate-400">読込中…</div>';
-            } else if (entry.error) {
-                inner = `<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`;
-            } else if (!entry.messages || entry.messages.length === 0) {
-                inner = '<div class="mt-3 text-sm text-slate-400">メッセージなし</div>';
-            } else {
-                const latest = entry.messages[entry.messages.length - 1];
-                const msgKey = storeMessage(rid, roomName, latest, 0);
-                inner = `
-                    <div class="card-body mt-3">
-                        ${messageHtml(msgKey, latest)}
-                        <div class="flex gap-2 mt-3">
-                            <button onclick="toggleReply('${msgKey}', this)" class="btn btn-sub flex-1">💬 返信</button>
-                            <button onclick="markAsRead('${rid}', '${safeId(latest.message_id)}', this)" class="btn btn-sub flex-1">✓ 既読</button>
-                            <button onclick="openMsgActions('${msgKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
-                        </div>
-                        ${replyPanelHtml(msgKey)}
-                    </div>`;
+            const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
+            const wrap = (inner, extraCls, cardKey) =>
+                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}">${head}${inner}</div>`;
+
+            if (!entry) return wrap('<div class="mt-3 text-sm text-slate-400">読込中…</div>');
+            if (entry.error) return wrap(`<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`);
+            const msgs = entry.messages || [];
+            if (msgs.length === 0) return wrap('<div class="mt-3 text-sm text-slate-400">メッセージなし</div>');
+
+            // 未読の件数分（最大5件）を表示
+            const n = Math.min(Math.max(Number(unreadNum) || 1, 1), msgs.length, MAX_SHOW);
+            const shown = msgs.slice(-n);
+            const last = msgs[msgs.length - 1];
+            const lastIsMine = isMine(last);
+            const lastCustomer = msgs.slice().reverse().find(m => !isMine(m));
+
+            // カード全体用（AIには取得した最大5件の流れを渡す）
+            const cardKey = `c_${rid}_${Math.random().toString(36).slice(2, 8)}`;
+            const thread = msgs.map(lineFor).join('\n\n');
+            window.messageStore[cardKey] = {
+                body: shown.map(lineFor).join('\n\n'), context: thread, roomId: rid, roomName,
+                sender: lastCustomer ? senderName(lastCustomer) : senderName(last),
+                replyTo: lastCustomer ? { aid: safeId(lastCustomer.account && lastCustomer.account.account_id), mid: safeId(lastCustomer.message_id), name: senderName(lastCustomer) } : null
+            };
+
+            const more = Number(unreadNum) > MAX_SHOW ? `<div class="text-xs text-slate-400 mt-2">※ 未読はほかに ${Number(unreadNum) - MAX_SHOW} 件あります（「ルーム」タブで確認できます）</div>` : '';
+            const notice = lastIsMine ? `<div class="mt-3 text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">✅ 最後の発言は自社です（返信済みかもしれません）</div>` : '';
+            const items = shown.map((m, i) => {
+                const k = storeMessage(rid, roomName, m);
+                return `<div class="${i > 0 ? 'mt-3 pt-3 border-t border-slate-100' : ''}">${messageHtml(k, m, { small: i < shown.length - 1 })}</div>`;
+            }).join('');
+
+            const inner = `
+                ${notice}
+                <div class="mt-3">${items}${more}</div>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="toggleReply('${cardKey}', this)" class="btn ${lastIsMine ? 'btn-sub' : 'btn-main'} flex-1">💬 返信</button>
+                    <button onclick="markAsRead('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 既読</button>
+                    <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
+                </div>
+                ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
+            return wrap(inner, lastIsMine ? 'opacity-75' : '', cardKey);
+        }
+
+        // 送信・既読のあと、カードを片付ける
+        function removeCard(roomId) {
+            const id = activeListId();
+            const card = document.querySelector(`#${id} .burst-card[data-room-id="${safeId(roomId)}"]`);
+            if (card) card.remove();
+            const left = document.querySelectorAll(`#${id} .burst-card`).length;
+            if (currentMode === 'burst') {
+                setUnreadStatus(left);
+                if (left === 0) document.getElementById(id).innerHTML = emptyBox('🎉 未読はありません');
+            } else if (currentMode === 'later') {
+                setStatus(`後で ${left}`, 'bg-amber-500');
+                if (left === 0) document.getElementById(id).innerHTML = emptyBox('☕ 「後で対応」のルームはありません');
             }
-            return `<div class="burst-card bg-white rounded-2xl shadow-sm p-4" data-room-name="${esc(roomName)}">${cardHeadHtml(roomId, roomName, badge, badgeCls)}${inner}</div>`;
+            updateSelectionBar();
         }
 
         // ===== その他メニュー =====
         function sheetBtn(icon, label, onclick) {
             return `<button onclick="${onclick}" class="sheet-row"><span class="text-xl w-7 text-center">${icon}</span><span>${label}</span></button>`;
         }
-
-        window.openMsgActions = function(msgKey) {
-            const m = window.messageStore[msgKey] || {};
+        window.openMsgActions = function(key) {
+            const m = window.messageStore[key] || {};
             const rid = m.roomId;
             const later = isLater(rid);
             document.getElementById('sheetActionsTitle').textContent = m.roomName || '';
             document.getElementById('sheetActionsBody').innerHTML =
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
-                sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${msgKey}')`) +
-                sheetBtn('📋', '本文をコピー', `copyMessageText('${msgKey}')`) +
+                sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
+                sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
+                sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
                 `<a href="https://www.chatwork.com/#!rid${rid}" target="_blank" rel="noopener" class="sheet-row"><span class="text-xl w-7 text-center">🌐</span><span>Chatworkで開く</span></a>`;
             openSheet('sheetActions');
         };
 
-        window.copyMessageText = function(msgKey) {
-            const text = (window.messageStore[msgKey] || {}).body || "";
+        window.copyMessageText = function(key) {
+            const text = (window.messageStore[key] || {}).body || "";
             navigator.clipboard.writeText(text)
                 .then(() => { closeAllModals(); showToast('コピーしました'); })
                 .catch(err => alert("コピーに失敗しました: " + err));
         };
-
         window.copyAllUnreadChats = function() {
-            const container = currentMode === 'burst' ? 'burstModeContainer' : 'laterModeContainer';
-            const cards = document.querySelectorAll(`#${container} .burst-card`);
-            if (cards.length === 0) { showToast("コピーするチャットがありません"); return; }
-            let text = "【未読チャット一覧】\n\n";
-            cards.forEach((card, idx) => {
-                const bodyEl = card.querySelector('.chat-msg-body-text');
-                text += `■ [${idx + 1}] ルーム: ${card.getAttribute('data-room-name') || "ルーム"}\n${bodyEl ? bodyEl.textContent : ""}\n\n--------------------\n\n`;
+            const cards = document.querySelectorAll(`#${activeListId()} .burst-card`);
+            const parts = [];
+            cards.forEach(card => {
+                const st = window.messageStore[card.getAttribute('data-card-key')];
+                if (st) parts.push(`■ ルーム: ${card.getAttribute('data-room-name')}\n${st.body}`);
             });
-            navigator.clipboard.writeText(text.trim())
-                .then(() => showToast(`${cards.length} 件をコピーしました`))
+            if (parts.length === 0) { showToast("コピーするチャットがありません"); return; }
+            const text = "【未読チャット一覧】\n\n" + parts.map((p, i) => p.replace('■', `■ [${i + 1}]`)).join('\n\n--------------------\n\n');
+            navigator.clipboard.writeText(text)
+                .then(() => showToast(`${parts.length} 件をコピーしました`))
                 .catch(err => alert("コピーに失敗しました: " + err));
         };
-
         window.copyAllRoomMessages = function(roomId) {
-            const roomName = window.roomNameMap[roomId] || "ルーム";
-            const els = document.querySelectorAll('#singleRoomMessageContainer .chat-msg-body-text');
-            if (els.length === 0) { showToast("コピーするメッセージがありません"); return; }
-            let text = `【ルーム名: ${roomName}】\n\n`;
-            els.forEach((el, idx) => { text += `--- メッセージ ${idx + 1} ---\n${el.textContent}\n\n`; });
-            navigator.clipboard.writeText(text.trim())
-                .then(() => showToast(`${els.length} 件をコピーしました`))
+            const st = window.messageStore[`compose_${safeId(roomId)}`];
+            if (!st || !st.fullText) { showToast("コピーするメッセージがありません"); return; }
+            navigator.clipboard.writeText(`【ルーム名: ${st.roomName}】\n\n${st.fullText}`)
+                .then(() => showToast('コピーしました'))
                 .catch(err => alert("コピーに失敗しました: " + err));
         };
 
-        window.openStaffAppModal = function(msgKey) {
-            const m = window.messageStore[msgKey] || {};
+        window.openStaffAppModal = function(key) {
+            const m = window.messageStore[key] || {};
             document.getElementById('linkRoomId').value = m.roomId || "";
             document.getElementById('linkRoomName').value = m.roomName || "";
             document.getElementById('linkSenderName').value = m.sender || "";
             document.getElementById('linkMessageBody').value = m.body || "";
             openSheet('modalLinkCopy');
+        };
+
+        function compressImage(file, maxSize = 1280, quality = 0.7) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.width * scale);
+                    canvas.height = Math.round(img.height * scale);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    URL.revokeObjectURL(url);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+                img.src = url;
+            });
+        }
+        window.registerToStaffApp = async function(btnEl) {
+            const roomName = document.getElementById('linkRoomName').value;
+            const senderNm = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
+            const fromVal = document.getElementById('linkFromInput').value;
+            const toVal = document.getElementById('linkToInput').value;
+            const memoVal = document.getElementById('linkMemoInput').value;
+            const imageInput = document.getElementById('linkImageInput');
+            let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}\n\n👤 発言者: ${senderNm}\n💬 メッセージ本文:\n${messageBody}`;
+            if (memoVal) taskContent += `\n\n📝 連絡メモ:\n${memoVal}`;
+            btnEl.disabled = true;
+            btnEl.textContent = "登録中...";
+            try {
+                let imageUrl = null;
+                if (imageInput && imageInput.files && imageInput.files[0]) imageUrl = await compressImage(imageInput.files[0]);
+                await fsAdd("staff_requests", {
+                    from: fromVal || '未設定', to: toVal || '未設定', task: taskContent,
+                    imageUrl: imageUrl, status: 'pending', createdAt: FS_TS
+                });
+                document.getElementById('linkMemoInput').value = '';
+                imageInput.value = '';
+                closeAllModals();
+                showToast('スタッフ連絡に登録しました');
+            } catch (error) {
+                alert("登録失敗: " + error.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "🚀 登録する";
+            }
         };
 
         window.fetchSellerInfo = async function(roomId) {
@@ -778,57 +869,83 @@
             }
         };
 
-        // ===== ルームタブ =====
+        // ===== ルームタブ（一覧 → タップで開く） =====
         async function fetchNormalRooms(forceReload) {
-            const selectEl = document.getElementById('roomSelect');
-            selectEl.innerHTML = '<option value="">ルーム一覧を読み込み中…</option>';
-            try {
-                if (forceReload || allRoomsCache.length === 0) {
+            const list = document.getElementById('roomList');
+            if (forceReload || allRoomsCache.length === 0) {
+                if (allRoomsCache.length === 0) list.innerHTML = '<div class="p-6 text-center text-slate-400">ルーム一覧を読み込み中…</div>';
+                try {
                     allRoomsCache = (await callApi("get_rooms")).rooms || [];
+                    lastFetchAt = Date.now();
+                } catch (e) {
+                    list.innerHTML = `<div class="p-6 text-center text-red-500">取得失敗: ${esc(e.message)}</div>`;
+                    return;
                 }
-                filterNormalRooms();
-                setStatus(`${allRoomsCache.length} ルーム`);
-            } catch (e) {
-                selectEl.innerHTML = `<option value="">取得失敗: ${esc(e.message)}</option>`;
             }
+            renderRoomList();
+            setStatus(`${allRoomsCache.length} ルーム`);
         }
-        function filterNormalRooms() {
-            const kw = document.getElementById('roomSearchInput').value.toLowerCase();
-            const current = document.getElementById('roomSelect').value;
-            let html = '<option value="">ルームを選択してください</option>';
-            allRoomsCache.filter(r => String(r.name).toLowerCase().includes(kw)).forEach(r => {
-                const unread = getUnread(r);
-                html += `<option value="${safeId(r.room_id)}">${unread > 0 ? `🔴${unread} ` : ''}${esc(r.name)}</option>`;
-            });
-            const sel = document.getElementById('roomSelect');
-            sel.innerHTML = html;
-            if (current) sel.value = current;
-        }
+        window.renderRoomList = function() {
+            const kw = document.getElementById('roomSearchInput').value.trim().toLowerCase();
+            const rooms = allRoomsCache
+                .filter(r => !kw || String(r.name).toLowerCase().includes(kw))
+                .sort((a, b) => (getUnread(b) > 0) - (getUnread(a) > 0) || (b.last_update_time || 0) - (a.last_update_time || 0));
+            const shown = rooms.slice(0, 60);
+            const list = document.getElementById('roomList');
+            if (shown.length === 0) { list.innerHTML = '<div class="p-6 text-center text-slate-400">該当するルームがありません</div>'; return; }
+            list.innerHTML = shown.map(r => {
+                const u = getUnread(r);
+                return `
+                    <button onclick="openRoomFromList('${safeId(r.room_id)}')" class="room-row">
+                        <span class="flex-1 min-w-0">
+                            <span class="block font-bold text-[15px] truncate">${esc(r.name)}</span>
+                            <span class="block text-xs text-slate-400">${fmtTime(r.last_update_time)}</span>
+                        </span>
+                        ${u > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${u}</span>` : ''}
+                        <span class="text-slate-300 shrink-0">›</span>
+                    </button>`;
+            }).join('') + (rooms.length > shown.length ? `<div class="p-3 text-center text-xs text-slate-400">ほか ${rooms.length - shown.length} 件（検索で絞り込めます）</div>` : '');
+        };
+        window.openRoomFromList = function(roomId) {
+            if (currentMode !== 'normal') switchMode('normal');
+            openRoom(roomId);
+        };
+        window.backToRoomList = function() {
+            currentRoomId = null;
+            document.getElementById('roomDetailView').style.display = 'none';
+            document.getElementById('roomListView').style.display = 'block';
+            document.getElementById('singleRoomMessageContainer').innerHTML = '';
+            fetchNormalRooms(false);
+        };
 
-        async function loadSingleRoomMessages() {
-            const roomId = document.getElementById('roomSelect').value;
+        async function openRoom(roomId) {
+            currentRoomId = safeId(roomId);
+            document.getElementById('roomListView').style.display = 'none';
+            document.getElementById('roomDetailView').style.display = 'block';
             const container = document.getElementById('singleRoomMessageContainer');
-            if (!roomId) { container.innerHTML = ''; return; }
             container.innerHTML = emptyBox('読み込み中…');
             try {
-                const roomData = await callApi("get_room_data", { room_id: roomId });
+                const roomData = await callApi("get_room_data", { room_id: currentRoomId });
+                if (currentRoomId !== safeId(roomId)) return;
+                lastFetchAt = Date.now();
                 const msgs = roomData.messages || [];
                 const members = roomData.members || [];
-                roomMembersCache[roomId] = members;
-                const roomObj = allRoomsCache.find(r => String(r.room_id) === String(roomId));
+                roomMembersCache[currentRoomId] = members;
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === currentRoomId);
                 const roomName = roomObj ? roomObj.name : "ルーム";
-                window.roomNameMap[roomId] = roomName;
-
+                window.roomNameMap[currentRoomId] = roomName;
                 const latest = msgs[msgs.length - 1] || {};
                 const recent = msgs.slice(-20);
+                const later = isLater(currentRoomId);
 
                 let html = `
                     <div class="bg-white rounded-2xl shadow-sm p-4">
                         <div class="font-bold text-base">${esc(roomName)}</div>
-                        <div class="grid grid-cols-3 gap-2 mt-3">
-                            <button onclick="fetchSellerInfo('${safeId(roomId)}')" class="btn btn-sub">🔑 セラー</button>
-                            <button onclick="copyAllRoomMessages('${safeId(roomId)}')" class="btn btn-sub">📋 コピー</button>
-                            <button onclick="markAsRead('${safeId(roomId)}', '${safeId(latest.message_id)}', this)" class="btn btn-sub">✓ 既読</button>
+                        <div class="grid grid-cols-4 gap-2 mt-3">
+                            <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
+                            <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
+                            <button onclick="markAsRead('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 既読</button>
+                            <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
                         </div>
                     </div>`;
 
@@ -837,22 +954,25 @@
                 } else {
                     html += `<div class="text-xs font-bold text-slate-400 px-1">直近 ${recent.length} 件（下が最新）</div>`;
                     recent.forEach((m, idx) => {
-                        const msgKey = storeMessage(roomId, roomName, m, idx);
+                        const key = storeMessage(currentRoomId, roomName, m);
+                        // AIには、このメッセージまでの直近6件の流れを渡す
+                        const absIdx = msgs.length - recent.length + idx;
+                        window.messageStore[key].context = msgs.slice(Math.max(0, absIdx - 5), absIdx + 1).map(lineFor).join('\n\n');
+                        const mine = isMine(m);
                         html += `
                             <div class="bg-white rounded-2xl shadow-sm p-4">
-                                ${messageHtml(msgKey, m)}
+                                ${messageHtml(key, m)}
                                 <div class="flex gap-2 mt-3">
-                                    <button onclick="toggleReply('${msgKey}', this)" class="btn btn-sub flex-1">💬 返信</button>
-                                    <button onclick="openMsgActions('${msgKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
+                                    ${mine ? '' : `<button onclick="toggleReply('${key}', this)" class="btn btn-sub flex-1">💬 返信</button>`}
+                                    <button onclick="openMsgActions('${key}')" class="btn btn-sub ${mine ? 'flex-1' : 'w-12 shrink-0'} text-lg" aria-label="その他">⋯</button>
                                 </div>
-                                ${replyPanelHtml(msgKey, members)}
+                                ${mine ? '' : replyPanelHtml(key, members, '📤 送信')}
                             </div>`;
                     });
                 }
-
-                html += buildComposeBox(roomId, roomName, msgs, members);
+                html += buildComposeBox(currentRoomId, roomName, msgs, members, recent);
                 container.innerHTML = html;
-                // 最新メッセージと発信欄が見えるよう一番下へ
+                setStatus(roomName.length > 8 ? roomName.slice(0, 8) + '…' : roomName);
                 setTimeout(() => container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50);
             } catch (e) {
                 container.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
@@ -860,22 +980,22 @@
         }
 
         // ===== 新規発信 =====
-        function buildComposeBox(roomId, roomName, messages, members) {
+        function buildComposeBox(roomId, roomName, messages, members, recent) {
             const rid = safeId(roomId);
             const key = `compose_${rid}`;
-            const recent = messages.slice(-10).map(m => `${m.account ? m.account.name : "相手"}: ${cleanBody(m.body)}`).join("\n\n");
-            window.messageStore[key] = { body: recent, sender: "", roomId: rid, roomName };
-
+            window.messageStore[key] = {
+                body: '', context: messages.slice(-10).map(lineFor).join("\n\n"),
+                fullText: (recent || []).map(lineFor).join("\n\n"),
+                sender: "", roomId: rid, roomName, replyTo: null
+            };
             return `
                 <div class="bg-white border-2 border-emerald-300 rounded-2xl shadow-sm p-4 space-y-2">
                     <div class="font-bold text-base text-emerald-800">✏️ 新しく発信する</div>
+                    <select id="member_select_${key}" data-loaded="1" onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
                     <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
                     <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
                     <textarea id="reply_text_${key}" rows="6" placeholder="送信するメッセージ（直接入力もOK）" class="inp"></textarea>
-                    <div class="flex gap-2">
-                        <select id="member_select_${key}" onchange="insertMentionForMsg('${key}')" class="inp flex-1 min-w-0">${memberOptionsHtml(members)}</select>
-                        <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok shrink-0 px-5">📤 送信</button>
-                    </div>
+                    <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok w-full">📤 送信</button>
                 </div>`;
         }
 
@@ -885,21 +1005,17 @@
             const intent = document.getElementById(`custom_prompt_${key}`).value.trim();
             if (!intent) { showToast("伝えたい内容を入力してください"); return; }
             const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
-
             btnEl.disabled = true;
             btnEl.textContent = "AI作成中…";
             try {
                 const data = await callApi("generate_ai_reply", {
                     mode: "compose", room_id: m.roomId, room_name: m.roomName || "ルーム",
-                    context: m.body || "", custom_prompt: intent
+                    context: m.context || "", custom_prompt: intent
                 });
-                const text = data.ai_reply || "";
-                if (!text) { showToast("AIの結果が空でした"); return; }
-                textarea.value = toLines + text;
+                textarea.value = toLines + (data.ai_reply || "");
                 fsAdd("ai_reply_logs", {
-                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.body || "",
-                    aiGeneratedText: text, customPrompt: intent, type: 'compose', status: 'generated',
-                    createdAt: FS_TS
+                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.context || "",
+                    aiGeneratedText: data.ai_reply || "", customPrompt: intent, type: 'compose', status: 'generated', createdAt: FS_TS
                 }).catch(err => console.error("AIログ保存失敗:", err));
             } catch (e) {
                 alert("AI作成エラー: " + e.message);
@@ -913,14 +1029,14 @@
             const m = window.messageStore[key] || {};
             const finalMsg = document.getElementById(`reply_text_${key}`).value.trim();
             if (!finalMsg) { showToast("メッセージを入力してください"); return; }
-            if (!confirm(`「${m.roomName}」に送信しますか？`)) return;
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${finalMsg.slice(0, 80)}${finalMsg.length > 80 ? '…' : ''}`)) return;
             btn.disabled = true;
             btn.textContent = "送信中…";
             try {
                 await callApi("send_message", { room_id: m.roomId, body: finalMsg });
                 saveAutoFeedback(m.roomId, finalMsg);
                 showToast("送信しました");
-                loadSingleRoomMessages();
+                openRoom(m.roomId);
             } catch (e) {
                 alert("送信失敗: " + e.message);
                 btn.disabled = false;
@@ -930,8 +1046,14 @@
 
         // ===== 未読タブ =====
         function unreadOf(data) {
+            const latest = data.latest || {};
+            const lastIsMine = r => {
+                const ms = (latest[String(r.room_id)] || {}).messages || [];
+                return ms.length ? isMine(ms[ms.length - 1]) : false;
+            };
+            // お客様の発言が最後のルームを上に、自社が最後のルームは下へ
             return (data.rooms || []).filter(r => getUnread(r) > 0)
-                .sort((a, b) => (b.last_update_time || 0) - (a.last_update_time || 0));
+                .sort((a, b) => (lastIsMine(a) - lastIsMine(b)) || (b.last_update_time || 0) - (a.last_update_time || 0));
         }
         function setUnreadStatus(n) {
             if (n === 0) setStatus('未読ゼロ', 'bg-emerald-500');
@@ -940,19 +1062,15 @@
         function renderUnreadBundle(data) {
             const container = document.getElementById('burstModeContainer');
             allRoomsCache = data.rooms || [];
-            unreadRoomsCache = unreadOf(data);
-            setUnreadStatus(unreadRoomsCache.length);
-            if (unreadRoomsCache.length === 0) {
-                container.innerHTML = emptyBox('🎉 未読はありません');
-                return;
-            }
+            const rooms = unreadOf(data);
+            setUnreadStatus(rooms.length);
+            if (rooms.length === 0) { container.innerHTML = emptyBox('🎉 未読はありません'); return; }
             const latest = data.latest || {};
-            container.innerHTML = unreadRoomsCache.map(r =>
-                burstCardHtml(r.room_id, r.name, `未読 ${getUnread(r)}`, "bg-red-500 text-white", latest[String(r.room_id)] || { error: '取得できませんでした' })
+            container.innerHTML = rooms.map(r =>
+                burstCardHtml(r.room_id, r.name, `未読 ${getUnread(r)}`, "bg-red-500 text-white", latest[String(r.room_id)] || { error: '取得できませんでした' }, getUnread(r))
             ).join('');
             updateSelectionBar();
         }
-        // 表示内容が変わったかどうかの判定用
         function bundleSignature(data) {
             const latest = data.latest || {};
             return unreadOf(data).map(r => {
@@ -960,7 +1078,6 @@
                 return `${r.room_id}:${getUnread(r)}:${ms.length ? ms[ms.length - 1].message_id : ''}`;
             }).join('|');
         }
-        // 返信を書いている途中などは、勝手に画面を書き換えない
         function isUserBusy(container) {
             const panelOpen = Array.from(container.querySelectorAll('[id^="reply_panel_"]')).some(p => p.style.display !== 'none');
             const typed = Array.from(container.querySelectorAll('textarea, input[type="text"]')).some(t => t.value.trim());
@@ -970,12 +1087,11 @@
             try { return JSON.parse(localStorage.getItem(BUNDLE_CACHE_KEY + acc)); } catch (e) { return null; }
         }
         function markReadInCache(ids) {
-            const key = BUNDLE_CACHE_KEY + getAccount();
             const c = readBundleCache(getAccount());
             if (!c || !c.data) return;
             const set = new Set(ids.map(String));
             (c.data.rooms || []).forEach(r => { if (set.has(String(r.room_id))) r.unread_num = 0; });
-            try { localStorage.setItem(key, JSON.stringify(c)); } catch (e) {}
+            try { localStorage.setItem(BUNDLE_CACHE_KEY + getAccount(), JSON.stringify(c)); } catch (e) {}
         }
 
         let bundleSeq = 0;
@@ -984,32 +1100,31 @@
             const acc = getAccount();
             const seq = ++bundleSeq;
 
-            // ① 前回の結果があれば、まずそれを一瞬で表示
             let shownSig = null;
             const cached = readBundleCache(acc);
-            if (cached && cached.data) {
+            if (cached && cached.data && !container.querySelector('.burst-card')) {
                 renderUnreadBundle(cached.data);
                 shownSig = bundleSignature(cached.data);
-                setStatus('更新中…');
+                setLastUpdated(true);
+            } else if (container.querySelector('.burst-card') && cached && cached.data) {
+                shownSig = bundleSignature(cached.data);
             } else {
                 container.innerHTML = emptyBox('未読ルームを確認中…');
-                setStatus('確認中…');
             }
+            setStatus('更新中…');
 
-            // ② 裏で最新を1回の通信でまとめて取得
             try {
                 const data = await callApi("get_unread_bundle");
                 try { localStorage.setItem(BUNDLE_CACHE_KEY + acc, JSON.stringify({ t: Date.now(), data: data })); } catch (e) {}
                 if (seq !== bundleSeq || acc !== getAccount() || currentMode !== 'burst') return;
-
+                lastFetchAt = Date.now();
                 allRoomsCache = data.rooms || [];
-                updateLaterBadge();
+                setLastUpdated(false);
+                migrateOldLater();
+
                 const sig = bundleSignature(data);
-                if (shownSig !== null && sig === shownSig) {          // 変化なし
-                    setUnreadStatus(unreadOf(data).length);
-                    return;
-                }
-                if (shownSig !== null && !force && isUserBusy(container)) {   // 作業中は書き換えない
+                if (shownSig !== null && sig === shownSig && !force) { setUnreadStatus(unreadOf(data).length); return; }
+                if (shownSig !== null && !force && isUserBusy(container)) {
                     setUnreadStatus(unreadOf(data).length);
                     showToast('新着があります。🔄で更新できます');
                     return;
@@ -1027,49 +1142,42 @@
         }
 
         // ===== 返信 =====
-        window.generateAiReplyForMessage = async function(msgKey, btnEl) {
-            const m = window.messageStore[msgKey] || {};
-            const textarea = document.getElementById(`reply_text_${msgKey}`);
-            const promptInput = document.getElementById(`custom_prompt_${msgKey}`);
+        window.generateAiReplyForMessage = async function(key, btnEl) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            const promptInput = document.getElementById(`custom_prompt_${key}`);
             const customPrompt = promptInput ? promptInput.value.trim() : "";
             const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
-
             btnEl.disabled = true;
-            btnEl.textContent = "AI作成中…";
+            btnEl.textContent = "作成中…";
             try {
                 const data = await callApi("generate_ai_reply", {
                     room_id: m.roomId, room_name: m.roomName || "ルーム",
-                    context: m.body || "", custom_prompt: customPrompt
+                    context: m.context || m.body || "", custom_prompt: customPrompt
                 });
-                const aiReply = data.ai_reply || "";
-                if (!aiReply) { showToast("AIの結果が空でした"); return; }
-                textarea.value = toLines + aiReply;
+                textarea.value = toLines + (data.ai_reply || "");
                 fsAdd("ai_reply_logs", {
-                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.body || "",
-                    aiGeneratedText: aiReply, customPrompt: customPrompt, status: 'generated',
-                    createdAt: FS_TS
+                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.context || m.body || "",
+                    aiGeneratedText: data.ai_reply || "", customPrompt: customPrompt, status: 'generated', createdAt: FS_TS
                 }).catch(err => console.error("AIログ保存失敗:", err));
             } catch (e) {
                 alert("AI作成エラー: " + e.message);
             } finally {
                 btnEl.disabled = false;
-                btnEl.textContent = "✨ AIで返信を作成";
+                btnEl.textContent = "✨ AI作成";
             }
         };
 
         async function saveAutoFeedback(roomId, text) {
             if (!text || !text.trim()) return;
             try {
-                await fsAdd("ai_brushup_feedback", {
-                    roomId: String(roomId), userEditedText: text.trim(), updatedAt: FS_TS
-                });
+                await fsAdd("ai_brushup_feedback", { roomId: String(roomId), userEditedText: text.trim(), updatedAt: FS_TS });
             } catch (e) { console.error("自動添削保存失敗:", e); }
         }
 
-        // To はプルダウンで選んだ瞬間に挿入
-        window.insertMentionForMsg = function(msgKey) {
-            const selectEl = document.getElementById(`member_select_${msgKey}`);
-            const textarea = document.getElementById(`reply_text_${msgKey}`);
+        window.insertMentionForMsg = function(key) {
+            const selectEl = document.getElementById(`member_select_${key}`);
+            const textarea = document.getElementById(`reply_text_${key}`);
             if (!selectEl || !textarea || !selectEl.value) return;
             const memberName = selectEl.options[selectEl.selectedIndex].text;
             textarea.value = `[To:${selectEl.value}] ${memberName}さん\n` + textarea.value;
@@ -1079,48 +1187,49 @@
 
         window.markAsRead = async function(roomId, lastChatId, btn) {
             btn.disabled = true;
+            const label = btn.textContent;
             btn.textContent = "処理中…";
             try {
                 await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId });
+                markReadInCache([roomId]);
                 showToast("既読にしました");
-                if (currentMode !== 'burst') {
-                    btn.disabled = false;
-                    btn.textContent = "✓ 既読";
-                } else {
-                    // カードだけ消して、画面全体の再読込を避ける
-                    const card = btn.closest('.burst-card');
-                    if (card) card.remove();
-                    markReadInCache([roomId]);
-                    const left = document.querySelectorAll('#burstModeContainer .burst-card').length;
-                    setUnreadStatus(left);
-                    if (left === 0) document.getElementById('burstModeContainer').innerHTML = emptyBox('🎉 未読はありません');
-                    updateSelectionBar();
-                }
+                if (currentMode === 'burst') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
             } catch (e) {
                 alert("既読エラー: " + e.message);
                 btn.disabled = false;
-                btn.textContent = "✓ 既読";
+                btn.textContent = label;
             }
         };
 
-        window.sendReplyForMessage = async function(msgKey, btn) {
-            const m = window.messageStore[msgKey] || {};
-            const textarea = document.getElementById(`reply_text_${msgKey}`);
-            const finalMsg = textarea.value.trim();
+        // 送信：未読・後でタブでは「送信＋既読＋後で対応から外す」までまとめて完了
+        window.sendReplyForMessage = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            let finalMsg = textarea.value.trim();
             if (!finalMsg) { showToast("返信文を入力してください"); return; }
+
+            const rpBox = document.getElementById(`rp_${key}`);
+            if (rpBox && rpBox.checked && m.replyTo && m.replyTo.mid) {
+                finalMsg = `[rp aid=${m.replyTo.aid} to=${m.roomId}-${m.replyTo.mid}]${m.replyTo.name}さん\n` + finalMsg;
+            }
+            const preview = textarea.value.trim();
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`)) return;
+
+            const done = currentMode !== 'normal';
             btn.disabled = true;
             btn.textContent = "送信中…";
             try {
-                await callApi("send_message", { room_id: m.roomId, body: finalMsg });
+                await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
                 saveAutoFeedback(m.roomId, finalMsg);
-                textarea.value = '';
-                showToast("送信しました");
-                if (currentMode === 'normal') loadSingleRoomMessages();
+                markReadInCache([m.roomId]);
+                showToast(done ? "送信して完了にしました" : "送信しました");
+                if (done) removeCard(m.roomId);
+                else openRoom(m.roomId);
             } catch (e) {
                 alert("送信失敗: " + e.message);
-            } finally {
                 btn.disabled = false;
-                btn.textContent = "📤 送信";
+                btn.textContent = done ? "📤 送信して完了" : "📤 送信";
             }
         };
     </script>
