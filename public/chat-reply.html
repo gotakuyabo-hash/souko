@@ -78,6 +78,27 @@
                 <div id="singleRoomMessageContainer" class="space-y-3"></div>
             </div>
         </div>
+        <div id="searchModeContainer" style="display:none;">
+            <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+                <div class="font-bold text-base">🔍 直近の問い合わせを探す</div>
+                <input type="search" id="searchKeyword" placeholder="キーワード（例：返品　解約）" class="inp" onkeydown="if(event.key==='Enter'){this.blur();runSearch();}">
+                <div class="text-xs text-slate-500 -mt-1">スペースで区切ると「どれかを含む」で探します</div>
+                <div class="flex gap-2">
+                    <select id="searchDays" class="inp flex-1">
+                        <option value="1">今日・昨日</option>
+                        <option value="3">直近3日</option>
+                        <option value="7" selected>直近1週間</option>
+                        <option value="14">直近2週間</option>
+                        <option value="30">直近1か月</option>
+                    </select>
+                    <button id="searchBtn" onclick="runSearch()" class="btn btn-main shrink-0 px-6">検索</button>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                    <input type="checkbox" id="searchIncludeMine" class="w-5 h-5 accent-indigo-600"> 自社の発言も含める
+                </label>
+            </div>
+            <div id="searchResults" class="space-y-3 mt-3"></div>
+        </div>
     </main>
 
     <!-- 選択中バー -->
@@ -92,10 +113,11 @@
 
     <!-- 下部タブ -->
     <nav class="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom, 0px);">
-        <div class="max-w-md mx-auto grid grid-cols-3">
+        <div class="max-w-md mx-auto grid grid-cols-4">
             <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">⚡</span>未読</button>
             <button id="tabLater" class="tab-btn" onclick="switchMode('later')"><span class="ico">⏳</span>後で (<span id="laterCountBadge">0</span>)</button>
             <button id="tabNormal" class="tab-btn" onclick="switchMode('normal')"><span class="ico">📁</span>ルーム</button>
+            <button id="tabSearch" class="tab-btn" onclick="switchMode('search')"><span class="ico">🔍</span>検索</button>
         </div>
     </nav>
 
@@ -182,7 +204,7 @@
             if (Date.now() - lastFetchAt < AUTO_REFRESH_MS) return;
             if (currentMode === 'burst') fetchAllUnreadRooms(false);
             else if (currentMode === 'later') renderLaterRooms(false);
-            else if (!currentRoomId) fetchNormalRooms(true);
+            else if (currentMode === 'normal' && !currentRoomId) fetchNormalRooms(true);
         });
 
         document.addEventListener('change', e => {
@@ -426,6 +448,8 @@
             currentRoomId = null;
             document.getElementById('burstModeContainer').innerHTML = '';
             document.getElementById('laterModeContainer').innerHTML = '';
+            document.getElementById('searchResults').innerHTML = '';
+            lastSearch = null;
             document.getElementById('roomSearchInput').value = '';
             document.getElementById('singleRoomMessageContainer').innerHTML = '';
             updateLaterBadge();
@@ -438,6 +462,7 @@
             updateSelectionBar();
             if (currentMode === 'burst') fetchAllUnreadRooms(force);
             else if (currentMode === 'later') renderLaterRooms(force);
+            else if (currentMode === 'search') { if (document.getElementById('searchKeyword').value.trim()) runSearch(); }
             else if (currentRoomId) openRoom(currentRoomId);
             else fetchNormalRooms(true);
         }
@@ -446,8 +471,9 @@
             currentMode = mode;
             document.getElementById('selectAllCheckbox').checked = false;
             ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => document.getElementById(id).classList.remove('active'));
-            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
-            document.getElementById('listToolbar').style.display = mode !== 'normal' ? 'flex' : 'none';
+            ['tabSearch'].forEach(id => document.getElementById(id).classList.remove('active'));
+            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer', 'searchModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
+            document.getElementById('listToolbar').style.display = (mode === 'burst' || mode === 'later') ? 'flex' : 'none';
 
             if (mode === 'burst') {
                 document.getElementById('tabBurst').classList.add('active');
@@ -457,6 +483,10 @@
                 document.getElementById('tabLater').classList.add('active');
                 document.getElementById('laterModeContainer').style.display = 'block';
                 renderLaterRooms(false);
+            } else if (mode === 'search') {
+                document.getElementById('tabSearch').classList.add('active');
+                document.getElementById('searchModeContainer').style.display = 'block';
+                setStatus('検索');
             } else {
                 document.getElementById('tabNormal').classList.add('active');
                 document.getElementById('normalModeContainer').style.display = 'block';
@@ -469,7 +499,7 @@
         // ===== 選択・一括既読 =====
         function activeListId() { return currentMode === 'burst' ? 'burstModeContainer' : 'laterModeContainer'; }
         function updateSelectionBar() {
-            const n = currentMode === 'normal' ? 0 : document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`).length;
+            const n = (currentMode !== 'burst' && currentMode !== 'later') ? 0 : document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`).length;
             document.getElementById('selectedCount').textContent = n;
             document.getElementById('selectionBar').style.display = n > 0 ? 'block' : 'none';
         }
@@ -978,6 +1008,126 @@
                 container.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
             }
         }
+
+        // ===== 直近の問い合わせ検索 =====
+        let lastSearch = null;
+
+        function escRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+        function toHalf(s) { return String(s).replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)); }
+
+        // キーワード部分に色を付ける（全角・半角、大文字・小文字を区別しない）
+        function highlight(text, words) {
+            const safe = esc(text);
+            if (!words.length) return safe;
+            const half = toHalf(safe).toLowerCase();
+            const marks = [];
+            words.forEach(w => {
+                const ew = esc(w);
+                let i = half.indexOf(ew);
+                while (i !== -1) { marks.push([i, i + ew.length]); i = half.indexOf(ew, i + ew.length); }
+            });
+            if (!marks.length) return safe;
+            marks.sort((a, b) => a[0] - b[0]);
+            let out = '', pos = 0;
+            marks.forEach(([a, b]) => {
+                if (a < pos) return;
+                out += safe.slice(pos, a) + '<mark class="bg-yellow-200 rounded px-0.5">' + safe.slice(a, b) + '</mark>';
+                pos = b;
+            });
+            return out + safe.slice(pos);
+        }
+
+        window.runSearch = async function() {
+            const keyword = document.getElementById('searchKeyword').value.trim();
+            if (!keyword) { showToast('キーワードを入力してください'); return; }
+            const days = document.getElementById('searchDays').value;
+            const includeMine = document.getElementById('searchIncludeMine').checked;
+            const box = document.getElementById('searchResults');
+            const btn = document.getElementById('searchBtn');
+            btn.disabled = true;
+            btn.textContent = '検索中…';
+            box.innerHTML = emptyBox('🔍 直近のチャットを確認しています…<div class="text-sm font-normal mt-2">ルームが多いと10秒ほどかかります</div>');
+            setStatus('検索中…');
+            try {
+                const data = await callApi("search_recent", { keyword: keyword, days: days, include_mine: includeMine });
+                lastSearch = { keyword, days: data.days, results: data.results || [] };
+                renderSearchResults(data, keyword);
+            } catch (e) {
+                box.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">検索に失敗しました：${esc(e.message)}</div>`;
+                setStatus('エラー', 'bg-red-500');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '検索';
+            }
+        };
+
+        function renderSearchResults(data, keyword) {
+            const box = document.getElementById('searchResults');
+            const results = data.results || [];
+            const words = keyword.split(/[\s　]+/).filter(Boolean).map(w => toHalf(w).toLowerCase());
+            const total = results.reduce((n, r) => n + r.hit_count, 0);
+            setStatus(`${results.length} ルーム`, results.length ? 'bg-amber-500' : 'bg-emerald-500');
+
+            const notes = [];
+            if (data.truncated) notes.push(`※ 対象ルームが多いため、更新が新しい ${data.scanned} ルームだけを確認しました。期間を短くすると漏れが減ります。`);
+            if (data.failed) notes.push(`※ ${data.failed} ルームは取得に失敗しました。少し時間をおいて再検索してください。`);
+
+            let html = `
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <div class="text-base font-bold">${results.length} ルーム / ${total} 件ヒット</div>
+                    <div class="text-xs text-slate-500 mt-1">直近${data.days}日に更新があった ${data.scanned} ルームを確認（各ルーム最新100件まで）</div>
+                    ${notes.map(n => `<div class="text-xs text-amber-700 mt-1">${esc(n)}</div>`).join('')}
+                    ${results.length ? `<button onclick="copySearchResults()" class="btn btn-sub w-full mt-3">📋 セラー一覧をコピー（スプレッドシート貼り付け用）</button>` : ''}
+                </div>`;
+
+            if (!results.length) {
+                html += emptyBox('該当するチャットは見つかりませんでした');
+            }
+            results.forEach(r => {
+                const rid = safeId(r.room_id);
+                window.roomNameMap[rid] = r.room_name;
+                const s = r.seller;
+                html += `
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="flex items-start gap-2">
+                            <div class="flex-1 min-w-0">
+                                <div class="font-bold text-base truncate">${esc(r.room_name)}</div>
+                                <div class="text-sm text-slate-600 mt-0.5">${s ? `管理番号 ${esc(s.kanriNo)}・${esc(s.shopName)}` : '<span class="text-slate-400">セラー情報なし</span>'}</div>
+                            </div>
+                            <span class="shrink-0 text-xs font-bold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full">${r.hit_count}件</span>
+                        </div>
+                        <div class="mt-3 space-y-2">
+                            ${r.hits.map(h => `
+                                <div class="bg-slate-50 rounded-xl p-3">
+                                    <div class="text-xs text-slate-500">${esc(h.sender)}・${fmtTime(h.send_time)}</div>
+                                    <div class="msg-body text-[14px] mt-1">${highlight(h.snippet, words)}</div>
+                                </div>`).join('')}
+                            ${r.hit_count > r.hits.length ? `<div class="text-xs text-slate-400">ほか ${r.hit_count - r.hits.length} 件</div>` : ''}
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <button onclick="openRoomFromList('${rid}')" class="btn btn-main">📁 ルームを開く</button>
+                            <button onclick="fetchSellerInfo('${rid}')" class="btn btn-sub">🔑 セラー情報</button>
+                        </div>
+                    </div>`;
+            });
+            box.innerHTML = html;
+        }
+
+        // タブ区切りでコピー → スプレッドシートにそのまま貼れる
+        window.copySearchResults = function() {
+            if (!lastSearch || !lastSearch.results.length) return;
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
+            const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', 'ヒット数', '最新日時', '最新の内容'].join('\t')];
+            lastSearch.results.forEach(r => {
+                const s = r.seller || {};
+                const d = new Date(r.latest_time * 1000);
+                const dt = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+                rows.push([s.kanriNo, s.shopName, s.name, r.room_name, r.hit_count, dt, r.hits[0] ? r.hits[0].snippet : ''].map(clean).join('\t'));
+            });
+            navigator.clipboard.writeText(rows.join('\n'))
+                .then(() => showToast(`${lastSearch.results.length} 件をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
 
         // ===== 新規発信 =====
         function buildComposeBox(roomId, roomName, messages, members, recent) {
