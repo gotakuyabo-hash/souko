@@ -148,22 +148,20 @@ exports.notifySharedNotes = onDocumentWritten(
     }
 );
 
-// 4. スタッフからの要望・依頼の更新通知 -> request.html
+// 4. スタッフからの新しい依頼の通知 -> request.html
+//    ・新規登録のときだけ通知（更新・完了・削除では通知しない）
 exports.notifyStaffRequests = onDocumentWritten(
     { document: "staff_requests/{docId}", region: "asia-northeast1", secrets: [slackWebhookUrlSecret] },
     async (event) => {
         const snap = event.data;
-        if (!snap || !snap.after.exists) return;
+        if (!snap || !snap.after.exists) return; // 削除
+        if (snap.before.exists) return;          // 更新（完了への変更も含む）
+
         const docId = event.params.docId;
         const data = snap.after.data();
 
-        const fromUser = data.from || "スタッフ";
-        const toUser = data.to || "未設定";
-        const taskContent = data.task || "内容なし";
-        const status = data.status || "pending";
-
-        let messageText = `🙋 *スタッフからの要望・依頼が更新されました！*\n>・ *依頼者:* ${fromUser}\n>・ *宛先:* ${toUser}\n>・ *内容:* ${taskContent}\n>・ *ステータス:* ${status}\n>・ *ID:* ${docId}`;
-        await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/request.html", "要望を確認する");
+        const messageText = `🆕 *スタッフから新しい依頼が届きました！*\n>・ *依頼者:* ${data.from || "スタッフ"}\n>・ *宛先:* ${data.to || "未設定"}\n>・ *内容:* ${data.task || "内容なし"}\n>・ *ID:* ${docId}`;
+        await sendSlackNotification(messageText, slackWebhookUrlSecret.value(), "https://souko-2de57.web.app/request.html", "依頼を確認する");
     }
 );
 
