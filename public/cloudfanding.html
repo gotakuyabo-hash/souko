@@ -143,6 +143,7 @@
         <span style="font-weight: bold; color: #333;">送り状データ出力:</span>
         <button class="btn btn-warning" onclick="exportSagawa()">佐川急便 送り状CSVを出力</button>
         <button class="btn btn-warning" onclick="exportYamato()">ヤマト(B2) 送り状CSVを出力</button>
+        <span style="font-size:12px; color:#666;">※それぞれ「配送会社」が一致する行だけを出力します（沖縄県は自動でヤマト）。</span>
     </div>
 
     <div class="controls">
@@ -160,6 +161,14 @@
                 <option value="180">180</option>
                 <option value="200">200</option>
                 <option value="240">240</option>
+            </select>
+        </div>
+        <div>
+            <label for="defaultCarrierSelect">配送会社: </label>
+            <select id="defaultCarrierSelect" onchange="applyDefaultCarrier()">
+                <option value="auto" selected>佐川（沖縄はヤマト）</option>
+                <option value="sagawa">すべて佐川</option>
+                <option value="yamato">すべてヤマト</option>
             </select>
         </div>
         <div>
@@ -216,11 +225,11 @@
         <thead>
             <tr>
                 <th>No.</th><th>注文ID</th><th>名前</th><th>品名</th><th>郵便番号</th><th>電話番号</th><th>住所</th>
-                <th>都道府県</th><th>サイズ</th><th>送料</th><th>出荷手数料</th><th>資材費</th><th>点数</th><th>同梱費</th><th>行合計</th><th>操作</th>
+                <th>都道府県</th><th>配送会社</th><th>サイズ</th><th>送料</th><th>出荷手数料</th><th>資材費</th><th>点数</th><th>同梱費</th><th>行合計</th><th>操作</th>
             </tr>
         </thead>
         <tbody id="resultBody">
-            <tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>
+            <tr><td colspan="17" style="text-align:center; color:#888;">データがありません</td></tr>
         </tbody>
     </table>
 </div>
@@ -369,6 +378,7 @@ function createRow(data, index) {
     tr.dataset.index = index;
     tr.dataset.pref = pref || "";
     const prefDisplay = pref ? pref : '<span class="not-found">都道府県不明</span>';
+    const carrier = data.carrier || autoCarrier(pref);
     const sizes = [['ss','SS'],['compact','コンパクト'],['60','60'],['80','80'],['100','100'],['120','120'],['140','140'],['160','160'],['180','180'],['200','200'],['240','240']];
     const sizeOptions = sizes.map(([v, t]) => `<option value="${v}" ${defaultSize === v ? 'selected' : ''}>${t}</option>`).join('');
 
@@ -381,6 +391,10 @@ function createRow(data, index) {
         <td><input type="text" class="phone-input" value="${escAttr(data.phone)}" placeholder="電話番号" style="width: 95px; padding: 4px;"></td>
         <td><input type="text" class="address-input" value="${escAttr(address)}" placeholder="住所" style="width: 170px; padding: 4px;" oninput="updateRowAddress(this)"></td>
         <td class="pref-cell" data-pref="${pref || ''}">${prefDisplay}</td>
+        <td><select class="carrier-select" onchange="this.dataset.manual='1'; calculate()">
+            <option value="sagawa" ${carrier === 'sagawa' ? 'selected' : ''}>佐川</option>
+            <option value="yamato" ${carrier === 'yamato' ? 'selected' : ''}>ヤマト</option>
+        </select></td>
         <td><select class="size-select" onchange="calculate()">${sizeOptions}</select></td>
         <td class="shipping-cell">0 円</td>
         <td class="fee-cell">300 円</td>
@@ -401,7 +415,7 @@ function initRows() {
     tbody.innerHTML = '';
 
     if (lines.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; color:#888;">データがありません</td></tr>';
         calculate();
         return;
     }
@@ -446,6 +460,23 @@ function renumberRows() {
     });
 }
 
+// 配送会社の自動判定（一括設定に従う。標準は佐川、沖縄県だけヤマト）
+function autoCarrier(pref) {
+    const mode = document.getElementById('defaultCarrierSelect').value;
+    if (mode === 'sagawa' || mode === 'yamato') return mode;
+    return pref === '沖縄県' ? 'yamato' : 'sagawa';
+}
+
+function applyDefaultCarrier() {
+    document.querySelectorAll('#resultBody tr').forEach(row => {
+        const sel = row.querySelector('.carrier-select');
+        if (!sel) return;
+        sel.value = autoCarrier(row.dataset.pref);
+        delete sel.dataset.manual;
+    });
+    calculate();
+}
+
 function updateRowAddress(input) {
     const tr = input.closest('tr');
     const pref = extractPrefecture(input.value);
@@ -453,6 +484,9 @@ function updateRowAddress(input) {
     const prefCell = tr.querySelector('.pref-cell');
     prefCell.dataset.pref = pref || "";
     prefCell.innerHTML = pref ? pref : '<span class="not-found">都道府県不明</span>';
+    // 手動で変更していない行は、住所に合わせて配送会社も切り替え
+    const carrierSel = tr.querySelector('.carrier-select');
+    if (carrierSel && !carrierSel.dataset.manual) carrierSel.value = autoCarrier(pref);
     calculate();
 }
 
@@ -493,6 +527,7 @@ function calculate() {
     const rows = document.querySelectorAll('#resultBody tr');
     let totalCount = 0, totalShipping = 0, totalFee = 0, totalMaterial = 0, totalBundle = 0, totalItemsCount = 0;
     let unknownPrefCount = 0;
+    let carrierCounts = { sagawa: 0, yamato: 0 };
     let sizeCounts = {};
     let materialSizeCounts = {};
     const warn = document.getElementById('prefWarning');
@@ -519,6 +554,8 @@ function calculate() {
         const rowtotalCell = row.querySelector('.rowtotal-cell');
 
         totalCount++;
+        const carrierSel = row.querySelector('.carrier-select');
+        if (carrierSel) carrierCounts[carrierSel.value]++;
         const pref = prefCell.dataset.pref;
         const size = sizeSelect.value;
         sizeCounts[size] = (sizeCounts[size] || 0) + 1;
@@ -566,7 +603,8 @@ function calculate() {
     document.getElementById('grandTotalPrice').textContent = grandTotal.toLocaleString();
 
     const countDetailText = Object.entries(sizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
-    document.getElementById('detailCount').textContent = countDetailText ? `(${countDetailText})` : '';
+    document.getElementById('detailCount').textContent =
+        (countDetailText ? `(${countDetailText})\n` : '') + `佐川 ${carrierCounts.sagawa}件／ヤマト ${carrierCounts.yamato}件`;
     document.getElementById('detailFee').textContent = `(${totalCount}件)`;
     const materialDetailText = Object.entries(materialSizeCounts).map(([sz, cnt]) => `${sz}: ${cnt}件`).join(', ');
     document.getElementById('detailMaterial').textContent = materialDetailText ? `(${materialDetailText})` : '';
@@ -596,7 +634,8 @@ function collectRowData() {
             address: row.querySelector('.address-input').value,
             size: row.querySelector('.size-select').value,
             material: row.querySelector('.material-input').value,
-            itemCount: row.querySelector('.itemcount-input').value
+            itemCount: row.querySelector('.itemcount-input').value,
+            carrier: row.querySelector('.carrier-select').value
         });
     });
     return list;
@@ -606,7 +645,7 @@ function renderRowsFromData(list) {
     const tbody = document.getElementById('resultBody');
     tbody.innerHTML = '';
     if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="16" style="text-align:center; color:#888;">データがありません</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; color:#888;">データがありません</td></tr>';
     } else {
         list.forEach((d, i) => tbody.appendChild(createRow(d, i)));
     }
@@ -1160,11 +1199,15 @@ async function deleteTemplate() {
 // =============================================================
 // 送り状データ出力
 // =============================================================
-function exportableRows() {
+function exportableRows(carrier) {
     if (isEmptyTable()) { alert("出力するデータがありません。"); return null; }
     if (document.getElementById('filterPref').value &&
         !confirm('都道府県フィルターがかかっています。表示中の行だけを出力しますか？')) return null;
-    return [...document.querySelectorAll('#resultBody tr')].filter(r => r.style.display !== 'none' && r.querySelector('.size-select'));
+    const label = carrier === 'yamato' ? 'ヤマト' : '佐川';
+    const rows = [...document.querySelectorAll('#resultBody tr')].filter(r =>
+        r.style.display !== 'none' && r.querySelector('.carrier-select') && r.querySelector('.carrier-select').value === carrier);
+    if (rows.length === 0) { alert(`配送会社が「${label}」の行がありません。`); return null; }
+    return rows;
 }
 
 function splitByLength(s, len, count) {
@@ -1179,7 +1222,7 @@ function csvLine(arr) {
 
 // 佐川急便（e飛伝Ⅱ 74列）
 function exportSagawa() {
-    const rows = exportableRows();
+    const rows = exportableRows('sagawa');
     if (!rows) return;
 
     const sName = document.getElementById('senderName').value;
@@ -1238,7 +1281,7 @@ function exportSagawa() {
 
 // ヤマト運輸（B2クラウド）
 function exportYamato() {
-    const rows = exportableRows();
+    const rows = exportableRows('yamato');
     if (!rows) return;
 
     const sName = document.getElementById('senderName').value;
