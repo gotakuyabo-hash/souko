@@ -1230,10 +1230,7 @@
                     context: m.context || "", custom_prompt: intent
                 });
                 textarea.value = toLines + (data.ai_reply || "");
-                fsAdd("ai_reply_logs", {
-                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.context || "",
-                    aiGeneratedText: data.ai_reply || "", customPrompt: intent, type: 'compose', status: 'generated', createdAt: FS_TS
-                }).catch(err => console.error("AIログ保存失敗:", err));
+                logAiDraft(m, data.ai_reply || "", intent, m.context || "", 'compose');
             } catch (e) {
                 alert("AI作成エラー: " + e.message);
             } finally {
@@ -1251,7 +1248,7 @@
             btn.textContent = "送信中…";
             try {
                 await callApi("send_message", { room_id: m.roomId, body: finalMsg });
-                saveAutoFeedback(m.roomId, finalMsg);
+                saveSendLog(m, finalMsg, 'compose');
                 showToast("送信しました");
                 openRoom(m.roomId);
             } catch (e) {
@@ -1373,10 +1370,7 @@
                     context: m.context || m.body || "", custom_prompt: customPrompt
                 });
                 textarea.value = toLines + (data.ai_reply || "");
-                fsAdd("ai_reply_logs", {
-                    roomId: String(m.roomId), roomName: m.roomName || "", context: m.context || m.body || "",
-                    aiGeneratedText: data.ai_reply || "", customPrompt: customPrompt, status: 'generated', createdAt: FS_TS
-                }).catch(err => console.error("AIログ保存失敗:", err));
+                logAiDraft(m, data.ai_reply || "", customPrompt, m.context || m.body || "", 'reply');
             } catch (e) {
                 alert("AI作成エラー: " + e.message);
             } finally {
@@ -1385,11 +1379,68 @@
             }
         };
 
-        async function saveAutoFeedback(roomId, text) {
-            if (!text || !text.trim()) return;
-            try {
-                await fsAdd("ai_brushup_feedback", { roomId: String(roomId), userEditedText: text.trim(), updatedAt: FS_TS });
-            } catch (e) { console.error("自動添削保存失敗:", e); }
+        // ===== AI添削ログ（AI案と送信文を1件にひもづけて記録） =====
+        function newId() {
+            return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        }
+        // 比較用：宛先・返信マークの行を外して整える
+        function bodyForCompare(t) {
+            return String(t || '')
+                .replace(/^\[(To:\d+|rp aid=\d+ to=\d+-\d+)\][^\n]*\n?/gm, '')
+                .replace(/\[toall\]/gi, '')
+                .trim();
+        }
+        // 2つの文の違いの割合（0＝同じ、1＝まったく別）
+        function editRatio(a, b) {
+            a = String(a).slice(0, 1500);
+            b = String(b).slice(0, 1500);
+            if (!a.length && !b.length) return 0;
+            let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+            for (let i = 1; i <= a.length; i++) {
+                const cur = [i];
+                for (let j = 1; j <= b.length; j++) {
+                    cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+                }
+                prev = cur;
+            }
+            return prev[b.length] / Math.max(a.length, b.length);
+        }
+        function editLevel(r) { return r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正'; }
+
+        function logAiDraft(m, aiText, prompt, context, mode) {
+            const id = newId();
+            m.aiDraft = { id: id, text: aiText, prompt: prompt, count: ((m.aiDraft && m.aiDraft.count) || 0) + 1 };
+            fsAdd("ai_reply_logs", {
+                draftId: id, account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "", context: context,
+                aiGeneratedText: aiText, customPrompt: prompt, generateCount: m.aiDraft.count,
+                type: mode, status: 'generated', createdAt: FS_TS
+            }).catch(err => console.error("AIログ保存失敗:", err));
+        }
+
+        function saveSendLog(m, sentText, mode) {
+            if (!sentText || !sentText.trim()) return;
+            const final = bodyForCompare(sentText);
+            const d = m.aiDraft || null;
+            const data = {
+                account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "",
+                userEditedText: sentText.trim(), finalText: final,
+                usedAi: !!d, draftId: d ? d.id : null,
+                aiGeneratedText: d ? d.text : null, customPrompt: d ? d.prompt : null,
+                generateCount: d ? d.count : 0,
+                context: (m.context || m.body || "").slice(0, 3000),
+                updatedAt: FS_TS
+            };
+            if (d) {
+                const r = editRatio(bodyForCompare(d.text), final);
+                data.editRatio = Math.round(r * 1000) / 1000;
+                data.editLevel = editLevel(r);
+                data.aiLength = bodyForCompare(d.text).length;
+                data.finalLength = final.length;
+            }
+            fsAdd("ai_brushup_feedback", data).catch(e => console.error("送信ログ保存失敗:", e));
+            m.aiDraft = null;
         }
 
         window.insertMentionForMsg = function(key) {
@@ -1438,7 +1489,7 @@
             btn.textContent = "送信中…";
             try {
                 await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
-                saveAutoFeedback(m.roomId, finalMsg);
+                saveSendLog(m, finalMsg, 'reply');
                 markReadInCache([m.roomId]);
                 showToast(done ? "送信して完了にしました" : "送信しました");
                 if (done) removeCard(m.roomId);
