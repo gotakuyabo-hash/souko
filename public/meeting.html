@@ -1234,9 +1234,29 @@
     return saveChain;
   }
 
+  // 何か1つでも入力があるかどうか（空の定例カード・空の参加者欄などは「入力なし」扱い）
+  function hasContent(data) {
+    if (!data) return false;
+    const filled = v => v !== undefined && v !== null && String(v).trim() !== '';
+    // 出荷件数は前週の記録から自動で入るため、それだけでは「入力あり」と数えない
+    if ((Number(data.errorCount) || 0) > 0) return true;
+    return (data.meetings || []).some(m =>
+      filled(m.title) ||
+      (m.attendees || []).some(filled) ||
+      (m.shares || []).some(filled) ||
+      (m.topics || []).some(t =>
+        filled(t.title) || filled(t.speaker) || filled(t.summary) ||
+        (t.subs || []).some(filled) ||
+        (t.tasks || []).some(k => filled(k.task) || filled(k.assignee) || filled(k.limit))
+      )
+    );
+  }
+
   async function doSave(dateStr, data, isAuto, force) {
     const docRef = doc(db, COLLECTION, dateStr);
-    const newUpdatedAt = new Date().toISOString();
+    const isEmpty = !hasContent(data);
+    const newUpdatedAt = isEmpty ? null : new Date().toISOString();
+    let removed = false;
     try {
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(docRef);
@@ -1244,7 +1264,12 @@
         if (!force && remoteUpdatedAt !== lastKnownUpdatedAt) {
           throw new Error('CONFLICT');
         }
-        tx.set(docRef, { ...data, updatedAt: newUpdatedAt });
+        if (isEmpty) {
+          // 中身が空なら記録を作らない（すでにあれば削除して、開催日一覧に出ないようにする）
+          if (snap.exists()) { tx.delete(docRef); removed = true; }
+        } else {
+          tx.set(docRef, { ...data, updatedAt: newUpdatedAt });
+        }
       });
 
       // 保存中に別の日付へ切り替わっていたら、表示用の情報は更新しない
@@ -1252,7 +1277,13 @@
         lastKnownUpdatedAt = newUpdatedAt;
         const now = new Date();
         const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-        saveStatusEl.textContent = isAuto ? `自動保存しました (${timeStr})` : `保存しました (${timeStr})`;
+        if (isEmpty) {
+          saveStatusEl.textContent = removed
+            ? `入力が空になったため、この日の記録を開催日一覧から外しました (${timeStr})`
+            : '入力がないため、まだ保存していません';
+        } else {
+          saveStatusEl.textContent = isAuto ? `自動保存しました (${timeStr})` : `保存しました (${timeStr})`;
+        }
       }
     } catch (error) {
       if (error.message === 'CONFLICT') {
@@ -1348,13 +1379,15 @@
       showHistoryMessage('読み込みに失敗しました', '#e74c3c');
       return;
     }
-    if (querySnapshot.empty) {
+    const docsData = [];
+    querySnapshot.forEach(d => {
+      const data = d.data();
+      if (hasContent(data)) docsData.push({ id: d.id, data }); // 中身が空の日は一覧に出さない
+    });
+    if (docsData.length === 0) {
       showHistoryMessage('保存されたデータはありません');
       return;
     }
-
-    const docsData = [];
-    querySnapshot.forEach(d => docsData.push({ id: d.id, data: d.data() }));
     docsData.sort((a, b) => b.id.localeCompare(a.id));
 
     historyListContainer.innerHTML = '';
