@@ -72,6 +72,19 @@ button{cursor:pointer;border:none;background:none}
 /* フォーム */
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px;border-top:4px solid var(--blue)}
 .panel h2{font-size:15px;margin:0 0 10px}
+
+/* 資材発注：新システムへのリンク */
+.mat-links{display:grid;gap:10px}
+.mat-link{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:58px;padding:0 16px;border-radius:var(--radius);background:var(--blue);color:#fff;font-weight:700;font-size:17px;text-decoration:none}
+.mat-link:active{opacity:.85}
+.mat-link small{font-size:12px;font-weight:400;opacity:.85}
+.mat-old{margin-top:16px}
+.mat-old > summary{list-style:none;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;font-weight:700;font-size:14px;color:var(--sub);display:flex;align-items:center;gap:8px}
+.mat-old > summary::-webkit-details-marker{display:none}
+.mat-old > summary::before{content:"▶";font-size:11px}
+.mat-old[open] > summary::before{content:"▼"}
+.mat-old[open] > summary{margin-bottom:10px}
+.mat-old-note{font-size:12px;color:var(--sub);margin:0 0 10px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .field{margin-bottom:10px}
 .field label,.lbl{display:block;font-size:12px;font-weight:700;color:var(--sub);margin-bottom:3px}
@@ -290,12 +303,23 @@ textarea.inp{resize:vertical}
 
 <!-- ==================== 3. 資材発注 ==================== -->
 <section id="app-mat" class="tab-content">
+  <div class="panel">
+    <h2>📦 資材の発注</h2>
+    <p class="mat-old-note">自分の倉庫を選んでください。発注画面が別のページで開きます。</p>
+    <div class="mat-links">
+      <a class="mat-link" href="https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=ch-3a6ee14506e3" target="_blank" rel="noopener">🏭 調布<small>開く ↗</small></a>
+      <a class="mat-link" href="https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=na-54231abe2573" target="_blank" rel="noopener">🏭 新潟（阿賀野）<small>開く ↗</small></a>
+      <a class="mat-link" href="https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=hj-82b8e61fd44c" target="_blank" rel="noopener">🏭 本庄<small>開く ↗</small></a>
+    </div>
+  </div>
+
+  <details class="mat-old" id="mat-old">
+  <summary>以前の発注履歴（旧方式）<span id="mat-old-pending"></span></summary>
+  <p class="mat-old-note">ここでは新しい発注はできません。残っている「未発注」を片付けるときや、過去の内容を確認するときに使ってください。</p>
   <div class="toolbar">
     <select id="mat-wh-filter" class="search" aria-label="倉庫で絞り込み">
       <option value="">🏭 すべての倉庫</option><option value="調布1F">調布1F</option><option value="調布地下">調布地下</option><option value="本庄">本庄</option><option value="新潟">新潟</option>
     </select>
-    <button class="btn btn-sub" onclick="openMaster()" aria-label="資材マスタ">⚙ 資材登録</button>
-    <button class="btn btn-primary" onclick="openMatForm()">＋ 発注</button>
   </div>
 
   <div class="panel" id="master-panel" hidden style="border-top-color:var(--amber)">
@@ -349,6 +373,7 @@ textarea.inp{resize:vertical}
   <div class="meta-row"><span id="mat-count"></span></div>
   <div id="mat-list" class="list"></div>
   <button id="mat-more" class="more-btn" onclick="showMore('mat')" hidden>もっと見る</button>
+  </details>
 </section>
 
 <!-- 下部タブ -->
@@ -1437,6 +1462,8 @@ function renderMat() {
   });
 
   $('mat-count').textContent = `${list.length}件`;
+  const leftover = allMat.filter(m => m.status === '未発注').length;
+  $('mat-old-pending').innerHTML = leftover ? ` <span class="tag red">未発注 ${leftover}件</span>` : '';
   const shown = list.slice(0, limits.mat);
   $('mat-more').hidden = list.length <= limits.mat;
 
@@ -1465,12 +1492,10 @@ function renderMat() {
           ? `<button class="btn-sm plain" onclick="revertMat('${m.id}')">↩ 未発注に戻す</button>`
           : `<button class="btn-sm ok" onclick="updateMatStatus('${m.id}')">✅ 発注済みにする</button>`}
         <span class="spacer"></span>
-        <button class="btn-sm blue" onclick="reorderMat('${m.id}')">📋 同じ内容で依頼</button>
-        <button class="btn-sm edit" onclick="editMat('${m.id}')">編集</button>
         <button class="btn-sm del" onclick="delMat('${m.id}')">削除</button>
       </div>
     </article>`;
-  }).join('') || '<div class="empty">該当する発注依頼はありません。絞り込みを変えるか、「＋ 発注依頼」から作成できます。</div>';
+  }).join('') || '<div class="empty">該当する発注履歴はありません。</div>';
 }
 
 window.editMat = (id) => {
