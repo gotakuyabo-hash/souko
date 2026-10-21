@@ -124,6 +124,21 @@ exports.notifySharedNotes = onDocumentWritten(
         const docId = event.params.docId;
         const data = snap.after.data();
 
+        // 更新前と比べて、タイトル・カテゴリ・内容が変わっていなければ通知しない
+        // （並び順や更新日時だけの保存、全件の一括保存などで通知が大量に飛ぶのを防ぐ）
+        if (snap.before.exists) {
+            const before = snap.before.data();
+            const isSame =
+                (before.title || "") === (data.title || "") &&
+                (before.name || "") === (data.name || "") &&
+                (before.category || "") === (data.category || "") &&
+                (before.content || "") === (data.content || "");
+            if (isSame) {
+                logger.info(`共有ノート ${docId} は内容に変更がないため通知をスキップしました。`);
+                return;
+            }
+        }
+
         const title = data.title || data.name || "無題";
         const category = data.category || "未分類";
         const content = data.content ? (data.content.length > 50 ? data.content.substring(0, 50) + "..." : data.content) : "内容なし";
