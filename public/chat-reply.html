@@ -1,949 +1,2303 @@
-/**
- * Chatwork 未読バーストコックピット用 GAS（安全版）
- *
- * ▼ スクリプトプロパティに設定するもの（プロジェクトの設定 → スクリプト プロパティ）
- *   APP_SECRET          … 画面で入力する合言葉（好きな文字列。長めがおすすめ）
- *   GEMINI_API_KEY      … Gemini APIキー
- *   CW_TOKEN_STAFF      … ラクロジスタッフアカウントのChatwork APIトークン
- *   CW_TOKEN_MATSUSHITA … 松下アカウントのChatwork APIトークン
- */
-
-// 画面の「アカウント選択」の値 → スクリプトプロパティ名
-var ACCOUNTS = {
-  staff: "CW_TOKEN_STAFF",
-  matsushita: "CW_TOKEN_MATSUSHITA"
-};
-
-var GEMINI_MODEL = "gemini-3.7-flash";
-
-// ==============================
-// 入口
-// ==============================
-function doGet(e) {
-  return handleRequest_((e && e.parameter) || {});
-}
-
-function doPost(e) {
-  var params;
-  try {
-    params = JSON.parse(e.postData.contents);
-  } catch (err) {
-    return json_({ status: "error", message: "リクエストの形式が正しくありません" });
-  }
-  return handleRequest_(params);
-}
-
-function handleRequest_(p) {
-  try {
-    var secret = PropertiesService.getScriptProperties().getProperty("APP_SECRET");
-    if (!secret) {
-      return json_({ status: "error", message: "APP_SECRET がスクリプトプロパティに設定されていません" });
-    }
-    if (p.secret !== secret) {
-      return json_({ status: "error", code: "auth", message: "認証エラー：合言葉が違います" });
-    }
-
-    var action = p.action;
-    var result;
-
-    if (action === "ping") {
-      result = {};
-    } else if (action === "get_seller_info") {
-      result = getSellerInfoByChatworkId(p.chatwork_id);
-    } else if (action === "generate_ai_reply") {
-      result = generateAiReply(p);
-    } else {
-      var token = getChatworkToken_(p.account);
-      if (action === "get_unread_bundle") {
-        result = getUnreadBundle(token, p.account);
-      } else if (action === "get_todo_bundle") {
-        result = getTodoBundle_(token, p);
-      } else if (action === "set_option_override") {
-        result = setOptionOverride_(p);
-      } else if (action === "get_option_sellers") {
-        result = getOptionSellers_(token, p.label);
-      } else if (action === "search_recent") {
-        result = searchRecent_(token, p);
-      } else if (action === "get_later_bundle") {
-        result = getLaterBundle(token, p.account);
-      } else if (action === "set_later") {
-        result = { later: setLater_(p.account, p.room_ids, p.on !== false) };
-      } else if (action === "get_latest_messages") {
-        result = { latest: fetchLatest_(token, p.room_ids) };
-      } else if (action === "get_members") {
-        result = { members: getMembersCached_(token, p.room_id) };
-      } else if (action === "mark_read_batch") {
-        result = markReadBatch_(token, p.room_ids);
-      } else if (action === "get_rooms") {
-        result = getChatworkRooms(token);
-      } else if (action === "get_room_data") {
-        result = getChatworkRoomData(token, p.room_id);
-      } else if (action === "get_room_file") {
-        result = getChatworkRoomFile(token, p.room_id, p.file_id);
-      } else if (action === "send_message") {
-        result = sendChatworkMessage(token, p.room_id, p.body);
-        if (p.done) {
-          // 送信と同時に「既読」＋「後で対応から外す」
-          try { markChatworkRead(token, p.room_id, null); } catch (e) {}
-          result.later = setLater_(p.account, [p.room_id], false);
-        }
-      } else if (action === "mark_read") {
-        result = markChatworkRead(token, p.room_id, p.last_chat_id);
-      } else if (action === "upload_file") {
-        result = uploadChatworkFile(token, p.room_id, p.file_data, p.file_name, p.mime_type);
-      } else {
-        throw new Error("不明なアクションです: " + action);
-      }
-    }
-
-    result.status = "success";
-    return json_(result);
-
-  } catch (err) {
-    return json_({ status: "error", message: err.message });
-  }
-}
-
-function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function getChatworkToken_(account) {
-  var propName = ACCOUNTS[account];
-  if (!propName) throw new Error("アカウントの指定が正しくありません: " + account);
-  var token = PropertiesService.getScriptProperties().getProperty(propName);
-  if (!token) throw new Error(propName + " がスクリプトプロパティに設定されていません");
-  return token;
-}
-
-// Chatwork API 共通処理（エラー時は理由を返す）
-function cw_(token, method, path, payload) {
-  var options = {
-    method: method,
-    headers: { "X-ChatWorkToken": token },
-    muteHttpExceptions: true
-  };
-  if (payload) options.payload = payload;
-
-  var res = UrlFetchApp.fetch("https://api.chatwork.com/v2" + path, options);
-  var code = res.getResponseCode();
-  var text = res.getContentText();
-
-  if (code === 204) return null; // 該当データなし
-  if (code < 200 || code >= 300) {
-    throw new Error("Chatwork API エラー (" + code + "): " + text);
-  }
-  return text ? JSON.parse(text) : null;
-}
-
-// ==============================
-// Chatwork
-// ==============================
-function getChatworkRooms(token) {
-  var rooms = cw_(token, "get", "/rooms");
-  return { rooms: slimRooms_(rooms) };
-}
-
-function slimRooms_(rooms) {
-  return (Array.isArray(rooms) ? rooms : []).map(function (r) {
-    return { room_id: r.room_id, name: r.name, unread_num: r.unread_num, last_update_time: r.last_update_time };
-  });
-}
-
-function onlyIds_(ids) {
-  return (Array.isArray(ids) ? ids : []).map(String).filter(function (id) { return /^\d+$/.test(id); });
-}
-
-// ==============================
-// 高速化：まとめて取得（UrlFetchApp.fetchAll で同時に取りに行く）
-// ==============================
-
-// 未読ルーム一覧 ＋ 各ルームの最新メッセージを1回で返す
-function getUnreadBundle(token, account) {
-  var rooms = slimRooms_(cw_(token, "get", "/rooms"));
-  var unreadIds = rooms
-    .filter(function (r) { return Number(r.unread_num || 0) > 0; })
-    .map(function (r) { return String(r.room_id); });
-  return { rooms: rooms, latest: fetchLatest_(token, unreadIds), my_ids: getMyIds_(), later: getLater_(account) };
-}
-
-// 「後で対応」タブ用：リスト＋各ルームの最新メッセージを1回で返す
-function getLaterBundle(token, account) {
-  var later = getLater_(account);
-  var rooms = slimRooms_(cw_(token, "get", "/rooms"));
-  return { rooms: rooms, later: later, latest: fetchLatest_(token, later), my_ids: getMyIds_() };
-}
-
-// ==============================
-// 自社アカウントの判定（「返信済み？」表示用）
-//   設定済みの各アカウントのIDを自動取得。
-//   他のスタッフ個人のアカウントも含めたい場合は、スクリプトプロパティ
-//   STAFF_ACCOUNT_IDS に「1234567,2345678」のようにカンマ区切りで追加。
-// ==============================
-function getMyIds_() {
-  var cache = CacheService.getScriptCache();
-  var hit = cache.get("cw_my_ids_v1");
-  if (hit) {
-    try { return JSON.parse(hit); } catch (e) {}
-  }
-  var props = PropertiesService.getScriptProperties();
-  var ids = [];
-  Object.keys(ACCOUNTS).forEach(function (acc) {
-    var token = props.getProperty(ACCOUNTS[acc]);
-    if (!token) return;
-    try {
-      var me = cw_(token, "get", "/me");
-      if (me && me.account_id) ids.push(String(me.account_id));
-    } catch (e) {}
-  });
-  var extra = props.getProperty("STAFF_ACCOUNT_IDS");
-  if (extra) {
-    extra.split(/[,、\s]+/).forEach(function (x) { if (/^\d+$/.test(x)) ids.push(x); });
-  }
-  try { cache.put("cw_my_ids_v1", JSON.stringify(ids), 21600); } catch (e) {}
-  return ids;
-}
-
-// ==============================
-// 「後で対応」リスト（スタッフ全員で共有。アカウントごと）
-// ==============================
-function laterKey_(account) {
-  if (!ACCOUNTS[account]) throw new Error("アカウントの指定が正しくありません: " + account);
-  return "LATER_" + account;
-}
-
-function getLater_(account) {
-  var v = PropertiesService.getScriptProperties().getProperty(laterKey_(account));
-  try {
-    var arr = JSON.parse(v || "[]");
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function setLater_(account, roomIds, on) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
-    var list = getLater_(account);
-    onlyIds_(roomIds).forEach(function (id) {
-      var i = list.indexOf(id);
-      if (on && i === -1) list.push(id);
-      if (!on && i > -1) list.splice(i, 1);
-    });
-    PropertiesService.getScriptProperties().setProperty(laterKey_(account), JSON.stringify(list));
-    return list;
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// 指定ルームの最新メッセージ（最大5件）を同時取得
-var LATEST_COUNT = 5;
-function fetchLatest_(token, roomIds) {
-  var ids = onlyIds_(roomIds);
-  var latest = {};
-  for (var s = 0; s < ids.length; s += 25) {
-    var chunk = ids.slice(s, s + 25);
-    var reqs = chunk.map(function (id) {
-      return {
-        url: "https://api.chatwork.com/v2/rooms/" + id + "/messages?force=1",
-        method: "get",
-        headers: { "X-ChatWorkToken": token },
-        muteHttpExceptions: true
-      };
-    });
-    var resps = UrlFetchApp.fetchAll(reqs);
-    resps.forEach(function (res, i) {
-      var id = chunk[i];
-      var code = res.getResponseCode();
-      if (code === 204) { latest[id] = { messages: [] }; return; }
-      if (code !== 200) { latest[id] = { error: "取得失敗 (" + code + ")" }; return; }
-      try {
-        var arr = JSON.parse(res.getContentText());
-        latest[id] = { messages: Array.isArray(arr) ? arr.slice(-LATEST_COUNT) : [] };
-      } catch (e) {
-        latest[id] = { error: "読み取り失敗" };
-      }
-    });
-  }
-  return latest;
-}
-
-// 複数ルームをまとめて既読
-function markReadBatch_(token, roomIds) {
-  var ids = onlyIds_(roomIds);
-  var ok = 0, ng = 0;
-  for (var s = 0; s < ids.length; s += 25) {
-    var chunk = ids.slice(s, s + 25);
-    var reqs = chunk.map(function (id) {
-      return {
-        url: "https://api.chatwork.com/v2/rooms/" + id + "/messages/read",
-        method: "put",
-        headers: { "X-ChatWorkToken": token },
-        payload: {},
-        muteHttpExceptions: true
-      };
-    });
-    UrlFetchApp.fetchAll(reqs).forEach(function (res) {
-      var code = res.getResponseCode();
-      if (code === 200 || code === 204) ok++; else ng++;
-    });
-  }
-  return { ok: ok, ng: ng };
-}
-
-// ルームメンバーは6時間キャッシュ（めったに変わらないため）
-function getMembersCached_(token, roomId) {
-  var rid = String(roomId || "").replace(/[^0-9]/g, "");
-  if (!rid) return [];
-  var cache = CacheService.getScriptCache();
-  var key = "cw_members_" + rid;
-  var hit = cache.get(key);
-  if (hit) {
-    try { return JSON.parse(hit); } catch (e) {}
-  }
-  var members = cw_(token, "get", "/rooms/" + rid + "/members") || [];
-  var slim = members.map(function (m) { return { account_id: m.account_id, name: m.name }; });
-  try { cache.put(key, JSON.stringify(slim), 21600); } catch (e) {}
-  return slim;
-}
-
-function getChatworkRoomData(token, roomId) {
-  if (!roomId) throw new Error("room_id がありません");
-  var messages = cw_(token, "get", "/rooms/" + roomId + "/messages?force=1");
-  var members = [];
-  try {
-    members = getMembersCached_(token, roomId);
-  } catch (e) {
-    members = []; // メンバー取得だけ失敗しても表示は続ける
-  }
-  return {
-    messages: Array.isArray(messages) ? messages : [],
-    members: Array.isArray(members) ? members : [],
-    my_ids: getMyIds_()
-  };
-}
-
-function getChatworkRoomFile(token, roomId, fileId) {
-  var file = cw_(token, "get", "/rooms/" + roomId + "/files/" + fileId + "?create_download_url=1");
-  return { file: file };
-}
-
-function sendChatworkMessage(token, roomId, body) {
-  if (!body) throw new Error("送信する本文が空です");
-  cw_(token, "post", "/rooms/" + roomId + "/messages", { body: body, self_unread: "0" });
-  return { success: true };
-}
-
-function markChatworkRead(token, roomId, messageId) {
-  var payload = {};
-  if (messageId) payload.message_id = messageId;
-  cw_(token, "put", "/rooms/" + roomId + "/messages/read", payload);
-  return { success: true };
-}
-
-function uploadChatworkFile(token, roomId, fileData, fileName, mimeType) {
-  var blob = Utilities.newBlob(Utilities.base64Decode(fileData), mimeType, fileName);
-  cw_(token, "post", "/rooms/" + roomId + "/files", {
-    file: blob,
-    message: "ファイルアップロード: " + fileName
-  });
-  return { success: true };
-}
-
-// ==============================
-// Gemini で返信案を作成
-// ==============================
-function generateAiReply(params) {
-  var roomName = params.room_name || "ルーム";
-  var contextText = params.context || "";
-  var customPrompt = params.custom_prompt || "";
-
-  var apiKey = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
-  if (!apiKey) throw new Error("GEMINI_API_KEY がスクリプトプロパティに設定されていません");
-
-  var url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
-
-  var prompt;
-  if (params.mode === "compose") {
-    // こちらから新しく発信するメッセージ
-    if (!customPrompt) throw new Error("伝えたい内容を入力してください");
-    prompt = "あなたは物流倉庫のプロフェッショナルなカスタマーサポート担当です。以下の【伝えたい内容】をもとに、こちらから相手へ送るチャットメッセージを作成してください。宛名、自己紹介不要で、丁寧かつ簡潔に、相手が次に何をすればよいか分かる文章にしてください。\n\n"
-      + "【伝えたい内容】\n" + customPrompt + "\n\n"
-      + "アスタリスク（*）やマークダウン記号は使用せず、プレーンテキストで出力してください\n\n"
-      + "【ルーム名】" + roomName + "\n"
-      + "【参考：このルームの最近のやり取り（必要な場合のみ参考にしてください）】\n" + (contextText || "なし")
-      + "\n\n送信するメッセージ本文のみを出力してください。";
-  } else {
-    // 相手のメッセージへの返信
-    prompt = "あなたは物流倉庫のプロフェッショナルなカスタマーサポート担当です。以下のチャットのやり取りに対し、宛名、自己紹介不要で、丁寧かつ簡潔で業務が円滑に進む返信文を作成してください。\n";
-    if (customPrompt) {
-      prompt += "【追加の指示・条件】\n" + customPrompt + "\n\n";
-    }
-    prompt += "アスタリスク（*）やマークダウン記号は使用せず、プレーンテキストで出力してください\n\n"
-      + "【ルーム名】" + roomName + "\n【これまでのメッセージ】\n" + contextText
-      + "\n\n返信文のみを出力してください。";
-  }
-
-  var options = {
-    method: "post",
-    contentType: "application/json",
-    headers: { "x-goog-api-key": apiKey }, // URLにキーを載せない
-    payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-    muteHttpExceptions: true
-  };
-
-  // 混雑時（429/500/503）や空の結果のときは、少し待って最大2回までやり直す
-  var lastReason = "";
-  for (var attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) Utilities.sleep(1500 * attempt);
-
-    var res = UrlFetchApp.fetch(url, options);
-    var code = res.getResponseCode();
-    var text = res.getContentText();
-
-    if (code === 429 || code === 500 || code === 503) {
-      lastReason = "AIが混み合っています (" + code + ")";
-      continue;
-    }
-    if (code !== 200) {
-      throw new Error("Gemini API エラー (" + code + "): " + text);
-    }
-
-    var data = JSON.parse(text);
-    var cand = data.candidates && data.candidates[0];
-    var parts = cand && cand.content && cand.content.parts;
-    var aiReply = "";
-    if (parts) {
-      // 「考え中」の部分（thought）は除いて、本文だけをつなげる
-      aiReply = parts
-        .filter(function (pt) { return !pt.thought; })
-        .map(function (pt) { return pt.text || ""; })
-        .join("")
-        .trim();
-    }
-    if (aiReply) return { ai_reply: aiReply };
-
-    // 空だった理由を記録（安全フィルター・長さ制限など）
-    var block = data.promptFeedback && data.promptFeedback.blockReason;
-    lastReason = block ? "入力がブロックされました (" + block + ")"
-      : "結果が空でした (" + ((cand && cand.finishReason) || "理由不明") + ")";
-    if (block) break; // ブロックはやり直しても同じなので終了
-  }
-  throw new Error("AIの文章を作成できませんでした：" + lastReason);
-}
-
-// ==============================
-// セラー情報検索（ルーム名に含まれる管理番号で検索）
-// ==============================
-/**
- * ▼ 追加で表示したい列はシートごとに「extraFields」に書きます
- *   label  … 画面に出す項目名
- *   col    … 列のアルファベット（例: "K"）
- *   header … 列の見出し名（含まれていればOK。列がずれても追従します）
- *   yesno  … ◯×で表示したい時に指定（任意）
- *            { yes: "◯にする文字", no: "×にする文字" } ※空欄は×になります
- *   fixed  … 列を見ずに常に同じ値を表示（例: fixed: "◯"）
- *   ※ col と header はどちらか一方でOK。両方書いた場合は col が優先です
- *
- *   書き方の例：
- *   extraFields: [
- *     { label: "電話番号", header: "電話番号" },
- *     { label: "プラン",   col: "M" }
- *   ]
- */
-var SELLER_SHEETS = [
-  {
-    sheetLabel: "シート1",
-    spreadsheetId: "1oOqn_2OSkubEV5xUky0jl7QvSkoeSawLGvn5l2Xgx10", sheetName: "フォームの回答 1", kanriCol: 0,
-    extraFields: [
-      // N列「動画撮影オプションを利用しますか？」
-      { label: "動画撮影オプション", header: "動画撮影オプション", yesno: { yes: "利用する", no: "利用しない" } },
-    ]
-  },
-  {
-    sheetLabel: "シート2",
-    spreadsheetId: "1hsEfgrnPw7nBw9Er6tfO1_jZgbL7_PuIVmw34n8Dy0w", sheetName: "フォームの回答 1", kanriCol: 22,
-    extraFields: [
-      // L列「動画オプションを利用しますか？」（はい／いいえ）
-      { label: "動画撮影オプション", header: "動画オプション", yesno: { yes: "はい", no: "いいえ" } },
-    ]
-  },
-  {
-    sheetLabel: "シート3",
-    spreadsheetId: "1n_1x-OIfeqWdv9J0eOYVMcAjKEtOb9KHkiFO4zoXV2k", sheetName: "フォームの回答 1", kanriCol: 23,
-    extraFields: [
-      // M列「動画撮影オプションを利用しますか？」
-      { label: "動画撮影オプション", header: "動画撮影オプション", yesno: { yes: "利用する", no: "利用しない" } },
-    ]
-  },
-  {
-    sheetLabel: "シート4",
-    spreadsheetId: "1QFgSUeyvPFFtrTmla4lC3qEstpujfsjLdGw01yNoQtQ", sheetName: "フォームの回答 1", kanriCol: 18,
-    extraFields: [
-      // N列「動画撮影オプションを利用しますか？」
-      { label: "動画撮影オプション", header: "動画撮影オプション", yesno: { yes: "利用する", no: "利用しない" } },
-    ]
-  },
-  {
-    sheetLabel: "シート5",
-    spreadsheetId: "1Kgg23A-U5beQVuARzOQw70YZ1psUoQkQnUSQ0IljxFI", sheetName: "フォームの回答 1", kanriCol: 9,
-    extraFields: [
-      // このシートのセラーは全員加入
-      { label: "動画撮影オプション", fixed: "◯" },
-    ]
-  }
-];
-
-// "A"→0, "K"→10, "AA"→26
-function colLetterToIndex_(letter) {
-  var s = String(letter).trim().toUpperCase();
-  var n = 0;
-  for (var i = 0; i < s.length; i++) {
-    n = n * 26 + (s.charCodeAt(i) - 64);
-  }
-  return n - 1;
-}
-
-// extraFields の設定から、実際の列番号を決める
-function resolveExtraCols_(fields, headers) {
-  var list = [];
-  (fields || []).forEach(function (f) {
-    if (f.fixed !== undefined) {
-      list.push({ label: f.label, idx: -1, fixed: String(f.fixed) });
-      return;
-    }
-    var idx = -1;
-    if (f.col) {
-      idx = colLetterToIndex_(f.col);
-    } else if (f.header) {
-      for (var c = 0; c < headers.length; c++) {
-        if (String(headers[c]).indexOf(f.header) !== -1) { idx = c; break; }
-      }
-    }
-    list.push({ label: f.label || f.header || f.col, idx: idx, yesno: f.yesno || null });
-  });
-  return list;
-}
-
-// ◯×表示に変換（「利用しない」を先に判定して誤判定を防ぐ）
-function toMaruBatsu_(value, yesno) {
-  var v = String(value || "").trim();
-  if (!v) return "×";
-  if (yesno.no && v.indexOf(yesno.no) !== -1) return "×";
-  if (yesno.yes && v.indexOf(yesno.yes) !== -1) return "◯";
-  return v; // 想定外の回答はそのまま表示
-}
-
-// 日付はそのまま返すと見づらいので整形
-function formatCell_(v) {
-  if (v === "" || v === null || v === undefined) return "";
-  if (v instanceof Date) return Utilities.formatDate(v, "Asia/Tokyo", "yyyy/MM/dd");
-  return String(v);
-}
-
-// 全角英数字を半角にして小文字化
-function normalize_(s) {
-  return String(s)
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
-    .trim()
-    .toLowerCase();
-}
-
-// 管理番号が「単独の番号として」ルーム名に含まれているか
-// 例：管理番号「12」は「A-12様」にはヒット、「123」「512」にはヒットしない
-function containsKanri_(text, kanri) {
-  var from = 0;
-  while (true) {
-    var idx = text.indexOf(kanri, from);
-    if (idx === -1) return false;
-    var before = idx > 0 ? text.charAt(idx - 1) : "";
-    var after = text.charAt(idx + kanri.length);
-    if (!/[0-9a-z]/.test(before) && !/[0-9a-z]/.test(after)) return true;
-    from = idx + 1;
-  }
-}
-
-var SELLER_CACHE_SEC = 600; // 10分
-
-// 1シート分を「検索用の小さなデータ」にしてキャッシュ
-function loadSellerRows_(t, useCache) {
-  var conf = SELLER_SHEETS[t];
-  var cache = CacheService.getScriptCache();
-  var key = "seller_rows_v1_" + t;
-  if (useCache) {
-    var hit = cache.get(key);
-    if (hit) {
-      try { return JSON.parse(hit); } catch (e) {}
-    }
-  }
-
-  var rows = [];
-  var sheet = SpreadsheetApp.openById(conf.spreadsheetId).getSheetByName(conf.sheetName);
-  if (!sheet) return rows;
-  var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return rows;
-
-  var headers = data[0];
-  var colName = -1, colShop = -1, colId = -1, colPass = -1;
-  for (var c = 0; c < headers.length; c++) {
-    var h = String(headers[c]).trim();
-    if (h.indexOf("お名前") !== -1) colName = c;
-    if (h.indexOf("ショップ名") !== -1) colShop = c;
-    if (h === "ID" || h.indexOf("ログインID") !== -1) colId = c;
-    if (h === "PW" || h.indexOf("パスワード") !== -1 || h.indexOf("rakko.tools") !== -1) colPass = c;
-  }
-  var extraCols = resolveExtraCols_(conf.extraFields, headers);
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var raw = row[conf.kanriCol];
-    if (raw === undefined || raw === null || raw === "") continue;
-    var k = normalize_(raw);
-    if (k.length < 2) continue;
-    rows.push({
-      k: k,
-      kanriNo: formatCell_(raw),
-      name: colName !== -1 && row[colName] ? formatCell_(row[colName]) : "不明",
-      shopName: colShop !== -1 && row[colShop] ? formatCell_(row[colShop]) : "不明",
-      id: colId !== -1 && row[colId] ? formatCell_(row[colId]) : "未登録",
-      pass: colPass !== -1 && row[colPass] ? formatCell_(row[colPass]) : "未登録",
-      sheetLabel: conf.sheetLabel || "",
-      extras: extraCols.map(function (ec) {
-        if (ec.fixed !== undefined) return { label: ec.label, value: ec.fixed };
-        if (ec.idx < 0) return { label: ec.label, value: "（列が見つかりません）" };
-        if (ec.yesno) return { label: ec.label, value: toMaruBatsu_(row[ec.idx], ec.yesno) };
-        return { label: ec.label, value: formatCell_(row[ec.idx]) || "未登録" };
-      })
-    });
-  }
-  try { cache.put(key, JSON.stringify(rows), SELLER_CACHE_SEC); } catch (e) {} // 大きすぎる場合はキャッシュなしで動く
-  return rows;
-}
-
-function findSeller_(searchKey, useCache) {
-  var best = null, bestLen = 0;
-  for (var t = 0; t < SELLER_SHEETS.length; t++) {
-    try {
-      loadSellerRows_(t, useCache).forEach(function (r) {
-        if (r.k.length > bestLen && containsKanri_(searchKey, r.k)) {
-          best = r;
-          bestLen = r.k.length;
-        }
-      });
-    } catch (err) {
-      // 1つのシートが開けなくても他のシートは検索を続ける
-    }
-  }
-  return best;
-}
-
-function getSellerInfoByChatworkId(keyword) {
-  if (!keyword) return { seller: { error: "検索キーワードが空です" } };
-  var searchKey = normalize_(keyword);
-  if (searchKey.length < 2) return { seller: { error: "検索キーワードが短すぎます" } };
-
-  // まずキャッシュで検索 → 見つからなければシートを読み直して再検索（新規セラー対策）
-  var best = findSeller_(searchKey, true) || findSeller_(searchKey, false);
-  if (!best) return { seller: { error: "見つかりません" } };
-
-  var ovAll = getOptionOverrides_();
-  var extras = (best.extras || []).map(function (e) {
-    var o = (ovAll[e.label] || {})[best.k];
-    return o ? { label: e.label, value: o.v, manual: true, note: o.note || "" } : e;
-  });
-
-  return {
-    seller: {
-      kanriNo: best.kanriNo, name: best.name, shopName: best.shopName,
-      id: best.id, pass: best.pass, sheetLabel: best.sheetLabel, extras: extras
-    }
-  };
-}
-
-
-// ==============================
-// 直近のチャット横断検索（特定の問い合わせをしたセラーの洗い出し）
-//   ・期間内に更新があったルームだけを対象に、最新100件ずつを同時取得して検索
-//   ・Chatwork APIの回数制限を守るため、対象ルームは最大80件まで
-// ==============================
-var SEARCH_PAGE_ROOMS = 80;   // 1回の呼び出しで確認するルーム数
-var RATE_KEEP = 50;           // 既読・送信など普段の操作用に、必ず残しておくAPI回数
-
-// レスポンスヘッダーを大文字小文字を気にせず取得
-function headerNum_(res, name) {
-  var h = res.getHeaders ? res.getHeaders() : {};
-  for (var k in h) {
-    if (String(k).toLowerCase() === name) return Number(h[k]);
-  }
-  return NaN;
-}
-
-// 検索用：全角英数字→半角、小文字化（文字数は変えない）
-function normText_(s) {
-  return String(s || "")
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
-    .toLowerCase();
-}
-
-// Chatworkのタグを外して検索・表示しやすくする
-function stripTags_(s) {
-  return String(s || "")
-    .replace(/\[download:\d+\]([\s\S]*?)\[\/download\]/g, "📎$1")
-    .replace(/\[[^\]]*\]/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-}
-
-function searchRecent_(token, p) {
-  var words = String(p.keyword || "").split(/[\s　]+/).map(normText_).filter(function (w) { return w; });
-  if (!words.length) throw new Error("キーワードを入力してください");
-  var days = Math.min(Math.max(Number(p.days) || 7, 1), 30);
-  var since = Math.floor(Date.now() / 1000) - days * 86400;
-  var myIds = p.include_mine ? [] : getMyIds_();
-
-  // ルーム一覧（残りAPI回数もここで確認）
-  var roomsRes = UrlFetchApp.fetch("https://api.chatwork.com/v2/rooms", {
-    method: "get", headers: { "X-ChatWorkToken": token }, muteHttpExceptions: true
-  });
-  if (roomsRes.getResponseCode() !== 200) {
-    throw new Error("Chatwork API エラー (" + roomsRes.getResponseCode() + "): " + roomsRes.getContentText());
-  }
-  var remaining = headerNum_(roomsRes, "x-ratelimit-remaining");
-  var resetAt = headerNum_(roomsRes, "x-ratelimit-reset");
-
-  // ページをまたいでも順番がずれないよう、ルームID順で並べる
-  var allRooms = slimRooms_(JSON.parse(roomsRes.getContentText()))
-    .filter(function (r) { return (r.last_update_time || 0) >= since; })
-    .sort(function (a, b) { return Number(a.room_id) - Number(b.room_id); });
-  var total = allRooms.length;
-  var offset = Math.max(0, Number(p.offset) || 0);
-  var rooms = allRooms.slice(offset, offset + SEARCH_PAGE_ROOMS);
-
-  // API回数が足りない時は、普段の操作を止めないために一旦待つ
-  if (!isNaN(remaining) && remaining - rooms.length < RATE_KEEP) {
-    var wait = Math.max(1, Math.round(((resetAt || 0) - Date.now() / 1000)));
-    return {
-      results: [], scanned: 0, total_rooms: total, offset: offset,
-      next_offset: offset < total ? offset : null,
-      wait_sec: isNaN(wait) ? 300 : Math.min(wait, 300), days: days, failed: 0
-    };
-  }
-
-  var results = [];
-  var failed = 0;
-  for (var s = 0; s < rooms.length; s += 25) {
-    var chunk = rooms.slice(s, s + 25);
-    var resps = UrlFetchApp.fetchAll(chunk.map(function (r) {
-      return {
-        url: "https://api.chatwork.com/v2/rooms/" + r.room_id + "/messages?force=1",
-        method: "get",
-        headers: { "X-ChatWorkToken": token },
-        muteHttpExceptions: true
-      };
-    }));
-
-    resps.forEach(function (res, i) {
-      var room = chunk[i];
-      var code = res.getResponseCode();
-      if (code === 204) return;
-      if (code !== 200) { failed++; return; }
-      var msgs;
-      try { msgs = JSON.parse(res.getContentText()); } catch (e) { failed++; return; }
-      if (!Array.isArray(msgs)) return;
-
-      var hits = [];
-      msgs.forEach(function (m) {
-        if ((m.send_time || 0) < since) return;
-        var aid = String(m.account && m.account.account_id);
-        if (myIds.indexOf(aid) !== -1) return;
-        var text = stripTags_(m.body);
-        var norm = normText_(text);
-        var idx = -1, word = "";
-        for (var w = 0; w < words.length; w++) {
-          idx = norm.indexOf(words[w]);
-          if (idx !== -1) { word = words[w]; break; }
-        }
-        if (idx === -1) return;
-        var start = Math.max(0, idx - 40);
-        var end = Math.min(text.length, idx + word.length + 80);
-        hits.push({
-          message_id: m.message_id,
-          sender: m.account ? m.account.name : "",
-          send_time: m.send_time,
-          snippet: (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "")
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#4f46e5">
+    <title>未読バーストコックピット</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .btn { height: 44px; border-radius: 12px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 12px; cursor: pointer; transition: transform .1s; white-space: nowrap; }
+        .btn:active { transform: scale(.97); }
+        .btn:disabled { opacity: .5; }
+        .btn-sub  { background: #f1f5f9; color: #334155; }
+        .btn-main { background: #4f46e5; color: #fff; }
+        .btn-ok   { background: #059669; color: #fff; }
+        .btn-ai   { background: linear-gradient(90deg, #7c3aed, #4f46e5); color: #fff; }
+        .inp { width: 100%; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fff; }
+        .inp:focus { outline: 2px solid #818cf8; outline-offset: 0; border-color: transparent; }
+        .clamp { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
+        .clamp-s { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+        .msg-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.7; }
+        .tab-btn { height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 700; color: #94a3b8; cursor: pointer; }
+        .tab-btn .ico { font-size: 22px; line-height: 1; filter: grayscale(1); opacity: .6; }
+        .tab-btn.active { color: #4f46e5; }
+        .tab-btn.active .ico { filter: none; opacity: 1; }
+        .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; max-width: 28rem; margin: 0 auto; background: #fff; border-radius: 20px 20px 0 0; max-height: 88vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 0px); display: none; box-shadow: 0 -8px 30px rgba(0,0,0,.15); }
+        .sheet-head { position: sticky; top: 0; background: #fff; padding: 10px 20px 12px; border-bottom: 1px solid #f1f5f9; z-index: 1; }
+        .sheet-head::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 9px; background: #cbd5e1; margin: 0 auto 10px; }
+        .sheet-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 20px; font-size: 16px; font-weight: 600; text-align: left; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
+        .sheet-row:active { background: #f8fafc; }
+        .field-label { font-size: 12px; color: #64748b; font-weight: 700; display: block; margin-bottom: 2px; }
+        .mine { background: #eef2ff; border-radius: 12px; padding: 8px 10px; margin: 0 -4px; }
+        .room-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer; }
+        .room-row:active { background: #f8fafc; }
+        #toast { transition: opacity .2s; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+    <!-- ヘッダー -->
+    <header class="sticky top-0 z-30 bg-indigo-600 text-white shadow" style="padding-top: env(safe-area-inset-top, 0px);">
+        <div class="max-w-md mx-auto px-3 py-2.5 flex items-center gap-2">
+            <select id="accountSelect" onchange="onAccountChange()" class="flex-1 min-w-0 bg-indigo-500 text-white font-bold rounded-xl px-3 h-11 text-[16px] border-0">
+                <option value="staff" selected>ラクロジスタッフ</option>
+                <option value="matsushita">松下</option>
+            </select>
+            <span id="loadStatus" class="shrink-0 text-xs font-bold bg-indigo-500 px-2.5 py-1 rounded-full">読込中</span>
+            <button onclick="refreshCurrentView(true)" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="更新">🔄</button>
+        </div>
+    </header>
+
+    <div id="toast" class="fixed left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-full shadow-lg pointer-events-none opacity-0 text-center" style="top: calc(70px + env(safe-area-inset-top, 0px)); max-width: 90vw;"></div>
+
+    <main class="max-w-md mx-auto px-3 pt-3" style="padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));">
+
+        <!-- 一覧用ツールバー（未読・後で） -->
+        <div id="listToolbar" class="flex items-center justify-between mb-2 px-1 gap-2">
+            <label class="flex items-center gap-2 text-sm font-bold text-slate-600 py-2 cursor-pointer shrink-0">
+                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="w-5 h-5 accent-indigo-600"> すべて
+            </label>
+            <span id="lastUpdated" class="text-xs text-slate-400 truncate"></span>
+            <button onclick="copyAllUnreadChats()" class="text-sm font-bold text-indigo-700 py-2 px-1 cursor-pointer shrink-0">📋 全部コピー</button>
+        </div>
+
+        <div id="burstModeContainer" class="space-y-3"></div>
+        <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
+
+        <div id="normalModeContainer" style="display:none;">
+            <!-- ルーム一覧 -->
+            <div id="roomListView">
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <button id="chipAll" onclick="setRoomFilter('all')" class="btn btn-main">すべてのルーム</button>
+                    <button id="chipOption" onclick="setRoomFilter('option')" class="btn btn-sub">🎥 撮影オプション</button>
+                </div>
+                <input type="search" id="roomSearchInput" oninput="renderRoomList()" placeholder="🔍 ルーム名で検索" class="inp mb-3">
+                <div id="optionHeader" class="mb-3" style="display:none;"></div>
+                <div id="roomList" class="bg-white rounded-2xl shadow-sm divide-y divide-slate-100 overflow-hidden"></div>
+            </div>
+            <!-- ルームの中身 -->
+            <div id="roomDetailView" style="display:none;">
+                <button onclick="backToRoomList()" class="text-indigo-700 font-bold text-base py-2 px-1 mb-1 cursor-pointer">← ルーム一覧</button>
+                <div id="singleRoomMessageContainer" class="space-y-3"></div>
+            </div>
+        </div>
+        <div id="searchModeContainer" style="display:none;">
+            <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+                <div class="font-bold text-base">🔍 直近の問い合わせを探す</div>
+                <input type="search" id="searchKeyword" placeholder="キーワード（例：返品　解約）" class="inp" onkeydown="if(event.key==='Enter'){this.blur();runSearch();}">
+                <div class="text-xs text-slate-500 -mt-1">スペースで区切ると「どれかを含む」で探します</div>
+                <div class="flex gap-2">
+                    <select id="searchDays" class="inp flex-1">
+                        <option value="1">今日・昨日</option>
+                        <option value="3">直近3日</option>
+                        <option value="7" selected>直近1週間</option>
+                        <option value="14">直近2週間</option>
+                        <option value="30">直近1か月</option>
+                    </select>
+                    <button id="searchBtn" onclick="runSearch()" class="btn btn-main shrink-0 px-6">検索</button>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                    <input type="checkbox" id="searchIncludeMine" class="w-5 h-5 accent-indigo-600"> 自社の発言も含める
+                </label>
+            </div>
+            <div id="searchResults" class="space-y-3 mt-3"></div>
+        </div>
+    </main>
+
+    <!-- 選択中バー -->
+    <div id="selectionBar" class="fixed inset-x-0 z-30" style="display:none; bottom: calc(60px + env(safe-area-inset-bottom, 0px));">
+        <div class="max-w-md mx-auto px-3 pb-2">
+            <div class="bg-slate-900 text-white rounded-2xl flex items-center justify-between pl-4 pr-2 py-2 shadow-lg">
+                <span class="text-sm font-bold"><span id="selectedCount">0</span>件 選択中</span>
+                <button onclick="batchMarkAsRead()" class="btn btn-ok">✓ 対応済みにする</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 下部タブ -->
+    <nav class="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom, 0px);">
+        <div class="max-w-md mx-auto grid grid-cols-4">
+            <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">🚨</span>要対応</button>
+            <button id="tabLater" class="tab-btn" onclick="switchMode('later')"><span class="ico">⏳</span>後で (<span id="laterCountBadge">0</span>)</button>
+            <button id="tabNormal" class="tab-btn" onclick="switchMode('normal')"><span class="ico">📁</span>ルーム</button>
+            <button id="tabSearch" class="tab-btn" onclick="switchMode('search')"><span class="ico">🔍</span>検索</button>
+        </div>
+    </nav>
+
+    <!-- シート類 -->
+    <div id="modalOverlay" class="fixed inset-0 bg-black/50 z-40" style="display:none;" onclick="closeAllModals()"></div>
+
+    <div id="sheetActions" class="sheet">
+        <div class="sheet-head"><div id="sheetActionsTitle" class="font-bold text-base truncate text-center"></div></div>
+        <div id="sheetActionsBody"></div>
+        <button onclick="closeAllModals()" class="sheet-row justify-center text-slate-500">閉じる</button>
+    </div>
+
+    <div id="modalSellerInfo" class="sheet">
+        <div class="sheet-head"><div class="font-bold text-base text-center">🔑 セラー情報</div></div>
+        <div class="p-5 space-y-4">
+            <div><span class="field-label">管理番号</span><span id="sellerModalKanriNo" class="font-bold text-base">-</span> <span id="sellerModalSheet" class="text-xs text-slate-400"></span></div>
+            <div><span class="field-label">お名前 / ショップ名</span><span id="sellerModalName" class="font-bold text-base">-</span><div id="sellerModalShopName" class="text-sm text-slate-600">-</div></div>
+            <div class="bg-indigo-50 p-4 rounded-xl space-y-3">
+                <div><span class="field-label text-indigo-700">ログインID</span><span id="sellerModalId" class="font-mono text-base select-all break-all">-</span></div>
+                <div><span class="field-label text-indigo-700">パスワード</span><span id="sellerModalPass" class="font-mono text-base select-all break-all">-</span></div>
+            </div>
+            <div id="sellerModalExtras" class="space-y-3"></div>
+            <button onclick="closeAllModals()" class="btn btn-sub w-full">閉じる</button>
+        </div>
+    </div>
+
+    <div id="modalLinkCopy" class="sheet">
+        <div class="sheet-head"><div class="font-bold text-base text-center">🚀 スタッフ連絡に登録</div></div>
+        <div class="p-5 space-y-3">
+            <input type="hidden" id="linkRoomId"><input type="hidden" id="linkRoomName"><input type="hidden" id="linkSenderName"><input type="hidden" id="linkMessageBody">
+            <div class="grid grid-cols-2 gap-2">
+                <div><label class="field-label">From</label><input type="text" id="linkFromInput" value="松下" class="inp"></div>
+                <div><label class="field-label">To</label><input type="text" id="linkToInput" value="スタッフ全員" class="inp"></div>
+            </div>
+            <div><label class="field-label">メモ（任意）</label><textarea id="linkMemoInput" rows="3" class="inp"></textarea></div>
+            <div><label class="field-label">画像（任意）</label><input type="file" id="linkImageInput" accept="image/*" class="inp text-sm bg-slate-50"></div>
+            <button onclick="registerToStaffApp(this)" class="btn btn-main w-full">🚀 登録する</button>
+        </div>
+    </div>
+
+    <!-- 画像ビューア -->
+    <div id="imageViewer" class="fixed inset-0 z-[70] bg-black/95 flex-col" style="display:none;">
+        <div class="flex items-center gap-2 px-3 text-white" style="padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px;">
+            <div id="viewerName" class="flex-1 min-w-0 truncate text-sm font-bold"></div>
+            <button onclick="closeViewer()" class="w-11 h-11 text-2xl shrink-0 cursor-pointer" aria-label="閉じる">✕</button>
+        </div>
+        <div class="flex-1 min-h-0 flex items-center justify-center overflow-auto p-2" onclick="if(event.target===this) closeViewer()">
+            <div id="viewerLoading" class="text-white text-base">読み込み中…</div>
+            <div id="viewerError" class="text-white text-base text-center px-6 leading-relaxed" style="display:none;"></div>
+            <img id="viewerImg" alt="" class="max-w-full max-h-full object-contain" style="display:none;">
+        </div>
+        <div class="px-3" style="padding-top: 8px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));">
+            <button id="viewerDownloadBtn" class="btn btn-sub w-full">⬇ ダウンロード</button>
+        </div>
+    </div>
+
+    <script>
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
+        const SECRET_KEY = "chatwork_cockpit_secret_v1";
+        const BUNDLE_CACHE_KEY = "cw_unread_bundle_v2_";
+        const LATER_CACHE_KEY = "cw_later_cache_v1_";
+        const OLD_LATER_KEY = "chatwork_later_rooms_v2";   // 以前の端末保存（共有化のため移行）
+        const MYIDS_KEY = "cw_my_ids_v1";
+        const AUTO_REFRESH_MS = 30 * 1000;                 // アプリに戻った時、30秒以上経っていれば自動更新
+        const MAX_SHOW = 5;                                // 未読カードに表示する最大件数
+
+        let allRoomsCache = [];
+        let roomMembersCache = {};
+        let currentMode = 'burst';
+        let currentRoomId = null;
+        let lastFetchAt = 0;
+        let myIds = new Set(JSON.parse(localStorage.getItem(MYIDS_KEY) || "[]"));
+        window.messageStore = {};
+        window.roomNameMap = {};
+
+        window.addEventListener('DOMContentLoaded', () => {
+            updateLaterBadge();
+            restoreHandledCache(getAccount());
+            loadMsgCache();
+            fetchAllUnreadRooms();
+            setTimeout(() => { loadOptionSellers(false); startOptionOvSync(); }, 1500);
         });
-      });
-      if (!hits.length) return;
 
-      hits.sort(function (a, b) { return b.send_time - a.send_time; });
-      var seller = null;
-      try {
-        var f = findSeller_(normalize_(room.name), true);
-        if (f) seller = { kanriNo: f.kanriNo, shopName: f.shopName, name: f.name };
-      } catch (e) {}
+        // アプリに戻ってきた時に自動更新
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (Date.now() - lastFetchAt < AUTO_REFRESH_MS) return;
+            if (currentMode === 'burst') fetchAllUnreadRooms(false);
+            else if (currentMode === 'later') renderLaterRooms(false);
+            else if (currentMode === 'normal' && !currentRoomId) fetchNormalRooms(true);
+        });
 
-      results.push({
-        room_id: room.room_id,
-        room_name: room.name,
-        seller: seller,
-        hit_count: hits.length,
-        latest_time: hits[0].send_time,
-        hits: hits.slice(0, 5)
-      });
-    });
-  }
+        document.addEventListener('change', e => {
+            if (e.target.classList && e.target.classList.contains('room-checkbox')) updateSelectionBar();
+        });
 
-  var next = offset + rooms.length;
-  return {
-    results: results, scanned: rooms.length, total_rooms: total, offset: offset,
-    next_offset: next < total ? next : null, wait_sec: 0, failed: failed, days: days
-  };
-}
+        // ===== Firestore（使う時だけ読み込む） =====
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+            authDomain: "souko-2de57.firebaseapp.com",
+            projectId: "souko-2de57",
+            storageBucket: "souko-2de57.firebasestorage.app",
+            messagingSenderId: "642116656086",
+            appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
+        };
+        const FS_TS = "__SERVER_TIMESTAMP__";
+        let _fsPromise = null;
+        function loadFirestore() {
+            if (!_fsPromise) {
+                _fsPromise = Promise.all([
+                    import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"),
+                    import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js")
+                ]).then(([appMod, fsMod]) => {
+                    const app = appMod.initializeApp(FIREBASE_CONFIG);
+                    let db;
+                    try {
+                        db = fsMod.initializeFirestore(app, { localCache: fsMod.persistentLocalCache({ tabManager: fsMod.persistentMultipleTabManager() }) });
+                    } catch (e) {
+                        db = fsMod.getFirestore(app);
+                    }
+                    return {
+                        db: db, collection: fsMod.collection, addDoc: fsMod.addDoc, serverTimestamp: fsMod.serverTimestamp,
+                        doc: fsMod.doc, getDoc: fsMod.getDoc, setDoc: fsMod.setDoc, onSnapshot: fsMod.onSnapshot,
+                        query: fsMod.query, where: fsMod.where, writeBatch: fsMod.writeBatch, deleteDoc: fsMod.deleteDoc
+                    };
+                }).catch(err => { _fsPromise = null; throw err; });
+            }
+            return _fsPromise;
+        }
+        async function fsAdd(collectionName, data) {
+            const f = await loadFirestore();
+            const doc = {};
+            Object.keys(data).forEach(k => { doc[k] = data[k] === FS_TS ? f.serverTimestamp() : data[k]; });
+            return f.addDoc(f.collection(f.db, collectionName), doc);
+        }
 
+        // ===== 共通 =====
+        function getAccount() { return document.getElementById('accountSelect').value; }
+        function esc(str) {
+            return (str === undefined || str === null) ? '' : String(str)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        function safeId(id) { return String(id || '').replace(/[^0-9]/g, ''); }
+        function getUnread(r) { return Number(r.unread_num !== undefined ? r.unread_num : (r.unread_count || 0)); }
+        function isMine(m) { return !!(m && m.account && myIds.has(String(m.account.account_id))); }
+        function senderName(m) { return m && m.account ? m.account.name : "相手"; }
+        function hm(d) { return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 
-// ==============================
-// オプション加入セラーの一覧（連絡用）
-//   セラー情報シート（10分キャッシュ）から「◯」のセラーを集め、
-//   ルーム名に管理番号が入っているChatworkルームとひもづけて返す
-// ==============================
-function getOptionSellers_(token, label) {
-  label = String(label || "動画撮影オプション");
-  var rooms = slimRooms_(cw_(token, "get", "/rooms")).map(function (r) {
-    return { r: r, n: normalize_(r.name) };
-  });
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.style.opacity = 1;
+            clearTimeout(t._timer);
+            t._timer = setTimeout(() => t.style.opacity = 0, 2200);
+        }
 
-  var ov = getOptionOverrides_()[label] || {};   // 手動修正（シートより優先）
-  var seen = {};
-  var sellers = [];
-  var findRoom = function (k) {
-    // 管理番号が入っているルームのうち、更新が一番新しいもの
-    var match = null;
-    rooms.forEach(function (x) {
-      if (containsKanri_(x.n, k) && (!match || (x.r.last_update_time || 0) > (match.last_update_time || 0))) match = x.r;
-    });
-    return match;
-  };
-  var pushSeller = function (base, k, o) {
-    var match = findRoom(k);
-    sellers.push({
-      kanriNo: base.kanriNo, name: base.name, shopName: base.shopName, sheetLabel: base.sheetLabel,
-      manual: !!o, note: o ? (o.note || "") : "", by: o ? (o.by || "") : "",
-      room_id: match ? match.room_id : null,
-      room_name: match ? match.name : "",
-      unread_num: match ? Number(match.unread_num || 0) : 0,
-      last_update_time: match ? (match.last_update_time || 0) : 0
-    });
-  };
+        function fmtTime(sec) {
+            if (!sec) return '';
+            const d = new Date(sec * 1000);
+            return d.toDateString() === new Date().toDateString() ? `今日 ${hm(d)}` : `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+        }
 
-  for (var t = 0; t < SELLER_SHEETS.length; t++) {
-    var rows = [];
-    try { rows = loadSellerRows_(t, true); } catch (e) {}
-    rows.forEach(function (row) {
-      if (seen[row.k]) return;
-      var o = ov[row.k];
-      var ex = (row.extras || []).filter(function (e) { return e.label === label; })[0];
-      var value = o ? o.v : (ex ? ex.value : "");
-      if (value !== "◯") return;
-      seen[row.k] = true;
-      pushSeller(row, row.k, o);
-    });
-  }
+        function setLastUpdated(fromCache) {
+            const el = document.getElementById('lastUpdated');
+            el.textContent = fromCache ? '前回の内容を表示中…' : `最終更新 ${hm(new Date())}`;
+        }
 
-  // シートに見当たらないが、手動で「加入」にしたセラー
-  Object.keys(ov).forEach(function (k) {
-    var o = ov[k];
-    if (o.v !== "◯" || seen[k]) return;
-    seen[k] = true;
-    pushSeller({ kanriNo: o.kanriNo || k, name: "不明", shopName: "（シートに見当たりません）", sheetLabel: "手動" }, k, o);
-  });
+        function updateMyIds(ids) {
+            if (!Array.isArray(ids)) return;
+            myIds = new Set(ids.map(String));
+            try { localStorage.setItem(MYIDS_KEY, JSON.stringify(ids)); } catch (e) {}
+        }
 
-  // 手動で「未加入」にしたセラー（元に戻せるように一覧で返す）
-  var removed = Object.keys(ov).filter(function (k) { return ov[k].v === "×"; }).map(function (k) {
-    return { kanriNo: ov[k].kanriNo || k, note: ov[k].note || "", by: ov[k].by || "", at: ov[k].at || 0 };
-  });
+        function cleanBody(b) {
+            return String(b || '')
+                .replace(/\[download:\d+\][\s\S]*?\[\/download\]/g, '')
+                .replace(/\[To:\d+\]/g, '@')
+                .replace(/\[toall\]/gi, '@全員 ')
+                .replace(/\[rp aid=\d+ to=\d+-\d+\]/g, '↩ ')
+                .replace(/\[(piconname|picon):\d+\]/g, '')
+                .replace(/\[qt\]\[qtmeta[^\]]*\]/g, '＞ ')
+                .replace(/\[\/qt\]/g, '\n')
+                .replace(/\[\/?info\]/g, '')
+                .replace(/\[title\]/g, '【').replace(/\[\/title\]/g, '】\n')
+                .replace(/\[hr\]/g, '──────')
+                .replace(/\[preview[^\]]*\]/g, '')
+                .replace(/\[dtext:[^\]]*\]/g, '')
+                .replace(/\[\/?code\]/g, '')
+                .replace(/【\s*】\n?/g, '')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        }
 
-  // 未読あり → 最近やり取りがある順 → ルームが見つからないセラーは最後
-  sellers.sort(function (a, b) {
-    return ((b.unread_num > 0) - (a.unread_num > 0)) || ((!!b.room_id) - (!!a.room_id)) || (b.last_update_time - a.last_update_time);
-  });
-  return { label: label, sellers: sellers, removed: removed };
-}
+        // AI・コピー用の1行（自社の発言には【自社】を付ける）
+        function lineFor(m) {
+            const files = parseFiles(m.body);
+            const text = cleanBody(m.body) + (files.length ? '\n' + files.map(f => '📎 ' + f.name).join('\n') : '');
+            return `${isMine(m) ? '【自社】' : ''}${senderName(m)}: ${text}`;
+        }
 
-// ==============================
-// オプション加入状況の手動修正
-//   元のシートは保護されていて直せないため、修正内容はGAS側に保存し、
-//   一覧・セラー情報・🎥マークの表示でシートより優先して使う
-//   保存形式：{ "動画撮影オプション": { 正規化した管理番号: { v:"◯"/"×", kanriNo, note, by, at } } }
-// ==============================
-function getOptionOverrides_() {
-  var v = PropertiesService.getScriptProperties().getProperty("OPTION_OVERRIDES");
-  try { return JSON.parse(v || "{}") || {}; } catch (e) { return {}; }
-}
+        // ===== 添付ファイル =====
+        const fileNameMap = {};
+        const fileUrlCache = {};
+        const URL_CACHE_MS = 3 * 60 * 1000;
 
-function setOptionOverride_(p) {
-  var label = String(p.label || "動画撮影オプション");
-  var kanriRaw = String(p.kanri || "").trim();
-  var k = normalize_(kanriRaw);
-  if (k.length < 2) throw new Error("管理番号を正しく入力してください");
-  var value = String(p.value || "");
-  if (value !== "◯" && value !== "×" && value !== "") throw new Error("指定が正しくありません");
+        function parseFiles(raw) {
+            const files = [];
+            const re = /\[download:(\d+)\]([\s\S]*?)\[\/download\]/g;
+            let m;
+            while ((m = re.exec(String(raw || ''))) !== null) {
+                const name = m[2].trim();
+                const base = name.replace(/\s*\([\d.,]+\s*[KMGT]?B\)\s*$/i, '');
+                files.push({ id: m[1], name: name, base: base });
+                fileNameMap[m[1]] = base;
+            }
+            return files;
+        }
+        function isImageFile(name) { return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(name || ''); }
 
-  var lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
-    var all = getOptionOverrides_();
-    if (!all[label]) all[label] = {};
-    if (value === "") {
-      delete all[label][k];   // シートの内容に戻す
-    } else {
-      all[label][k] = {
-        v: value, kanriNo: kanriRaw,
-        note: String(p.note || "").slice(0, 200),
-        by: String(p.by || "").slice(0, 40),
-        at: Math.floor(Date.now() / 1000)
-      };
-    }
-    PropertiesService.getScriptProperties().setProperty("OPTION_OVERRIDES", JSON.stringify(all));
-    return { ok: true };
-  } finally {
-    lock.releaseLock();
-  }
-}
+        function attachmentsHtml(roomId, files) {
+            if (!files || files.length === 0) return '';
+            const rid = safeId(roomId);
+            return `<div class="mt-2 space-y-2">` + files.map(f => {
+                const img = isImageFile(f.base);
+                return `
+                    <div class="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-2 pl-3">
+                        <span class="text-xl shrink-0">${img ? '🖼️' : '📄'}</span>
+                        <span class="flex-1 min-w-0 text-sm truncate">${esc(f.name)}</span>
+                        ${img ? `<button onclick="previewImage('${rid}', '${safeId(f.id)}')" class="btn btn-main shrink-0" style="height:38px">見る</button>` : ''}
+                        <button onclick="downloadFile('${rid}', '${safeId(f.id)}')" class="btn btn-sub shrink-0" style="height:38px">⬇ 保存</button>
+                    </div>`;
+            }).join('') + `</div>`;
+        }
 
+        async function getFileUrl(roomId, fileId) {
+            const c = fileUrlCache[fileId];
+            if (c && Date.now() - c.t < URL_CACHE_MS) return c.url;
+            const data = await callApi("get_room_file", { room_id: roomId, file_id: fileId });
+            const url = data.file && data.file.download_url;
+            if (!url) throw new Error("ファイルのURLを取得できませんでした");
+            fileUrlCache[fileId] = { url: url, t: Date.now() };
+            return url;
+        }
 
-// ==============================
-// 要対応タブ用（対応済みフラグはFirestoreで管理）
-//   画面から「ルームごとの対応済み時刻」を受け取り、
-//   その後に動きがあったルームだけ最新メッセージを取りに行く
-// ==============================
-var TODO_MAX_FETCH = 100;
+        window.previewImage = async function(roomId, fileId) {
+            const viewer = document.getElementById('imageViewer');
+            const img = document.getElementById('viewerImg');
+            const loading = document.getElementById('viewerLoading');
+            const err = document.getElementById('viewerError');
+            document.getElementById('viewerName').textContent = fileNameMap[fileId] || '';
+            document.getElementById('viewerDownloadBtn').onclick = () => downloadFile(roomId, fileId);
+            img.style.display = 'none';
+            img.removeAttribute('src');
+            err.style.display = 'none';
+            loading.style.display = 'block';
+            viewer.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+            try {
+                const url = await getFileUrl(roomId, fileId);
+                img.onload = () => { loading.style.display = 'none'; img.style.display = 'block'; };
+                img.onerror = () => {
+                    loading.style.display = 'none';
+                    err.textContent = 'この端末では画像を表示できませんでした（HEIC形式など）。下の「ダウンロード」から開いてください。';
+                    err.style.display = 'block';
+                };
+                img.src = url;
+            } catch (e) {
+                loading.style.display = 'none';
+                err.textContent = '読み込みに失敗しました：' + e.message;
+                err.style.display = 'block';
+            }
+        };
+        window.closeViewer = function() {
+            document.getElementById('imageViewer').style.display = 'none';
+            document.getElementById('viewerImg').removeAttribute('src');
+            document.body.style.overflow = '';
+        };
+        window.downloadFile = async function(roomId, fileId) {
+            const c = fileUrlCache[fileId];
+            if (c && Date.now() - c.t < URL_CACHE_MS) { window.open(c.url, '_blank'); return; }
+            const w = window.open('', '_blank');
+            if (w) w.document.write('<p style="font-family:sans-serif;font-size:18px;padding:24px">ファイルを準備中…</p>');
+            try {
+                const url = await getFileUrl(roomId, fileId);
+                if (w) w.location.href = url; else location.href = url;
+            } catch (e) {
+                if (w) w.close();
+                alert("ダウンロードに失敗しました: " + e.message);
+            }
+        };
 
-function getTodoBundle_(token, p) {
-  var handled = p.handled || {};          // { ルームID: 対応済みにした時刻(秒) }  0 = 未対応に戻した
-  var baseline = Number(p.baseline) || 0; // 使い始めた時刻（記録のないルームの基準）
-  var rooms = slimRooms_(cw_(token, "get", "/rooms"));
+        // ===== シート =====
+        function openSheet(id) {
+            ['sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById(id).style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+        function closeAllModals() {
+            ['modalOverlay', 'sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
+            document.body.style.overflow = '';
+        }
 
-  var cands = rooms.filter(function (r) {
-    var rid = String(r.room_id);
-    var eff = Object.prototype.hasOwnProperty.call(handled, rid)
-      ? Number(handled[rid]) || 0
-      : (Number(r.unread_num || 0) > 0 ? 0 : baseline);
-    return (r.last_update_time || 0) > eff;
-  }).sort(function (a, b) { return (b.last_update_time || 0) - (a.last_update_time || 0); });
+        // ===== 通信 =====
+        function getSecret() {
+            let s = localStorage.getItem(SECRET_KEY);
+            if (!s) {
+                s = (prompt("合言葉を入力してください") || "").trim();
+                if (s) localStorage.setItem(SECRET_KEY, s);
+            }
+            return s;
+        }
+        async function callApi(action, params = {}) {
+            const body = Object.assign({}, params, { action: action, account: getAccount(), secret: getSecret() });
+            const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify(body) });
+            const data = await res.json();
+            if (data.code === "auth") {
+                localStorage.removeItem(SECRET_KEY);
+                throw new Error("合言葉が違います。🔄を押して入力し直してください");
+            }
+            if (data.status !== "success") throw new Error(data.message || "エラー");
+            if (data.my_ids) updateMyIds(data.my_ids);
+            if (data.later) saveLaterLocal(data.later);
+            return data;
+        }
 
-  var truncated = cands.length > TODO_MAX_FETCH;
-  cands = cands.slice(0, TODO_MAX_FETCH);
+        function setStatus(text, cls) {
+            const el = document.getElementById('loadStatus');
+            el.textContent = text;
+            el.className = `shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${cls || 'bg-indigo-500'}`;
+        }
+        function emptyBox(text) {
+            return `<div class="bg-white p-10 rounded-2xl text-center text-base font-bold text-slate-500 shadow-sm">${text}</div>`;
+        }
 
-  return {
-    rooms: rooms,
-    latest: fetchLatest_(token, cands.map(function (r) { return String(r.room_id); })),
-    my_ids: getMyIds_(),
-    later: getLater_(p.account),
-    truncated: truncated
-  };
-}
+        // ===== 画面切替 =====
+        function onAccountChange() {
+            allRoomsCache = [];
+            roomMembersCache = {};
+            currentRoomId = null;
+            document.getElementById('burstModeContainer').innerHTML = '';
+            document.getElementById('laterModeContainer').innerHTML = '';
+            document.getElementById('searchResults').innerHTML = '';
+            lastSearch = null;
+            lastBundle = null;
+            if (handledUnsub) handledUnsub();
+            handledUnsub = null; handledReady = null; handledSynced = false; handledAcc = null;
+            resetRoomsSync();
+            restoreHandledCache(getAccount());
+            setOptionData(null);
+            setTimeout(() => loadOptionSellers(false).then(() => { if (roomFilter === 'option') renderRoomList(); }).catch(() => {}), 1500);
+            searchSeq++;
+            clearTimeout(searchTimer);
+            const sb = document.getElementById('searchBtn');
+            sb.disabled = false;
+            sb.textContent = '検索';
+            document.getElementById('roomSearchInput').value = '';
+            document.getElementById('singleRoomMessageContainer').innerHTML = '';
+            updateLaterBadge();
+            if (currentMode === 'normal') backToRoomList();
+            refreshCurrentView(true);
+        }
+
+        function refreshCurrentView(force) {
+            document.getElementById('selectAllCheckbox').checked = false;
+            updateSelectionBar();
+            if (currentMode === 'burst') fetchAllUnreadRooms(force);
+            else if (currentMode === 'later') renderLaterRooms(force);
+            else if (currentMode === 'search') { if (lastSearch && !lastSearch.running && lastSearch.nextOffset !== null) runSearch(true); }
+            else if (currentRoomId) openRoom(currentRoomId);
+            else fetchNormalRooms(true);
+        }
+
+        function switchMode(mode) {
+            currentMode = mode;
+            document.getElementById('selectAllCheckbox').checked = false;
+            ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => document.getElementById(id).classList.remove('active'));
+            ['tabSearch'].forEach(id => document.getElementById(id).classList.remove('active'));
+            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer', 'searchModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
+            document.getElementById('listToolbar').style.display = (mode === 'burst' || mode === 'later') ? 'flex' : 'none';
+
+            if (mode === 'burst') {
+                document.getElementById('tabBurst').classList.add('active');
+                document.getElementById('burstModeContainer').style.display = 'block';
+                fetchAllUnreadRooms(false);
+            } else if (mode === 'later') {
+                document.getElementById('tabLater').classList.add('active');
+                document.getElementById('laterModeContainer').style.display = 'block';
+                renderLaterRooms(false);
+            } else if (mode === 'search') {
+                document.getElementById('tabSearch').classList.add('active');
+                document.getElementById('searchModeContainer').style.display = 'block';
+                setStatus('検索');
+            } else {
+                document.getElementById('tabNormal').classList.add('active');
+                document.getElementById('normalModeContainer').style.display = 'block';
+                if (!currentRoomId) fetchNormalRooms(false);
+            }
+            updateSelectionBar();
+            window.scrollTo(0, 0);
+        }
+
+        // ===== 選択・一括既読 =====
+        function activeListId() { return currentMode === 'burst' ? 'burstModeContainer' : 'laterModeContainer'; }
+        function updateSelectionBar() {
+            const n = (currentMode !== 'burst' && currentMode !== 'later') ? 0 : document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`).length;
+            document.getElementById('selectedCount').textContent = n;
+            document.getElementById('selectionBar').style.display = n > 0 ? 'block' : 'none';
+        }
+        window.toggleSelectAll = function(master) {
+            document.querySelectorAll(`#${activeListId()} .room-checkbox`).forEach(cb => cb.checked = master.checked);
+            updateSelectionBar();
+        };
+        window.batchMarkAsRead = async function() {
+            const checked = document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`);
+            if (checked.length === 0) return;
+            if (!confirm(`${checked.length} 件のルームを対応済みにしますか？`)) return;
+            const ids = Array.from(checked).map(cb => cb.getAttribute('data-room-id'));
+            setStatus('処理中…');
+            try {
+                await setHandled(ids, { reopen: false });
+                callApi("mark_read_batch", { room_ids: ids }).catch(() => {});   // Chatwork側も既読に
+                if (currentMode === 'later') callApi("set_later", { room_ids: ids, on: false }).catch(() => {});
+                markReadInCache(ids);
+                showToast(`${ids.length} 件を対応済みにしました`);
+            } catch (e) {
+                alert("対応済みの保存に失敗しました: " + e.message);
+            }
+            refreshCurrentView(true);
+        };
+
+        // ===== 後で対応（スタッフ全員で共有） =====
+        function getLaterLocal() {
+            try { return JSON.parse(localStorage.getItem(LATER_CACHE_KEY + getAccount())) || []; } catch (e) { return []; }
+        }
+        function saveLaterLocal(list) {
+            try { localStorage.setItem(LATER_CACHE_KEY + getAccount(), JSON.stringify((list || []).map(String))); } catch (e) {}
+            updateLaterBadge();
+        }
+        function isLater(roomId) { return getLaterLocal().indexOf(String(roomId)) > -1; }
+        function updateLaterBadge() { document.getElementById('laterCountBadge').textContent = getLaterLocal().length; }
+
+        // 以前この端末だけに保存していた「後で対応」を共有リストへ移す（初回のみ）
+        async function migrateOldLater() {
+            const flag = `cw_later_migrated_${getAccount()}`;
+            if (localStorage.getItem(flag)) return;
+            localStorage.setItem(flag, '1');
+            let old = [];
+            try { old = (JSON.parse(localStorage.getItem(OLD_LATER_KEY)) || {})[getAccount()] || []; } catch (e) {}
+            if (old.length) {
+                try { await callApi("set_later", { room_ids: old, on: true }); } catch (e) {}
+            }
+        }
+
+        window.toggleLaterRoom = async function(roomId) {
+            const on = !isLater(roomId);
+            const before = getLaterLocal();
+            saveLaterLocal(on ? before.concat([String(roomId)]) : before.filter(id => id !== String(roomId)));
+            showToast(on ? "「後で対応」に入れました" : "「後で対応」から外しました");
+            try {
+                await callApi("set_later", { room_ids: [roomId], on: on });
+            } catch (e) {
+                saveLaterLocal(before);
+                alert("「後で対応」の保存に失敗しました: " + e.message);
+            }
+            if (currentMode === 'later') renderLaterRooms(true);
+        };
+
+        async function renderLaterRooms(force) {
+            const container = document.getElementById('laterModeContainer');
+            const nameOf = id => (allRoomsCache.find(r => String(r.room_id) === String(id)) || {}).name || `ルームID: ${id}`;
+            const unreadOfId = id => getUnread(allRoomsCache.find(r => String(r.room_id) === String(id)) || {});
+            const draw = (list, latest) => {
+                if (list.length === 0) { container.innerHTML = emptyBox('☕ 「後で対応」のルームはありません'); return; }
+                container.innerHTML = list.map(id =>
+                    burstCardHtml(id, nameOf(id), "後で", "bg-amber-100 text-amber-800",
+                        latest ? (latest[String(id)] || { error: '取得できませんでした' }) : null, unreadOfId(id))
+                ).join('');
+                updateSelectionBar();
+                applyOptionBadges();
+            };
+            draw(getLaterLocal(), null);
+            setStatus('更新中…');
+            try {
+                const data = await callApi("get_later_bundle");
+                lastFetchAt = Date.now();
+                if (data.rooms) allRoomsCache = data.rooms;
+                if (currentMode !== 'later') return;
+                if (!force && isUserBusy(container)) { showToast('新着があります。🔄で更新できます'); }
+                else draw(data.later || [], data.latest || {});
+                setStatus(`後で ${(data.later || []).length}`, 'bg-amber-500');
+                setLastUpdated(false);
+            } catch (e) {
+                setStatus('エラー', 'bg-red-500');
+                showToast('取得に失敗しました：' + e.message);
+            }
+        }
+
+        // ===== メッセージ部品 =====
+        function memberOptionsHtml(members) {
+            let html = '<option value="">＋ To を追加</option>';
+            (Array.isArray(members) ? members : []).forEach(mem => {
+                html += `<option value="${safeId(mem.account_id)}">${esc(mem.name)}</option>`;
+            });
+            return html;
+        }
+
+        function storeMessage(roomId, roomName, m) {
+            const rid = safeId(roomId);
+            const key = `m_${rid}_${safeId(m.message_id)}_${Math.random().toString(36).slice(2, 6)}`;
+            const files = parseFiles(m.body);
+            const display = cleanBody(m.body);
+            const body = display + (files.length ? (display ? '\n' : '') + files.map(f => '📎 ' + f.name).join('\n') : '');
+            window.messageStore[key] = {
+                body, displayBody: display, files, sender: senderName(m), roomId: rid, roomName,
+                replyTo: isMine(m) ? null : { aid: safeId(m.account && m.account.account_id), mid: safeId(m.message_id), name: senderName(m) }
+            };
+            return key;
+        }
+
+        function messageHtml(key, m, opts = {}) {
+            const st = window.messageStore[key];
+            const mine = isMine(m);
+            const avatarUrl = m.account && m.account.avatar_image_url;
+            const avatar = avatarUrl
+                ? `<img src="${esc(avatarUrl)}" alt="" class="w-8 h-8 rounded-full shrink-0 bg-slate-200 object-cover" loading="lazy">`
+                : `<div class="w-8 h-8 rounded-full shrink-0 bg-slate-200"></div>`;
+            const body = st.displayBody;
+            const clampCls = opts.small ? 'clamp-s' : 'clamp';
+            const isLong = opts.small ? (body.length > 90 || body.split('\n').length > 3) : (body.length > 280 || body.split('\n').length > 8);
+            return `
+                <div class="${mine ? 'mine' : ''}">
+                    <div class="flex items-center gap-2">
+                        ${avatar}
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-sm truncate">${esc(senderName(m))}${mine ? ' <span class="text-[11px] font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded">自社</span>' : ''}</div>
+                            <div class="text-xs text-slate-400">${fmtTime(m.send_time)}</div>
+                        </div>
+                    </div>
+                    <div id="body_${key}" class="chat-msg-body-text msg-body mt-1.5 ${isLong ? clampCls : ''} ${opts.small ? 'text-slate-600' : ''}" ${body ? '' : 'style="display:none"'}>${esc(body)}</div>
+                    ${isLong ? `<button onclick="expandBody('${key}', this)" class="text-indigo-600 text-sm font-bold py-1 cursor-pointer">続きを読む</button>` : ''}
+                    ${attachmentsHtml(st.roomId, st.files)}
+                </div>`;
+        }
+        window.expandBody = function(key, btn) {
+            const el = document.getElementById(`body_${key}`);
+            el.classList.remove('clamp', 'clamp-s');
+            btn.remove();
+        };
+
+        // 返信欄（宛先 → AI → 本文 → 返信マーク → 送信 の順に上から下へ）
+        function replyPanelHtml(key, members, sendLabel) {
+            const st = window.messageStore[key] || {};
+            const rp = st.replyTo;
+            return `
+                <div id="reply_panel_${key}" class="mt-3 pt-3 border-t border-slate-100 space-y-2" style="display:none;">
+                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
+                    <div class="flex gap-2">
+                        <input type="text" id="custom_prompt_${key}" placeholder="AIへの指示（任意）例：丁寧にお断り" class="inp flex-1 min-w-0 bg-slate-50">
+                        <button onclick="generateAiReplyForMessage('${key}', this)" class="btn btn-ai shrink-0">✨ AI作成</button>
+                    </div>
+                    <textarea id="reply_text_${key}" rows="6" placeholder="返信文" class="inp"></textarea>
+                    ${rp && rp.mid ? `<label class="flex items-center gap-2 text-sm text-slate-600 py-1 cursor-pointer">
+                        <input type="checkbox" id="rp_${key}" checked class="w-5 h-5 accent-indigo-600 shrink-0">
+                        <span>${esc(rp.name)}さんのメッセージへの返信として送る（↩）</span></label>` : ''}
+                    <button onclick="sendReplyForMessage('${key}', this)" class="btn btn-ok w-full mt-1">${sendLabel || '📤 送信'}</button>
+                </div>`;
+        }
+
+        window.toggleReply = function(key, btn) {
+            const panel = document.getElementById(`reply_panel_${key}`);
+            const open = panel.style.display === 'none';
+            panel.style.display = open ? 'block' : 'none';
+            btn.textContent = open ? '✕ 閉じる' : '💬 返信';
+            if (open) {
+                ensureMembers(key);
+                setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+            }
+        };
+
+        async function ensureMembers(key) {
+            const st = window.messageStore[key] || {};
+            const sel = document.getElementById(`member_select_${key}`);
+            if (!sel || sel.dataset.loaded) return;
+            sel.dataset.loaded = '1';
+            let members = roomMembersCache[st.roomId];
+            if (!members) {
+                sel.innerHTML = '<option value="">メンバー読込中…</option>';
+                try {
+                    members = (await callApi("get_members", { room_id: st.roomId })).members || [];
+                    roomMembersCache[st.roomId] = members;
+                } catch (e) {
+                    members = [];
+                    sel.dataset.loaded = '';
+                }
+            }
+            sel.innerHTML = memberOptionsHtml(members);
+        }
+
+        // ===== 未読・後でのカード =====
+        function cardHeadHtml(roomId, roomName, badge, badgeCls) {
+            return `
+                <div class="flex items-center gap-2">
+                    <label class="p-2 -m-2 shrink-0 cursor-pointer"><input type="checkbox" class="room-checkbox w-5 h-5 accent-indigo-600" data-room-id="${safeId(roomId)}"></label>
+                    <h3 class="font-bold text-base truncate flex-1 min-w-0 ml-1" data-op-room="${safeId(roomId)}">${esc(roomName)}</h3>
+                    <span class="shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${badgeCls}">${esc(badge)}</span>
+                </div>`;
+        }
+
+        // entry = { messages:[最大5件] } / { error } / null(読込中)
+        function burstCardHtml(roomId, roomName, badge, badgeCls, entry, unreadNum) {
+            const rid = safeId(roomId);
+            window.roomNameMap[rid] = roomName;
+            const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
+            const wrap = (inner, extraCls, cardKey) =>
+                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}">${head}${inner}</div>`;
+
+            if (!entry) return wrap('<div class="mt-3 text-sm text-slate-400">読込中…</div>');
+            if (entry.error) return wrap(`<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`);
+            const msgs = entry.messages || [];
+            if (msgs.length === 0) return wrap('<div class="mt-3 text-sm text-slate-400">メッセージなし</div>');
+
+            // 未読の件数分（最大5件）を表示
+            const n = Math.min(Math.max(Number(unreadNum) || 1, 1), msgs.length, MAX_SHOW);
+            const shown = msgs.slice(-n);
+            const last = msgs[msgs.length - 1];
+            const lastIsMine = isMine(last);
+            const lastCustomer = msgs.slice().reverse().find(m => !isMine(m));
+
+            // カード全体用（AIには取得した最大5件の流れを渡す）
+            const cardKey = `c_${rid}_${Math.random().toString(36).slice(2, 8)}`;
+            const thread = msgs.map(lineFor).join('\n\n');
+            window.messageStore[cardKey] = {
+                body: shown.map(lineFor).join('\n\n'), context: thread, roomId: rid, roomName,
+                sender: lastCustomer ? senderName(lastCustomer) : senderName(last),
+                replyTo: lastCustomer ? { aid: safeId(lastCustomer.account && lastCustomer.account.account_id), mid: safeId(lastCustomer.message_id), name: senderName(lastCustomer) } : null
+            };
+
+            const more = Number(unreadNum) > MAX_SHOW ? `<div class="text-xs text-slate-400 mt-2">※ 未読はほかに ${Number(unreadNum) - MAX_SHOW} 件あります（「ルーム」タブで確認できます）</div>` : '';
+            const notice = lastIsMine ? `<div class="mt-3 text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">✅ 最後の発言は自社です（返信済みかもしれません）</div>` : '';
+            const items = shown.map((m, i) => {
+                const k = storeMessage(rid, roomName, m);
+                return `<div class="${i > 0 ? 'mt-3 pt-3 border-t border-slate-100' : ''}">${messageHtml(k, m, { small: i < shown.length - 1 })}</div>`;
+            }).join('');
+
+            const inner = `
+                ${notice}
+                <div class="mt-3">${items}${more}</div>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="toggleReply('${cardKey}', this)" class="btn ${lastIsMine ? 'btn-sub' : 'btn-main'} flex-1">💬 返信</button>
+                    <button onclick="markDone('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 対応済み</button>
+                    <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
+                </div>
+                ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
+            return wrap(inner, lastIsMine ? 'opacity-75' : '', cardKey);
+        }
+
+        // 送信・既読のあと、カードを片付ける
+        function removeCard(roomId) {
+            const id = activeListId();
+            const card = document.querySelector(`#${id} .burst-card[data-room-id="${safeId(roomId)}"]`);
+            if (card) card.remove();
+            const left = document.querySelectorAll(`#${id} .burst-card`).length;
+            if (currentMode === 'burst') {
+                setTodoStatus(left);
+                if (left === 0) document.getElementById(id).innerHTML = emptyBox('🎉 要対応のチャットはありません');
+            } else if (currentMode === 'later') {
+                setStatus(`後で ${left}`, 'bg-amber-500');
+                if (left === 0) document.getElementById(id).innerHTML = emptyBox('☕ 「後で対応」のルームはありません');
+            }
+            updateSelectionBar();
+        }
+
+        // ===== その他メニュー =====
+        function sheetBtn(icon, label, onclick) {
+            return `<button onclick="${onclick}" class="sheet-row"><span class="text-xl w-7 text-center">${icon}</span><span>${label}</span></button>`;
+        }
+        window.openMsgActions = function(key) {
+            const m = window.messageStore[key] || {};
+            const rid = m.roomId;
+            const later = isLater(rid);
+            document.getElementById('sheetActionsTitle').textContent = m.roomName || '';
+            document.getElementById('sheetActionsBody').innerHTML =
+                sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
+                sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
+                sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
+                sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
+                sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
+                sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
+                sheetBtn('👤', `担当者名を変更（今：${esc(localStorage.getItem(STAFF_NAME_KEY) || '未設定')}）`, `changeStaffName()`) +
+                `<a href="https://www.chatwork.com/#!rid${rid}" target="_blank" rel="noopener" class="sheet-row"><span class="text-xl w-7 text-center">🌐</span><span>Chatworkで開く</span></a>`;
+            openSheet('sheetActions');
+        };
+
+        window.copyMessageText = function(key) {
+            const text = (window.messageStore[key] || {}).body || "";
+            navigator.clipboard.writeText(text)
+                .then(() => { closeAllModals(); showToast('コピーしました'); })
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+        window.copyAllUnreadChats = function() {
+            const cards = document.querySelectorAll(`#${activeListId()} .burst-card`);
+            const parts = [];
+            cards.forEach(card => {
+                const st = window.messageStore[card.getAttribute('data-card-key')];
+                if (st) parts.push(`■ ルーム: ${card.getAttribute('data-room-name')}\n${st.body}`);
+            });
+            if (parts.length === 0) { showToast("コピーするチャットがありません"); return; }
+            const text = "【未読チャット一覧】\n\n" + parts.map((p, i) => p.replace('■', `■ [${i + 1}]`)).join('\n\n--------------------\n\n');
+            navigator.clipboard.writeText(text)
+                .then(() => showToast(`${parts.length} 件をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+        window.copyAllRoomMessages = function(roomId) {
+            const st = window.messageStore[`compose_${safeId(roomId)}`];
+            if (!st || !st.fullText) { showToast("コピーするメッセージがありません"); return; }
+            navigator.clipboard.writeText(`【ルーム名: ${st.roomName}】\n\n${st.fullText}`)
+                .then(() => showToast('コピーしました'))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+
+        window.openStaffAppModal = function(key) {
+            const m = window.messageStore[key] || {};
+            document.getElementById('linkRoomId').value = m.roomId || "";
+            document.getElementById('linkRoomName').value = m.roomName || "";
+            document.getElementById('linkSenderName').value = m.sender || "";
+            document.getElementById('linkMessageBody').value = m.body || "";
+            openSheet('modalLinkCopy');
+        };
+
+        function compressImage(file, maxSize = 1280, quality = 0.7) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.width * scale);
+                    canvas.height = Math.round(img.height * scale);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    URL.revokeObjectURL(url);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+                img.src = url;
+            });
+        }
+        window.registerToStaffApp = async function(btnEl) {
+            const roomName = document.getElementById('linkRoomName').value;
+            const senderNm = document.getElementById('linkSenderName').value;
+            const messageBody = document.getElementById('linkMessageBody').value;
+            const fromVal = document.getElementById('linkFromInput').value;
+            const toVal = document.getElementById('linkToInput').value;
+            const memoVal = document.getElementById('linkMemoInput').value;
+            const imageInput = document.getElementById('linkImageInput');
+            let taskContent = `【Chatwork連携依頼】\nルーム名: ${roomName}\n\n👤 発言者: ${senderNm}\n💬 メッセージ本文:\n${messageBody}`;
+            if (memoVal) taskContent += `\n\n📝 連絡メモ:\n${memoVal}`;
+            btnEl.disabled = true;
+            btnEl.textContent = "登録中...";
+            try {
+                let imageUrl = null;
+                if (imageInput && imageInput.files && imageInput.files[0]) imageUrl = await compressImage(imageInput.files[0]);
+                await fsAdd("staff_requests", {
+                    from: fromVal || '未設定', to: toVal || '未設定', task: taskContent,
+                    imageUrl: imageUrl, status: 'pending', createdAt: FS_TS
+                });
+                document.getElementById('linkMemoInput').value = '';
+                imageInput.value = '';
+                closeAllModals();
+                showToast('スタッフ連絡に登録しました');
+            } catch (error) {
+                alert("登録失敗: " + error.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "🚀 登録する";
+            }
+        };
+
+        window.fetchSellerInfo = async function(roomId) {
+            const keyword = window.roomNameMap[roomId];
+            if (!keyword) return;
+            ['sellerModalName', 'sellerModalShopName', 'sellerModalId', 'sellerModalPass'].forEach(id => document.getElementById(id).textContent = '-');
+            document.getElementById('sellerModalSheet').textContent = '';
+            document.getElementById('sellerModalExtras').innerHTML = '';
+            document.getElementById('sellerModalKanriNo').textContent = "読込中…";
+            openSheet('modalSellerInfo');
+            try {
+                const data = await callApi("get_seller_info", { chatwork_id: keyword });
+                if (!data.seller || data.seller.error) {
+                    document.getElementById('sellerModalKanriNo').textContent = "見つかりませんでした";
+                    return;
+                }
+                const s = data.seller;
+                const ov = optionOv[normKanri(s.kanriNo)];
+                if (ov) {
+                    s.extras = (s.extras || []).map(ex => ex.label === OPTION_LABEL ? { label: ex.label, value: ov.v, manual: true, note: ov.note } : ex);
+                    if (!s.extras.some(ex => ex.label === OPTION_LABEL)) s.extras.push({ label: OPTION_LABEL, value: ov.v, manual: true, note: ov.note });
+                }
+                document.getElementById('sellerModalKanriNo').textContent = s.kanriNo || 'なし';
+                document.getElementById('sellerModalSheet').textContent = s.sheetLabel ? `（${s.sheetLabel}）` : '';
+                document.getElementById('sellerModalName').textContent = s.name || 'なし';
+                document.getElementById('sellerModalShopName').textContent = s.shopName || 'なし';
+                document.getElementById('sellerModalId').textContent = s.id || '未登録';
+                document.getElementById('sellerModalPass').textContent = s.pass || '未登録';
+                document.getElementById('sellerModalExtras').innerHTML = (s.extras || []).map(ex => `
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <span class="text-sm text-slate-600 font-bold">${esc(ex.label)}</span>
+                        <span class="text-base font-bold select-all text-right">${esc(ex.value)}${ex.manual ? `<span class="block text-[11px] font-bold text-violet-700">✎手動修正${ex.note ? `：${esc(ex.note)}` : ''}</span>` : ''}</span>
+                    </div>`).join('');
+            } catch (e) {
+                alert("取得失敗: " + e.message);
+                closeAllModals();
+            }
+        };
+
+        // ===== ルームタブ（一覧 → タップで開く） =====
+        async function fetchNormalRooms(forceReload) {
+            const list = document.getElementById('roomList');
+            if (await useFsMode()) {
+                allRoomsCache = metaToRooms();
+                renderRoomList();
+                setStatus(`${allRoomsCache.length} ルーム`);
+                return;
+            }
+            if (forceReload || allRoomsCache.length === 0) {
+                if (allRoomsCache.length === 0) list.innerHTML = '<div class="p-6 text-center text-slate-400">ルーム一覧を読み込み中…</div>';
+                try {
+                    allRoomsCache = (await callApi("get_rooms")).rooms || [];
+                    lastFetchAt = Date.now();
+                } catch (e) {
+                    list.innerHTML = `<div class="p-6 text-center text-red-500">取得失敗: ${esc(e.message)}</div>`;
+                    return;
+                }
+            }
+            renderRoomList();
+            setStatus(`${allRoomsCache.length} ルーム`);
+        }
+        window.renderRoomList = function() {
+            if (roomFilter === 'option') { renderOptionList(); return; }
+            document.getElementById('optionHeader').style.display = 'none';
+            const kw = document.getElementById('roomSearchInput').value.trim().toLowerCase();
+            const rooms = allRoomsCache
+                .filter(r => !kw || String(r.name).toLowerCase().includes(kw))
+                .sort((a, b) => (getUnread(b) > 0) - (getUnread(a) > 0) || (b.last_update_time || 0) - (a.last_update_time || 0));
+            const shown = rooms.slice(0, 60);
+            const list = document.getElementById('roomList');
+            if (shown.length === 0) { list.innerHTML = '<div class="p-6 text-center text-slate-400">該当するルームがありません</div>'; return; }
+            list.innerHTML = shown.map(r => {
+                const u = getUnread(r);
+                return `
+                    <button onclick="openRoomFromList('${safeId(r.room_id)}')" class="room-row">
+                        <span class="flex-1 min-w-0">
+                            <span class="block font-bold text-[15px] truncate" data-op-room="${safeId(r.room_id)}">${esc(r.name)}</span>
+                            <span class="block text-xs text-slate-400">${fmtTime(r.last_update_time)}</span>
+                        </span>
+                        ${u > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${u}</span>` : ''}
+                        <span class="text-slate-300 shrink-0">›</span>
+                    </button>`;
+            }).join('') + (rooms.length > shown.length ? `<div class="p-3 text-center text-xs text-slate-400">ほか ${rooms.length - shown.length} 件（検索で絞り込めます）</div>` : '');
+            applyOptionBadges();
+        };
+
+        // ===== 撮影オプションのセラー（連絡用） =====
+        const OPTION_CACHE_KEY = "cw_option_sellers_v1_";
+        const OPTION_CACHE_MS = 6 * 60 * 60 * 1000;   // 6時間ごとに自動で取り直し
+        let roomFilter = 'all';
+        let optionData = null;          // { t, sellers }
+        let optionRoomIds = new Set();
+        let optionLoading = null;
+
+        // ===== 撮影オプションの手動修正（Firestore：option_overrides） =====
+        //   元のシートは保護されていて直せないため、修正はFirestoreに保存し、
+        //   一覧・🎥マーク・セラー情報の表示でシートより優先する（GASの変更は不要）
+        const OPTION_LABEL = "動画撮影オプション";
+        let optionRaw = null;      // GASから届いた一覧（シートの内容）
+        let optionOv = {};         // 正規化した管理番号 → { v:"◯"/"×", kanriNo, note, by }
+        let optionOvUnsub = null;
+
+        function normKanri(v) { return toHalf(String(v || '')).trim().toLowerCase(); }
+        // 管理番号が「単独の番号として」ルーム名に含まれているか（GAS側と同じ判定）
+        function containsKanriJs(text, k) {
+            let from = 0;
+            while (true) {
+                const i = text.indexOf(k, from);
+                if (i === -1) return false;
+                const before = i > 0 ? text.charAt(i - 1) : '';
+                const after = text.charAt(i + k.length);
+                if (!/[0-9a-z]/.test(before) && !/[0-9a-z]/.test(after)) return true;
+                from = i + 1;
+            }
+        }
+        function findRoomByKanri(k) {
+            let best = null;
+            allRoomsCache.forEach(r => {
+                if (containsKanriJs(normKanri(r.name), k) && (!best || (r.last_update_time || 0) > (best.last_update_time || 0))) best = r;
+            });
+            return best;
+        }
+
+        function applyOptionOverrides(raw) {
+            const seen = {};
+            const sellers = [];
+            (raw.sellers || []).forEach(x => {
+                const k = normKanri(x.kanriNo);
+                const o = optionOv[k];
+                seen[k] = true;
+                if (o && o.v === '×') return;
+                sellers.push(o ? Object.assign({}, x, { manual: true, note: o.note || '', by: o.by || '' }) : x);
+            });
+            // 手動で「加入」にしたが、シートでは加入になっていないセラー
+            Object.keys(optionOv).forEach(k => {
+                const o = optionOv[k];
+                if (o.v !== '◯' || seen[k]) return;
+                const r = findRoomByKanri(k);
+                sellers.push({
+                    kanriNo: o.kanriNo || k, name: '', shopName: o.shopName || '（手動で追加）', sheetLabel: '手動',
+                    manual: true, note: o.note || '', by: o.by || '',
+                    room_id: r ? r.room_id : null, room_name: r ? r.name : '',
+                    unread_num: r ? getUnread(r) : 0, last_update_time: r ? (r.last_update_time || 0) : 0
+                });
+            });
+            sellers.sort((a, b) => ((b.unread_num > 0) - (a.unread_num > 0)) || ((!!b.room_id) - (!!a.room_id)) || (b.last_update_time - a.last_update_time));
+            const removed = Object.keys(optionOv).filter(k => optionOv[k].v === '×')
+                .map(k => ({ k: k, kanriNo: optionOv[k].kanriNo || k, note: optionOv[k].note || '', by: optionOv[k].by || '' }));
+            return { t: raw.t, sellers: sellers, removed: removed };
+        }
+
+        function recomputeOption() {
+            optionData = optionRaw ? applyOptionOverrides(optionRaw) : null;
+            optionRoomIds = new Set((optionData && optionData.sellers || []).filter(x => x.room_id).map(x => String(x.room_id)));
+            applyOptionBadges();
+            if (currentMode === 'normal' && roomFilter === 'option' && !currentRoomId) renderOptionList();
+        }
+
+        function setOptionData(d) {
+            optionRaw = d;
+            recomputeOption();
+            startOptionOvSync();
+        }
+
+        // 手動修正をリアルタイムで受け取る（他のスタッフの修正もすぐ反映）
+        async function startOptionOvSync() {
+            if (optionOvUnsub) return;
+            optionOvUnsub = () => {};
+            try {
+                const f = await loadFirestore();
+                optionOvUnsub = f.onSnapshot(
+                    f.query(f.collection(f.db, 'option_overrides'), f.where('label', '==', OPTION_LABEL)),
+                    qs => {
+                        const map = {};
+                        qs.forEach(d => { const x = d.data(); if (x.k) map[x.k] = x; });
+                        optionOv = map;
+                        recomputeOption();
+                    },
+                    err => console.error('手動修正の読み込みに失敗:', err)
+                );
+            } catch (e) {
+                optionOvUnsub = null;
+                console.error(e);
+            }
+        }
+
+        async function loadOptionSellers(force) {
+            const key = OPTION_CACHE_KEY + getAccount();
+            if (!force) {
+                try {
+                    const c = JSON.parse(localStorage.getItem(key));
+                    if (c && c.sellers) {
+                        setOptionData(c);
+                        applyOptionBadges();
+                        if (Date.now() - c.t < OPTION_CACHE_MS) return;
+                    }
+                } catch (e) {}
+            }
+            if (optionLoading) return optionLoading;
+            optionLoading = (async () => {
+                try {
+                    const data = await callApi("get_option_sellers", { label: "動画撮影オプション" });
+                    const d = { t: Date.now(), sellers: data.sellers || [], removed: data.removed || [] };
+                    try { localStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
+                    setOptionData(d);
+                    applyOptionBadges();
+                    if (currentMode === 'normal' && roomFilter === 'option') renderOptionList();
+                } finally {
+                    optionLoading = null;
+                }
+            })();
+            return optionLoading;
+        }
+
+        // 撮影オプション◯のセラーのルーム名に 🎥 を付ける
+        function applyOptionBadges() {
+            document.querySelectorAll('[data-op-room]').forEach(el => {
+                const on = optionRoomIds.has(el.getAttribute('data-op-room'));
+                const has = el.querySelector('.op-badge');
+                if (on && !has) el.insertAdjacentHTML('afterbegin', '<span class="op-badge" title="撮影オプションあり">🎥 </span>');
+                if (!on && has) has.remove();
+            });
+        }
+
+        window.setRoomFilter = function(f) {
+            roomFilter = f;
+            document.getElementById('chipAll').className = `btn ${f === 'all' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('chipOption').className = `btn ${f === 'option' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('roomSearchInput').placeholder = f === 'option' ? '🔍 管理番号・ショップ名・ルーム名で検索' : '🔍 ルーム名で検索';
+            renderRoomList();
+            if (f === 'option' && !optionData) {
+                document.getElementById('roomList').innerHTML = '<div class="p-6 text-center text-slate-400">撮影オプションのセラーを読み込み中…</div>';
+                loadOptionSellers(true).catch(e => {
+                    document.getElementById('roomList').innerHTML = `<div class="p-6 text-center text-red-500">取得失敗: ${esc(e.message)}</div>`;
+                });
+            }
+        };
+
+        function filteredOptionSellers() {
+            const kw = toHalf(document.getElementById('roomSearchInput').value.trim()).toLowerCase();
+            return (optionData && optionData.sellers || []).filter(x => !kw ||
+                toHalf([x.kanriNo, x.shopName, x.name, x.room_name].join(' ')).toLowerCase().includes(kw));
+        }
+
+        function renderOptionList() {
+            const head = document.getElementById('optionHeader');
+            const list = document.getElementById('roomList');
+            if (!optionData) return;
+            const all = optionData.sellers || [];
+            const sellers = filteredOptionSellers();
+            const unread = all.filter(x => x.unread_num > 0).length;
+            const noRoom = all.filter(x => !x.room_id).length;
+            const t = new Date(optionData.t);
+
+            head.style.display = 'block';
+            head.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <div class="font-bold text-base">🎥 撮影オプションあり ${all.length}名</div>
+                    <div class="text-xs text-slate-500 mt-1">未読あり ${unread}名${noRoom ? `・ルーム未発見 ${noRoom}名` : ''}・${t.getMonth() + 1}/${t.getDate()} ${hm(t)} 時点</div>
+                    <div class="grid grid-cols-3 gap-2 mt-3">
+                        <button onclick="addOptionSeller()" class="btn btn-sub px-1 text-[13px]">＋ 追加</button>
+                        <button onclick="copyOptionList()" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
+                        <button onclick="reloadOptionList(this)" class="btn btn-sub px-1 text-[13px]">🔄 取り直す</button>
+                    </div>
+                </div>`;
+
+            if (!sellers.length) { list.innerHTML = '<div class="p-6 text-center text-slate-400">該当するセラーがいません</div>'; return; }
+            optionRowMap = sellers;
+            const manualTag = x => x.manual ? `<span class="text-[11px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded ml-1">✎手動</span>` : '';
+            const noteLine = x => x.manual && x.note ? `<span class="block text-xs text-violet-700 truncate">メモ：${esc(x.note)}${x.by ? `（${esc(x.by)}）` : ''}</span>` : '';
+            let html = sellers.map((x, i) => {
+                const sub = `${esc(x.kanriNo)}・${esc(x.shopName)}`;
+                const main = x.room_id
+                    ? `<button onclick="openRoomFromList('${safeId(x.room_id)}')" class="room-row flex-1 min-w-0 pr-1">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate">${sub}${manualTag(x)}</span>
+                                <span class="block text-xs text-slate-500 truncate">${esc(x.room_name)}・${fmtTime(x.last_update_time)}</span>
+                                ${noteLine(x)}
+                            </span>
+                            ${x.unread_num > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${x.unread_num}</span>` : ''}
+                        </button>`
+                    : `<div class="room-row flex-1 min-w-0 pr-1 opacity-60">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate">${sub}${manualTag(x)}</span>
+                                <span class="block text-xs text-slate-400">Chatworkルームが見つかりません（ルーム名に管理番号がありません）</span>
+                                ${noteLine(x)}
+                            </span>
+                        </div>`;
+                return `<div class="flex items-stretch">${main}
+                    <button onclick="openOptionEdit(${i})" class="shrink-0 w-12 text-slate-400 text-lg cursor-pointer" aria-label="修正">✎</button></div>`;
+            }).join('');
+
+            // 手動で「未加入」にしたセラー
+            const removed = (optionData.removed || []);
+            if (removed.length) {
+                html += `<div class="px-4 pt-4 pb-2 text-xs font-bold text-slate-500 bg-slate-50">手動で一覧から外したセラー（${removed.length}名）</div>` +
+                    removed.map((x, i) => `
+                        <div class="flex items-center gap-2 px-4 py-3 bg-slate-50">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate text-slate-500">${esc(x.kanriNo)}</span>
+                                <span class="block text-xs text-slate-400 truncate">${x.note ? `メモ：${esc(x.note)}` : 'メモなし'}${x.by ? `（${esc(x.by)}）` : ''}</span>
+                            </span>
+                            <button onclick="undoRemoved(${i})" class="btn btn-sub shrink-0" style="height:38px">元に戻す</button>
+                        </div>`).join('');
+            }
+            list.innerHTML = html;
+        }
+
+        // ===== 撮影オプションの手動修正（元のシートは保護されているため、アプリ側で上書き） =====
+        let optionRowMap = [];
+
+        async function saveOptionOverride(kanri, value, note) {
+            const k = normKanri(kanri);
+            if (k.length < 2) throw new Error('管理番号を正しく入力してください');
+            const f = await loadFirestore();
+            const ref = f.doc(f.db, 'option_overrides', `${OPTION_LABEL}_${k}`);
+            if (value === '') {
+                await f.deleteDoc(ref);          // シートの内容に戻す
+                delete optionOv[k];
+            } else {
+                const data = { label: OPTION_LABEL, k: k, kanriNo: String(kanri).trim(), v: value, note: note || '', by: getStaffName(), updatedAt: f.serverTimestamp() };
+                await f.setDoc(ref, data);
+                optionOv[k] = data;
+            }
+            recomputeOption();
+            startOptionOvSync();
+        }
+
+        window.openOptionEdit = function(i) {
+            const x = optionRowMap[i];
+            if (!x) return;
+            document.getElementById('sheetActionsTitle').textContent = `${x.kanriNo}・${x.shopName}`;
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="px-5 pt-4 pb-2 text-sm text-slate-600 leading-relaxed">
+                    今の表示：<b>${x.manual ? '手動で「加入」' : 'シートで「加入」'}</b><br>
+                    元のシートは変更せず、このアプリの表示だけを修正します。
+                </div>
+                <div class="px-5 pb-3"><input type="text" id="optionNote" class="inp" placeholder="メモ（例：10/20 解約の連絡あり）" value="${esc(x.manual ? x.note : '')}"></div>` +
+                sheetBtn('×', '未加入にする（一覧から外す）', `applyOptionEdit(${i}, '×')`) +
+                (x.manual ? sheetBtn('↺', 'シートの内容に戻す（手動修正を取り消す）', `applyOptionEdit(${i}, '')`) : '');
+            openSheet('sheetActions');
+        };
+
+        window.applyOptionEdit = async function(i, value) {
+            const x = optionRowMap[i];
+            if (!x) return;
+            const note = (document.getElementById('optionNote') || {}).value || '';
+            closeAllModals();
+            try {
+                setStatus('保存中…');
+                await saveOptionOverride(x.kanriNo, value, note);
+                showToast(value === '×' ? `${x.kanriNo} を一覧から外しました` : `${x.kanriNo} をシートの内容に戻しました`);
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.undoRemoved = async function(i) {
+            const x = (optionData && optionData.removed || [])[i];
+            if (!x) return;
+            if (!confirm(`${x.kanriNo} の手動修正を取り消して、シートの内容に戻しますか？`)) return;
+            try {
+                await saveOptionOverride(x.kanriNo, '', '');
+                showToast(`${x.kanriNo} をシートの内容に戻しました`);
+                renderRoomList();
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.addOptionSeller = async function() {
+            const kanri = (prompt("撮影オプションに加入しているセラーの管理番号を入力してください") || "").trim();
+            if (!kanri) return;
+            const note = (prompt("メモ（任意）例：10/20 口頭で加入の連絡あり") || "").trim();
+            try {
+                setStatus('保存中…');
+                await saveOptionOverride(kanri, '◯', note);
+                showToast(`${kanri} を一覧に追加しました`);
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.reloadOptionList = async function(btn) {
+            btn.disabled = true;
+            btn.textContent = '取得中…';
+            try { await loadOptionSellers(true); showToast('最新の一覧にしました'); }
+            catch (e) { alert('取得に失敗しました: ' + e.message); }
+            finally { btn.disabled = false; btn.textContent = '🔄 取り直す'; }
+        };
+
+        // タブ区切り → スプレッドシートにそのまま貼れる
+        window.copyOptionList = function() {
+            const sellers = filteredOptionSellers();
+            if (!sellers.length) return;
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
+            const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', '未読', '最終更新'].join('\t')];
+            sellers.forEach(x => {
+                const d = x.last_update_time ? new Date(x.last_update_time * 1000) : null;
+                rows.push([x.kanriNo, x.shopName, x.name, x.room_name || '（ルームなし）', x.unread_num || '',
+                    d ? `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}` : ''].map(clean).join('\t'));
+            });
+            navigator.clipboard.writeText(rows.join('\n'))
+                .then(() => showToast(`${sellers.length} 名をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+        window.openRoomFromList = function(roomId) {
+            if (currentMode !== 'normal') switchMode('normal');
+            openRoom(roomId);
+        };
+        window.backToRoomList = function() {
+            currentRoomId = null;
+            document.getElementById('roomDetailView').style.display = 'none';
+            document.getElementById('roomListView').style.display = 'block';
+            document.getElementById('singleRoomMessageContainer').innerHTML = '';
+            fetchNormalRooms(false);
+        };
+
+        async function openRoom(roomId) {
+            currentRoomId = safeId(roomId);
+            document.getElementById('roomListView').style.display = 'none';
+            document.getElementById('roomDetailView').style.display = 'block';
+            const container = document.getElementById('singleRoomMessageContainer');
+            container.innerHTML = emptyBox('読み込み中…');
+            try {
+                const roomData = await callApi("get_room_data", { room_id: currentRoomId });
+                if (currentRoomId !== safeId(roomId)) return;
+                lastFetchAt = Date.now();
+                const msgs = roomData.messages || [];
+                const members = roomData.members || [];
+                roomMembersCache[currentRoomId] = members;
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === currentRoomId);
+                const roomName = roomObj ? roomObj.name : "ルーム";
+                window.roomNameMap[currentRoomId] = roomName;
+                const latest = msgs[msgs.length - 1] || {};
+                const recent = msgs.slice(-20);
+                const later = isLater(currentRoomId);
+
+                let html = `
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="font-bold text-base" data-op-room="${currentRoomId}">${esc(roomName)}</div>
+                        <div class="grid grid-cols-4 gap-2 mt-3">
+                            <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
+                            <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
+                            <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
+                            <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
+                        </div>
+                    </div>`;
+
+                if (recent.length === 0) {
+                    html += emptyBox('まだメッセージがありません');
+                } else {
+                    html += `<div class="text-xs font-bold text-slate-400 px-1">直近 ${recent.length} 件（下が最新）</div>`;
+                    recent.forEach((m, idx) => {
+                        const key = storeMessage(currentRoomId, roomName, m);
+                        // AIには、このメッセージまでの直近6件の流れを渡す
+                        const absIdx = msgs.length - recent.length + idx;
+                        window.messageStore[key].context = msgs.slice(Math.max(0, absIdx - 5), absIdx + 1).map(lineFor).join('\n\n');
+                        const mine = isMine(m);
+                        html += `
+                            <div class="bg-white rounded-2xl shadow-sm p-4">
+                                ${messageHtml(key, m)}
+                                <div class="flex gap-2 mt-3">
+                                    ${mine ? '' : `<button onclick="toggleReply('${key}', this)" class="btn btn-sub flex-1">💬 返信</button>`}
+                                    <button onclick="openMsgActions('${key}')" class="btn btn-sub ${mine ? 'flex-1' : 'w-12 shrink-0'} text-lg" aria-label="その他">⋯</button>
+                                </div>
+                                ${mine ? '' : replyPanelHtml(key, members, '📤 送信')}
+                            </div>`;
+                    });
+                }
+                html += buildComposeBox(currentRoomId, roomName, msgs, members, recent);
+                container.innerHTML = html;
+                applyOptionBadges();
+                setStatus(roomName.length > 8 ? roomName.slice(0, 8) + '…' : roomName);
+                setTimeout(() => container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50);
+            } catch (e) {
+                container.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
+            }
+        }
+
+        // ===== 直近の問い合わせ検索 =====
+        let lastSearch = null;
+
+        function escRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+        function toHalf(s) { return String(s).replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)); }
+
+        // キーワード部分に色を付ける（全角・半角、大文字・小文字を区別しない）
+        function highlight(text, words) {
+            const safe = esc(text);
+            if (!words.length) return safe;
+            const half = toHalf(safe).toLowerCase();
+            const marks = [];
+            words.forEach(w => {
+                const ew = esc(w);
+                let i = half.indexOf(ew);
+                while (i !== -1) { marks.push([i, i + ew.length]); i = half.indexOf(ew, i + ew.length); }
+            });
+            if (!marks.length) return safe;
+            marks.sort((a, b) => a[0] - b[0]);
+            let out = '', pos = 0;
+            marks.forEach(([a, b]) => {
+                if (a < pos) return;
+                out += safe.slice(pos, a) + '<mark class="bg-yellow-200 rounded px-0.5">' + safe.slice(a, b) + '</mark>';
+                pos = b;
+            });
+            return out + safe.slice(pos);
+        }
+
+        let searchSeq = 0;
+        let searchTimer = null;
+
+        // resume=true のときは、前回の検索の続きから
+        window.runSearch = async function(resume) {
+            clearTimeout(searchTimer);
+            if (!resume) {
+                const keyword = document.getElementById('searchKeyword').value.trim();
+                if (!keyword) { showToast('キーワードを入力してください'); return; }
+                lastSearch = {
+                    keyword: keyword,
+                    days: Number(document.getElementById('searchDays').value),
+                    includeMine: document.getElementById('searchIncludeMine').checked,
+                    results: [], scanned: 0, total: null, failed: 0,
+                    nextOffset: 0, waitUntil: 0, running: false, error: '', seq: ++searchSeq
+                };
+            }
+            const st = lastSearch;
+            if (!st || st.nextOffset === null || st.running) return;
+            const seq = st.seq;
+            const btn = document.getElementById('searchBtn');
+            st.running = true;
+            st.waitUntil = 0;
+            st.error = '';
+            btn.disabled = true;
+            btn.textContent = '検索中…';
+            setStatus('検索中…');
+            renderSearchResults(st);
+
+            try {
+                while (st.nextOffset !== null) {
+                    const data = await callApi("search_recent", {
+                        keyword: st.keyword, days: st.days, include_mine: st.includeMine, offset: st.nextOffset
+                    });
+                    if (seq !== searchSeq) return;
+                    st.total = data.total_rooms;
+                    if (data.wait_sec > 0) {
+                        // API回数の回復待ち → 回復したら自動で続きを検索
+                        st.waitUntil = Date.now() + data.wait_sec * 1000;
+                        searchTimer = setTimeout(() => {
+                            if (lastSearch === st && currentMode === 'search') runSearch(true);
+                        }, data.wait_sec * 1000 + 1000);
+                        break;
+                    }
+                    st.results = st.results.concat(data.results || []);
+                    st.scanned += data.scanned || 0;
+                    st.failed += data.failed || 0;
+                    st.nextOffset = data.next_offset;
+                    renderSearchResults(st);
+                }
+            } catch (e) {
+                if (seq !== searchSeq) return;
+                st.error = e.message;
+            } finally {
+                if (seq === searchSeq) {
+                    st.running = false;
+                    btn.disabled = false;
+                    btn.textContent = '検索';
+                    renderSearchResults(st);
+                }
+            }
+        };
+
+        function renderSearchResults(st) {
+            const box = document.getElementById('searchResults');
+            const results = st.results.slice().sort((a, b) => b.latest_time - a.latest_time);
+            const words = st.keyword.split(/[\s　]+/).filter(Boolean).map(w => toHalf(w).toLowerCase());
+            const hitTotal = results.reduce((n, r) => n + r.hit_count, 0);
+            const done = st.nextOffset === null;
+            const waiting = st.waitUntil > Date.now();
+
+            if (st.running) setStatus('検索中…');
+            else if (waiting) setStatus('回復待ち', 'bg-amber-500');
+            else setStatus(`${results.length} ルーム`, results.length ? 'bg-amber-500' : 'bg-emerald-500');
+
+            const totalTxt = st.total === null ? '…' : st.total;
+            const pct = st.total ? Math.round(st.scanned / st.total * 100) : 0;
+            let progress = '';
+            if (!done) {
+                progress = `
+                    <div class="mt-3">
+                        <div class="h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-indigo-500 transition-all" style="width:${pct}%"></div></div>
+                        <div class="text-xs text-slate-500 mt-1">${st.scanned} / ${totalTxt} ルーム確認済み</div>
+                    </div>`;
+            }
+            let note = '';
+            if (waiting) {
+                const min = Math.max(1, Math.ceil((st.waitUntil - Date.now()) / 60000));
+                note = `<div class="text-sm text-amber-800 bg-amber-50 rounded-xl p-3 mt-3 leading-relaxed">
+                    普段の既読・送信が止まらないよう、Chatworkの利用回数の回復を待っています。<b>約${min}分後に自動で続きを検索します。</b>
+                    <button onclick="runSearch(true)" class="btn btn-sub w-full mt-2">今すぐ続きを検索</button></div>`;
+            } else if (st.error) {
+                note = `<div class="text-sm text-red-600 bg-red-50 rounded-xl p-3 mt-3">検索が途中で止まりました：${esc(st.error)}
+                    <button onclick="runSearch(true)" class="btn btn-sub w-full mt-2">続きから再開</button></div>`;
+            }
+            if (st.failed) note += `<div class="text-xs text-amber-700 mt-2">※ ${st.failed} ルームは取得に失敗しました。少し時間をおいて再検索してください。</div>`;
+
+            let html = `
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <div class="text-base font-bold">${results.length} ルーム / ${hitTotal} 件ヒット${st.running ? '<span class="text-sm font-normal text-slate-400">（検索中…）</span>' : ''}</div>
+                    <div class="text-xs text-slate-500 mt-1">${done
+                        ? `直近${st.days}日に更新があった ${st.scanned} ルームをすべて確認しました（各ルーム最新100件まで）`
+                        : `直近${st.days}日に更新があったルームを順番に確認しています`}</div>
+                    ${progress}${note}
+                    ${results.length ? `<button onclick="copySearchResults()" class="btn btn-sub w-full mt-3">📋 セラー一覧をコピー（スプレッドシート貼り付け用）</button>` : ''}
+                </div>`;
+
+            if (!results.length && done && !st.running) html += emptyBox('該当するチャットは見つかりませんでした');
+            results.forEach(r => {
+                const rid = safeId(r.room_id);
+                window.roomNameMap[rid] = r.room_name;
+                const sl = r.seller;
+                html += `
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="flex items-start gap-2">
+                            <div class="flex-1 min-w-0">
+                                <div class="font-bold text-base truncate">${esc(r.room_name)}</div>
+                                <div class="text-sm text-slate-600 mt-0.5">${sl ? `管理番号 ${esc(sl.kanriNo)}・${esc(sl.shopName)}` : '<span class="text-slate-400">セラー情報なし</span>'}</div>
+                            </div>
+                            <span class="shrink-0 text-xs font-bold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full">${r.hit_count}件</span>
+                        </div>
+                        <div class="mt-3 space-y-2">
+                            ${r.hits.map(h => `
+                                <div class="bg-slate-50 rounded-xl p-3">
+                                    <div class="text-xs text-slate-500">${esc(h.sender)}・${fmtTime(h.send_time)}</div>
+                                    <div class="msg-body text-[14px] mt-1">${highlight(h.snippet, words)}</div>
+                                </div>`).join('')}
+                            ${r.hit_count > r.hits.length ? `<div class="text-xs text-slate-400">ほか ${r.hit_count - r.hits.length} 件</div>` : ''}
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <button onclick="openRoomFromList('${rid}')" class="btn btn-main">📁 ルームを開く</button>
+                            <button onclick="fetchSellerInfo('${rid}')" class="btn btn-sub">🔑 セラー情報</button>
+                        </div>
+                    </div>`;
+            });
+            box.innerHTML = html;
+        }
+
+        // タブ区切りでコピー → スプレッドシートにそのまま貼れる
+        window.copySearchResults = function() {
+            if (!lastSearch || !lastSearch.results.length) return;
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
+            const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', 'ヒット数', '最新日時', '最新の内容'].join('\t')];
+            lastSearch.results.slice().sort((a, b) => b.latest_time - a.latest_time).forEach(r => {
+                const s = r.seller || {};
+                const d = new Date(r.latest_time * 1000);
+                const dt = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+                rows.push([s.kanriNo, s.shopName, s.name, r.room_name, r.hit_count, dt, r.hits[0] ? r.hits[0].snippet : ''].map(clean).join('\t'));
+            });
+            navigator.clipboard.writeText(rows.join('\n'))
+                .then(() => showToast(`${lastSearch.results.length} 件をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+
+        // ===== 新規発信 =====
+        function buildComposeBox(roomId, roomName, messages, members, recent) {
+            const rid = safeId(roomId);
+            const key = `compose_${rid}`;
+            window.messageStore[key] = {
+                body: '', context: messages.slice(-10).map(lineFor).join("\n\n"),
+                fullText: (recent || []).map(lineFor).join("\n\n"),
+                sender: "", roomId: rid, roomName, replyTo: null
+            };
+            return `
+                <div class="bg-white border-2 border-emerald-300 rounded-2xl shadow-sm p-4 space-y-2">
+                    <div class="font-bold text-base text-emerald-800">✏️ 新しく発信する</div>
+                    <select id="member_select_${key}" data-loaded="1" onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
+                    <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
+                    <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
+                    <textarea id="reply_text_${key}" rows="6" placeholder="送信するメッセージ（直接入力もOK）" class="inp"></textarea>
+                    <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok w-full">📤 送信</button>
+                </div>`;
+        }
+
+        window.generateComposeAi = async function(key, btnEl) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            const intent = document.getElementById(`custom_prompt_${key}`).value.trim();
+            if (!intent) { showToast("伝えたい内容を入力してください"); return; }
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            btnEl.disabled = true;
+            btnEl.textContent = "AI作成中…";
+            try {
+                const data = await callApi("generate_ai_reply", {
+                    mode: "compose", room_id: m.roomId, room_name: m.roomName || "ルーム",
+                    context: m.context || "", custom_prompt: intent
+                });
+                textarea.value = toLines + (data.ai_reply || "");
+                logAiDraft(m, data.ai_reply || "", intent, m.context || "", 'compose');
+            } catch (e) {
+                alert("AI作成エラー: " + e.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ AIで文章を作成";
+            }
+        };
+
+        window.sendComposeMessage = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const finalMsg = document.getElementById(`reply_text_${key}`).value.trim();
+            if (!finalMsg) { showToast("メッセージを入力してください"); return; }
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${finalMsg.slice(0, 80)}${finalMsg.length > 80 ? '…' : ''}`)) return;
+            btn.disabled = true;
+            btn.textContent = "送信中…";
+            try {
+                await callApi("send_message", { room_id: m.roomId, body: finalMsg });
+                saveSendLog(m, finalMsg, 'compose');
+                showToast("送信しました");
+                openRoom(m.roomId);
+            } catch (e) {
+                alert("送信失敗: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "📤 送信";
+            }
+        };
+
+        // ===== 要対応タブ（対応済みフラグはFirestoreでスタッフ全員と共有） =====
+        //   cw_handled/{アカウント}_{ルームID} : { handledAt(秒), reopen, by, auto }
+        //   cw_handled_meta/{アカウント}       : { baselineAt } 使い始めた時刻
+        //   cw_handled_log                      : 手動で対応済み・未対応に戻した記録
+        const HANDLED_CACHE_KEY = "cw_handled_cache_v1_";
+        const STAFF_NAME_KEY = "cw_staff_name";
+        let handledMap = {};
+        let baselineAt = null;
+        let handledAcc = null;
+        let handledReady = null;
+        let handledSynced = false;
+        let handledUnsub = null;
+        let lastBundle = null;
+
+        function getStaffName() {
+            let n = localStorage.getItem(STAFF_NAME_KEY);
+            if (!n) {
+                n = (prompt("担当者名を入力してください（対応済みの記録に使います）") || "").trim();
+                if (n) localStorage.setItem(STAFF_NAME_KEY, n);
+            }
+            return n || "未設定";
+        }
+        window.changeStaffName = function() {
+            const cur = localStorage.getItem(STAFF_NAME_KEY) || "";
+            const n = (prompt("担当者名", cur) || "").trim();
+            if (n) { localStorage.setItem(STAFF_NAME_KEY, n); showToast(`担当者名を「${n}」にしました`); }
+            closeAllModals();
+        };
+
+        // 前回の対応状況を端末から復元（Firestoreの読み込みを待たずに表示するため）
+        function restoreHandledCache(acc) {
+            if (handledAcc === acc && handledSynced) return;
+            try {
+                const c = JSON.parse(localStorage.getItem(HANDLED_CACHE_KEY + acc));
+                handledMap = (c && c.map) || {};
+                baselineAt = (c && c.baselineAt) || null;
+            } catch (e) { handledMap = {}; baselineAt = null; }
+        }
+        function saveHandledCache() {
+            try { localStorage.setItem(HANDLED_CACHE_KEY + handledAcc, JSON.stringify({ map: handledMap, baselineAt: baselineAt })); } catch (e) {}
+        }
+
+        // Firestoreの対応状況をリアルタイムで受け取る（他のスタッフの操作もすぐ反映）
+        function startHandledSync() {
+            const acc = getAccount();
+            if (handledAcc === acc && handledReady) return handledReady;
+            if (handledUnsub) { handledUnsub(); handledUnsub = null; }
+            handledAcc = acc;
+            handledSynced = false;
+            handledReady = (async () => {
+                const f = await loadFirestore();
+                const metaRef = f.doc(f.db, 'cw_handled_meta', acc);
+                const meta = await f.getDoc(metaRef);
+                if (meta.exists()) {
+                    baselineAt = meta.data().baselineAt;
+                } else {
+                    baselineAt = Math.floor(Date.now() / 1000);
+                    await f.setDoc(metaRef, { account: acc, baselineAt: baselineAt, createdAt: f.serverTimestamp() });
+                }
+                await new Promise((resolve, reject) => {
+                    let first = true;
+                    handledUnsub = f.onSnapshot(
+                        f.query(f.collection(f.db, 'cw_handled'), f.where('account', '==', acc)),
+                        qs => {
+                            const map = {};
+                            qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                            if (handledAcc !== acc) return;
+                            handledMap = map;
+                            handledSynced = true;
+                            saveHandledCache();
+                            if (first) { first = false; resolve(); } else onHandledChanged();
+                        },
+                        err => { if (first) { first = false; reject(err); } else console.error(err); }
+                    );
+                });
+            })().catch(e => { handledReady = null; throw e; });
+            return handledReady;
+        }
+
+        // 他のスタッフが対応済み・未対応に戻した時
+        function onHandledChanged() {
+            if (fsActive()) { onRoomsMetaChanged(); return; }
+            if (currentMode !== 'burst' || !lastBundle) return;
+            const container = document.getElementById('burstModeContainer');
+            const needFetch = Object.keys(handledMap).some(rid => handledMap[rid].reopen && !(lastBundle.latest || {})[rid]);
+            if (needFetch) { fetchAllUnreadRooms(false); return; }
+            if (!isUserBusy(container)) renderTodo(lastBundle, false);
+        }
+
+        // 手動で「対応済み」「未対応に戻す」
+        async function setHandled(roomIds, opts) {
+            await startHandledSync().catch(() => {});
+            const f = await loadFirestore();
+            const acc = getAccount();
+            const by = getStaffName();
+            const now = Math.floor(Date.now() / 1000);
+            const batch = f.writeBatch(f.db);
+            roomIds.map(String).forEach(rid => {
+                const data = { account: acc, roomId: rid, handledAt: opts.reopen ? 0 : (opts.at || now), reopen: !!opts.reopen, by: by, auto: false, updatedAt: f.serverTimestamp() };
+                batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), data);
+                batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.reopen ? 'reopen' : 'done', by: by, at: f.serverTimestamp() });
+                handledMap[rid] = Object.assign({}, data, { updatedAt: null });   // 画面にはすぐ反映
+            });
+            saveHandledCache();
+            await batch.commit();
+        }
+
+        // 自社が返信済み・動きがメッセージ以外だったルームは自動で対応済みに（次回から取りに行かない）
+        async function autoHandleRooms(list) {
+            if (!handledSynced || !list.length) return;
+            const fresh = list.filter(([rid, t]) => { const h = handledMap[rid]; return !(h && (h.reopen || Number(h.handledAt) >= t)); });
+            if (!fresh.length) return;
+            try {
+                const f = await loadFirestore();
+                const acc = getAccount();
+                for (let i = 0; i < fresh.length; i += 400) {
+                    const batch = f.writeBatch(f.db);
+                    fresh.slice(i, i + 400).forEach(([rid, t]) => {
+                        batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), { account: acc, roomId: rid, handledAt: t, reopen: false, by: '自動', auto: true, updatedAt: f.serverTimestamp() });
+                    });
+                    await batch.commit();
+                }
+            } catch (e) { console.error('自動の対応済み保存に失敗:', e); }
+        }
+
+        function handledForRequest() {
+            const out = {};
+            Object.keys(handledMap).forEach(rid => { const h = handledMap[rid]; out[rid] = h.reopen ? 0 : (Number(h.handledAt) || 0); });
+            return out;
+        }
+
+        // 要対応の判定：対応済みの後にお客様の発言があり、最後の発言がお客様のルーム
+        function computeTodo(data, autoList) {
+            const latest = data.latest || {};
+            const out = [];
+            (data.rooms || []).forEach(r => {
+                const rid = String(r.room_id);
+                const h = handledMap[rid];
+                const reopen = !!(h && h.reopen);
+                const eff = h ? (Number(h.handledAt) || 0) : (getUnread(r) > 0 ? 0 : (baselineAt || 0));
+                if (!reopen && (r.last_update_time || 0) <= eff) return;
+                const entry = latest[rid];
+                if (!entry) return;
+                if (entry.error) { out.push({ r, error: entry.error, waitSince: r.last_update_time || 0, reopen }); return; }
+                const msgs = entry.messages || [];
+                if (!msgs.length) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                const last = msgs[msgs.length - 1];
+                if (!reopen) {
+                    if (isMine(last)) { if (autoList) autoList.push([rid, Math.max(last.send_time || 0, r.last_update_time || 0)]); return; }
+                    if ((last.send_time || 0) <= eff) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                }
+                const shown = reopen ? msgs : msgs.filter(m => (m.send_time || 0) > eff);
+                let lastMine = -1;
+                shown.forEach((m, i) => { if (isMine(m)) lastMine = i; });
+                const waiting = shown.slice(lastMine + 1);
+                out.push({ r, all: msgs, count: Math.max(shown.length, 1), reopen, waitSince: (waiting[0] || last).send_time || 0 });
+            });
+            out.sort((a, b) => (a.waitSince || 0) - (b.waitSince || 0));   // 待たせている時間が長い順
+            return out;
+        }
+
+        function waitLabel(sec) {
+            const min = Math.max(0, Math.floor((Date.now() / 1000 - sec) / 60));
+            if (min < 60) return `${min}分待ち`;
+            const h = Math.floor(min / 60);
+            return h < 24 ? `${h}時間待ち` : `${Math.floor(h / 24)}日待ち`;
+        }
+        function waitCls(sec) {
+            const h = (Date.now() / 1000 - sec) / 3600;
+            return h >= 3 ? 'bg-red-500 text-white' : h >= 1 ? 'bg-amber-400 text-amber-950' : 'bg-slate-200 text-slate-700';
+        }
+        function setTodoStatus(n) {
+            if (n === 0) setStatus('要対応ゼロ', 'bg-emerald-500');
+            else setStatus(`要対応 ${n}`, 'bg-red-500');
+        }
+
+        function renderTodo(data, allowAuto) {
+            const container = document.getElementById('burstModeContainer');
+            allRoomsCache = data.rooms || [];
+            const auto = [];
+            const items = computeTodo(data, auto);
+            if (allowAuto) autoHandleRooms(auto);
+            setTodoStatus(items.length);
+            if (items.length === 0) { container.innerHTML = emptyBox('🎉 要対応のチャットはありません'); updateSelectionBar(); return; }
+            const note = data.truncated ? `<div class="text-xs text-amber-700 px-1">※ 動きのあったルームが多いため、新しい100ルームだけを確認しました。対応済みにしていくと漏れがなくなります。</div>` : '';
+            container.innerHTML = note + items.map(it => {
+                const u = getUnread(it.r);
+                const badge = `${it.reopen ? '↺ ' : ''}${waitLabel(it.waitSince)}${u > 0 ? `・未読${u}` : ''}`;
+                const entry = it.error ? { error: it.error } : { messages: it.all };
+                return burstCardHtml(it.r.room_id, it.r.name, badge, waitCls(it.waitSince), entry, it.count);
+            }).join('');
+            updateSelectionBar();
+            applyOptionBadges();
+        }
+
+        function todoSignature(data) {
+            return computeTodo(data).map(it => {
+                const ms = it.all || [];
+                return `${it.r.room_id}:${ms.length ? ms[ms.length - 1].message_id : ''}:${it.reopen ? 1 : 0}`;
+            }).join('|');
+        }
+        function isUserBusy(container) {
+            const panelOpen = Array.from(container.querySelectorAll('[id^="reply_panel_"]')).some(p => p.style.display !== 'none');
+            const typed = Array.from(container.querySelectorAll('textarea, input[type="text"]')).some(t => t.value.trim());
+            return panelOpen || typed || !!container.querySelector('.room-checkbox:checked');
+        }
+        function readBundleCache(acc) {
+            try { return JSON.parse(localStorage.getItem(BUNDLE_CACHE_KEY + acc)); } catch (e) { return null; }
+        }
+        function markReadInCache(ids) {
+            const c = readBundleCache(getAccount());
+            if (!c || !c.data) return;
+            const set = new Set(ids.map(String));
+            (c.data.rooms || []).forEach(r => { if (set.has(String(r.room_id))) r.unread_num = 0; });
+            try { localStorage.setItem(BUNDLE_CACHE_KEY + getAccount(), JSON.stringify(c)); } catch (e) {}
+        }
+
+        // ===== Firestore同期モード（GASが1分ごとに cw_rooms を更新 → 画面は見るだけ） =====
+        //   cw_rooms/{アカウント}_{ルームID} : name, unread, lastUpdate, msgUpdate, lastMsgId, lastMsgTime, lastMine, custTimes
+        //   cw_sync_status/{アカウント}      : lastRunAt, pending
+        //   ※ メッセージ本文はFirestoreに置かず、表示する分だけGASから取得
+        const MSG_CACHE_KEY = "cw_msg_cache_v1_";
+        let roomsMeta = {};
+        let syncStatus = null;
+        let roomsAcc = null;
+        let roomsReady = null;
+        let roomsUnsubs = [];
+        let msgCache = {};
+        let needBodies = new Set();
+        let bodyTimer = null;
+        let bodyLoading = false;
+        let busyToastAt = 0;
+
+        function fsActive() {
+            return !!(syncStatus && syncStatus.lastRunAt && Date.now() / 1000 - syncStatus.lastRunAt < 300 && Object.keys(roomsMeta).length);
+        }
+        function resetRoomsSync() {
+            roomsUnsubs.forEach(u => { try { u(); } catch (e) {} });
+            roomsUnsubs = [];
+            roomsMeta = {};
+            syncStatus = null;
+            roomsAcc = null;
+            roomsReady = null;
+            needBodies = new Set();
+            loadMsgCache();
+        }
+        function loadMsgCache() {
+            try { msgCache = JSON.parse(localStorage.getItem(MSG_CACHE_KEY + getAccount())) || {}; } catch (e) { msgCache = {}; }
+        }
+        function saveMsgCache(keepIds) {
+            const keep = new Set(keepIds || Object.keys(msgCache));
+            const out = {};
+            Object.keys(msgCache).forEach(rid => { if (keep.has(rid)) out[rid] = msgCache[rid]; });
+            msgCache = out;
+            try { localStorage.setItem(MSG_CACHE_KEY + getAccount(), JSON.stringify(out)); } catch (e) {}
+        }
+
+        function startRoomsSync() {
+            const acc = getAccount();
+            if (roomsAcc === acc && roomsReady) return roomsReady;
+            resetRoomsSync();
+            roomsAcc = acc;
+            roomsReady = (async () => {
+                const f = await loadFirestore();
+                let gotStatus = false, gotRooms = false;
+                await new Promise(resolve => {
+                    const done = () => { if (gotStatus && gotRooms) resolve(); };
+                    setTimeout(resolve, 4000);   // 4秒待っても届かなければ、従来の方式で表示
+                    roomsUnsubs.push(f.onSnapshot(f.doc(f.db, 'cw_sync_status', acc), d => {
+                        if (roomsAcc !== acc) return;
+                        syncStatus = d.exists() ? d.data() : null;
+                        gotStatus = true; done();
+                        if (currentMode === 'burst' && fsActive()) setLastUpdatedFs();
+                    }, () => { gotStatus = true; done(); }));
+                    roomsUnsubs.push(f.onSnapshot(f.query(f.collection(f.db, 'cw_rooms'), f.where('account', '==', acc)), qs => {
+                        if (roomsAcc !== acc) return;
+                        const map = {};
+                        qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                        roomsMeta = map;
+                        const first = !gotRooms;
+                        gotRooms = true; done();
+                        if (!first) onRoomsMetaChanged();
+                    }, () => { gotRooms = true; done(); }));
+                });
+            })().catch(e => { console.error(e); roomsReady = null; });
+            return roomsReady;
+        }
+        async function useFsMode() {
+            try { await startRoomsSync(); } catch (e) {}
+            return fsActive();
+        }
+
+        function metaToRooms() {
+            return Object.keys(roomsMeta).map(rid => {
+                const d = roomsMeta[rid];
+                return { room_id: Number(rid) || rid, name: d.name || '', unread_num: d.unread || 0, last_update_time: d.lastUpdate || 0 };
+            });
+        }
+
+        function setLastUpdatedFs() {
+            const el = document.getElementById('lastUpdated');
+            if (!syncStatus || !syncStatus.lastRunAt) return;
+            const pend = syncStatus.pending ? `・確認待ち${syncStatus.pending}` : '';
+            el.textContent = `自動同期 ${hm(new Date(syncStatus.lastRunAt * 1000))}${pend}`;
+        }
+
+        // 要対応の判定（Firestoreの情報だけで判断）
+        function computeTodoMeta(autoList) {
+            const out = [];
+            Object.keys(roomsMeta).forEach(rid => {
+                const d = roomsMeta[rid];
+                const h = handledMap[rid];
+                const reopen = !!(h && h.reopen);
+                const eff = h ? (Number(h.handledAt) || 0) : ((d.unread || 0) > 0 ? 0 : (baselineAt || 0));
+                const lu = d.lastUpdate || 0;
+                if (!reopen && lu <= eff) return;
+                if (!d.msgUpdate || d.msgUpdate < lu) {     // まだ同期待ち（1〜2分で反映）
+                    if (reopen) out.push({ rid, d, reopen, eff, waitSince: lu });
+                    return;
+                }
+                if (!reopen) {
+                    if (d.lastMine) { if (autoList) autoList.push([rid, Math.max(d.lastMsgTime || 0, lu)]); return; }
+                    if ((d.lastMsgTime || 0) <= eff) { if (autoList) autoList.push([rid, lu]); return; }
+                }
+                const ct = (d.custTimes || []).filter(t => t > eff);
+                out.push({ rid, d, reopen, eff, waitSince: ct[0] || d.lastMsgTime || lu });
+            });
+            out.sort((a, b) => a.waitSince - b.waitSince);
+            return out;
+        }
+
+        function todoCardHtml(it) {
+            const u = it.d.unread || 0;
+            const badge = `${it.reopen ? '↺ ' : ''}${waitLabel(it.waitSince)}${u > 0 ? `・未読${u}` : ''}`;
+            const c = msgCache[it.rid];
+            let entry = null, count = 1;
+            if (c && c.forMsgId === String(it.d.lastMsgId || '')) {
+                if (c.error) entry = { error: c.error };
+                else {
+                    entry = { messages: c.messages };
+                    count = it.reopen ? c.messages.length : Math.max(1, c.messages.filter(m => (m.send_time || 0) > it.eff).length);
+                }
+            } else {
+                needBodies.add(it.rid);
+            }
+            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count);
+        }
+
+        function renderTodoFs() {
+            const container = document.getElementById('burstModeContainer');
+            allRoomsCache = metaToRooms();
+            const auto = [];
+            const items = computeTodoMeta(auto);
+            autoHandleRooms(auto);
+            setTodoStatus(items.length);
+            setLastUpdatedFs();
+            if (items.length === 0) {
+                container.innerHTML = emptyBox('🎉 要対応のチャットはありません');
+            } else {
+                container.innerHTML = items.map(todoCardHtml).join('');
+                if (needBodies.size) queueBodies();
+            }
+            saveMsgCache(items.map(it => it.rid));
+            updateSelectionBar();
+            applyOptionBadges();
+        }
+
+        // 本文は、表示するルームの分だけまとめてGASから取得
+        function queueBodies() { clearTimeout(bodyTimer); bodyTimer = setTimeout(loadBodies, 50); }
+        async function loadBodies() {
+            if (bodyLoading || !needBodies.size) return;
+            bodyLoading = true;
+            const ids = Array.from(needBodies);
+            needBodies.clear();
+            const forIds = {};
+            ids.forEach(rid => { forIds[rid] = String((roomsMeta[rid] || {}).lastMsgId || ''); });
+            try {
+                const data = await callApi("get_latest_messages", { room_ids: ids });
+                const latest = data.latest || {};
+                ids.forEach(rid => {
+                    const e = latest[rid];
+                    if (e && e.messages) msgCache[rid] = { forMsgId: forIds[rid], messages: e.messages };
+                    else msgCache[rid] = { forMsgId: forIds[rid], error: (e && e.error) || '取得できませんでした' };
+                });
+                saveMsgCache();
+                fillCards(ids);
+            } catch (e) {
+                showToast('メッセージの読み込みに失敗しました。🔄で再読み込みできます');
+            } finally {
+                bodyLoading = false;
+            }
+        }
+        // 読み込み中のカードだけを差し替える（書きかけの返信は消さない）
+        function fillCards(ids) {
+            if (currentMode !== 'burst' || !fsActive()) return;
+            const items = computeTodoMeta();
+            ids.forEach(rid => {
+                const it = items.find(x => x.rid === rid);
+                const el = document.querySelector(`#burstModeContainer .burst-card[data-room-id="${safeId(rid)}"]`);
+                if (!it || !el || el.querySelector('[id^="reply_panel_"]')) return;
+                const tmp = document.createElement('div');
+                tmp.innerHTML = todoCardHtml(it);
+                if (tmp.firstElementChild) el.replaceWith(tmp.firstElementChild);
+            });
+            needBodies.clear();
+            applyOptionBadges();
+        }
+
+        // Firestoreが変わった時（新着・他のスタッフの対応）
+        function onRoomsMetaChanged() {
+            if (!fsActive()) return;
+            if (currentMode === 'burst') {
+                const container = document.getElementById('burstModeContainer');
+                if (isUserBusy(container)) {
+                    setTodoStatus(computeTodoMeta().length);
+                    if (Date.now() - busyToastAt > 60000) { busyToastAt = Date.now(); showToast('新着があります。🔄で更新できます'); }
+                } else {
+                    renderTodoFs();
+                }
+            } else if (currentMode === 'normal' && !currentRoomId) {
+                allRoomsCache = metaToRooms();
+                renderRoomList();
+            }
+        }
+
+        async function fsTodoRefresh(force) {
+            try { await startHandledSync(); } catch (e) {}
+            if (force) {
+                // 🔄：本文を取り直す
+                Object.keys(msgCache).forEach(rid => { delete msgCache[rid].forMsgId; });
+            }
+            lastFetchAt = Date.now();
+            renderTodoFs();
+            migrateOldLater();
+        }
+
+        let bundleSeq = 0;
+        async function fetchAllUnreadRooms(force) {
+            if (await useFsMode()) { if (currentMode === 'burst') await fsTodoRefresh(force); return; }
+            const container = document.getElementById('burstModeContainer');
+            const acc = getAccount();
+            const seq = ++bundleSeq;
+
+            // ① 前回の内容を一瞬で表示
+            let shownSig = null;
+            const cached = readBundleCache(acc);
+            if (cached && cached.data && !container.querySelector('.burst-card')) {
+                lastBundle = cached.data;
+                renderTodo(cached.data, false);
+                shownSig = todoSignature(cached.data);
+                setLastUpdated(true);
+            } else if (container.querySelector('.burst-card') && lastBundle) {
+                shownSig = todoSignature(lastBundle);
+            } else {
+                container.innerHTML = emptyBox('要対応のチャットを確認中…');
+            }
+            setStatus('更新中…');
+
+            // ② 対応状況（Firestore）を読み込んでから、最新を取得
+            try {
+                await startHandledSync();
+                const data = await callApi("get_todo_bundle", { handled: handledForRequest(), baseline: baselineAt });
+                try { localStorage.setItem(BUNDLE_CACHE_KEY + acc, JSON.stringify({ t: Date.now(), data: data })); } catch (e) {}
+                if (seq !== bundleSeq || acc !== getAccount() || currentMode !== 'burst') return;
+                lastBundle = data;
+                lastFetchAt = Date.now();
+                allRoomsCache = data.rooms || [];
+                setLastUpdated(false);
+                migrateOldLater();
+
+                const sig = todoSignature(data);
+                if (shownSig !== null && sig === shownSig && !force) {
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
+                    return;
+                }
+                if (shownSig !== null && !force && isUserBusy(container)) {
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
+                    showToast('新着があります。🔄で更新できます');
+                    return;
+                }
+                renderTodo(data, true);
+            } catch (e) {
+                if (seq !== bundleSeq) return;
+                if (shownSig === null) {
+                    container.innerHTML = `<div class="text-sm text-red-500 text-center p-4 bg-white rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
+                } else {
+                    showToast('最新の取得に失敗しました（前回の内容を表示中）');
+                }
+                setStatus('エラー', 'bg-red-500');
+            }
+        }
+
+        // 「✓ 対応済み」：対応済みにして、Chatwork側も既読に
+        window.markDone = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = "処理中…";
+            try {
+                await setHandled([roomId], { reopen: false });
+                callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId }).catch(() => {});
+                markReadInCache([roomId]);
+                if (currentMode === 'later') callApi("set_later", { room_ids: [roomId], on: false }).catch(() => {});
+                showToast("対応済みにしました");
+                if (currentMode === 'burst' || currentMode === 'later') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
+            } catch (e) {
+                alert("対応済みの保存に失敗しました: " + e.message);
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+
+        // 「↺ 未対応に戻す」：要対応タブにもう一度表示
+        window.reopenRoom = async function(roomId) {
+            closeAllModals();
+            try {
+                await setHandled([roomId], { reopen: true });
+                showToast("要対応に戻しました");
+                if (currentMode === 'burst') fetchAllUnreadRooms(true);
+            } catch (e) {
+                alert("保存に失敗しました: " + e.message);
+            }
+        };
+
+        // ===== 返信 =====
+        window.generateAiReplyForMessage = async function(key, btnEl) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            const promptInput = document.getElementById(`custom_prompt_${key}`);
+            const customPrompt = promptInput ? promptInput.value.trim() : "";
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            btnEl.disabled = true;
+            btnEl.textContent = "作成中…";
+            try {
+                const data = await callApi("generate_ai_reply", {
+                    room_id: m.roomId, room_name: m.roomName || "ルーム",
+                    context: m.context || m.body || "", custom_prompt: customPrompt
+                });
+                textarea.value = toLines + (data.ai_reply || "");
+                logAiDraft(m, data.ai_reply || "", customPrompt, m.context || m.body || "", 'reply');
+            } catch (e) {
+                alert("AI作成エラー: " + e.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ AI作成";
+            }
+        };
+
+        // ===== AI添削ログ（AI案と送信文を1件にひもづけて記録） =====
+        function newId() {
+            return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        }
+        // 比較用：宛先・返信マークの行を外して整える
+        function bodyForCompare(t) {
+            return String(t || '')
+                .replace(/^\[(To:\d+|rp aid=\d+ to=\d+-\d+)\][^\n]*\n?/gm, '')
+                .replace(/\[toall\]/gi, '')
+                .trim();
+        }
+        // 2つの文の違いの割合（0＝同じ、1＝まったく別）
+        function editRatio(a, b) {
+            a = String(a).slice(0, 1500);
+            b = String(b).slice(0, 1500);
+            if (!a.length && !b.length) return 0;
+            let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+            for (let i = 1; i <= a.length; i++) {
+                const cur = [i];
+                for (let j = 1; j <= b.length; j++) {
+                    cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+                }
+                prev = cur;
+            }
+            return prev[b.length] / Math.max(a.length, b.length);
+        }
+        function editLevel(r) { return r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正'; }
+
+        function logAiDraft(m, aiText, prompt, context, mode) {
+            const id = newId();
+            m.aiDraft = { id: id, text: aiText, prompt: prompt, count: ((m.aiDraft && m.aiDraft.count) || 0) + 1 };
+            fsAdd("ai_reply_logs", {
+                draftId: id, account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "", context: context,
+                aiGeneratedText: aiText, customPrompt: prompt, generateCount: m.aiDraft.count,
+                type: mode, status: 'generated', createdAt: FS_TS
+            }).catch(err => console.error("AIログ保存失敗:", err));
+        }
+
+        function saveSendLog(m, sentText, mode) {
+            if (!sentText || !sentText.trim()) return;
+            const final = bodyForCompare(sentText);
+            const d = m.aiDraft || null;
+            const data = {
+                account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "",
+                userEditedText: sentText.trim(), finalText: final,
+                usedAi: !!d, draftId: d ? d.id : null,
+                aiGeneratedText: d ? d.text : null, customPrompt: d ? d.prompt : null,
+                generateCount: d ? d.count : 0,
+                context: (m.context || m.body || "").slice(0, 3000),
+                updatedAt: FS_TS
+            };
+            if (d) {
+                const r = editRatio(bodyForCompare(d.text), final);
+                data.editRatio = Math.round(r * 1000) / 1000;
+                data.editLevel = editLevel(r);
+                data.aiLength = bodyForCompare(d.text).length;
+                data.finalLength = final.length;
+            }
+            fsAdd("ai_brushup_feedback", data).catch(e => console.error("送信ログ保存失敗:", e));
+            m.aiDraft = null;
+        }
+
+        window.insertMentionForMsg = function(key) {
+            const selectEl = document.getElementById(`member_select_${key}`);
+            const textarea = document.getElementById(`reply_text_${key}`);
+            if (!selectEl || !textarea || !selectEl.value) return;
+            const memberName = selectEl.options[selectEl.selectedIndex].text;
+            textarea.value = `[To:${selectEl.value}] ${memberName}さん\n` + textarea.value;
+            selectEl.value = '';
+            showToast(`${memberName}さんを宛先に追加しました`);
+        };
+
+        window.markAsRead = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = "処理中…";
+            try {
+                await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId });
+                markReadInCache([roomId]);
+                showToast("既読にしました");
+                if (currentMode === 'burst') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
+            } catch (e) {
+                alert("既読エラー: " + e.message);
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+
+        // 送信：未読・後でタブでは「送信＋既読＋後で対応から外す」までまとめて完了
+        window.sendReplyForMessage = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            let finalMsg = textarea.value.trim();
+            if (!finalMsg) { showToast("返信文を入力してください"); return; }
+
+            const rpBox = document.getElementById(`rp_${key}`);
+            if (rpBox && rpBox.checked && m.replyTo && m.replyTo.mid) {
+                finalMsg = `[rp aid=${m.replyTo.aid} to=${m.roomId}-${m.replyTo.mid}]${m.replyTo.name}さん\n` + finalMsg;
+            }
+            const preview = textarea.value.trim();
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`)) return;
+
+            const done = currentMode !== 'normal';
+            btn.disabled = true;
+            btn.textContent = "送信中…";
+            try {
+                await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
+                saveSendLog(m, finalMsg, 'reply');
+                setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
+                markReadInCache([m.roomId]);
+                showToast(done ? "送信して完了にしました" : "送信しました");
+                if (done) removeCard(m.roomId);
+                else openRoom(m.roomId);
+            } catch (e) {
+                alert("送信失敗: " + e.message);
+                btn.disabled = false;
+                btn.textContent = done ? "📤 送信して完了" : "📤 送信";
+            }
+        };
+    </script>
+</body>
+</html>
