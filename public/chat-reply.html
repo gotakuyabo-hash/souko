@@ -450,6 +450,11 @@
             document.getElementById('laterModeContainer').innerHTML = '';
             document.getElementById('searchResults').innerHTML = '';
             lastSearch = null;
+            searchSeq++;
+            clearTimeout(searchTimer);
+            const sb = document.getElementById('searchBtn');
+            sb.disabled = false;
+            sb.textContent = '検索';
             document.getElementById('roomSearchInput').value = '';
             document.getElementById('singleRoomMessageContainer').innerHTML = '';
             updateLaterBadge();
@@ -462,7 +467,7 @@
             updateSelectionBar();
             if (currentMode === 'burst') fetchAllUnreadRooms(force);
             else if (currentMode === 'later') renderLaterRooms(force);
-            else if (currentMode === 'search') { if (document.getElementById('searchKeyword').value.trim()) runSearch(); }
+            else if (currentMode === 'search') { if (lastSearch && !lastSearch.running && lastSearch.nextOffset !== null) runSearch(true); }
             else if (currentRoomId) openRoom(currentRoomId);
             else fetchNormalRooms(true);
         }
@@ -1037,62 +1042,124 @@
             return out + safe.slice(pos);
         }
 
-        window.runSearch = async function() {
-            const keyword = document.getElementById('searchKeyword').value.trim();
-            if (!keyword) { showToast('キーワードを入力してください'); return; }
-            const days = document.getElementById('searchDays').value;
-            const includeMine = document.getElementById('searchIncludeMine').checked;
-            const box = document.getElementById('searchResults');
+        let searchSeq = 0;
+        let searchTimer = null;
+
+        // resume=true のときは、前回の検索の続きから
+        window.runSearch = async function(resume) {
+            clearTimeout(searchTimer);
+            if (!resume) {
+                const keyword = document.getElementById('searchKeyword').value.trim();
+                if (!keyword) { showToast('キーワードを入力してください'); return; }
+                lastSearch = {
+                    keyword: keyword,
+                    days: Number(document.getElementById('searchDays').value),
+                    includeMine: document.getElementById('searchIncludeMine').checked,
+                    results: [], scanned: 0, total: null, failed: 0,
+                    nextOffset: 0, waitUntil: 0, running: false, error: '', seq: ++searchSeq
+                };
+            }
+            const st = lastSearch;
+            if (!st || st.nextOffset === null || st.running) return;
+            const seq = st.seq;
             const btn = document.getElementById('searchBtn');
+            st.running = true;
+            st.waitUntil = 0;
+            st.error = '';
             btn.disabled = true;
             btn.textContent = '検索中…';
-            box.innerHTML = emptyBox('🔍 直近のチャットを確認しています…<div class="text-sm font-normal mt-2">ルームが多いと10秒ほどかかります</div>');
             setStatus('検索中…');
+            renderSearchResults(st);
+
             try {
-                const data = await callApi("search_recent", { keyword: keyword, days: days, include_mine: includeMine });
-                lastSearch = { keyword, days: data.days, results: data.results || [] };
-                renderSearchResults(data, keyword);
+                while (st.nextOffset !== null) {
+                    const data = await callApi("search_recent", {
+                        keyword: st.keyword, days: st.days, include_mine: st.includeMine, offset: st.nextOffset
+                    });
+                    if (seq !== searchSeq) return;
+                    st.total = data.total_rooms;
+                    if (data.wait_sec > 0) {
+                        // API回数の回復待ち → 回復したら自動で続きを検索
+                        st.waitUntil = Date.now() + data.wait_sec * 1000;
+                        searchTimer = setTimeout(() => {
+                            if (lastSearch === st && currentMode === 'search') runSearch(true);
+                        }, data.wait_sec * 1000 + 1000);
+                        break;
+                    }
+                    st.results = st.results.concat(data.results || []);
+                    st.scanned += data.scanned || 0;
+                    st.failed += data.failed || 0;
+                    st.nextOffset = data.next_offset;
+                    renderSearchResults(st);
+                }
             } catch (e) {
-                box.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">検索に失敗しました：${esc(e.message)}</div>`;
-                setStatus('エラー', 'bg-red-500');
+                if (seq !== searchSeq) return;
+                st.error = e.message;
             } finally {
-                btn.disabled = false;
-                btn.textContent = '検索';
+                if (seq === searchSeq) {
+                    st.running = false;
+                    btn.disabled = false;
+                    btn.textContent = '検索';
+                    renderSearchResults(st);
+                }
             }
         };
 
-        function renderSearchResults(data, keyword) {
+        function renderSearchResults(st) {
             const box = document.getElementById('searchResults');
-            const results = data.results || [];
-            const words = keyword.split(/[\s　]+/).filter(Boolean).map(w => toHalf(w).toLowerCase());
-            const total = results.reduce((n, r) => n + r.hit_count, 0);
-            setStatus(`${results.length} ルーム`, results.length ? 'bg-amber-500' : 'bg-emerald-500');
+            const results = st.results.slice().sort((a, b) => b.latest_time - a.latest_time);
+            const words = st.keyword.split(/[\s　]+/).filter(Boolean).map(w => toHalf(w).toLowerCase());
+            const hitTotal = results.reduce((n, r) => n + r.hit_count, 0);
+            const done = st.nextOffset === null;
+            const waiting = st.waitUntil > Date.now();
 
-            const notes = [];
-            if (data.truncated) notes.push(`※ 対象ルームが多いため、更新が新しい ${data.scanned} ルームだけを確認しました。期間を短くすると漏れが減ります。`);
-            if (data.failed) notes.push(`※ ${data.failed} ルームは取得に失敗しました。少し時間をおいて再検索してください。`);
+            if (st.running) setStatus('検索中…');
+            else if (waiting) setStatus('回復待ち', 'bg-amber-500');
+            else setStatus(`${results.length} ルーム`, results.length ? 'bg-amber-500' : 'bg-emerald-500');
+
+            const totalTxt = st.total === null ? '…' : st.total;
+            const pct = st.total ? Math.round(st.scanned / st.total * 100) : 0;
+            let progress = '';
+            if (!done) {
+                progress = `
+                    <div class="mt-3">
+                        <div class="h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-indigo-500 transition-all" style="width:${pct}%"></div></div>
+                        <div class="text-xs text-slate-500 mt-1">${st.scanned} / ${totalTxt} ルーム確認済み</div>
+                    </div>`;
+            }
+            let note = '';
+            if (waiting) {
+                const min = Math.max(1, Math.ceil((st.waitUntil - Date.now()) / 60000));
+                note = `<div class="text-sm text-amber-800 bg-amber-50 rounded-xl p-3 mt-3 leading-relaxed">
+                    普段の既読・送信が止まらないよう、Chatworkの利用回数の回復を待っています。<b>約${min}分後に自動で続きを検索します。</b>
+                    <button onclick="runSearch(true)" class="btn btn-sub w-full mt-2">今すぐ続きを検索</button></div>`;
+            } else if (st.error) {
+                note = `<div class="text-sm text-red-600 bg-red-50 rounded-xl p-3 mt-3">検索が途中で止まりました：${esc(st.error)}
+                    <button onclick="runSearch(true)" class="btn btn-sub w-full mt-2">続きから再開</button></div>`;
+            }
+            if (st.failed) note += `<div class="text-xs text-amber-700 mt-2">※ ${st.failed} ルームは取得に失敗しました。少し時間をおいて再検索してください。</div>`;
 
             let html = `
                 <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-base font-bold">${results.length} ルーム / ${total} 件ヒット</div>
-                    <div class="text-xs text-slate-500 mt-1">直近${data.days}日に更新があった ${data.scanned} ルームを確認（各ルーム最新100件まで）</div>
-                    ${notes.map(n => `<div class="text-xs text-amber-700 mt-1">${esc(n)}</div>`).join('')}
+                    <div class="text-base font-bold">${results.length} ルーム / ${hitTotal} 件ヒット${st.running ? '<span class="text-sm font-normal text-slate-400">（検索中…）</span>' : ''}</div>
+                    <div class="text-xs text-slate-500 mt-1">${done
+                        ? `直近${st.days}日に更新があった ${st.scanned} ルームをすべて確認しました（各ルーム最新100件まで）`
+                        : `直近${st.days}日に更新があったルームを順番に確認しています`}</div>
+                    ${progress}${note}
                     ${results.length ? `<button onclick="copySearchResults()" class="btn btn-sub w-full mt-3">📋 セラー一覧をコピー（スプレッドシート貼り付け用）</button>` : ''}
                 </div>`;
 
-            if (!results.length) {
-                html += emptyBox('該当するチャットは見つかりませんでした');
-            }
+            if (!results.length && done && !st.running) html += emptyBox('該当するチャットは見つかりませんでした');
             results.forEach(r => {
                 const rid = safeId(r.room_id);
                 window.roomNameMap[rid] = r.room_name;
-                const s = r.seller;
+                const sl = r.seller;
                 html += `
                     <div class="bg-white rounded-2xl shadow-sm p-4">
                         <div class="flex items-start gap-2">
                             <div class="flex-1 min-w-0">
                                 <div class="font-bold text-base truncate">${esc(r.room_name)}</div>
-                                <div class="text-sm text-slate-600 mt-0.5">${s ? `管理番号 ${esc(s.kanriNo)}・${esc(s.shopName)}` : '<span class="text-slate-400">セラー情報なし</span>'}</div>
+                                <div class="text-sm text-slate-600 mt-0.5">${sl ? `管理番号 ${esc(sl.kanriNo)}・${esc(sl.shopName)}` : '<span class="text-slate-400">セラー情報なし</span>'}</div>
                             </div>
                             <span class="shrink-0 text-xs font-bold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full">${r.hit_count}件</span>
                         </div>
@@ -1118,7 +1185,7 @@
             if (!lastSearch || !lastSearch.results.length) return;
             const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
             const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', 'ヒット数', '最新日時', '最新の内容'].join('\t')];
-            lastSearch.results.forEach(r => {
+            lastSearch.results.slice().sort((a, b) => b.latest_time - a.latest_time).forEach(r => {
                 const s = r.seller || {};
                 const d = new Date(r.latest_time * 1000);
                 const dt = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
