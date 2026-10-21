@@ -111,7 +111,7 @@
         <div class="max-w-md mx-auto px-3 pb-2">
             <div class="bg-slate-900 text-white rounded-2xl flex items-center justify-between pl-4 pr-2 py-2 shadow-lg">
                 <span class="text-sm font-bold"><span id="selectedCount">0</span>件 選択中</span>
-                <button onclick="batchMarkAsRead()" class="btn btn-ok">✓ 既読にする</button>
+                <button onclick="batchMarkAsRead()" class="btn btn-ok">✓ 対応済みにする</button>
             </div>
         </div>
     </div>
@@ -119,7 +119,7 @@
     <!-- 下部タブ -->
     <nav class="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom, 0px);">
         <div class="max-w-md mx-auto grid grid-cols-4">
-            <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">⚡</span>未読</button>
+            <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">🚨</span>要対応</button>
             <button id="tabLater" class="tab-btn" onclick="switchMode('later')"><span class="ico">⏳</span>後で (<span id="laterCountBadge">0</span>)</button>
             <button id="tabNormal" class="tab-btn" onclick="switchMode('normal')"><span class="ico">📁</span>ルーム</button>
             <button id="tabSearch" class="tab-btn" onclick="switchMode('search')"><span class="ico">🔍</span>検索</button>
@@ -200,6 +200,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             updateLaterBadge();
+            restoreHandledCache(getAccount());
             fetchAllUnreadRooms();
             setTimeout(() => loadOptionSellers(false), 1500);
         });
@@ -235,7 +236,11 @@
                     import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js")
                 ]).then(([appMod, fsMod]) => {
                     const app = appMod.initializeApp(FIREBASE_CONFIG);
-                    return { db: fsMod.getFirestore(app), collection: fsMod.collection, addDoc: fsMod.addDoc, serverTimestamp: fsMod.serverTimestamp };
+                    return {
+                        db: fsMod.getFirestore(app), collection: fsMod.collection, addDoc: fsMod.addDoc, serverTimestamp: fsMod.serverTimestamp,
+                        doc: fsMod.doc, getDoc: fsMod.getDoc, setDoc: fsMod.setDoc, onSnapshot: fsMod.onSnapshot,
+                        query: fsMod.query, where: fsMod.where, writeBatch: fsMod.writeBatch
+                    };
                 }).catch(err => { _fsPromise = null; throw err; });
             }
             return _fsPromise;
@@ -456,6 +461,10 @@
             document.getElementById('laterModeContainer').innerHTML = '';
             document.getElementById('searchResults').innerHTML = '';
             lastSearch = null;
+            lastBundle = null;
+            if (handledUnsub) handledUnsub();
+            handledUnsub = null; handledReady = null; handledSynced = false; handledAcc = null;
+            restoreHandledCache(getAccount());
             setOptionData(null);
             setTimeout(() => loadOptionSellers(false).then(() => { if (roomFilter === 'option') renderRoomList(); }).catch(() => {}), 1500);
             searchSeq++;
@@ -523,15 +532,17 @@
         window.batchMarkAsRead = async function() {
             const checked = document.querySelectorAll(`#${activeListId()} .room-checkbox:checked`);
             if (checked.length === 0) return;
-            if (!confirm(`${checked.length} 件のルームを既読にしますか？`)) return;
+            if (!confirm(`${checked.length} 件のルームを対応済みにしますか？`)) return;
             const ids = Array.from(checked).map(cb => cb.getAttribute('data-room-id'));
             setStatus('処理中…');
             try {
-                const r = await callApi("mark_read_batch", { room_ids: ids });
+                await setHandled(ids, { reopen: false });
+                callApi("mark_read_batch", { room_ids: ids }).catch(() => {});   // Chatwork側も既読に
+                if (currentMode === 'later') callApi("set_later", { room_ids: ids, on: false }).catch(() => {});
                 markReadInCache(ids);
-                showToast(`${r.ok} 件を既読にしました` + (r.ng ? `（${r.ng} 件失敗）` : ''));
+                showToast(`${ids.length} 件を対応済みにしました`);
             } catch (e) {
-                alert("既読エラー: " + e.message);
+                alert("対応済みの保存に失敗しました: " + e.message);
             }
             refreshCurrentView(true);
         };
@@ -755,7 +766,7 @@
                 <div class="mt-3">${items}${more}</div>
                 <div class="flex gap-2 mt-3">
                     <button onclick="toggleReply('${cardKey}', this)" class="btn ${lastIsMine ? 'btn-sub' : 'btn-main'} flex-1">💬 返信</button>
-                    <button onclick="markAsRead('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 既読</button>
+                    <button onclick="markDone('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 対応済み</button>
                     <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
                 </div>
                 ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
@@ -769,8 +780,8 @@
             if (card) card.remove();
             const left = document.querySelectorAll(`#${id} .burst-card`).length;
             if (currentMode === 'burst') {
-                setUnreadStatus(left);
-                if (left === 0) document.getElementById(id).innerHTML = emptyBox('🎉 未読はありません');
+                setTodoStatus(left);
+                if (left === 0) document.getElementById(id).innerHTML = emptyBox('🎉 要対応のチャットはありません');
             } else if (currentMode === 'later') {
                 setStatus(`後で ${left}`, 'bg-amber-500');
                 if (left === 0) document.getElementById(id).innerHTML = emptyBox('☕ 「後で対応」のルームはありません');
@@ -793,6 +804,8 @@
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
                 sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
+                sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
+                sheetBtn('👤', `担当者名を変更（今：${esc(localStorage.getItem(STAFF_NAME_KEY) || '未設定')}）`, `changeStaffName()`) +
                 `<a href="https://www.chatwork.com/#!rid${rid}" target="_blank" rel="noopener" class="sheet-row"><span class="text-xl w-7 text-center">🌐</span><span>Chatworkで開く</span></a>`;
             openSheet('sheetActions');
         };
@@ -1131,7 +1144,7 @@
                         <div class="grid grid-cols-4 gap-2 mt-3">
                             <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
                             <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
-                            <button onclick="markAsRead('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 既読</button>
+                            <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
                             <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
                         </div>
                     </div>`;
@@ -1411,39 +1424,204 @@
             }
         };
 
-        // ===== 未読タブ =====
-        function unreadOf(data) {
+        // ===== 要対応タブ（対応済みフラグはFirestoreでスタッフ全員と共有） =====
+        //   cw_handled/{アカウント}_{ルームID} : { handledAt(秒), reopen, by, auto }
+        //   cw_handled_meta/{アカウント}       : { baselineAt } 使い始めた時刻
+        //   cw_handled_log                      : 手動で対応済み・未対応に戻した記録
+        const HANDLED_CACHE_KEY = "cw_handled_cache_v1_";
+        const STAFF_NAME_KEY = "cw_staff_name";
+        let handledMap = {};
+        let baselineAt = null;
+        let handledAcc = null;
+        let handledReady = null;
+        let handledSynced = false;
+        let handledUnsub = null;
+        let lastBundle = null;
+
+        function getStaffName() {
+            let n = localStorage.getItem(STAFF_NAME_KEY);
+            if (!n) {
+                n = (prompt("担当者名を入力してください（対応済みの記録に使います）") || "").trim();
+                if (n) localStorage.setItem(STAFF_NAME_KEY, n);
+            }
+            return n || "未設定";
+        }
+        window.changeStaffName = function() {
+            const cur = localStorage.getItem(STAFF_NAME_KEY) || "";
+            const n = (prompt("担当者名", cur) || "").trim();
+            if (n) { localStorage.setItem(STAFF_NAME_KEY, n); showToast(`担当者名を「${n}」にしました`); }
+            closeAllModals();
+        };
+
+        // 前回の対応状況を端末から復元（Firestoreの読み込みを待たずに表示するため）
+        function restoreHandledCache(acc) {
+            if (handledAcc === acc && handledSynced) return;
+            try {
+                const c = JSON.parse(localStorage.getItem(HANDLED_CACHE_KEY + acc));
+                handledMap = (c && c.map) || {};
+                baselineAt = (c && c.baselineAt) || null;
+            } catch (e) { handledMap = {}; baselineAt = null; }
+        }
+        function saveHandledCache() {
+            try { localStorage.setItem(HANDLED_CACHE_KEY + handledAcc, JSON.stringify({ map: handledMap, baselineAt: baselineAt })); } catch (e) {}
+        }
+
+        // Firestoreの対応状況をリアルタイムで受け取る（他のスタッフの操作もすぐ反映）
+        function startHandledSync() {
+            const acc = getAccount();
+            if (handledAcc === acc && handledReady) return handledReady;
+            if (handledUnsub) { handledUnsub(); handledUnsub = null; }
+            handledAcc = acc;
+            handledSynced = false;
+            handledReady = (async () => {
+                const f = await loadFirestore();
+                const metaRef = f.doc(f.db, 'cw_handled_meta', acc);
+                const meta = await f.getDoc(metaRef);
+                if (meta.exists()) {
+                    baselineAt = meta.data().baselineAt;
+                } else {
+                    baselineAt = Math.floor(Date.now() / 1000);
+                    await f.setDoc(metaRef, { account: acc, baselineAt: baselineAt, createdAt: f.serverTimestamp() });
+                }
+                await new Promise((resolve, reject) => {
+                    let first = true;
+                    handledUnsub = f.onSnapshot(
+                        f.query(f.collection(f.db, 'cw_handled'), f.where('account', '==', acc)),
+                        qs => {
+                            const map = {};
+                            qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                            if (handledAcc !== acc) return;
+                            handledMap = map;
+                            handledSynced = true;
+                            saveHandledCache();
+                            if (first) { first = false; resolve(); } else onHandledChanged();
+                        },
+                        err => { if (first) { first = false; reject(err); } else console.error(err); }
+                    );
+                });
+            })().catch(e => { handledReady = null; throw e; });
+            return handledReady;
+        }
+
+        // 他のスタッフが対応済み・未対応に戻した時
+        function onHandledChanged() {
+            if (currentMode !== 'burst' || !lastBundle) return;
+            const container = document.getElementById('burstModeContainer');
+            const needFetch = Object.keys(handledMap).some(rid => handledMap[rid].reopen && !(lastBundle.latest || {})[rid]);
+            if (needFetch) { fetchAllUnreadRooms(false); return; }
+            if (!isUserBusy(container)) renderTodo(lastBundle, false);
+        }
+
+        // 手動で「対応済み」「未対応に戻す」
+        async function setHandled(roomIds, opts) {
+            await startHandledSync().catch(() => {});
+            const f = await loadFirestore();
+            const acc = getAccount();
+            const by = getStaffName();
+            const now = Math.floor(Date.now() / 1000);
+            const batch = f.writeBatch(f.db);
+            roomIds.map(String).forEach(rid => {
+                const data = { account: acc, roomId: rid, handledAt: opts.reopen ? 0 : (opts.at || now), reopen: !!opts.reopen, by: by, auto: false, updatedAt: f.serverTimestamp() };
+                batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), data);
+                batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.reopen ? 'reopen' : 'done', by: by, at: f.serverTimestamp() });
+                handledMap[rid] = Object.assign({}, data, { updatedAt: null });   // 画面にはすぐ反映
+            });
+            saveHandledCache();
+            await batch.commit();
+        }
+
+        // 自社が返信済み・動きがメッセージ以外だったルームは自動で対応済みに（次回から取りに行かない）
+        async function autoHandleRooms(list) {
+            if (!handledSynced || !list.length) return;
+            const fresh = list.filter(([rid, t]) => { const h = handledMap[rid]; return !(h && (h.reopen || Number(h.handledAt) >= t)); });
+            if (!fresh.length) return;
+            try {
+                const f = await loadFirestore();
+                const acc = getAccount();
+                for (let i = 0; i < fresh.length; i += 400) {
+                    const batch = f.writeBatch(f.db);
+                    fresh.slice(i, i + 400).forEach(([rid, t]) => {
+                        batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), { account: acc, roomId: rid, handledAt: t, reopen: false, by: '自動', auto: true, updatedAt: f.serverTimestamp() });
+                    });
+                    await batch.commit();
+                }
+            } catch (e) { console.error('自動の対応済み保存に失敗:', e); }
+        }
+
+        function handledForRequest() {
+            const out = {};
+            Object.keys(handledMap).forEach(rid => { const h = handledMap[rid]; out[rid] = h.reopen ? 0 : (Number(h.handledAt) || 0); });
+            return out;
+        }
+
+        // 要対応の判定：対応済みの後にお客様の発言があり、最後の発言がお客様のルーム
+        function computeTodo(data, autoList) {
             const latest = data.latest || {};
-            const lastIsMine = r => {
-                const ms = (latest[String(r.room_id)] || {}).messages || [];
-                return ms.length ? isMine(ms[ms.length - 1]) : false;
-            };
-            // お客様の発言が最後のルームを上に、自社が最後のルームは下へ
-            return (data.rooms || []).filter(r => getUnread(r) > 0)
-                .sort((a, b) => (lastIsMine(a) - lastIsMine(b)) || (b.last_update_time || 0) - (a.last_update_time || 0));
+            const out = [];
+            (data.rooms || []).forEach(r => {
+                const rid = String(r.room_id);
+                const h = handledMap[rid];
+                const reopen = !!(h && h.reopen);
+                const eff = h ? (Number(h.handledAt) || 0) : (getUnread(r) > 0 ? 0 : (baselineAt || 0));
+                if (!reopen && (r.last_update_time || 0) <= eff) return;
+                const entry = latest[rid];
+                if (!entry) return;
+                if (entry.error) { out.push({ r, error: entry.error, waitSince: r.last_update_time || 0, reopen }); return; }
+                const msgs = entry.messages || [];
+                if (!msgs.length) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                const last = msgs[msgs.length - 1];
+                if (!reopen) {
+                    if (isMine(last)) { if (autoList) autoList.push([rid, Math.max(last.send_time || 0, r.last_update_time || 0)]); return; }
+                    if ((last.send_time || 0) <= eff) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                }
+                const shown = reopen ? msgs : msgs.filter(m => (m.send_time || 0) > eff);
+                let lastMine = -1;
+                shown.forEach((m, i) => { if (isMine(m)) lastMine = i; });
+                const waiting = shown.slice(lastMine + 1);
+                out.push({ r, all: msgs, count: Math.max(shown.length, 1), reopen, waitSince: (waiting[0] || last).send_time || 0 });
+            });
+            out.sort((a, b) => (a.waitSince || 0) - (b.waitSince || 0));   // 待たせている時間が長い順
+            return out;
         }
-        function setUnreadStatus(n) {
-            if (n === 0) setStatus('未読ゼロ', 'bg-emerald-500');
-            else setStatus(`未読 ${n}`, 'bg-amber-500');
+
+        function waitLabel(sec) {
+            const min = Math.max(0, Math.floor((Date.now() / 1000 - sec) / 60));
+            if (min < 60) return `${min}分待ち`;
+            const h = Math.floor(min / 60);
+            return h < 24 ? `${h}時間待ち` : `${Math.floor(h / 24)}日待ち`;
         }
-        function renderUnreadBundle(data) {
+        function waitCls(sec) {
+            const h = (Date.now() / 1000 - sec) / 3600;
+            return h >= 3 ? 'bg-red-500 text-white' : h >= 1 ? 'bg-amber-400 text-amber-950' : 'bg-slate-200 text-slate-700';
+        }
+        function setTodoStatus(n) {
+            if (n === 0) setStatus('要対応ゼロ', 'bg-emerald-500');
+            else setStatus(`要対応 ${n}`, 'bg-red-500');
+        }
+
+        function renderTodo(data, allowAuto) {
             const container = document.getElementById('burstModeContainer');
             allRoomsCache = data.rooms || [];
-            const rooms = unreadOf(data);
-            setUnreadStatus(rooms.length);
-            if (rooms.length === 0) { container.innerHTML = emptyBox('🎉 未読はありません'); return; }
-            const latest = data.latest || {};
-            container.innerHTML = rooms.map(r =>
-                burstCardHtml(r.room_id, r.name, `未読 ${getUnread(r)}`, "bg-red-500 text-white", latest[String(r.room_id)] || { error: '取得できませんでした' }, getUnread(r))
-            ).join('');
+            const auto = [];
+            const items = computeTodo(data, auto);
+            if (allowAuto) autoHandleRooms(auto);
+            setTodoStatus(items.length);
+            if (items.length === 0) { container.innerHTML = emptyBox('🎉 要対応のチャットはありません'); updateSelectionBar(); return; }
+            const note = data.truncated ? `<div class="text-xs text-amber-700 px-1">※ 動きのあったルームが多いため、新しい100ルームだけを確認しました。対応済みにしていくと漏れがなくなります。</div>` : '';
+            container.innerHTML = note + items.map(it => {
+                const u = getUnread(it.r);
+                const badge = `${it.reopen ? '↺ ' : ''}${waitLabel(it.waitSince)}${u > 0 ? `・未読${u}` : ''}`;
+                const entry = it.error ? { error: it.error } : { messages: it.all };
+                return burstCardHtml(it.r.room_id, it.r.name, badge, waitCls(it.waitSince), entry, it.count);
+            }).join('');
             updateSelectionBar();
             applyOptionBadges();
         }
-        function bundleSignature(data) {
-            const latest = data.latest || {};
-            return unreadOf(data).map(r => {
-                const ms = (latest[String(r.room_id)] || {}).messages || [];
-                return `${r.room_id}:${getUnread(r)}:${ms.length ? ms[ms.length - 1].message_id : ''}`;
+
+        function todoSignature(data) {
+            return computeTodo(data).map(it => {
+                const ms = it.all || [];
+                return `${it.r.room_id}:${ms.length ? ms[ms.length - 1].message_id : ''}:${it.reopen ? 1 : 0}`;
             }).join('|');
         }
         function isUserBusy(container) {
@@ -1468,36 +1646,48 @@
             const acc = getAccount();
             const seq = ++bundleSeq;
 
+            // ① 前回の内容を一瞬で表示
             let shownSig = null;
             const cached = readBundleCache(acc);
             if (cached && cached.data && !container.querySelector('.burst-card')) {
-                renderUnreadBundle(cached.data);
-                shownSig = bundleSignature(cached.data);
+                lastBundle = cached.data;
+                renderTodo(cached.data, false);
+                shownSig = todoSignature(cached.data);
                 setLastUpdated(true);
-            } else if (container.querySelector('.burst-card') && cached && cached.data) {
-                shownSig = bundleSignature(cached.data);
+            } else if (container.querySelector('.burst-card') && lastBundle) {
+                shownSig = todoSignature(lastBundle);
             } else {
-                container.innerHTML = emptyBox('未読ルームを確認中…');
+                container.innerHTML = emptyBox('要対応のチャットを確認中…');
             }
             setStatus('更新中…');
 
+            // ② 対応状況（Firestore）を読み込んでから、最新を取得
             try {
-                const data = await callApi("get_unread_bundle");
+                await startHandledSync();
+                const data = await callApi("get_todo_bundle", { handled: handledForRequest(), baseline: baselineAt });
                 try { localStorage.setItem(BUNDLE_CACHE_KEY + acc, JSON.stringify({ t: Date.now(), data: data })); } catch (e) {}
                 if (seq !== bundleSeq || acc !== getAccount() || currentMode !== 'burst') return;
+                lastBundle = data;
                 lastFetchAt = Date.now();
                 allRoomsCache = data.rooms || [];
                 setLastUpdated(false);
                 migrateOldLater();
 
-                const sig = bundleSignature(data);
-                if (shownSig !== null && sig === shownSig && !force) { setUnreadStatus(unreadOf(data).length); return; }
+                const sig = todoSignature(data);
+                if (shownSig !== null && sig === shownSig && !force) {
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
+                    return;
+                }
                 if (shownSig !== null && !force && isUserBusy(container)) {
-                    setUnreadStatus(unreadOf(data).length);
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
                     showToast('新着があります。🔄で更新できます');
                     return;
                 }
-                renderUnreadBundle(data);
+                renderTodo(data, true);
             } catch (e) {
                 if (seq !== bundleSeq) return;
                 if (shownSig === null) {
@@ -1508,6 +1698,38 @@
                 setStatus('エラー', 'bg-red-500');
             }
         }
+
+        // 「✓ 対応済み」：対応済みにして、Chatwork側も既読に
+        window.markDone = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = "処理中…";
+            try {
+                await setHandled([roomId], { reopen: false });
+                callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId }).catch(() => {});
+                markReadInCache([roomId]);
+                if (currentMode === 'later') callApi("set_later", { room_ids: [roomId], on: false }).catch(() => {});
+                showToast("対応済みにしました");
+                if (currentMode === 'burst' || currentMode === 'later') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
+            } catch (e) {
+                alert("対応済みの保存に失敗しました: " + e.message);
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+
+        // 「↺ 未対応に戻す」：要対応タブにもう一度表示
+        window.reopenRoom = async function(roomId) {
+            closeAllModals();
+            try {
+                await setHandled([roomId], { reopen: true });
+                showToast("要対応に戻しました");
+                if (currentMode === 'burst') fetchAllUnreadRooms(true);
+            } catch (e) {
+                alert("保存に失敗しました: " + e.message);
+            }
+        };
 
         // ===== 返信 =====
         window.generateAiReplyForMessage = async function(key, btnEl) {
@@ -1644,6 +1866,7 @@
             try {
                 await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
                 saveSendLog(m, finalMsg, 'reply');
+                setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
                 markReadInCache([m.roomId]);
                 showToast(done ? "送信して完了にしました" : "送信しました");
                 if (done) removeCard(m.roomId);
