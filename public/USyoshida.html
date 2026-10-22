@@ -107,6 +107,24 @@ dialog.wide[open]{display:flex}
 .msg-err{font-size:12px;color:var(--danger);font-weight:700}
 .msg-warn{font-size:12px;color:var(--primary)}
 .car-y{font-weight:700}
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:2px solid var(--line);flex-wrap:wrap}
+.tabs button{border:0;border-radius:6px 6px 0 0;background:transparent;padding:10px 16px;color:var(--muted);margin-bottom:-2px;border-bottom:3px solid transparent}
+.tabs button.on{color:var(--ink);font-weight:700;border-bottom-color:var(--primary)}
+.stack{display:grid;gap:10px}
+.h2{margin:0;font-size:17px}
+.small{font-size:13px;margin:0}
+.files{display:grid;gap:8px}
+.files label{display:grid;gap:4px;font-size:13px;font-weight:700}
+.files input{font-size:13px}
+.search-row.wrap{flex-wrap:wrap}
+.log{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;max-height:260px;overflow:auto;margin:0;font-family:inherit}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px}
+table.res{width:100%;border-collapse:collapse;font-size:13px}
+table.res th,table.res td{padding:6px 10px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+table.res th{background:var(--bg);border-top:0;white-space:nowrap}
+.st-ok{color:var(--ok);font-weight:700}
+.st-ng{color:var(--danger);font-weight:700}
+.mini{padding:3px 8px;font-size:12px}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:6px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:9}
 #toast.show{opacity:1}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
@@ -165,6 +183,12 @@ dialog.wide[open]{display:flex}
   </section>
 
   <section id="appView" hidden>
+    <nav class="tabs" role="tablist" aria-label="画面の切り替え">
+      <button data-tab="work" class="on" role="tab">検索・入荷・送り状</button>
+      <button data-tab="after" role="tab">出荷後の取り込み</button>
+      <button data-tab="inq" role="tab">問い合わせ中</button>
+    </nav>
+    <div id="tabWork">
     <div class="panel search">
       <div class="seg" role="tablist" aria-label="探す番号">
         <button data-mode="tracking" class="on" role="tab" aria-selected="true">倉庫追跡番号</button>
@@ -179,6 +203,43 @@ dialog.wide[open]{display:flex}
     </div>
     <div id="summary"></div>
     <div id="groups"></div>
+    </div>
+
+    <div id="tabAfter" hidden>
+      <div class="panel stack">
+        <h2 class="h2">発行済みデータの取り込み・出荷通知</h2>
+        <p class="muted small">ヤマト・佐川の発行済みCSVを読み込むと、品名2の「(No.○○)」でシートと紐づけて、配送業者・追跡番号・出荷日を入れます。受注CSVも読み込むと、出荷通知用のCSV（ステータス120）を作れます。</p>
+        <div class="files">
+          <label>ヤマトの発行済みCSV<input type="file" id="fYamato" accept=".csv"></label>
+          <label>佐川の発行済みCSV<input type="file" id="fSagawa" accept=".csv"></label>
+          <label>受注CSV（出荷通知を作るときだけ）<input type="file" id="fOrder" accept=".csv"></label>
+        </div>
+        <div class="search-row"><button id="btnLink" class="primary">紐づけを確認する</button></div>
+        <div id="linkResult"></div>
+        <div id="linkActions" class="search-row wrap" hidden>
+          <label class="chk"><input type="checkbox" id="excludeInq" checked> 問い合わせ中の注文は出荷通知CSVから外す</label>
+          <button id="btnLinkWrite" class="primary">シートに反映する</button>
+          <button id="btnNotifyCsv" class="secondary">出荷通知CSVを保存</button>
+        </div>
+        <pre id="linkLog" class="log" hidden></pre>
+      </div>
+
+      <div class="panel stack" style="margin-top:16px">
+        <h2 class="h2">Robot-inの受注反映履歴</h2>
+        <p class="muted small">Robot-inの受注反映履歴をそのままコピーして貼り付けてください。結果（成功・失敗）をW列に入れ、V列は成功・失敗どちらも「更新済」にします（V列が空白の注文は連携不可の扱いのままです）。</p>
+        <textarea id="robotText" rows="6" placeholder="ここに貼り付け"></textarea>
+        <div class="search-row"><button id="btnRobotClear" class="ghost">クリア</button><button id="btnRobotRead" class="primary">読み取る</button></div>
+        <div id="robotResult"></div>
+        <div id="robotActions" class="search-row" hidden><button id="btnRobotWrite" class="primary">シートに反映する</button></div>
+      </div>
+    </div>
+
+    <div id="tabInq" hidden>
+      <div class="panel stack">
+        <div class="search-row"><span id="inqCount" class="muted"></span><button id="btnInqReload" class="ghost">再読み込み</button></div>
+        <div id="inqList"></div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -241,6 +302,7 @@ dialog.wide[open]{display:flex}
 <div id="printArea"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.0.0/encoding.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -269,6 +331,7 @@ const state = {
   groups: [],      // [{key, rows:[No...]}]
   notFound: [],
   selected: new Set(),
+  inq: {},         // No → 問い合わせ中の情報
 };
 
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
@@ -450,6 +513,8 @@ async function doSearch(){
     state.selected.clear();
     render();
     saveOrders(j.rows);
+    await loadInquiryFlags(j.rows.map(r=>r.no));
+    render();
   }catch(e){ toast(e.message, 6000); }
   finally{ btn.disabled = false; btn.textContent = '検索する'; }
 }
@@ -474,6 +539,8 @@ function infoOf(r){
     });
   }
   if (r.deliveryDate || r.deliveryTime) badges.push({ t:'日時指定', warn:true });
+  const iq = state.inq[r.no];
+  if (iq) { badges.unshift({ t:'問い合わせ中', warn:true }); partners.unshift('問い合わせ中'+(iq.memo ? '：'+iq.memo : '')); }
   return { badges, partners, highlight: !!(r.deliveryDate || r.deliveryTime || r.note) };
 }
 
@@ -499,7 +566,7 @@ function render(){
       + '<div class="rows">'+rows.map(rowHtml).join('')+'</div></section>';
   }).join('');
 
-  $('#actionBar').hidden = !state.groups.length;
+  $('#actionBar').hidden = !state.groups.length || $('#tabWork').hidden;
   if (!$('#arrDate').value) $('#arrDate').value = todayStr();
   updateSel();
 }
@@ -521,7 +588,8 @@ function rowHtml(r){
     + '<div class="l3 muted">'+esc(r.name)+' ／ 数量 '+esc(r.qty)+' ／ 注文番号 '+esc(r.orderId)+'</div></div>'
     + '<div class="side"><span>'+spec+'</span>'
     + (r.arrivedAt ? '<span class="arr">入荷 '+esc(md(r.arrivedAt))+'</span>' : '<span class="todo">未入荷</span>')
-    + '<span>'+(r.shippedAt ? '出荷 '+esc(md(r.shippedAt)) : '未出荷')+'</span></div>'
+    + '<span>'+(r.shippedAt ? '出荷 '+esc(md(r.shippedAt)) : '未出荷')+'</span>'
+    + '<button type="button" class="ghost mini inqbtn" data-no="'+r.no+'">'+(state.inq[r.no] ? '問い合わせを解除' : '問い合わせ中にする')+'</button></div>'
     + (noteText ? '<div class="note">'+esc(noteText)+'</div>' : '')
     + '</label>';
 }
@@ -542,6 +610,12 @@ $('#groups').addEventListener('change', e => {
     g.rows.forEach(no => t.checked ? state.selected.add(no) : state.selected.delete(no));
     render();
   }
+});
+$('#groups').addEventListener('click', e => {
+  const b = e.target.closest('.inqbtn');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  toggleInquiry(Number(b.dataset.no));
 });
 $('#selAll').onchange = e => {
   state.groups.forEach(g => g.rows.forEach(no => e.target.checked ? state.selected.add(no) : state.selected.delete(no)));
@@ -774,6 +848,7 @@ function makeLabel(rows, key, splitFrom){
   const dd = rows.map(r=>r.deliveryDate).find(Boolean) || '';
   if (dd && !/^\d{4}-\d{2}-\d{2}$/.test(dd)) errors.push('指定日を読み取れません（'+dd+'）');
   if (rows.some(r=>r.shippedAt)) warns.push('出荷日が入っている注文を含みます');
+  if (rows.some(r=>state.inq[r.no])) warns.push('問い合わせ中の注文を含みます');
 
   if (carrier==='yamato') {
     if (splitB(addr,[64,32]).overflow) errors.push('住所が長すぎます');
@@ -946,6 +1021,384 @@ async function logLabels(list){
     await batch.commit();
   }catch(e){ console.warn('送り状の記録に失敗', e); }
 }
+
+/* ===== タブ ===== */
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  const t = b.dataset.tab;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x===b));
+  $('#tabWork').hidden = t!=='work';
+  $('#tabAfter').hidden = t!=='after';
+  $('#tabInq').hidden = t!=='inq';
+  $('#actionBar').hidden = t!=='work' || !state.groups.length;
+  if (t==='inq') loadInquiryList();
+});
+
+/* ===== Firestore の補助 ===== */
+const ordersCol = () => clientRef().collection('orders');
+const serverTs = () => firebase.firestore.FieldValue.serverTimestamp();
+function chunk(arr, n){ const out=[]; for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
+
+// 受注番号 → アプリに記録済みの注文 [{no,rowNumber}]
+async function ordersByOrderIds(ids){
+  const map = {};
+  for (const part of chunk([...new Set(ids.filter(Boolean))], 30)) {
+    const snap = await ordersCol().where('orderId','in',part).get();
+    snap.forEach(d => { const v=d.data(); (map[v.orderId] = map[v.orderId] || []).push({ no:Number(d.id), rowNumber:v.rowNumber }); });
+  }
+  return map;
+}
+
+/* ===== 問い合わせ中 ===== */
+async function loadInquiryFlags(nos){
+  try{
+    for (const part of chunk([...new Set(nos)].map(String), 30)) {
+      const snap = await ordersCol().where(firebase.firestore.FieldPath.documentId(),'in',part).get();
+      part.forEach(id => delete state.inq[Number(id)]);
+      snap.forEach(d => { const iq=d.data().inquiry; if (iq && iq.active) state.inq[Number(d.id)] = iq; });
+    }
+  }catch(e){ console.warn('問い合わせ中の読み込みに失敗', e); }
+}
+
+async function toggleInquiry(no){
+  const ref = ordersCol().doc(String(no));
+  const email = state.user.email || '';
+  try{
+    if (state.inq[no]) {
+      if (!confirm('No.'+no+'の問い合わせ中を解除しますか？')) return;
+      await ref.set({ inquiry:{ active:false, resolvedAt:serverTs(), resolvedBy:email } }, { merge:true });
+      delete state.inq[no];
+      toast('No.'+no+'の問い合わせ中を解除しました');
+    } else {
+      const memo = prompt('No.'+no+'を問い合わせ中にします。問い合わせ内容のメモ（空欄でも大丈夫です）', '');
+      if (memo === null) return;
+      const iq = { active:true, memo:memo.trim(), at:new Date().toISOString(), by:email };
+      await ref.set({ inquiry:Object.assign({}, iq, { resolvedAt:null, resolvedBy:'' }) }, { merge:true });
+      state.inq[no] = iq;
+      toast('No.'+no+'を問い合わせ中にしました');
+    }
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  if (state.groups.length) render();
+  if (!$('#tabInq').hidden) loadInquiryList();
+}
+
+let inqDocs = [];
+async function loadInquiryList(){
+  $('#inqList').innerHTML = '<p class="muted">読み込み中…</p>';
+  try{
+    const snap = await ordersCol().where('inquiry.active','==',true).get();
+    inqDocs = [];
+    snap.forEach(d => inqDocs.push(Object.assign({ no:Number(d.id) }, d.data())));
+    inqDocs.sort((a,b) => a.no-b.no);
+    inqDocs.forEach(d => state.inq[d.no] = d.inquiry);
+    $('#inqCount').textContent = '問い合わせ中 '+inqDocs.length+'件';
+    $('#inqList').innerHTML = inqDocs.length
+      ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>ショップ</th><th>商品</th><th>お届け先</th><th>メモ</th><th>登録</th><th></th></tr></thead><tbody>'
+        + inqDocs.map(d => '<tr><td>'+d.no+'</td><td>'+esc(d.shop)+'</td><td>'+esc(d.item)+'</td><td>'+esc(d.name)+'</td><td>'+esc(d.inquiry.memo)+'</td>'
+          + '<td>'+esc(String(d.inquiry.at||'').slice(0,10))+'<br><span class="muted">'+esc(d.inquiry.by)+'</span></td>'
+          + '<td><button type="button" class="ghost mini inqoff" data-no="'+d.no+'">解除</button></td></tr>').join('')
+        + '</tbody></table></div>'
+      : '<p class="muted">問い合わせ中の注文はありません。検索結果の各注文にある「問い合わせ中にする」で登録できます。</p>';
+  }catch(e){ $('#inqList').innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
+}
+$('#btnInqReload').onclick = loadInquiryList;
+$('#inqList').addEventListener('click', e => { const b=e.target.closest('.inqoff'); if (b) toggleInquiry(Number(b.dataset.no)); });
+
+/* ===== 発行済みデータ・出荷通知 ===== */
+const files = { yamato:null, sagawa:null, order:null, orderName:'' };
+let linkPlan = null;
+
+function readCsvFile(file){
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('ファイルを読み込めませんでした：'+file.name));
+    fr.onload = e => {
+      let s;
+      try { s = new TextDecoder('utf-8', { fatal:true }).decode(e.target.result); }
+      catch(_) { s = new TextDecoder('shift_jis').decode(e.target.result); }
+      resolve(Papa.parse(s, { header:false, skipEmptyLines:false }).data);
+    };
+    fr.readAsArrayBuffer(file);
+  });
+}
+[['fYamato','yamato'],['fSagawa','sagawa'],['fOrder','order']].forEach(([id,key]) => {
+  $('#'+id).addEventListener('change', async e => {
+    const f = e.target.files[0];
+    files[key] = null; linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = '';
+    if (!f) return;
+    try { files[key] = await readCsvFile(f); if (key==='order') files.orderName = f.name; toast(f.name+' を読み込みました（'+files[key].length+'行）'); }
+    catch(err){ toast(err.message, 6000); }
+  });
+});
+
+function linkLog(text, reset){ const el=$('#linkLog'); el.hidden=false; el.textContent = (reset ? '' : el.textContent) + text + '\n'; el.scrollTop = el.scrollHeight; }
+function logList(title, items, limit){
+  if (!items.length) return;
+  linkLog('\n'+title+'：'+items.length+'件');
+  items.slice(0, limit||30).forEach(x => linkLog('  - '+x));
+  if (items.length > (limit||30)) linkLog('  …ほか'+(items.length-(limit||30))+'件');
+}
+function parseNos(s){ const m=String(s||'').match(/No\.?\s*([\d,，、\s]+)/i); return m ? m[1].split(/[,，、\s]+/).map(Number).filter(Boolean) : []; }
+function pad2(n){ return String(n).padStart(2,'0'); }
+function normDate(s){
+  const t = String(s||'').trim();
+  let m = t.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); if (m) return m[1]+'-'+pad2(m[2])+'-'+pad2(m[3]);
+  m = t.match(/^(\d{4})(\d{2})(\d{2})$/); if (m) return m[1]+'-'+m[2]+'-'+m[3];
+  return '';
+}
+
+// 発行済みCSVの1行 → { carrier, tracking, orderNo, nos, date }
+// ヤマト：見出しなし。A列=お客様管理番号（注文番号）、D列=伝票番号、E列=出荷予定日、AD列=品名2
+// 佐川：1行目は見出し。A列=お問い合せ送り状No.、C列=出荷日、AN列=品名2、AO列=品名3（注文番号）
+function carrierRows(){
+  const out = [];
+  (files.yamato || []).forEach(r => {
+    if (!r || !/^\d{8,}$/.test(String(r[3]||'').trim())) return;
+    out.push({ carrier:'ヤマト運輸', tracking:String(r[3]).trim(), orderNo:String(r[0]||'').trim(), nos:parseNos(r[29]), date:normDate(r[4]) });
+  });
+  (files.sagawa || []).slice(1).forEach(r => {
+    if (!r || !String(r[0]||'').trim()) return;
+    out.push({ carrier:'佐川急便', tracking:String(r[0]).trim(), orderNo:String(r[40]||'').trim(), nos:parseNos(r[39]), date:normDate(r[2]) });
+  });
+  return out;
+}
+
+$('#btnLink').onclick = async () => {
+  if (!files.yamato && !files.sagawa) { toast('ヤマトか佐川の発行済みCSVを読み込んでください'); return; }
+  const btn = $('#btnLink'); btn.disabled = true; btn.textContent = '確認中…';
+  try{
+    const crows = carrierRows();
+    // (No.○○) がない行は、アプリに記録済みの受注番号で探す
+    const oidMap = await ordersByOrderIds(crows.filter(c=>!c.nos.length).map(c=>c.orderNo));
+    crows.forEach(c => { if (!c.nos.length) c.nos = (oidMap[c.orderNo]||[]).map(x=>x.no); });
+
+    const byNo = {}, unlinked = [];
+    crows.forEach(c => {
+      if (!c.nos.length) { unlinked.push(c.carrier+' '+c.tracking+'（'+(c.orderNo||'注文番号なし')+'）'); return; }
+      c.nos.forEach(no => { if (!byNo[no]) byNo[no] = c; }); // 複数口は1口目の番号
+    });
+    const nos = Object.keys(byNo).map(Number).sort((a,b)=>a-b);
+    const cur = {};
+    if (nos.length) {
+      for (const part of chunk(nos, 200)) {
+        const j = await gas('search', { mode:'no', values:part });
+        j.rows.forEach(r => cur[r.no] = r);
+      }
+    }
+    await loadInquiryFlags(nos);
+
+    const plan = nos.map(no => {
+      const c = byNo[no], r = cur[no];
+      if (!r) return { no, c, status:'nf' };
+      const ex = normTracking(r.tracking);
+      if (ex && ex !== normTracking(c.tracking)) return { no, c, r, status:'conflict' };
+      return { no, c, r, status: ex ? 'same' : 'ok', inq: !!state.inq[no] };
+    });
+    linkPlan = { plan, unlinked };
+    renderLinkPlan();
+  }catch(e){ toast(e.message, 6000); }
+  finally{ btn.disabled = false; btn.textContent = '紐づけを確認する'; }
+};
+
+function renderLinkPlan(){
+  const { plan, unlinked } = linkPlan;
+  const w = plan.filter(p => p.status==='ok' || p.status==='same');
+  const label = p => {
+    if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
+    if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
+    const base = p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます';
+    return '<span class="st-ok">'+base+'</span>' + (p.inq ? '<br><span class="st-ng">問い合わせ中のため出荷日は入れません</span>' : '');
+  };
+  $('#linkResult').innerHTML = '<p><b>書き込み対象 '+w.length+'件</b><span class="muted"> ／ 書き込まない '+(plan.length-w.length)+'件 ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
+    + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
+      + plan.map(p => '<tr><td>'+p.no+'</td><td>'+esc(p.c.carrier)+'</td><td>'+esc(p.c.tracking)+'</td><td>'+esc(md(p.c.date || todayStr()))+'</td><td>'+label(p)+'</td></tr>').join('')
+      + '</tbody></table></div>' : '')
+    + (unlinked.length ? '<p class="st-ng small" style="margin-top:8px">No.も受注番号も見つからなかった送り状：'+esc(unlinked.join('、'))+'</p>' : '');
+  $('#linkActions').hidden = false;
+  $('#btnLinkWrite').disabled = !w.length;
+}
+
+$('#btnLinkWrite').onclick = async () => {
+  if (!linkPlan) return;
+  const targets = linkPlan.plan.filter(p => p.status==='ok' || p.status==='same');
+  if (!targets.length) return;
+  if (!confirm(targets.length+'件をシートに反映します。よろしいですか？')) return;
+  const btn = $('#btnLinkWrite'); btn.disabled = true;
+  linkLog('──────── シートへの反映 ────────', true);
+  try{
+    let done = 0; const notFound = [];
+    for (const part of chunk(targets, 100)) {
+      const updates = part.map(p => {
+        const fields = { carrier:p.c.carrier, tracking:p.c.tracking };
+        if (!p.inq) fields.shippedAt = p.c.date || todayStr();
+        return { no:p.no, rowNumber:p.r.rowNumber, fields };
+      });
+      const j = await gas('write', { updates });
+      done += j.updated; notFound.push(...j.notFound);
+      const batch = db.batch();
+      part.forEach(p => batch.set(ordersCol().doc(String(p.no)), {
+        carrier:p.c.carrier, tracking:p.c.tracking,
+        shippedAt: p.inq ? (p.r.shippedAt||'') : (p.c.date || todayStr()),
+        trackingLinkedAt: serverTs(),
+      }, { merge:true }));
+      await batch.commit().catch(e => console.warn(e));
+    }
+    linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号'+(targets.some(p=>!p.inq)?'・出荷日':'')+'）');
+    const inq = targets.filter(p=>p.inq).map(p=>'No.'+p.no);
+    logList('問い合わせ中のため出荷日を入れなかった注文', inq);
+    logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
+    toast(done+'件をシートに反映しました');
+  }catch(e){ linkLog('❌ '+e.message); toast(e.message, 6000); }
+  finally{ btn.disabled = false; }
+};
+
+/* --- 出荷通知CSV（受注CSV＋発行済みCSV → ステータス120） --- */
+function cleanOrderNoNormalized(str){
+  if (!str) return '';
+  return String(str).replace(/^No:?[\.\s]*/i,'').replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0)-0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g,'').trim().toLowerCase();
+}
+function buildCarrierMap(rows){
+  const map = new Map(); let multi = 0;
+  rows.forEach(c => {
+    const key = cleanOrderNoNormalized(c.orderNo);
+    if (!key || !c.tracking) return;
+    if (map.has(key)) { const e = map.get(key); if (e.count===1) multi++; e.count++; return; }
+    map.set(key, { tracking:c.tracking, rawOrderNo:c.orderNo, count:1, used:false });
+  });
+  return { map, multi };
+}
+const sjisCache = new Map();
+function isSjisSafe(ch){
+  if (ch.codePointAt(0) < 0x80) return true;
+  if (sjisCache.has(ch)) return sjisCache.get(ch);
+  const sj = Encoding.convert(Encoding.stringToCode(ch), { to:'SJIS', from:'UNICODE' });
+  const ok = Encoding.codeToString(Encoding.convert(sj, { to:'UNICODE', from:'SJIS' })) === ch;
+  sjisCache.set(ch, ok); return ok;
+}
+
+$('#btnNotifyCsv').onclick = async () => {
+  if (!files.order || files.order.length <= 1) { toast('出荷通知を作るには受注CSVを読み込んでください', 5000); return; }
+  const crows = carrierRows();
+  if (!crows.length) { toast('ヤマトか佐川の発行済みCSVを読み込んでください'); return; }
+  linkLog('──────── 出荷通知CSVの作成 ────────', true);
+
+  const yamato = buildCarrierMap(crows.filter(c=>c.carrier==='ヤマト運輸'));
+  const sagawa = buildCarrierMap(crows.filter(c=>c.carrier==='佐川急便'));
+
+  // 問い合わせ中の注文の受注番号
+  let inqOids = new Set();
+  if ($('#excludeInq').checked) {
+    try{
+      const snap = await ordersCol().where('inquiry.active','==',true).get();
+      snap.forEach(d => { const o=d.data().orderId; if (o) inqOids.add(cleanOrderNoNormalized(o)); });
+    }catch(e){ linkLog('⚠️ 問い合わせ中の注文を読み込めませんでした：'+e.message); }
+  }
+
+  const header = [...files.order[0]];
+  while (header.length <= 56) header.push('');
+  const out = [header];
+  const today = new Date().toLocaleDateString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit' });
+  let yc = 0, sc = 0; const unmatched = [], skippedInq = [];
+
+  for (let i = 1; i < files.order.length; i++) {
+    const src = files.order[i];
+    if (!src || src.length <= 5) continue;
+    const key = cleanOrderNoNormalized(src[5]);
+    if (!key) continue;
+    let carrier = null, entry = null;
+    if (yamato.map.has(key)) { carrier='ヤマト運輸'; entry=yamato.map.get(key); }
+    else if (sagawa.map.has(key)) { carrier='佐川急便'; entry=sagawa.map.get(key); }
+    if (!entry) { unmatched.push(String(src[5]).trim()); continue; }
+    entry.used = true;
+    if (inqOids.has(key)) { skippedInq.push(String(src[5]).trim()); continue; }
+    const row = [...src];
+    while (row.length <= 56) row.push('');
+    row[7] = '120'; row[46] = '発払い'; row[51] = today; row[55] = carrier; row[56] = entry.tracking;
+    out.push(row);
+    carrier==='ヤマト運輸' ? yc++ : sc++;
+  }
+
+  const n = out.length - 1;
+  linkLog('🎉 ステータス120（出荷通知の対象）：'+n+'件（ヤマト '+yc+'件 ／ 佐川 '+sc+'件）');
+  if (yamato.multi) linkLog('- ヤマト複数口の注文：'+yamato.multi+'件（1口目の伝票番号で紐づけ）');
+  if (sagawa.multi) linkLog('- 佐川複数口の注文：'+sagawa.multi+'件');
+  logList('⚠️ 問い合わせ中のため外した注文', skippedInq);
+  logList('⚠️ 受注CSVにあるが、追跡番号が見つからなかった注文', unmatched);
+  logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号', [...yamato.map.values()].filter(e=>!e.used).map(e=>e.rawOrderNo));
+  logList('⚠️ 佐川CSVにあるが、受注CSVに見当たらない注文番号', [...sagawa.map.values()].filter(e=>!e.used).map(e=>e.rawOrderNo));
+
+  if (!n) { linkLog('\n❌ 紐づけできた注文が0件のため、CSVは出力していません。'); toast('紐づけできた注文が0件でした。読み込んだCSVの組み合わせを確認してください', 6000); return; }
+
+  const bad = [];
+  out.slice(1).forEach(r => { const s = new Set(); r.forEach(v => Array.from(String(v??'')).forEach(ch => { if (!isSjisSafe(ch)) s.add(ch); })); if (s.size) bad.push('注文番号 '+r[5]+'：「'+[...s].join('')+'」'); });
+  logList('⚠️ Shift_JISにない文字があるため「?」になる行（取り込み後に確認してください）', bad);
+
+  const csv = out.map(r => r.map(v => '"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const sj = Encoding.convert(Encoding.stringToCode(csv), { to:'SJIS', from:'UNICODE' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([new Uint8Array(sj)], { type:'text/csv' }));
+  a.download = 'updated_status120_' + (files.orderName || 'order.csv');
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  linkLog('\n📥 出荷通知CSVを保存しました。');
+};
+
+/* ===== Robot-in の受注反映履歴 ===== */
+let robotPlan = null;
+$('#btnRobotClear').onclick = () => { $('#robotText').value=''; $('#robotResult').innerHTML=''; $('#robotActions').hidden=true; robotPlan=null; };
+function parseRobot(text){
+  const lines = text.split(/\r?\n/);
+  const h = lines.findIndex(l => /受注番号/.test(l));
+  const seen = new Set(), out = [];
+  (h >= 0 ? lines.slice(h+1) : lines).forEach(l => {
+    const c = (l.includes('\t') ? l.split('\t') : l.split(',')).map(s => s.trim());
+    if (!c[0] || !/^[\w\-]+$/.test(c[0]) || !/\d/.test(c[0]) || !c[1]) return;
+    if (seen.has(c[0])) return; seen.add(c[0]);
+    out.push({ orderNo:c[0], status:c[1], msg:c.slice(2).join(' ') });
+  });
+  return out;
+}
+$('#btnRobotRead').onclick = async () => {
+  const items = parseRobot($('#robotText').value);
+  if (!items.length) { toast('受注番号とステータスを読み取れませんでした。履歴をそのまま貼り付けてください', 5000); return; }
+  const btn = $('#btnRobotRead'); btn.disabled = true; btn.textContent = '照合中…';
+  try{
+    const map = await ordersByOrderIds(items.map(x=>x.orderNo));
+    items.forEach(x => x.orders = map[x.orderNo] || []);
+    robotPlan = items;
+    const ok = items.filter(x=>x.status==='成功').length, ng = items.filter(x=>x.status!=='成功').length, nf = items.filter(x=>!x.orders.length).length;
+    $('#robotResult').innerHTML = '<p><b>'+items.length+'件</b><span class="muted"> ／ 成功 '+ok+'件 ／ 失敗 '+ng+'件 ／ 該当なし '+nf+'件</span></p>'
+      + '<div class="tbl-wrap"><table class="res"><thead><tr><th>受注番号</th><th>結果</th><th>No.</th><th>メッセージ</th></tr></thead><tbody>'
+      + items.map(x => '<tr><td>'+esc(x.orderNo)+'</td><td class="'+(x.status==='成功'?'st-ok':'st-ng')+'">'+esc(x.status)+'</td>'
+        + '<td>'+(x.orders.length ? x.orders.map(o=>'No.'+o.no).join('、') : '<span class="st-ng">該当なし</span>')+'</td>'
+        + '<td class="small">'+esc(x.msg)+'</td></tr>').join('')
+      + '</tbody></table></div>';
+    $('#robotActions').hidden = !items.some(x=>x.orders.length);
+  }catch(e){ toast(e.message, 6000); }
+  finally{ btn.disabled = false; btn.textContent = '読み取る'; }
+};
+$('#btnRobotWrite').onclick = async () => {
+  if (!robotPlan) return;
+  const updates = [];
+  robotPlan.forEach(x => x.orders.forEach(o => {
+    const fields = { note2:x.status, statusUpdate:'更新済' }; // V列は空白＝連携不可、反映したら成功・失敗とも更新済
+    updates.push({ no:o.no, rowNumber:o.rowNumber, fields, _x:x });
+  }));
+  if (!updates.length) return;
+  if (!confirm(updates.length+'件をシートに反映します。よろしいですか？')) return;
+  const btn = $('#btnRobotWrite'); btn.disabled = true;
+  try{
+    let done = 0; const nf = [];
+    for (const part of chunk(updates, 100)) {
+      const j = await gas('write', { updates: part.map(u => ({ no:u.no, rowNumber:u.rowNumber, fields:u.fields })) });
+      done += j.updated; nf.push(...j.notFound);
+      const batch = db.batch();
+      part.forEach(u => batch.set(ordersCol().doc(String(u.no)), { robotStatus:u._x.status, robotMessage:u._x.msg, robotAt:serverTs() }, { merge:true }));
+      await batch.commit().catch(e => console.warn(e));
+    }
+    toast(done+'件をシートに反映しました'+(nf.length ? ' ／ シートで見つからなかったNo.：'+nf.join('、') : ''), nf.length ? 8000 : 3200);
+  }catch(e){ toast(e.message, 6000); }
+  finally{ btn.disabled = false; }
+};
 </script>
 </body>
 </html>
