@@ -269,7 +269,7 @@
                     return {
                         db: db, collection: fsMod.collection, addDoc: fsMod.addDoc, serverTimestamp: fsMod.serverTimestamp,
                         doc: fsMod.doc, getDoc: fsMod.getDoc, setDoc: fsMod.setDoc, onSnapshot: fsMod.onSnapshot,
-                        query: fsMod.query, where: fsMod.where, writeBatch: fsMod.writeBatch, deleteDoc: fsMod.deleteDoc,
+                        query: fsMod.query, where: fsMod.where, writeBatch: fsMod.writeBatch, deleteDoc: fsMod.deleteDoc, getDocs: fsMod.getDocs,
                         signOut: () => authMod.signOut(auth)
                     };
                 })().catch(err => { _fsPromise = null; throw err; });
@@ -729,6 +729,270 @@
                 </div>`;
         }
 
+        // ===== 請求記録（補填・イレギュラー発送など） =====
+        //   Firestore：billing_records（合言葉ログインで保護）
+        const BILLING_TYPES = ['イレギュラー発送', '補填', '再発送', '着払い立替', '作業費', '資材費', 'その他'];
+        let billingCtx = null;
+
+        function todayYmd() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        function yen(n) { return '¥' + Math.round(Number(n) || 0).toLocaleString(); }
+
+        window.openBillingForm = async function(key) {
+            const m = window.messageStore[key] || {};
+            billingCtx = { roomId: m.roomId, roomName: m.roomName || '', sourceText: (m.body || '').slice(0, 500), sourceMsgId: (m.replyTo && m.replyTo.mid) || '' };
+            document.getElementById('sheetActionsTitle').textContent = '🧾 請求に記録';
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="p-5 space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div><label class="field-label">管理番号</label><input id="bl_kanri" class="inp" placeholder="読込中…"></div>
+                        <div><label class="field-label">日付</label><input id="bl_date" type="date" class="inp" value="${todayYmd()}"></div>
+                    </div>
+                    <div><label class="field-label">ショップ名・お名前</label><input id="bl_shop" class="inp" placeholder="読込中…"></div>
+                    <div><label class="field-label">種類</label>
+                        <select id="bl_type" class="inp" onchange="onBillingTypeChange()">${BILLING_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>
+                    <div>
+                        <label class="field-label">送り状番号（任意・着払いや再発送の時）</label>
+                        <div class="flex gap-2">
+                            <input id="bl_tracking" class="inp flex-1 min-w-0" inputmode="numeric" autocomplete="off" placeholder="手入力または📷で読み取り">
+                            <label class="btn btn-sub shrink-0 cursor-pointer">📷 読取
+                                <input type="file" accept="image/*" capture="environment" style="display:none" onchange="scanTrackingPhoto(this)">
+                            </label>
+                        </div>
+                        <div id="bl_scan_msg" class="text-xs text-slate-500 mt-1"></div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div><label class="field-label">単価（円）</label><input id="bl_price" type="number" inputmode="numeric" class="inp" oninput="calcBilling()"></div>
+                        <div><label class="field-label">数量</label><input id="bl_qty" type="number" inputmode="numeric" class="inp" value="1" oninput="calcBilling()"></div>
+                        <div><label class="field-label">税</label><select id="bl_tax" class="inp"><option>税抜</option><option>税込</option></select></div>
+                    </div>
+                    <div class="text-right font-bold text-base">合計 <span id="bl_total">¥0</span></div>
+                    <div><label class="field-label">内容メモ</label><textarea id="bl_memo" rows="2" class="inp" placeholder="例：破損のため再発送（送料・梱包）"></textarea></div>
+                    ${billingCtx.sourceText ? `<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 clamp-s">元のメッセージ：${esc(billingCtx.sourceText)}</div>` : ''}
+                    <button id="bl_save" onclick="saveBilling(this)" class="btn btn-main w-full">🧾 記録する</button>
+                </div>`;
+            openSheet('sheetActions');
+            // セラー情報を自動で入れる
+            try {
+                const data = await callApi("get_seller_info", { chatwork_id: billingCtx.roomName });
+                const s = data.seller || {};
+                const k = document.getElementById('bl_kanri'), sh = document.getElementById('bl_shop');
+                if (k && !k.value) k.value = s.error ? '' : (s.kanriNo || '');
+                if (sh && !sh.value) sh.value = s.error ? billingCtx.roomName : [s.shopName, s.name].filter(v => v && v !== '不明').join('・');
+                if (k) k.placeholder = '管理番号'; if (sh) sh.placeholder = 'ショップ名';
+            } catch (e) {
+                const sh = document.getElementById('bl_shop');
+                if (sh && !sh.value) sh.value = billingCtx.roomName;
+            }
+        };
+
+        window.onBillingTypeChange = function() {
+            // 着払いは税込が基本
+            if (document.getElementById('bl_type').value === '着払い立替') document.getElementById('bl_tax').value = '税込';
+        };
+
+        // ===== 送り状番号の読み取り（写真から。伝票スキャナーと同じ仕組み） =====
+        function normalizeTracking(raw) {
+            let v = String(raw || '').trim();
+            v = v.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+            v = v.replace(/[\s\-‐‑–—－ー]/g, '');
+            v = v.replace(/^[A-Da-d](\d+)[A-Da-d]$/, '$1');
+            return v.toUpperCase();
+        }
+        function isValidTracking(v) { return /^\d{10,14}$/.test(v) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(v); }
+        let _detector = null;
+        function getBarcodeDetector() {
+            if (_detector) return _detector;
+            _detector = (async () => {
+                if ('BarcodeDetector' in window) {
+                    try {
+                        const sup = await BarcodeDetector.getSupportedFormats();
+                        const want = ['codabar', 'code_128', 'itf', 'code_39', 'ean_13', 'qr_code'].filter(f => sup.includes(f));
+                        if (want.length) { const det = new BarcodeDetector({ formats: want }); return async c => (await det.detect(c)).map(b => b.rawValue); }
+                    } catch (e) {}
+                }
+                // iPhoneなど：ZXingを読み込む
+                await new Promise((res, rej) => {
+                    if (window.ZXing) return res();
+                    const sc = document.createElement('script');
+                    sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+                    sc.onload = res; sc.onerror = () => rej(new Error('読み取りライブラリを読み込めませんでした'));
+                    document.head.appendChild(sc);
+                });
+                const ZX = window.ZXing;
+                const hints = new Map();
+                hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODABAR, ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.ITF, ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE]);
+                hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+                const reader = new ZX.MultiFormatReader();
+                reader.setHints(hints);
+                return async c => {
+                    try { const r = reader.decodeWithState(new ZX.BinaryBitmap(new ZX.HybridBinarizer(new ZX.HTMLCanvasElementLuminanceSource(c)))); return r ? [r.getText()] : []; }
+                    catch (e) { return []; } finally { reader.reset(); }
+                };
+            })().catch(e => { _detector = null; throw e; });
+            return _detector;
+        }
+        function drawForScan(img, cropW, cropH, rotate) {
+            const W = img.naturalWidth, H = img.naturalHeight;
+            const sw = Math.round(W * cropW), sh = Math.round(H * cropH), sx = Math.round((W - sw) / 2), sy = Math.round((H - sh) / 2);
+            const scale = Math.min(1, 1600 / Math.max(sw, sh)), dw = Math.round(sw * scale), dh = Math.round(sh * scale);
+            const c = document.createElement('canvas');
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            if (rotate) {
+                c.width = dh; c.height = dw;
+                ctx.translate(dh / 2, dw / 2); ctx.rotate(Math.PI / 2);
+                ctx.drawImage(img, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
+            } else {
+                c.width = dw; c.height = dh;
+                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+            }
+            return c;
+        }
+        window.scanTrackingPhoto = async function(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            const msg = document.getElementById('bl_scan_msg');
+            msg.textContent = '読み取り中…';
+            try {
+                const detect = await getBarcodeDetector();
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+                URL.revokeObjectURL(url);
+                let found = null;
+                for (const [cw, ch, rot] of [[1, 1, 0], [0.8, 0.5, 0], [1, 1, 1]]) {
+                    for (const raw of await detect(drawForScan(img, cw, ch, rot))) {
+                        const v = normalizeTracking(raw);
+                        if (isValidTracking(v)) { found = v; break; }
+                    }
+                    if (found) break;
+                }
+                if (found) {
+                    document.getElementById('bl_tracking').value = found;
+                    msg.textContent = `✓ 読み取りました：${found}`;
+                    if (navigator.vibrate) navigator.vibrate(80);
+                } else {
+                    msg.textContent = 'バーコードが見つかりませんでした。明るい場所で、バーコードが大きく写るように撮り直してください';
+                }
+            } catch (e) {
+                msg.textContent = '読み取れませんでした：' + e.message;
+            }
+        };
+
+        window.calcBilling = function() {
+            const p = Number(document.getElementById('bl_price').value) || 0;
+            const q = Number(document.getElementById('bl_qty').value) || 0;
+            document.getElementById('bl_total').textContent = yen(p * q);
+        };
+
+        window.saveBilling = async function(btn) {
+            if (!billingCtx) return;
+            const price = Number(document.getElementById('bl_price').value);
+            const qty = Number(document.getElementById('bl_qty').value) || 1;
+            const date = document.getElementById('bl_date').value || todayYmd();
+            if (!document.getElementById('bl_price').value) { showToast('単価を入力してください'); return; }
+            const tracking = normalizeTracking(document.getElementById('bl_tracking').value);
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+            try {
+                if (tracking) {
+                    const f = await loadFirestore();
+                    const dup = await f.getDocs(f.query(f.collection(f.db, 'billing_records'), f.where('trackingNo', '==', tracking)));
+                    if (!dup.empty) {
+                        const d = dup.docs[0].data();
+                        if (!confirm(`送り状番号「${tracking}」はすでに記録されています。\n${d.date}　${d.kanriNo || ''}　${d.type}　${yen(d.amount)}\n\nそれでも記録しますか？`)) {
+                            btn.disabled = false; btn.textContent = '🧾 記録する'; return;
+                        }
+                    }
+                }
+                await fsAdd('billing_records', {
+                    trackingNo: tracking,
+                    account: getAccount(), roomId: String(billingCtx.roomId), roomName: billingCtx.roomName,
+                    kanriNo: document.getElementById('bl_kanri').value.trim(),
+                    shopName: document.getElementById('bl_shop').value.trim(),
+                    date: date, month: date.slice(0, 7),
+                    type: document.getElementById('bl_type').value,
+                    unitPrice: price, quantity: qty, amount: Math.round(price * qty),
+                    taxMode: document.getElementById('bl_tax').value,
+                    memo: document.getElementById('bl_memo').value.trim(),
+                    sourceMsgId: billingCtx.sourceMsgId, sourceText: billingCtx.sourceText,
+                    status: 'unbilled', by: getStaffName(), createdAt: FS_TS
+                });
+                closeAllModals();
+                showToast('請求に記録しました');
+                if (currentRoomId) refreshBillingCount(currentRoomId);
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '🧾 記録する';
+            }
+        };
+
+        async function fetchRoomBilling(roomId) {
+            const f = await loadFirestore();
+            const snap = await f.getDocs(f.query(f.collection(f.db, 'billing_records'), f.where('roomId', '==', String(roomId))));
+            const list = [];
+            snap.forEach(d => list.push(Object.assign({ _id: d.id }, d.data())));
+            return list.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+        }
+
+        // ルーム画面の「🧾 記録 ○件」
+        async function refreshBillingCount(roomId) {
+            try {
+                const list = await fetchRoomBilling(roomId);
+                const btn = document.getElementById('billingCountBtn');
+                if (!btn || currentRoomId !== safeId(roomId)) return;
+                const ym = todayYmd().slice(0, 7);
+                const thisMonth = list.filter(r => r.month === ym);
+                if (!list.length) { btn.style.display = 'none'; return; }
+                btn.style.display = 'flex';
+                btn.textContent = `🧾 請求記録 今月${thisMonth.length}件（${yen(thisMonth.reduce((n, r) => n + (r.amount || 0), 0))}）・全${list.length}件`;
+            } catch (e) { handleFsDenied(e); }
+        }
+
+        window.openBillingList = async function(roomId) {
+            document.getElementById('sheetActionsTitle').textContent = '🧾 このルームの請求記録';
+            document.getElementById('sheetActionsBody').innerHTML = '<div class="p-6 text-center text-slate-400">読込中…</div>';
+            openSheet('sheetActions');
+            try {
+                const list = await fetchRoomBilling(roomId);
+                window._billingList = list;
+                document.getElementById('sheetActionsBody').innerHTML = list.length ? list.map((r, i) => `
+                    <div class="px-5 py-3 border-b border-slate-100">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-bold px-2 py-0.5 rounded-full ${r.status === 'billed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">${r.status === 'billed' ? '請求済み' : '未請求'}</span>
+                            <span class="font-bold flex-1 min-w-0 truncate">${esc(r.date)}　${esc(r.type)}</span>
+                            <span class="font-bold shrink-0">${yen(r.amount)}<span class="text-xs text-slate-400">（${esc(r.taxMode || '')}）</span></span>
+                        </div>
+                        <div class="text-sm text-slate-600 mt-1">${r.trackingNo ? `📦 ${esc(r.trackingNo)}　` : ''}${esc(r.memo || '')}</div>
+                        <div class="flex items-center justify-between mt-1">
+                            <span class="text-xs text-slate-400">${r.unitPrice != null ? `${yen(r.unitPrice)} × ${r.quantity}` : ''}・${esc(r.by || '')}</span>
+                            ${r.status === 'billed' ? '' : `<button onclick="deleteBilling(${i}, '${safeId(roomId)}')" class="text-xs text-red-500 font-bold px-2 py-1 cursor-pointer">削除</button>`}
+                        </div>
+                    </div>`).join('') : '<div class="p-6 text-center text-slate-400">記録はまだありません</div>';
+            } catch (e) {
+                handleFsDenied(e);
+                document.getElementById('sheetActionsBody').innerHTML = `<div class="p-6 text-center text-red-500">読み込みに失敗しました：${esc(e.message)}</div>`;
+            }
+        };
+
+        window.deleteBilling = async function(i, roomId) {
+            const r = (window._billingList || [])[i];
+            if (!r || !confirm(`${r.date}「${r.type}」${yen(r.amount)} の記録を削除しますか？`)) return;
+            try {
+                const f = await loadFirestore();
+                await f.deleteDoc(f.doc(f.db, 'billing_records', r._id));
+                showToast('削除しました');
+                openBillingList(roomId);
+                refreshBillingCount(roomId);
+            } catch (e) {
+                alert('削除に失敗しました: ' + e.message);
+            }
+        };
+
         // ===== ファイル添付（Chatworkは1ファイル5MBまで） =====
         const attachStore = {};
         const CW_FILE_MAX = 5 * 1024 * 1024;
@@ -935,6 +1199,7 @@
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
+                sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
                 sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
                 sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
                 sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
@@ -1477,6 +1742,7 @@
                             <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
                             <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
                         </div>
+                        <button id="billingCountBtn" onclick="openBillingList('${currentRoomId}')" class="btn btn-sub w-full mt-2 text-[13px]" style="display:none"></button>
                     </div>`;
 
                 if (recent.length === 0) {
@@ -1503,6 +1769,7 @@
                 html += buildComposeBox(currentRoomId, roomName, msgs, members, recent);
                 container.innerHTML = html;
                 applyOptionBadges();
+                refreshBillingCount(currentRoomId);
                 setStatus(roomName.length > 8 ? roomName.slice(0, 8) + '…' : roomName);
                 setTimeout(() => container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50);
             } catch (e) {
