@@ -171,7 +171,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
   <div class="bar-right">
     <span id="userName" class="muted"></span>
     <button id="btnSettings" class="ghost" hidden>設定</button>
-    <button id="btnLogout" class="ghost" hidden>ログアウト</button>
+    <button id="btnLogout" class="ghost" hidden>アカウント切り替え</button>
   </div>
 </header>
 
@@ -185,6 +185,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
   <section id="appView" hidden>
     <nav class="tabs" role="tablist" aria-label="画面の切り替え">
       <button data-tab="work" class="on" role="tab">検索・入荷・送り状</button>
+      <button data-tab="hist" role="tab">検品書の履歴</button>
       <button data-tab="after" role="tab">出荷後の取り込み</button>
       <button data-tab="inq" role="tab">問い合わせ中</button>
     </nav>
@@ -231,6 +232,14 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <div class="search-row"><button id="btnRobotClear" class="ghost">クリア</button><button id="btnRobotRead" class="primary">読み取る</button></div>
         <div id="robotResult"></div>
         <div id="robotActions" class="search-row" hidden><button id="btnRobotWrite" class="primary">シートに反映する</button></div>
+      </div>
+    </div>
+
+    <div id="tabHist" hidden>
+      <div class="panel stack">
+        <p class="muted small">印刷した検品書の履歴です。「開く」を押すと、そのときの注文をシートの最新の状態で表示して全件選択するので、検品が終わったらそのまま「入荷済みにする」で入荷日を入れられます。</p>
+        <div class="search-row"><span id="histCount" class="muted"></span><button id="btnHistReload" class="ghost">再読み込み</button></div>
+        <div id="histList"></div>
       </div>
     </div>
 
@@ -344,7 +353,14 @@ function toast(msg, ms){ const t=$('#toast'); (document.querySelector('dialog[op
 function clientRef(){ return db.collection('deliveryClients').doc(state.clientId); }
 
 /* ===== ログイン ===== */
-$('#btnLogin').onclick = () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e => toast('ログインできませんでした：'+e.message, 6000));
+$('#btnLogin').onclick = () => {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt:'select_account' }); // 毎回アカウントを選べるようにする
+  auth.signInWithPopup(provider).catch(e => {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    toast('ログインできませんでした：'+e.message, 6000);
+  });
+};
 $('#btnLogout').onclick = () => auth.signOut();
 
 auth.onAuthStateChanged(async u => {
@@ -495,9 +511,9 @@ function updateCount(){ $('#qCount').textContent = parseTokens().length + '件�
 $('#q').addEventListener('input', updateCount);
 $('#btnClear').onclick = () => { $('#q').value=''; updateCount(); $('#q').focus(); };
 $('#q').addEventListener('keydown', e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) doSearch(); });
-$('#btnSearch').onclick = doSearch;
+$('#btnSearch').onclick = () => doSearch(false);
 
-async function doSearch(){
+async function doSearch(preselect){
   const tokens = parseTokens();
   if (!tokens.length) { toast('番号を入力してください'); return; }
   const btn = $('#btnSearch'); btn.disabled = true; btn.textContent = '検索中…';
@@ -524,7 +540,7 @@ async function doSearch(){
         if (map[key].rows.indexOf(r.no) < 0) map[key].rows.push(r.no);
       }));
     }
-    state.selected.clear();
+    state.selected = new Set(preselect ? j.rows.map(r=>r.no) : []);
     render();
     saveOrders(j.rows);
     await loadInquiryFlags(j.rows.map(r=>r.no));
@@ -715,7 +731,7 @@ async function printSheets(){
       const note = esc(r.note) + inf.partners.map(p=>'<span class="pbadge">'+esc(p)+'</span>').join('');
       return '<tr class="'+(inf.highlight?'hl ':'')+(isBundle?'bundle':'')+'">'
         + '<td>'+r.no+'</td><td>'+esc(r.address)+'</td>'
-        + '<td>'+esc(r.name)+'</td><td>'+esc(r.tel)+'</td>'
+        + '<td>'+esc(r.name)+'</td>'
         + '<td>'+esc(r.item)+'</td><td>'+img+'</td><td>'+esc(r.inboundTracking)+'</td><td>'+esc(r.pkgId)+'</td>'
         + '<td>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
         + '<td class="pnote">'+note+'</td></tr>';
@@ -724,9 +740,9 @@ async function printSheets(){
     pages.push('<section class="ppage"><div class="phead"><span class="ptrk">'+esc(g.key)+'</span>'
       + '<span class="pmeta">'+esc(shops)+' ／ '+rows.length+'件</span><span class="pdate">印刷日 '+md(today)+'</span></div>'
       + '<table class="ptable"><colgroup>'
-      + '<col style="width:5%"><col style="width:16%"><col style="width:8%"><col style="width:8%"><col style="width:17%"><col style="width:8%">'
-      + '<col style="width:8%"><col style="width:7%"><col style="width:4%"><col style="width:5%"><col style="width:5%"><col style="width:9%">'
-      + '</colgroup><thead><tr><th>No</th><th>発送先住所</th><th>名前</th><th>電話番号</th>'
+      + '<col style="width:5%"><col style="width:18%"><col style="width:9%"><col style="width:21%"><col style="width:8%">'
+      + '<col style="width:9%"><col style="width:7%"><col style="width:4%"><col style="width:5%"><col style="width:5%"><col style="width:9%">'
+      + '</colgroup><thead><tr><th>No</th><th>発送先住所</th><th>名前</th>'
       + '<th>商品</th><th>画像</th><th>倉庫までの追跡番号</th><th>発送状況</th>'
       + '<th>数量</th><th>指定日</th><th>時間指定</th><th>備考欄</th></tr></thead><tbody>'+body+'</tbody></table></section>');
   });
@@ -747,6 +763,7 @@ async function printSheets(){
   })));
   const noUrl = area.querySelectorAll('.pnoimg').length;
   if (noUrl && !confirm('画像がない注文が'+noUrl+'件あります（「画像なし」と印刷されます）。このまま印刷しますか？')) { area.innerHTML=''; return; }
+  savePrintHistory();
   window.print();
 }
 window.addEventListener('afterprint', () => { $('#printArea').innerHTML = ''; });
@@ -1039,12 +1056,18 @@ async function logLabels(list){
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   const t = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x===b));
+  switchTab(t);
+});
+function switchTab(t){
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab===t));
   $('#tabWork').hidden = t!=='work';
+  $('#tabHist').hidden = t!=='hist';
   $('#tabAfter').hidden = t!=='after';
   $('#tabInq').hidden = t!=='inq';
   $('#actionBar').hidden = t!=='work' || !state.groups.length;
   if (t==='inq') loadInquiryList();
-});
+  if (t==='hist') loadHistory();
+}
 
 /* ===== Firestore の補助 ===== */
 const ordersCol = () => clientRef().collection('orders');
@@ -1412,6 +1435,61 @@ $('#btnRobotWrite').onclick = async () => {
   }catch(e){ toast(e.message, 6000); }
   finally{ btn.disabled = false; }
 };
+
+/* ===== 検品書の履歴 ===== */
+const histCol = () => clientRef().collection('printHistory');
+
+function savePrintHistory(){
+  const groups = state.groups.map(g => ({ key:g.key, nos:g.rows.filter(no => state.selected.has(no)) })).filter(g => g.nos.length);
+  const nos = [...new Set(groups.flatMap(g => g.nos))];
+  histCol().add({
+    printedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    printedBy: state.user.email || '',
+    printedByName: state.user.displayName || '',
+    sheetTitle: $('#sheetTitle').textContent || '',
+    groups, nos, count: nos.length,
+  }).catch(e => console.warn('検品書の履歴を保存できませんでした', e));
+}
+
+let histDocs = [];
+async function loadHistory(){
+  $('#histList').innerHTML = '<p class="muted">読み込み中…</p>';
+  try{
+    const snap = await histCol().orderBy('printedAt','desc').limit(50).get();
+    histDocs = [];
+    snap.forEach(d => histDocs.push(Object.assign({ id:d.id }, d.data())));
+    $('#histCount').textContent = '直近 '+histDocs.length+'件';
+    if (!histDocs.length) { $('#histList').innerHTML = '<p class="muted">まだ履歴がありません。検品書を印刷すると、ここに残ります。</p>'; return; }
+    $('#histList').innerHTML = '<div class="tbl-wrap"><table class="res"><thead><tr><th>印刷日時</th><th>印刷した人</th><th>倉庫追跡番号</th><th>注文</th><th></th></tr></thead><tbody>'
+      + histDocs.map((d, i) => {
+        const keys = (d.groups||[]).map(g => g.key);
+        const shown = keys.slice(0, 3).join('、') + (keys.length > 3 ? ' ほか'+(keys.length-3)+'件' : '');
+        return '<tr><td>'+esc(fmtTs(d.printedAt))+'</td><td>'+esc(d.printedByName || d.printedBy)+'</td>'
+          + '<td>'+esc(shown)+'</td><td>'+(d.count||0)+'件</td>'
+          + '<td><button type="button" class="secondary mini histopen" data-i="'+i+'">開く</button></td></tr>';
+      }).join('')
+      + '</tbody></table></div>';
+  }catch(e){ $('#histList').innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
+}
+function fmtTs(ts){
+  const d = ts && ts.toDate ? ts.toDate() : null;
+  if (!d) return '保存中…';
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+$('#btnHistReload').onclick = loadHistory;
+$('#histList').addEventListener('click', async e => {
+  const b = e.target.closest('.histopen');
+  if (!b) return;
+  const d = histDocs[Number(b.dataset.i)];
+  if (!d || !d.nos || !d.nos.length) return;
+  // No.で検索し直して、そのときの注文を全件選択した状態で表示する
+  document.querySelector('.seg button[data-mode="no"]').click();
+  $('#q').value = d.nos.join(' ');
+  updateCount();
+  switchTab('work');
+  await doSearch(true);
+  toast('検品書（'+fmtTs(d.printedAt)+'）の注文を全件選択しました。入荷日を確認して「入荷済みにする」を押してください', 6000);
+});
 </script>
 </body>
 </html>
