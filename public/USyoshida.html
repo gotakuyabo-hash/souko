@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配送管理アプリ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF0F2; --surface:#FFFFFF; --ink:#17212B; --muted:#5E6B78; --line:#D3D9DF;
+  --primary:#0E5A63; --primary-ink:#FFFFFF; --tape:#F4C842; --tape-soft:#FBEFC4;
+  --danger:#B3261E; --ok:#2E7D4F; --sel:#E3F0F1;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#12171C; --surface:#1B2229; --ink:#E6EBEF; --muted:#9AA7B3; --line:#2E3841;
+    --primary:#4FB3BD; --primary-ink:#0B1A1C; --tape:#C9A227; --tape-soft:#3A3218;
+    --danger:#F08A82; --ok:#7CC79A; --sel:#1F3438;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 "BIZ UDPGothic","Hiragino Sans","Yu Gothic",sans-serif;padding-bottom:96px}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--surface);padding:8px 14px}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--tape);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink);font-weight:700}
+.secondary{border-color:var(--primary);color:var(--primary);font-weight:700}
+.ghost{background:transparent}
+.muted{color:var(--muted)}
+[hidden]{display:none!important}
+
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.brand{font-weight:700;font-size:17px}
+.brand .sheet{font-weight:400;font-size:13px;color:var(--muted);margin-left:12px}
+.bar-right{display:flex;align-items:center;gap:8px;font-size:13px}
+
+main{max-width:1180px;margin:0 auto;padding:20px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px}
+.center{max-width:440px;margin:80px auto;text-align:center}
+
+.search{display:grid;gap:10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;width:max-content}
+.seg button{border:0;border-radius:0;padding:8px 18px;background:transparent}
+.seg button.on{background:var(--primary);color:var(--primary-ink);font-weight:700}
+textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface);resize:vertical;font-variant-numeric:tabular-nums}
+.search-row{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.search-row .muted{margin-right:auto}
+
+#summary{margin:16px 0 8px}
+.sum-line{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{border:1px solid var(--danger);color:var(--danger);border-radius:4px;padding:1px 8px;font-size:13px;font-variant-numeric:tabular-nums}
+
+.parcel{background:var(--surface);border:1px solid var(--line);border-left:8px solid var(--tape);border-radius:8px;margin:14px 0;overflow:hidden}
+.parcel-head{display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.trk{font-size:22px;font-weight:700;letter-spacing:.03em;font-variant-numeric:tabular-nums}
+.parcel-head .meta{font-size:13px;color:var(--muted)}
+.row{display:grid;grid-template-columns:28px 72px 1fr 210px;gap:12px;padding:10px 14px;border-top:1px solid var(--line);align-items:start;cursor:pointer}
+.row:first-child{border-top:0}
+.row.is-sel{background:var(--sel)}
+.row img,.noimg{width:72px;height:72px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:4px}
+.noimg{display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--danger);text-align:center}
+.l1{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.l1 b{font-size:16px;font-variant-numeric:tabular-nums}
+.item{margin:2px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.l3{font-size:13px}
+.note{grid-column:3 / -1;background:var(--tape-soft);border-radius:4px;padding:6px 10px;font-size:13px;white-space:pre-wrap}
+.side{font-size:13px;display:grid;gap:2px}
+.side .arr{font-weight:700;color:var(--ok)}
+.side .todo{color:var(--muted)}
+.badge{font-size:12px;border:1px solid var(--primary);color:var(--primary);border-radius:4px;padding:0 6px}
+.badge.warn{border-color:var(--danger);color:var(--danger)}
+.chk input{width:18px;height:18px;margin:0;vertical-align:middle}
+
+.actionbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px 20px;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:center;z-index:6}
+.actionbar input[type=date]{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--surface)}
+#selCount{font-weight:700;min-width:5em}
+
+dialog{border:1px solid var(--line);border-radius:10px;padding:20px;background:var(--surface);color:var(--ink);width:min(560px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+.form{display:grid;gap:12px}
+.form label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.form input{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface);font-size:15px}
+.form .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+
+dialog.wide{width:min(1100px,96vw);max-height:92vh;display:none;flex-direction:column;gap:10px}
+dialog.wide[open]{display:flex}
+.lab-head,.lab-ctrl,.lab-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.lab-head{justify-content:space-between}
+.lab-ctrl input[type=date]{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--surface)}
+.lab-foot{justify-content:flex-end;border-top:1px solid var(--line);padding-top:10px}
+#labList{overflow:auto;border:1px solid var(--line);border-radius:6px}
+.lab{display:grid;grid-template-columns:28px 1fr auto;gap:12px;padding:10px 12px;border-top:1px solid var(--line);align-items:start}
+.lab:first-child{border-top:0}
+.lab.is-err{background:color-mix(in srgb,var(--danger) 8%,transparent)}
+.lab.is-off{opacity:.55}
+.lab .addr{font-size:13px;color:var(--muted)}
+.lab-opts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.lab-opts select{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--surface)}
+.msgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.msg-err{font-size:12px;color:var(--danger);font-weight:700}
+.msg-warn{font-size:12px;color:var(--primary)}
+.car-y{font-weight:700}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:6px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:9}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+
+@media (max-width:760px){
+  main{padding:12px}
+  .row{grid-template-columns:28px 60px 1fr}
+  .row img,.noimg{width:60px;height:60px}
+  .side{grid-column:3}
+  .note{grid-column:1 / -1}
+}
+
+/* ===== 検品書（印刷） ===== */
+#printArea{display:none}
+@media print{
+  @page{size:A4 landscape;margin:8mm}
+  body{background:#fff;color:#000;padding:0}
+  body > *:not(#printArea){display:none!important}
+  #printArea{display:block}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+.ppage{break-after:page;font-size:9pt;color:#000}
+.ppage:last-child{break-after:auto}
+.phead{display:flex;align-items:baseline;gap:16px;border-bottom:2px solid #000;padding-bottom:4px;margin-bottom:6px}
+.phead .ptrk{font-size:18pt;font-weight:700;letter-spacing:.03em}
+.phead .pmeta{font-size:10pt}
+.phead .pdate{margin-left:auto;font-size:9pt}
+.ptable{width:100%;border-collapse:collapse;table-layout:fixed}
+.ptable th,.ptable td{border:1px solid #777;padding:3px 4px;vertical-align:top;word-break:break-all}
+.ptable th{background:#e6e6e6;font-weight:700;text-align:left}
+.ptable tr{break-inside:avoid}
+.ptable img{width:64px;height:64px;object-fit:contain}
+.ptable .pnoimg{color:#b00;font-weight:700}
+.ptable tr.hl td{background:#fff3c4}
+.ptable tr.bundle td:first-child{border-left:4px solid #000}
+.ptable .pnote{white-space:pre-wrap}
+.ptable .pbadge{display:block;font-weight:700}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">配送管理<span id="sheetTitle" class="sheet"></span></div>
+  <div class="bar-right">
+    <span id="userName" class="muted"></span>
+    <button id="btnSettings" class="ghost" hidden>設定</button>
+    <button id="btnLogout" class="ghost" hidden>ログアウト</button>
+  </div>
+</header>
+
+<main>
+  <section id="loginView" class="panel center" hidden>
+    <h1 style="font-size:22px">配送管理アプリ</h1>
+    <p class="muted">社内のGoogleアカウントでログインしてください。</p>
+    <button id="btnLogin" class="primary">Googleでログイン</button>
+  </section>
+
+  <section id="appView" hidden>
+    <div class="panel search">
+      <div class="seg" role="tablist" aria-label="探す番号">
+        <button data-mode="tracking" class="on" role="tab" aria-selected="true">倉庫追跡番号</button>
+        <button data-mode="no" role="tab" aria-selected="false">No.</button>
+      </div>
+      <textarea id="q" rows="4" placeholder="倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK）"></textarea>
+      <div class="search-row">
+        <span id="qCount" class="muted">0件</span>
+        <button id="btnClear" class="ghost">クリア</button>
+        <button id="btnSearch" class="primary">検索する</button>
+      </div>
+    </div>
+    <div id="summary"></div>
+    <div id="groups"></div>
+  </section>
+</main>
+
+<div id="actionBar" class="actionbar" hidden>
+  <label class="chk"><input type="checkbox" id="selAll"> 表示中をすべて選択</label>
+  <span id="selCount">0件選択</span>
+  <label>入荷日 <input type="date" id="arrDate"></label>
+  <button id="btnArrive" class="primary">入荷済みにする</button>
+  <button id="btnUnarrive" class="ghost">入荷日を消す</button>
+  <button id="btnPrint" class="secondary">検品書を印刷</button>
+  <button id="btnLabels" class="secondary">送り状データを作成</button>
+</div>
+
+<dialog id="dlgSettings">
+  <form class="form" method="dialog" onsubmit="return false">
+    <h2 style="margin:0;font-size:18px">設定</h2>
+    <label>お客様ID（データの保存先の名前。例：150）<input id="sClient" required></label>
+    <label>配送管理シートのURL（シートを新しくしたらここを差し替え）<input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/…"></label>
+    <label>シート名<input id="sSheetName" placeholder="入力シート"></label>
+    <label>連携GASのウェブアプリURL<input id="sGas" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    <label>API_KEY（連携GASのスクリプトプロパティと同じ値）<input id="sKey" type="password" autocomplete="off"></label>
+    <h3 style="margin:8px 0 0;font-size:15px">送り状</h3>
+    <label>ヤマト：請求先顧客コード<input id="sYBill" inputmode="numeric"></label>
+    <label>ヤマト：運賃管理番号<input id="sYFare" inputmode="numeric"></label>
+    <label>佐川：お客様コード<input id="sSCust" inputmode="numeric"></label>
+    <label>ご依頼主：電話番号<input id="sSTel"></label>
+    <label>ご依頼主：郵便番号<input id="sSZip"></label>
+    <label>ご依頼主：住所<input id="sSAddr"></label>
+    <label>ご依頼主：建物名（住所2）<input id="sSAddr2"></label>
+    <div class="btns">
+      <button id="btnTest" type="button" class="ghost">接続テスト</button>
+      <button id="btnCloseSettings" type="button" class="ghost">閉じる</button>
+      <button id="btnSaveSettings" type="button" class="primary">保存する</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgLabels" class="wide">
+  <div class="lab-head">
+    <h2 style="margin:0;font-size:18px">送り状データの作成</h2>
+    <button id="btnCloseLabels" type="button" class="ghost">閉じる</button>
+  </div>
+  <div class="lab-ctrl">
+    <div class="seg" id="carrierMode" role="tablist" aria-label="配送業者のモード">
+      <button data-m="auto" class="on">自動（沖縄はヤマト）</button>
+      <button data-m="sagawa">すべて佐川</button>
+      <button data-m="yamato">すべてヤマト</button>
+    </div>
+    <label>出荷日 <input type="date" id="shipDate"></label>
+  </div>
+  <div id="labSummary" class="muted"></div>
+  <div id="labList"></div>
+  <div class="lab-foot">
+    <button id="dlYamato" type="button" class="primary">ヤマトB2のCSVを保存</button>
+    <button id="dlSagawa" type="button" class="primary">佐川e飛伝のCSVを保存</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="printArea"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.0.0/encoding.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== Firebase ===== */
+const firebaseConfig = {
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app",
+  messagingSenderId: "642116656086",
+  appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* ===== 状態 ===== */
+const $ = s => document.querySelector(s);
+const state = {
+  user: null,
+  clientId: lsGet('dm_client') || '150',
+  config: null,
+  mode: 'tracking',
+  rows: {},        // No → 行データ
+  groups: [],      // [{key, rows:[No...]}]
+  notFound: [],
+  selected: new Set(),
+};
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function md(s){ const m=String(s||'').match(/^\d{4}-(\d{2})-(\d{2})$/); return m ? Number(m[1])+'/'+Number(m[2]) : (s||''); }
+function toast(msg, ms){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'), ms||3200); }
+function clientRef(){ return db.collection('deliveryClients').doc(state.clientId); }
+
+/* ===== ログイン ===== */
+$('#btnLogin').onclick = () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e => toast('ログインできませんでした：'+e.message, 6000));
+$('#btnLogout').onclick = () => auth.signOut();
+
+auth.onAuthStateChanged(async u => {
+  state.user = u;
+  $('#loginView').hidden = !!u;
+  $('#appView').hidden = !u;
+  $('#btnSettings').hidden = !u;
+  $('#btnLogout').hidden = !u;
+  $('#userName').textContent = u ? (u.displayName || u.email) : '';
+  if (!u) { $('#actionBar').hidden = true; return; }
+  await loadConfig();
+});
+
+async function loadConfig(){
+  try{
+    const snap = await clientRef().get();
+    state.config = snap.exists ? snap.data() : null;
+  }catch(e){
+    toast('設定を読み込めませんでした（Firestoreのルールを確認してください）', 6000);
+    state.config = null;
+  }
+  if (!state.config || !state.config.gasUrl || !state.config.sheetId) { openSettings(); return; }
+  try{ const j = await gas('info'); $('#sheetTitle').textContent = j.sheetTitle; }
+  catch(e){ toast(e.message, 6000); }
+}
+
+/* ===== 連携GAS ===== */
+const ERR = {
+  'unauthorized':'API_KEYが違います。設定画面で確認してください',
+  'sheetId is required':'シートのURLが登録されていません',
+  'sheet not found':'シートが見つかりません（シート名を確認してください）',
+  'unexpected header':'B1が「No」ではありません。列の並びが変わっていないか確認してください',
+};
+async function gas(action, extra, cfg){
+  const c = cfg || state.config;
+  if (!c || !c.gasUrl) throw new Error('設定画面で連携GASのURLを登録してください');
+  const payload = Object.assign({ action, key:c.apiKey, sheetId:c.sheetId, sheetName:c.sheetName || '入力シート' }, extra || {});
+  let res;
+  try{ res = await fetch(c.gasUrl, { method:'POST', body: JSON.stringify(payload) }); }
+  catch(e){ throw new Error('連携GASに接続できませんでした。URLとデプロイ設定（アクセス：全員）を確認してください'); }
+  let j;
+  try{ j = await res.json(); }catch(e){ throw new Error('連携GASの応答を読み取れませんでした'); }
+  if (!j.ok) throw new Error(ERR[j.error] || ('エラー：'+j.error));
+  return j;
+}
+
+/* ===== 設定 ===== */
+$('#btnSettings').onclick = openSettings;
+$('#btnCloseSettings').onclick = () => $('#dlgSettings').close();
+function openSettings(){
+  const c = state.config || {};
+  $('#sClient').value = state.clientId;
+  $('#sSheet').value = c.sheetId ? 'https://docs.google.com/spreadsheets/d/'+c.sheetId+'/edit' : '';
+  $('#sSheetName').value = c.sheetName || '入力シート';
+  $('#sGas').value = c.gasUrl || '';
+  $('#sKey').value = c.apiKey || '';
+  $('#sYBill').value = c.yamatoBillCode || DEFAULTS.yamatoBillCode;
+  $('#sYFare').value = c.yamatoFareNo || DEFAULTS.yamatoFareNo;
+  $('#sSCust').value = c.sagawaCustCode || DEFAULTS.sagawaCustCode;
+  $('#sSTel').value = c.senderTel || DEFAULTS.senderTel;
+  $('#sSZip').value = c.senderZip || DEFAULTS.senderZip;
+  $('#sSAddr').value = c.senderAddr || DEFAULTS.senderAddr;
+  $('#sSAddr2').value = c.senderAddr2 || DEFAULTS.senderAddr2;
+  $('#dlgSettings').showModal();
+}
+function readSettingsForm(){
+  const url = $('#sSheet').value.trim();
+  const m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return {
+    sheetId: m ? m[1] : url,
+    sheetName: $('#sSheetName').value.trim() || '入力シート',
+    gasUrl: $('#sGas').value.trim(),
+    apiKey: $('#sKey').value.trim(),
+    yamatoBillCode: $('#sYBill').value.trim(),
+    yamatoFareNo: $('#sYFare').value.trim(),
+    sagawaCustCode: $('#sSCust').value.trim(),
+    senderTel: $('#sSTel').value.trim(),
+    senderZip: $('#sSZip').value.trim(),
+    senderAddr: $('#sSAddr').value.trim(),
+    senderAddr2: $('#sSAddr2').value.trim(),
+  };
+}
+// ご依頼主・ヤマトの初期値（設定画面で変更できます）
+const DEFAULTS = {
+  yamatoBillCode: '09050540672', yamatoFareNo: '01', sagawaCustCode: '155924420000',
+  senderTel: '080-6457-5057', senderZip: '2140014',
+  senderAddr: '神奈川県川崎市多摩区登戸1035', senderAddr2: 'GINZO101',
+};
+$('#btnTest').onclick = async () => {
+  try{ const j = await gas('info', null, readSettingsForm()); toast('接続できました：'+j.sheetTitle+'（'+(j.lastRow-1)+'行）'); }
+  catch(e){ toast(e.message, 6000); }
+};
+$('#btnSaveSettings').onclick = async () => {
+  const cid = $('#sClient').value.trim();
+  if (!cid) { toast('お客様IDを入力してください'); return; }
+  const cfg = readSettingsForm();
+  if (!cfg.sheetId || !cfg.gasUrl || !cfg.apiKey) { toast('シートのURL・連携GASのURL・API_KEYを入力してください', 5000); return; }
+  state.clientId = cid; lsSet('dm_client', cid);
+  try{
+    await clientRef().set(Object.assign({}, cfg, {
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: state.user.email || '',
+    }), { merge:true });
+    state.config = cfg;
+    $('#dlgSettings').close();
+    toast('設定を保存しました');
+    loadConfig();
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); }
+};
+
+/* ===== 検索 ===== */
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+  state.mode = b.dataset.mode;
+  document.querySelectorAll('.seg button').forEach(x => { x.classList.toggle('on', x===b); x.setAttribute('aria-selected', x===b); });
+  $('#q').placeholder = state.mode === 'no'
+    ? 'No.を入力または貼り付け（例：10266 10267）'
+    : '倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK）';
+  updateCount();
+});
+
+function normTracking(s){ return String(s||'').replace(/[\s\-‐－−]/g,'').toUpperCase(); }
+function normNo(s){ const t=String(s||'').replace(/[^\d]/g,''); return t ? String(Number(t)) : ''; }
+function parseTokens(){
+  const out = [];
+  $('#q').value.split(/[\s,、，\t]+/).forEach(p => {
+    const k = state.mode === 'no' ? normNo(p) : normTracking(p);
+    if (k && out.indexOf(k) < 0) out.push(k);
+  });
+  return out;
+}
+function updateCount(){ $('#qCount').textContent = parseTokens().length + '件（重複は1つにまとめます）'; }
+$('#q').addEventListener('input', updateCount);
+$('#btnClear').onclick = () => { $('#q').value=''; updateCount(); $('#q').focus(); };
+$('#q').addEventListener('keydown', e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) doSearch(); });
+$('#btnSearch').onclick = doSearch;
+
+async function doSearch(){
+  const tokens = parseTokens();
+  if (!tokens.length) { toast('番号を入力してください'); return; }
+  const btn = $('#btnSearch'); btn.disabled = true; btn.textContent = '検索中…';
+  try{
+    const j = await gas('search', { mode: state.mode, values: tokens });
+    $('#sheetTitle').textContent = j.sheetTitle;
+    state.rows = {};
+    const byRowNum = {};
+    j.rows.forEach(r => { state.rows[r.no] = r; byRowNum[r.rowNumber] = r; });
+
+    state.groups = [];
+    state.notFound = j.results.filter(r => !r.rowNumbers.length).map(r => r.key);
+    if (state.mode === 'tracking') {
+      j.results.forEach(res => {
+        if (!res.rowNumbers.length) return;
+        state.groups.push({ key: res.key, rows: res.rowNumbers.map(rn => byRowNum[rn].no) });
+      });
+    } else {
+      const map = {};
+      j.results.forEach(res => res.rowNumbers.forEach(rn => {
+        const r = byRowNum[rn];
+        const key = normTracking(String(r.inboundTracking).split(/[\s,、，\/]+/)[0]) || '（倉庫追跡番号なし）';
+        if (!map[key]) { map[key] = { key, rows: [] }; state.groups.push(map[key]); }
+        if (map[key].rows.indexOf(r.no) < 0) map[key].rows.push(r.no);
+      }));
+    }
+    state.selected.clear();
+    render();
+    saveOrders(j.rows);
+  }catch(e){ toast(e.message, 6000); }
+  finally{ btn.disabled = false; btn.textContent = '検索する'; }
+}
+
+/* ===== 同梱・注意の判定 ===== */
+function groupOf(no){ const g = state.groups.find(g => g.rows.indexOf(no) >= 0); return g ? g.key : ''; }
+function infoOf(r){
+  const badges = [];
+  const partners = [];
+  const oid = String(r.orderId||'').trim();
+  if (oid && oid !== '有在庫用') {
+    const same = Object.values(state.rows).filter(x => String(x.orderId).trim() === oid && x.no !== r.no);
+    if (same.length) badges.push({ t:'同梱候補（同じ注文番号）', warn:false });
+  }
+  if (/同梱/.test(r.note||'')) {
+    badges.push({ t:'同梱指示あり', warn:false });
+    const nums = (String(r.note).match(/\d{5}/g) || []).map(Number).filter(n => n !== r.no);
+    [...new Set(nums)].forEach(n => {
+      const p = state.rows[n];
+      if (!p) partners.push('同梱相手：No.'+n+'（今回の検索結果にありません）');
+      else if (groupOf(n) !== groupOf(r.no)) partners.push('同梱相手：No.'+n+'（倉庫追跡番号 '+groupOf(n)+'）');
+    });
+  }
+  if (r.deliveryDate || r.deliveryTime) badges.push({ t:'日時指定', warn:true });
+  return { badges, partners, highlight: !!(r.deliveryDate || r.deliveryTime || r.note) };
+}
+
+/* ===== 表示 ===== */
+function render(){
+  const total = state.groups.reduce((a,g)=>a+g.rows.length, 0);
+  const label = state.mode === 'no' ? 'No.' : '倉庫追跡番号';
+  let html = '<div class="sum-line"><b>'+total+'件の注文</b><span class="muted">'
+    + (state.mode==='tracking' ? '見つかった番号 '+state.groups.length+'件' : '倉庫追跡番号 '+state.groups.length+'件に分かれています')
+    + ' ／ 該当なし '+state.notFound.length+'件</span></div>';
+  if (state.notFound.length) html += '<div class="chips" aria-label="該当なしの'+label+'">'+state.notFound.map(k=>'<span class="chip">'+esc(k)+'</span>').join('')+'</div>';
+  $('#summary').innerHTML = html;
+
+  $('#groups').innerHTML = state.groups.map((g, gi) => {
+    const rows = g.rows.map(no => state.rows[no]);
+    const shops = [...new Set(rows.map(r=>r.shop).filter(Boolean))].join('、');
+    const arrived = rows.filter(r=>r.arrivedAt).length;
+    const allSel = rows.every(r=>state.selected.has(r.no));
+    return '<section class="parcel">'
+      + '<div class="parcel-head"><label class="chk"><input type="checkbox" class="gsel" data-g="'+gi+'" '+(allSel?'checked':'')+' aria-label="この番号の注文をすべて選択"></label>'
+      + '<div class="trk">'+esc(g.key)+'</div>'
+      + '<div class="meta">'+esc(shops)+' ／ '+rows.length+'件 ／ 入荷済み '+arrived+'件</div></div>'
+      + '<div class="rows">'+rows.map(rowHtml).join('')+'</div></section>';
+  }).join('');
+
+  $('#actionBar').hidden = !state.groups.length;
+  if (!$('#arrDate').value) $('#arrDate').value = todayStr();
+  updateSel();
+}
+
+function rowHtml(r){
+  const inf = infoOf(r);
+  const sel = state.selected.has(r.no);
+  const img = r.imageUrl
+    ? '<img src="'+esc(r.imageUrl)+'" alt="" loading="lazy" onerror="this.outerHTML=\'<div class=noimg>画像なし</div>\'">'
+    : '<div class="noimg">画像なし</div>';
+  const badges = inf.badges.map(b=>'<span class="badge'+(b.warn?' warn':'')+'">'+esc(b.t)+'</span>').join('');
+  const spec = (r.deliveryDate || r.deliveryTime) ? '指定 '+esc(md(r.deliveryDate))+' '+esc(r.deliveryTime) : '指定なし';
+  const noteText = [r.note, ...inf.partners].filter(Boolean).join('\n');
+  return '<label class="row'+(sel?' is-sel':'')+'">'
+    + '<input type="checkbox" class="rsel" data-no="'+r.no+'" '+(sel?'checked':'')+' aria-label="No.'+r.no+'を選択">'
+    + img
+    + '<div><div class="l1"><b>No.'+r.no+'</b><span>'+esc(r.shop)+'</span>'+badges+'</div>'
+    + '<div class="item">'+esc(r.item)+'</div>'
+    + '<div class="l3 muted">'+esc(r.name)+' ／ 数量 '+esc(r.qty)+' ／ 注文番号 '+esc(r.orderId)+'</div></div>'
+    + '<div class="side"><span>'+spec+'</span>'
+    + (r.arrivedAt ? '<span class="arr">入荷 '+esc(md(r.arrivedAt))+'</span>' : '<span class="todo">未入荷</span>')
+    + '<span>'+(r.shippedAt ? '出荷 '+esc(md(r.shippedAt)) : '未出荷')+'</span></div>'
+    + (noteText ? '<div class="note">'+esc(noteText)+'</div>' : '')
+    + '</label>';
+}
+
+/* ===== 選択 ===== */
+$('#groups').addEventListener('change', e => {
+  const t = e.target;
+  if (t.classList.contains('rsel')) {
+    const no = Number(t.dataset.no);
+    t.checked ? state.selected.add(no) : state.selected.delete(no);
+    t.closest('.row').classList.toggle('is-sel', t.checked);
+    const sec = t.closest('.parcel');
+    const all = [...sec.querySelectorAll('.rsel')].every(x=>x.checked);
+    sec.querySelector('.gsel').checked = all;
+    updateSel();
+  } else if (t.classList.contains('gsel')) {
+    const g = state.groups[Number(t.dataset.g)];
+    g.rows.forEach(no => t.checked ? state.selected.add(no) : state.selected.delete(no));
+    render();
+  }
+});
+$('#selAll').onchange = e => {
+  state.groups.forEach(g => g.rows.forEach(no => e.target.checked ? state.selected.add(no) : state.selected.delete(no)));
+  render();
+};
+function updateSel(){
+  const all = state.groups.reduce((a,g)=>a.concat(g.rows),[]);
+  $('#selCount').textContent = state.selected.size+'件選択';
+  $('#selAll').checked = all.length > 0 && all.every(no=>state.selected.has(no));
+}
+
+/* ===== 入荷登録 ===== */
+$('#btnArrive').onclick = () => setArrived(false);
+$('#btnUnarrive').onclick = () => setArrived(true);
+
+async function setArrived(clear){
+  const nos = [...state.selected];
+  if (!nos.length) { toast('入荷登録する注文を選んでください'); return; }
+  const date = $('#arrDate').value;
+  if (!clear && !date) { toast('入荷日を選んでください'); return; }
+  if (clear && !confirm(nos.length+'件の入荷日を消します。よろしいですか？')) return;
+
+  const btns = [$('#btnArrive'), $('#btnUnarrive')]; btns.forEach(b=>b.disabled=true);
+  try{
+    const updates = nos.map(no => ({ no, rowNumber: state.rows[no].rowNumber, fields: { arrivedAt: clear ? '' : date } }));
+    const j = await gas('write', { updates });
+    j.done.forEach(d => { const r = state.rows[d.no]; if (r) { r.arrivedAt = clear ? '' : date; r.rowNumber = d.rowNumber; } });
+    logArrival(j.done.map(d=>d.no), clear ? '' : date);
+    render();
+    let msg = clear ? j.updated+'件の入荷日を消しました' : j.updated+'件を入荷済みにしました（'+md(date)+'）';
+    if (j.notFound.length) msg += ' ／ シートで見つからなかったNo.：'+j.notFound.join('、');
+    toast(msg, j.notFound.length ? 8000 : 3200);
+  }catch(e){ toast(e.message, 6000); }
+  finally{ btns.forEach(b=>b.disabled=false); }
+}
+
+/* ===== Firestore への記録 ===== */
+async function saveOrders(rows){
+  try{
+    const col = clientRef().collection('orders');
+    for (let i=0; i<rows.length; i+=400) {
+      const batch = db.batch();
+      rows.slice(i, i+400).forEach(r => batch.set(col.doc(String(r.no)), Object.assign({}, r, {
+        lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }), { merge:true }));
+      await batch.commit();
+    }
+  }catch(e){ console.warn('Firestoreへの保存に失敗', e); }
+}
+async function logArrival(nos, date){
+  try{
+    const col = clientRef().collection('orders');
+    const batch = db.batch();
+    nos.forEach(no => batch.set(col.doc(String(no)), {
+      arrivedAt: date,
+      arrivedLoggedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      arrivedBy: state.user.email || '',
+    }, { merge:true }));
+    await batch.commit();
+  }catch(e){ console.warn('入荷記録の保存に失敗', e); }
+}
+
+/* ===== 検品書の印刷 ===== */
+$('#btnPrint').onclick = printSheets;
+
+async function printSheets(){
+  if (!state.selected.size) { toast('印刷する注文を選んでください'); return; }
+  const today = todayStr();
+  const pages = [];
+  state.groups.forEach(g => {
+    const rows = g.rows.filter(no => state.selected.has(no)).map(no => state.rows[no]);
+    if (!rows.length) return;
+    // 同じ注文番号を並べて同梱が分かるようにする
+    rows.sort((a,b) => String(a.orderId).localeCompare(String(b.orderId)) || a.no - b.no);
+    const oidCount = {};
+    rows.forEach(r => { const o=String(r.orderId).trim(); if (o && o!=='有在庫用') oidCount[o]=(oidCount[o]||0)+1; });
+    const shops = [...new Set(rows.map(r=>r.shop).filter(Boolean))].join('、');
+
+    const body = rows.map(r => {
+      const inf = infoOf(r);
+      const isBundle = (oidCount[String(r.orderId).trim()]||0) > 1 || /同梱/.test(r.note||'');
+      const img = r.imageUrl ? '<img src="'+esc(r.imageUrl)+'" alt="">' : '<span class="pnoimg">画像なし</span>';
+      const note = esc(r.note) + inf.partners.map(p=>'<span class="pbadge">'+esc(p)+'</span>').join('');
+      return '<tr class="'+(inf.highlight?'hl ':'')+(isBundle?'bundle':'')+'">'
+        + '<td>'+r.no+'</td><td>'+esc(r.shop)+'</td><td>'+esc(r.zip)+'</td><td>'+esc(r.address)+'</td>'
+        + '<td>'+esc(r.name)+'</td><td>'+esc(r.tel)+'</td><td>'+esc(r.orderId)+'</td><td>'+esc(r.asin)+'</td>'
+        + '<td>'+esc(r.item)+'</td><td>'+img+'</td><td>'+esc(r.inboundTracking)+'</td><td>'+esc(r.pkgId)+'</td>'
+        + '<td>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
+        + '<td class="pnote">'+note+'</td></tr>';
+    }).join('');
+
+    pages.push('<section class="ppage"><div class="phead"><span class="ptrk">'+esc(g.key)+'</span>'
+      + '<span class="pmeta">'+esc(shops)+' ／ '+rows.length+'件</span><span class="pdate">印刷日 '+md(today)+'</span></div>'
+      + '<table class="ptable"><colgroup>'
+      + '<col style="width:4%"><col style="width:6%"><col style="width:5%"><col style="width:10%"><col style="width:7%">'
+      + '<col style="width:6%"><col style="width:8%"><col style="width:6%"><col style="width:12%"><col style="width:7%">'
+      + '<col style="width:6%"><col style="width:6%"><col style="width:3%"><col style="width:4%"><col style="width:5%"><col style="width:10%">'
+      + '</colgroup><thead><tr><th>No</th><th>ショップ名</th><th>郵便番号</th><th>発送先住所</th><th>名前</th><th>電話番号</th>'
+      + '<th>注文番号</th><th>ASIN</th><th>商品</th><th>画像</th><th>倉庫までの追跡番号</th><th>発送状況</th>'
+      + '<th>数量</th><th>指定日</th><th>時間指定</th><th>備考欄</th></tr></thead><tbody>'+body+'</tbody></table></section>');
+  });
+
+  const area = $('#printArea');
+  area.innerHTML = pages.join('');
+
+  // 画像の読み込みを待ってから印刷する
+  const imgs = [...area.querySelectorAll('img')];
+  toast('画像を読み込んでいます…');
+  await Promise.all(imgs.map(img => new Promise(res => {
+    let fin = false;
+    const done = ok => { if (fin) return; fin = true; if (!ok) img.outerHTML = '<span class="pnoimg">画像なし</span>'; res(); };
+    if (img.complete && img.naturalWidth) return done(true);
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    setTimeout(() => done(img.complete && img.naturalWidth > 0), 8000);
+  })));
+  const noUrl = area.querySelectorAll('.pnoimg').length;
+  if (noUrl && !confirm('画像がない注文が'+noUrl+'件あります（「画像なし」と印刷されます）。このまま印刷しますか？')) { area.innerHTML=''; return; }
+  window.print();
+}
+window.addEventListener('afterprint', () => { $('#printArea').innerHTML = ''; });
+
+/* ===== 送り状データの作成 ===== */
+const YAMATO_HEADERS = ['お客様管理番号','送り状種類','クール区分','伝票番号','出荷予定日','お届け予定（指定）日','配達時間帯','お届け先コード','お届け先電話番号','お届け先電話番号枝番','お届け先郵便番号','お届け先住所','お届け先住所（アパートマンション名）','お届け先会社・部門名１','お届け先会社・部門名２','お届け先名','お届け先名略称カナ','敬称','ご依頼主コード','ご依頼主電話番号','ご依頼主電話番号枝番','ご依頼主郵便番号','ご依頼主住所','ご依頼主住所（アパートマンション名）','ご依頼主名','ご依頼主略称カナ','品名コード１','品名１','品名コード２','品名２','荷扱い１','荷扱い２','記事','コレクト代金引換額（税込）','コレクト内消費税額等','営業所止置き','営業所コード','発行枚数','個数口枠の印字','ご請求先顧客コード','ご請求先分類コード','運賃管理番号','クロネコwebコレクトデータ登録','クロネコwebコレクト加盟店番号','クロネコwebコレクト申込受付番号１','クロネコwebコレクト申込受付番号２','クロネコwebコレクト申込受付番号３','お届け予定ｅメール利用区分','お届け予定ｅメールe-mailアドレス','入力機種','お届け予定eメールメッセージ','お届け完了eメール利用区分','お届け完了ｅメールe-mailアドレス','お届け完了ｅメールメッセージ','クロネコ収納代行利用区分','収納代行決済ＱＲコード印刷','収納代行請求金額(税込)','収納代行内消費税額等','収納代行請求先郵便番号','収納代行請求先住所','収納代行請求先住所（アパートマンション名）','収納代行請求先会社・部門名１','収納代行請求先会社・部門名２','収納代行請求先名(漢字)','収納代行請求先名(カナ)','収納代行問合せ先名(漢字)','収納代行問合せ先郵便番号','収納代行問合せ先住所','収納代行問合せ先住所（アパートマンション名）','収納代行問合せ先電話番号','収納代行管理番号','収納代行品名','収納代行備考','複数口くくりキー','検索キータイトル１','検索キー１','検索キータイトル２','検索キー２','検索キータイトル３','検索キー３','検索キータイトル４','検索キー４','検索キータイトル５','検索キー５','予備','予備','投函予定メール利用区分','投函予定メールe-mailアドレス','投函予定メールメッセージ','投函完了メール（お届け先宛）利用区分','投函完了メール（お届け先宛）e-mailアドレス','投函完了メール（お届け先宛）メールメッセージ','投函完了メール（ご依頼主宛）利用区分','投函完了メール（ご依頼主宛）e-mailアドレス','投函完了メール（ご依頼主宛）メールメッセージ','連携管理番号','通知メールアドレス'];
+const SAGAWA_HEADERS = ['お届け先コード取得区分','お届け先コード','お届け先電話番号','お届け先郵便番号','お届け先住所１','お届け先住所２','お届け先住所３','お届け先名称１','お届け先名称２','お客様管理番号','お客様コード','部署ご担当者コード取得区分','部署ご担当者コード','部署ご担当者名称','荷送人電話番号','ご依頼主コード取得区分','ご依頼主コード','ご依頼主電話番号','ご依頼主郵便番号','ご依頼主住所１','ご依頼主住所２','ご依頼主名称１','ご依頼主名称２','荷姿','品名１','品名２','品名３','品名４','品名５','荷札荷姿','荷札品名１','荷札品名２','荷札品名３','荷札品名４','荷札品名５','荷札品名６','荷札品名７','荷札品名８','荷札品名９','荷札品名１０','荷札品名１１','出荷個数','スピード指定','クール便指定','配達日','配達指定時間帯','配達指定時間（時分）','代引金額','消費税','決済種別','保険金額','指定シール１','指定シール２','指定シール３','営業所受取','SRC区分','営業所受取営業所コード','元着区分','メールアドレス','ご不在時連絡先','出荷日','お問い合せ送り状No.','出荷場印字区分','集約解除指定','編集０１','編集０２','編集０３','編集０４','編集０５','編集０６','編集０７','編集０８','編集０９','編集１０'];
+
+// Q列の時間指定 → 各社のコード
+const TIME_MAP = {
+  '午前中':      { y:'0812', s:'01' },
+  '14:00～16:00': { y:'1416', s:'14' },
+  '16:00～18:00': { y:'1618', s:'16' },
+  '18:00～20:00': { y:'1820', s:'18' },
+  '19:00～21:00': { y:'1921', s:'19' },
+};
+function normTime(t){ return String(t||'').replace(/\s/g,'').replace(/[〜~ー－\-−]/g,'～').replace(/：/g,':').replace(/(^|～)(\d):/g,'$10$2:'); }
+
+const L = { mode:'auto', shipDate:'', overrides:{}, types:{}, include:{}, splits:new Set(), zipInfo:{}, labels:[] };
+
+function hasJa(s){ return /[\u3040-\u30ff\u3400-\u9fff]/.test(s); }
+function blen(s){ let n=0; for (const ch of String(s||'')) { const c=ch.codePointAt(0); n += (c<=0x7e || (c>=0xff61 && c<=0xff9f)) ? 1 : 2; } return n; }
+function cutB(s, max){ let out='', n=0; for (const ch of String(s||'')) { const w=blen(ch); if (n+w>max) break; out+=ch; n+=w; } return out; }
+function splitB(s, limits){
+  let rest = String(s||''); const parts = [];
+  limits.forEach(max => { const p = cutB(rest, max); parts.push(p); rest = rest.slice(p.length); });
+  return { parts, overflow: rest.length };
+}
+function toZen(s){
+  return String(s||'').replace(/[!-~]/g, c => c==='-' ? '－' : String.fromCharCode(c.charCodeAt(0)+0xFEE0)).replace(/ /g,'　');
+}
+function digits(s){ return String(s||'').replace(/[^\d]/g,''); }
+function isOkinawaZip(z){ if (z.length!==7) return false; const n=Number(z.slice(0,3)); return n>=900 && n<=907; }
+function slashDate(d){ return d ? d.replace(/-/g,'/') : ''; }
+function compactDate(d){ return d ? d.replace(/-/g,'') : ''; }
+function labelCfg(){ return Object.assign({}, DEFAULTS, state.config || {}); }
+
+$('#btnLabels').onclick = openLabels;
+$('#btnCloseLabels').onclick = () => $('#dlgLabels').close();
+
+async function openLabels(){
+  if (!state.selected.size) { toast('送り状を作る注文を選んでください'); return; }
+  L.overrides = {}; L.types = {}; L.include = {}; L.splits = new Set();
+  if (!L.shipDate) L.shipDate = todayStr();
+  $('#shipDate').value = L.shipDate;
+  // 英語住所の郵便番号だけ、先にまとめて調べる
+  const need = [...state.selected].map(no=>state.rows[no]).filter(r => r && r.address && !hasJa(r.address))
+    .map(r => digits(r.zip)).filter(z => z.length===7 && !(z in L.zipInfo));
+  if (need.length) {
+    toast('英語住所の郵便番号を調べています…');
+    try { const j = await gas('zip', { zips:[...new Set(need)] }); Object.assign(L.zipInfo, j.zips); }
+    catch(e){ toast(e.message, 6000); }
+  }
+  renderLabels();
+  $('#dlgLabels').showModal();
+}
+
+document.querySelectorAll('#carrierMode button').forEach(b => b.onclick = () => {
+  L.mode = b.dataset.m; L.overrides = {};
+  document.querySelectorAll('#carrierMode button').forEach(x => x.classList.toggle('on', x===b));
+  renderLabels();
+});
+$('#shipDate').onchange = e => { L.shipDate = e.target.value; };
+
+// 同梱グループ：同じ注文番号、または備考欄で「同梱」とNoが書かれている注文をまとめる
+function buildLabels(){
+  const rows = [...state.selected].map(no=>state.rows[no]).filter(Boolean).sort((a,b)=>a.no-b.no);
+  const parent = {};
+  rows.forEach(r => parent[r.no] = r.no);
+  const find = x => parent[x]===x ? x : (parent[x] = find(parent[x]));
+  const union = (a,b) => { a=find(a); b=find(b); if (a!==b) parent[Math.max(a,b)] = Math.min(a,b); };
+  const byOid = {};
+  rows.forEach(r => { const o=String(r.orderId||'').trim(); if (o && o!=='有在庫用') { if (byOid[o]!==undefined) union(byOid[o], r.no); else byOid[o]=r.no; } });
+  rows.forEach(r => { if (/同梱/.test(r.note||'')) (String(r.note).match(/\d{5}/g)||[]).map(Number).forEach(n => { if (parent[n]!==undefined) union(r.no, n); }); });
+  const groups = {};
+  rows.forEach(r => { const k=find(r.no); (groups[k] = groups[k] || []).push(r); });
+  const labels = [];
+  Object.values(groups).forEach(g => {
+    const key = g.map(r=>r.no).join('-');
+    if (g.length>1 && L.splits.has(key)) g.forEach(r => labels.push(makeLabel([r], String(r.no), key)));
+    else labels.push(makeLabel(g, key, null));
+  });
+  return labels.sort((a,b) => a.rows[0].no - b.rows[0].no);
+}
+
+function makeLabel(rows, key, splitFrom){
+  const cfg = labelCfg();
+  const base = rows.find(r=>r.address && r.zip) || rows.find(r=>r.address) || rows[0];
+  const zip7 = digits(base.zip);
+  const tel = digits(rows.map(r=>r.tel).find(Boolean) || '');
+  const name = String(base.name || rows.map(r=>r.name).find(Boolean) || '').trim();
+  const errors = [], warns = [];
+  let addr = String(base.address||'').replace(/\s+/g,' ').trim();
+
+  if (zip7.length!==7) errors.push('郵便番号が7桁ではありません');
+  if (!tel) errors.push('電話番号が空欄です');
+  if (!addr) errors.push('住所が空欄です');
+  if (!name) errors.push('お届け先名が空欄です');
+  if (addr && !hasJa(addr)) {
+    const z = L.zipInfo[zip7];
+    if (z) { addr = z.pref + z.city + ' ' + addr; warns.push('英語住所を変換'); }
+    else if (zip7.length===7) errors.push('郵便番号から住所が見つかりません');
+  }
+
+  const okinawa = zip7.length===7 ? isOkinawaZip(zip7) : /沖縄県|okinawa/i.test(addr);
+  const auto = okinawa ? 'yamato' : 'sagawa';
+  const carrier = L.overrides[key] || (L.mode==='auto' ? auto : L.mode);
+
+  const t = rows.map(r=>r.deliveryTime).find(Boolean) || '';
+  const tm = t ? TIME_MAP[normTime(t)] : null;
+  if (t && !tm) errors.push('時間指定の表記が分かりません（'+t+'）');
+  const dd = rows.map(r=>r.deliveryDate).find(Boolean) || '';
+  if (dd && !/^\d{4}-\d{2}-\d{2}$/.test(dd)) errors.push('指定日を読み取れません（'+dd+'）');
+  if (rows.some(r=>r.shippedAt)) warns.push('出荷日が入っている注文を含みます');
+
+  if (carrier==='yamato') {
+    if (splitB(addr,[64,32]).overflow) errors.push('住所が長すぎます');
+    if (blen(name)>32) warns.push('お届け先名を16文字で切ります');
+    if (!cfg.yamatoBillCode) errors.push('ヤマトの請求先顧客コードが未登録です');
+  } else {
+    if (splitB(toZen(addr),[32,32,32]).overflow) errors.push('住所が長すぎます');
+    if (!cfg.sagawaCustCode) errors.push('佐川のお客様コードが未登録です（設定画面）');
+  }
+  if (!cfg.senderTel || !cfg.senderZip || !cfg.senderAddr) errors.push('ご依頼主の住所・電話が未登録です');
+
+  return {
+    key, rows, splitFrom, zip7, tel, name, addr, carrier, okinawa, tm, dd, errors, warns,
+    type: L.types[key] || '0',
+    include: !errors.length && L.include[key] !== false,
+  };
+}
+
+function renderLabels(){
+  L.labels = buildLabels();
+  const inc = L.labels.filter(l=>l.include);
+  const y = inc.filter(l=>l.carrier==='yamato').length, s = inc.filter(l=>l.carrier==='sagawa').length;
+  const err = L.labels.filter(l=>l.errors.length).length;
+  $('#labSummary').textContent = '送り状 '+L.labels.length+'枚（ヤマト '+y+'枚 ／ 佐川 '+s+'枚）'+(err ? ' ／ 直しが必要 '+err+'枚（CSVに含めません）' : '');
+  $('#dlYamato').textContent = 'ヤマトB2のCSVを保存（'+y+'件）';
+  $('#dlSagawa').textContent = '佐川e飛伝のCSVを保存（'+s+'件）';
+  $('#dlYamato').disabled = !y; $('#dlSagawa').disabled = !s;
+
+  $('#labList').innerHTML = L.labels.map(l => {
+    const nos = l.rows.map(r=>'No.'+r.no).join('、');
+    const shops = [...new Set(l.rows.map(r=>r.shop).filter(Boolean))].join('、');
+    const msgs = l.errors.map(m=>'<span class="msg-err">'+esc(m)+'</span>').join('') + l.warns.map(m=>'<span class="msg-warn">'+esc(m)+'</span>').join('');
+    const spec = (l.dd ? md(l.dd)+' ' : '') + (l.rows.map(r=>r.deliveryTime).find(Boolean) || '');
+    let opts = '<select class="lcar" data-k="'+esc(l.key)+'" aria-label="配送業者"><option value="sagawa"'+(l.carrier==='sagawa'?' selected':'')+'>佐川</option><option value="yamato"'+(l.carrier==='yamato'?' selected':'')+'>ヤマト</option></select>';
+    if (l.carrier==='yamato') opts += '<select class="ltype" data-k="'+esc(l.key)+'" aria-label="送り状種類"><option value="0"'+(l.type==='0'?' selected':'')+'>宅急便</option><option value="A"'+(l.type==='A'?' selected':'')+'>ネコポス</option></select>';
+    if (l.rows.length>1) opts += '<button type="button" class="ghost lsplit" data-k="'+esc(l.key)+'">同梱を分ける</button>';
+    else if (l.splitFrom) opts += '<button type="button" class="ghost ljoin" data-k="'+esc(l.splitFrom)+'">同梱に戻す</button>';
+    return '<div class="lab'+(l.errors.length?' is-err':'')+(l.include?'':' is-off')+'">'
+      + '<label class="chk"><input type="checkbox" class="linc" data-k="'+esc(l.key)+'"'+(l.include?' checked':'')+(l.errors.length?' disabled':'')+' aria-label="CSVに含める"></label>'
+      + '<div><div class="l1"><b>'+esc(nos)+'</b><span>'+esc(shops)+'</span>'
+      + (l.rows.length>1 ? '<span class="badge">同梱 '+l.rows.length+'件</span>' : '')
+      + (l.okinawa ? '<span class="badge">沖縄</span>' : '')
+      + (spec.trim() ? '<span class="badge warn">指定 '+esc(spec)+'</span>' : '') + '</div>'
+      + '<div>'+esc(l.name)+'　〒'+esc(l.zip7)+'</div><div class="addr">'+esc(l.addr)+'</div>'
+      + (msgs ? '<div class="msgs">'+msgs+'</div>' : '') + '</div>'
+      + '<div class="lab-opts">'+opts+'</div></div>';
+  }).join('');
+}
+
+$('#labList').addEventListener('change', e => {
+  const t = e.target, k = t.dataset.k;
+  if (t.classList.contains('lcar')) L.overrides[k] = t.value;
+  else if (t.classList.contains('ltype')) L.types[k] = t.value;
+  else if (t.classList.contains('linc')) L.include[k] = t.checked;
+  else return;
+  renderLabels();
+});
+$('#labList').addEventListener('click', e => {
+  const t = e.target;
+  if (t.classList.contains('lsplit')) { L.splits.add(t.dataset.k); renderLabels(); }
+  else if (t.classList.contains('ljoin')) { L.splits.delete(t.dataset.k); renderLabels(); }
+});
+
+function yamatoRow(l, cfg){
+  const v = {}, r0 = l.rows[0], a = splitB(l.addr,[64,32]).parts;
+  const shop = [...new Set(l.rows.map(r=>r.shop).filter(Boolean))][0] || '';
+  v['お客様管理番号'] = cutB(r0.orderId, 50);
+  v['送り状種類'] = l.type;
+  v['クール区分'] = '0';
+  v['出荷予定日'] = slashDate(L.shipDate);
+  v['お届け予定（指定）日'] = slashDate(l.dd);
+  v['配達時間帯'] = l.tm ? l.tm.y : '';
+  v['お届け先電話番号'] = l.tel;
+  v['お届け先郵便番号'] = l.zip7;
+  v['お届け先住所'] = a[0];
+  v['お届け先住所（アパートマンション名）'] = a[1];
+  v['お届け先名'] = cutB(l.name, 32);
+  v['敬称'] = '様';
+  v['ご依頼主電話番号'] = cfg.senderTel;
+  v['ご依頼主郵便番号'] = digits(cfg.senderZip);
+  v['ご依頼主住所'] = cutB(cfg.senderAddr, 64);
+  v['ご依頼主住所（アパートマンション名）'] = cutB(cfg.senderAddr2, 32);
+  v['ご依頼主名'] = cutB(shop, 32);
+  v['品名コード１'] = cutB(r0.asin, 30);
+  v['品名１'] = cutB(r0.item, 50);
+  v['品名２'] = cutB('(No.'+l.rows.map(r=>r.no).join(',')+')', 50);
+  v['記事'] = cutB(r0.orderId, 20);
+  v['営業所止置き'] = '0';
+  v['発行枚数'] = '1';
+  v['ご請求先顧客コード'] = cfg.yamatoBillCode;
+  v['運賃管理番号'] = cfg.yamatoFareNo;
+  v['クロネコwebコレクトデータ登録'] = '0';
+  v['お届け予定ｅメール利用区分'] = '0';
+  v['お届け完了eメール利用区分'] = '0';
+  v['クロネコ収納代行利用区分'] = '0';
+  v['投函予定メール利用区分'] = '0';
+  v['投函完了メール（お届け先宛）利用区分'] = '0';
+  v['投函完了メール（ご依頼主宛）利用区分'] = '0';
+  return fill(YAMATO_HEADERS, v);
+}
+
+function sagawaRow(l, cfg){
+  const v = {}, r0 = l.rows[0], a = splitB(toZen(l.addr),[32,32,32]).parts, n = splitB(toZen(l.name),[32,32]).parts;
+  const shop = [...new Set(l.rows.map(r=>r.shop).filter(Boolean))][0] || '';
+  v['お届け先電話番号'] = l.tel;
+  v['お届け先郵便番号'] = l.zip7;
+  v['お届け先住所１'] = a[0]; v['お届け先住所２'] = a[1]; v['お届け先住所３'] = a[2];
+  v['お届け先名称１'] = n[0]; v['お届け先名称２'] = n[1];
+  v['お客様コード'] = cfg.sagawaCustCode;
+  v['ご依頼主電話番号'] = cfg.senderTel;
+  v['ご依頼主郵便番号'] = digits(cfg.senderZip);
+  v['ご依頼主住所１'] = cutB(toZen(cfg.senderAddr), 32);
+  v['ご依頼主住所２'] = cutB(toZen(cfg.senderAddr2), 32);
+  v['ご依頼主名称１'] = cutB(toZen(shop), 32);
+  v['品名１'] = cutB(toZen(r0.item), 32);
+  v['品名２'] = cutB('(No.'+l.rows.map(r=>r.no).join(',')+')', 32);
+  v['品名３'] = cutB(r0.orderId, 32);
+  v['出荷個数'] = '1';
+  v['配達日'] = compactDate(l.dd);
+  v['配達指定時間帯'] = l.tm ? l.tm.s : '';
+  v['元着区分'] = '1';
+  v['出荷日'] = compactDate(L.shipDate);
+  return fill(SAGAWA_HEADERS, v);
+}
+
+function fill(headers, v){
+  Object.keys(v).forEach(k => { if (headers.indexOf(k) < 0) throw new Error('列名が見つかりません：'+k); });
+  return headers.map(h => v[h] == null ? '' : String(v[h]));
+}
+function toCsv(headers, rows){
+  const q = s => '"' + String(s).replace(/"/g,'""') + '"';
+  return [headers, ...rows].map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
+}
+
+$('#dlYamato').onclick = () => saveCsv('yamato');
+$('#dlSagawa').onclick = () => saveCsv('sagawa');
+
+function saveCsv(carrier){
+  if (!L.shipDate) { toast('出荷日を選んでください'); return; }
+  const cfg = labelCfg();
+  const list = L.labels.filter(l => l.include && l.carrier===carrier);
+  if (!list.length) { toast('この配送業者の送り状がありません'); return; }
+  const headers = carrier==='yamato' ? YAMATO_HEADERS : SAGAWA_HEADERS;
+  const rows = list.map(l => carrier==='yamato' ? yamatoRow(l, cfg) : sagawaRow(l, cfg));
+  const csv = toCsv(headers, rows);
+  const sjis = Encoding.convert(Encoding.stringToCode(csv), { to:'SJIS', from:'UNICODE' });
+  const blob = new Blob([new Uint8Array(sjis)], { type:'text/csv' });
+  const d = new Date(), stamp = compactDate(todayStr()) + '_' + String(d.getHours()).padStart(2,'0') + String(d.getMinutes()).padStart(2,'0');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (carrier==='yamato' ? 'yamatoB2_' : 'sagawa_ehiden_') + stamp + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast((carrier==='yamato' ? 'ヤマトB2' : '佐川e飛伝') + 'のCSVを保存しました（' + list.length + '件）');
+  logLabels(list);
+}
+
+async function logLabels(list){
+  try{
+    const col = clientRef().collection('orders');
+    const batch = db.batch();
+    list.forEach(l => l.rows.forEach(r => batch.set(col.doc(String(r.no)), {
+      bundleNos: l.rows.map(x=>x.no),
+      labelCarrier: l.carrier,
+      labelType: l.carrier==='yamato' ? l.type : '',
+      labelShipDate: L.shipDate,
+      labelCreatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      labelCreatedBy: state.user.email || '',
+    }, { merge:true })));
+    await batch.commit();
+  }catch(e){ console.warn('送り状の記録に失敗', e); }
+}
+</script>
+</body>
+</html>
