@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>着払い伝票スキャナー & 請求台帳</title>
+    <title>請求台帳（着払い・補填・イレギュラー）</title>
     <style>
         :root {
             --primary-color: #2563eb;
@@ -21,7 +21,7 @@
             background-color: var(--bg-color);
             color: var(--text-color);
             padding: 16px;
-            max-width: 600px;
+            max-width: 760px;
             margin: 0 auto;
         }
         h1 { font-size: 1.25rem; margin-bottom: 16px; text-align: center; }
@@ -93,6 +93,16 @@
             color: var(--text-color);
         }
         .hint { font-size: 0.75rem; color: var(--sub-color); margin-top: 4px; }
+        .seller-row { display: flex; gap: 8px; }
+        .seller-row input { flex: 1; }
+        .seller-row .btn { width: auto; margin: 0; padding: 10px 14px; white-space: nowrap; }
+        #sellerName { margin-top: 6px; font-size: 0.9rem; font-weight: bold; min-height: 1.3em; }
+        #sellerName.err { color: var(--danger-color); }
+        .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .chip { font-size: 0.8rem; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border-color); background: #fff; color: var(--text-color); cursor: pointer; }
+        .tag { font-size: 0.7rem; font-weight: bold; padding: 1px 6px; border-radius: 99px; margin-left: 4px; }
+        .tag.un { background: #fef3c7; color: #b45309; }
+        .tag.bi { background: #d1fae5; color: #047857; }
         #statusMsg { text-align: center; font-size: 0.85rem; color: var(--sub-color); margin-top: 8px; min-height: 1.2em; }
         #statusMsg.ok { color: var(--success-color); font-weight: bold; }
         #statusMsg.err { color: var(--danger-color); font-weight: bold; }
@@ -136,45 +146,83 @@
         #dialogMessage { font-size: 0.875rem; color: var(--sub-color); white-space: pre-line; }
         .dialog-buttons { display: flex; gap: 8px; margin-top: 16px; }
         .dialog-buttons .btn { margin: 0; }
+
+        /* ===== 請求台帳タブ ===== */
+        :root { --bg:#f1f5f9; --card:#fff; --text:#1e293b; --sub:#64748b; --line:#e2e8f0; --main:#4f46e5; --ok:#059669; --warn:#b45309; --warnbg:#fef3c7; --okbg:#d1fae5; --red:#dc2626; }
+        #tabLedger .card { background:var(--card); border-radius:16px; padding:16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+        #tabLedger .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        #tabLedger label.l { font-size:12px; color:var(--sub); font-weight:700; display:block; }
+        #tabLedger input, #tabLedger select { font-size:16px; padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); }
+        #tabLedger button { font-size:14px; font-weight:700; border:0; border-radius:12px; padding:11px 14px; cursor:pointer; color:#fff; background:var(--main); }
+        #tabLedger button.ok { background:var(--ok); }
+        #tabLedger button.sub { background:transparent; color:var(--main); border:1px solid var(--line); }
+        #tabLedger button.mini { padding:6px 10px; font-size:13px; border-radius:9px; }
+        #tabLedger button.del { background:transparent; color:var(--red); border:1px solid var(--line); }
+        #tabLedger button:disabled { opacity:.5; }
+        #tabLedger .note { font-size:13px; color:var(--sub); }
+        #tabLedger .stats { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+        #tabLedger .stat { border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+        #tabLedger .stat .n { font-size:20px; font-weight:800; }
+        #tabLedger .stat .lb { font-size:12px; color:var(--sub); font-weight:700; }
+        #tabLedger table { width:100%; border-collapse:collapse; font-size:14px; }
+        #tabLedger th, #tabLedger td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+        #tabLedger td.num, #tabLedger th.num { text-align:right; white-space:nowrap; }
+        #tabLedger .scroll { overflow-x:auto; }
+        #tabLedger .rec { border-bottom:1px solid var(--line); padding:12px 0; }
+        #tabLedger .rec:last-child { border-bottom:0; }
+        #tabLedger .tag { font-size:12px; font-weight:700; padding:2px 8px; border-radius:99px; }
+        #tabLedger .tag.un { background:var(--warnbg); color:var(--warn); }
+        #tabLedger .tag.bi { background:var(--okbg); color:var(--ok); }
+        #tabLedger .muted { color:var(--sub); font-size:13px; }
+        /* ===== タブ ===== */
+        .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #e2e8f0; padding: 4px; border-radius: 12px; margin-bottom: 16px; position: sticky; top: 8px; z-index: 5; }
+        .tabs button { border: 0; border-radius: 9px; padding: 10px; font-size: 0.95rem; font-weight: bold; background: transparent; color: var(--sub-color); cursor: pointer; }
+        .tabs button.active { background: #fff; color: var(--primary-color); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
-
-    <h1>着払い伝票スキャナー</h1>
-
+    <h1>請求台帳</h1>
+    <div class="tabs">
+        <button type="button" id="tabBtnScan" class="active" onclick="showTab('scan')">📷 着払いを記録</button>
+        <button type="button" id="tabBtnLedger" onclick="showTab('ledger')">🧾 台帳・月末集計</button>
+    </div>
+    <section id="tabScan">
     <div class="card">
         <div class="video-container">
             <video id="camera" autoplay playsinline muted></video>
             <div class="scan-overlay"></div>
         </div>
         <button type="button" class="btn" id="startCameraBtn">カメラを起動する</button>
-
         <div class="file-input-wrap">
             <label class="btn btn-secondary" for="fileInput">画像ファイルから読み取る</label>
             <input type="file" id="fileInput" accept="image/*">
         </div>
         <p id="statusMsg"></p>
     </div>
-
     <div class="card">
         <form id="logForm" novalidate>
+            <label for="kanriInput">請求先（管理番号 または 名前）<span style="color:var(--danger-color)">*</span></label>
+            <div class="seller-row">
+                <input type="text" id="kanriInput" list="sellerSuggest" placeholder="例：A-12 ／ 〇〇商店" autocomplete="off" spellcheck="false">
+                <datalist id="sellerSuggest"></datalist>
+                <button type="button" class="btn btn-secondary" id="sellerCheckBtn">確認</button>
+            </div>
+            <div id="sellerName"></div>
+            <p class="hint">管理番号がないセラーは、名前を入れればそのまま保存できます（入力するとChatworkのルーム名が候補に出ます）</p>
+            <div class="chips" id="recentSellers"></div>
             <label for="trackingNumber">送り状番号</label>
             <input type="text" id="trackingNumber" placeholder="スキャンまたは手入力" autocomplete="off" autocapitalize="characters" spellcheck="false">
             <p class="hint">ハイフンや全角数字は自動で整えます</p>
-
-            <label for="amount">請求金額 (円)</label>
+            <label for="amount">着払い金額 (円・税込)</label>
             <input type="number" id="amount" placeholder="例: 1200" inputmode="numeric" min="0" step="1">
-
             <label for="memo">宛先・メモ</label>
             <textarea id="memo" rows="2" placeholder="〇〇様 / 返送品など"></textarea>
-
             <button type="submit" class="btn" id="saveBtn" style="margin-top: 16px;">記録を保存する</button>
         </form>
     </div>
-
     <div class="card">
         <div class="history-head">
-            <h3>クラウド保存履歴</h3>
+            <h3>着払いの記録（請求台帳）</h3>
             <button type="button" class="btn btn-secondary btn-small" id="csvBtn">CSVで保存</button>
         </div>
         <div class="filter-container">
@@ -188,7 +236,48 @@
             <li class="empty">読み込み中...</li>
         </ul>
     </div>
+    </section>
+    <section id="tabLedger" style="display:none">
 
+
+    <div class="card">
+        <div class="row">
+            <div><label class="l">対象月</label><input type="month" id="month"></div>
+            <div><label class="l">表示</label>
+                <select id="filter" onchange="render()"><option value="all">すべて</option><option value="unbilled" selected>未請求だけ</option><option value="billed">請求済みだけ</option></select></div>
+            <div style="flex:1;min-width:160px"><label class="l">絞り込み</label><input id="kw" placeholder="管理番号・ショップ名・メモ" oninput="render()" style="width:100%"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="loadBtn" onclick="loadMonth()" style="width:100%">読み込む</button></div>
+        <div id="msg" class="note" style="margin-top:6px"></div>
+        <details class="note" style="margin-top:10px">
+            <summary>以前の着払い台帳（invoices）の取り込み</summary>
+            <div style="margin-top:6px">伝票スキャナーで以前に記録した着払いを、この台帳に取り込みます。何回押しても二重には入りません。取り込んだ記録は管理番号が空なので、明細の「管理番号を入れる」から設定してください。</div>
+            <button class="sub" onclick="migrateInvoices(this)" style="margin-top:8px;width:100%">以前の着払いを取り込む</button>
+        </details>
+    </div>
+
+    <div id="result" style="display:none">
+        <div class="card">
+            <div class="stats" id="stats"></div>
+            <div class="row" style="margin-top:12px">
+                <button class="ok" onclick="markAllShown()" style="flex:1">表示中を「請求済み」にする</button>
+                <button class="sub" onclick="copyTsv()" style="flex:1">📋 表をコピー</button>
+                <button class="sub" onclick="downloadCsv()" style="flex:1">⬇ CSV</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="font-weight:800;margin-bottom:6px">セラー別の合計</div>
+            <div class="scroll"><table id="sellerTable"></table></div>
+        </div>
+
+        <div class="card">
+            <div style="font-weight:800;margin-bottom:6px">明細</div>
+            <div id="list"></div>
+        </div>
+    </div>
+
+    </section>
     <dialog id="confirmDialog">
         <p id="dialogTitle" style="font-weight: bold; margin-bottom: 8px;"></p>
         <p id="dialogMessage"></p>
@@ -197,11 +286,10 @@
             <button type="button" class="btn" id="dialogOkBtn">OK</button>
         </div>
     </dialog>
-
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, limit, serverTimestamp, updateDoc, writeBatch, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         // ===== Firebase設定（変更なし） =====
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -214,8 +302,49 @@
         };
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        const invoicesCol = collection(db, "invoices");
-
+        // 請求台帳（補填・イレギュラー発送と共通。月末は billing_records.html でまとめて集計）
+        const invoicesCol = collection(db, "billing_records");
+        const COD_TYPE = "着払い立替";
+        const auth = getAuth(app);
+        // ===== 合言葉ログイン（コックピットと共通） =====
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
+        const SECRET_KEY = "chatwork_cockpit_secret_v1";
+        function getSecret() {
+            let s = localStorage.getItem(SECRET_KEY);
+            if (!s) { s = (prompt("合言葉を入力してください") || "").trim(); if (s) localStorage.setItem(SECRET_KEY, s); }
+            return s;
+        }
+        async function callGas(action, params) {
+            const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify(Object.assign({}, params, { action, secret: getSecret() })) });
+            const data = await res.json();
+            if (data.code === "auth") { localStorage.removeItem(SECRET_KEY); throw new Error("合言葉が違います。再読み込みして入力し直してください"); }
+            if (data.status !== "success") throw new Error(data.message || "エラー");
+            return data;
+        }
+        let loginPromise = null;
+        function ensureLogin(force) {
+            if (!loginPromise || force) {
+                loginPromise = (async () => {
+                    await new Promise(res => { const un = onAuthStateChanged(auth, () => { un(); res(); }); });
+                    if (auth.currentUser && !force) return;
+                    if (force && auth.currentUser) await signOut(auth);
+                    const t = await callGas("get_fb_token", { device_id: "denpyo_scanner" });
+                    await signInWithCustomToken(auth, t.token);
+                })().catch(e => { loginPromise = null; throw e; });
+            }
+            return loginPromise;
+        }
+        // 権限エラーの時だけ、ログインし直して1回やり直す
+        async function withLogin(fn) {
+            await ensureLogin(false);
+            try { return await fn(); }
+            catch (e) { if (e.code !== 'permission-denied') throw e; await ensureLogin(true); return await fn(); }
+        }
+        function staffName() {
+            let n = localStorage.getItem("cw_staff_name");
+            if (!n) { n = (prompt("担当者名を入力してください（記録に残ります）") || "").trim(); if (n) localStorage.setItem("cw_staff_name", n); }
+            return n || "未設定";
+        }
         // ===== 設定値 =====
         const SCAN_INTERVAL = 350;   // 何ミリ秒ごとに読み取るか
         const REQUIRED_MATCHES = 2;  // 同じ番号を何回連続で読んだら確定するか
@@ -223,7 +352,6 @@
         const RECENT_LIMIT = 100;    // 「最新」表示の件数
         // iPhoneなどBarcodeDetector非対応端末用の読み取りライブラリ
         const ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
-
         // ===== 画面要素 =====
         const $ = (id) => document.getElementById(id);
         const video = $('camera');
@@ -240,7 +368,6 @@
         const summaryCount = $('summaryCount');
         const summaryTotal = $('summaryTotal');
         const csvBtn = $('csvBtn');
-
         let mediaStream = null;
         let scanning = false;
         let lastScanTime = 0;
@@ -249,17 +376,14 @@
         let currentData = [];
         const workCanvas = document.createElement('canvas');
         const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
-
         // ===== 共通関数 =====
         function setStatus(text, type = "") {
             statusMsg.textContent = text;
             statusMsg.className = type;
         }
-
         function escapeHtml(str) {
             return String(str ?? "").replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
-
         // 送り状番号を整える（全角→半角、ハイフン・空白除去、NW-7の開始/終了文字除去）
         function normalizeTracking(raw) {
             let v = String(raw ?? "").trim();
@@ -268,12 +392,10 @@
             v = v.replace(/^[A-Da-d](\d+)[A-Da-d]$/, "$1");
             return v.toUpperCase();
         }
-
         // 送り状番号らしい形か（国内：10〜14桁の数字／国際郵便：EJ123456789JP形式）
         function isValidTracking(v) {
             return /^\d{10,14}$/.test(v) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(v);
         }
-
         // 日本時間の年月 "2026-10" と、その月のUTC範囲
         function jstYm(date) {
             const j = new Date(date.getTime() + 9 * 3600 * 1000);
@@ -290,7 +412,6 @@
             if (isNaN(d)) return "";
             return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         }
-
         // 確認ダイアログ（OKならtrue）
         function confirmBox(title, message, okLabel = "OK", danger = false) {
             const dlg = $('confirmDialog');
@@ -313,10 +434,8 @@
                 dlg.showModal();
             });
         }
-
         // ===== バーコード読み取り（Android：標準機能／iPhone：ZXing） =====
         let detectorPromise = null;
-
         function loadZXing() {
             return new Promise((resolve, reject) => {
                 if (window.ZXing) return resolve(window.ZXing);
@@ -327,7 +446,6 @@
                 document.head.appendChild(s);
             });
         }
-
         async function createDetector() {
             if ('BarcodeDetector' in window) {
                 try {
@@ -367,14 +485,12 @@
                 }
             };
         }
-
         function getDetector() {
             if (!detectorPromise) {
                 detectorPromise = createDetector().catch(err => { detectorPromise = null; throw err; });
             }
             return detectorPromise;
         }
-
         // 読み取り結果から送り状番号として正しいものだけを拾う
         function pickTracking(values) {
             for (const raw of values) {
@@ -383,7 +499,6 @@
             }
             return null;
         }
-
         // 映像や画像をキャンバスに描く（cropRatio: 中央をどれだけ切り出すか）
         function drawToCanvas(source, srcW, srcH, cropW = 1, cropH = 1, maxW = 1280, rotate = 0) {
             const sw = Math.round(srcW * cropW);
@@ -406,14 +521,12 @@
             }
             return workCanvas;
         }
-
         function onScanSuccess(value) {
             trackingInput.value = value;
             setStatus(`読み取りました：${value}`, "ok");
             if (navigator.vibrate) navigator.vibrate(100);
             amountInput.focus();
         }
-
         // ===== カメラ =====
         startCameraBtn.addEventListener('click', async () => {
             if (scanning) { stopCamera(); return; }
@@ -447,7 +560,6 @@
                 startCameraBtn.disabled = false;
             }
         });
-
         function stopCamera() {
             if (mediaStream) {
                 mediaStream.getTracks().forEach(t => t.stop());
@@ -457,12 +569,10 @@
             scanning = false;
             startCameraBtn.textContent = "カメラを起動する";
         }
-
         // 画面を閉じた・アプリを切り替えたらカメラを止める
         document.addEventListener('visibilitychange', () => {
             if (document.hidden && scanning) { stopCamera(); setStatus(""); }
         });
-
         async function scanVideoFrame(timestamp) {
             if (!scanning) return;
             if (timestamp - lastScanTime >= SCAN_INTERVAL && video.readyState >= video.HAVE_ENOUGH_DATA) {
@@ -495,7 +605,6 @@
             }
             requestAnimationFrame(scanVideoFrame);
         }
-
         // ===== 画像ファイルから読み取り =====
         fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
@@ -509,7 +618,6 @@
                 const img = new Image();
                 await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
                 URL.revokeObjectURL(url);
-
                 // 全体 → 中央切り出し → 90度回転 の順で試す
                 const attempts = [
                     [1, 1, 1600, 0],
@@ -528,14 +636,96 @@
                 setStatus("画像を読み取れませんでした：" + (err?.message || "形式を確認してください"), "err");
             }
         });
-
+        // ===== セラー（管理番号）の確認 =====
+        const kanriInput = $('kanriInput');
+        const sellerNameEl = $('sellerName');
+        let seller = null;   // { kanriNo, shopName }
+        const RECENT_SELLERS_KEY = "denpyo_recent_sellers";
+        function normalizeKanri(v) {
+            return String(v || "").trim().replace(/[０-９Ａ-Ｚａ-ｚ－]/g, c => c === '－' ? '-' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).toUpperCase();
+        }
+        // 管理番号らしい入力か（英数字とハイフンだけ）
+        function looksLikeKanri(v) { return /^[A-Z0-9][A-Z0-9\-_]{1,19}$/.test(v); }
+        async function checkSeller() {
+            const raw = kanriInput.value.trim();
+            seller = null;
+            if (!raw) { sellerNameEl.textContent = ""; return null; }
+            const k = normalizeKanri(raw);
+            if (looksLikeKanri(k)) kanriInput.value = k;
+            sellerNameEl.className = "";
+            sellerNameEl.textContent = "確認中...";
+            try {
+                // 管理番号でも、ルーム名でも探せる（ルーム名に管理番号が入っていれば見つかる）
+                const data = await callGas("get_seller_info", { chatwork_id: looksLikeKanri(k) ? k : raw });
+                const s = data.seller || {};
+                if (!s.error && s.kanriNo) {
+                    seller = { kanriNo: String(s.kanriNo), shopName: [s.shopName, s.name].filter(v => v && v !== '不明').join('・') };
+                    sellerNameEl.textContent = `✓ ${seller.kanriNo}　${seller.shopName}`;
+                } else if (looksLikeKanri(k)) {
+                    sellerNameEl.className = "err";
+                    sellerNameEl.textContent = "⚠ この管理番号のセラーが見つかりません（このまま保存もできます）";
+                    seller = { kanriNo: k, shopName: "" };
+                } else {
+                    seller = { kanriNo: "", shopName: raw };
+                    sellerNameEl.textContent = `✓ 管理番号なしの請求先「${raw}」として記録します`;
+                }
+            } catch (e) {
+                sellerNameEl.className = "err";
+                sellerNameEl.textContent = "確認できませんでした：" + e.message;
+                seller = looksLikeKanri(k) ? { kanriNo: k, shopName: "" } : { kanriNo: "", shopName: raw };
+            }
+            return seller;
+        }
+        // 候補：Chatworkのルーム名（コックピットの同期データから）
+        async function loadSellerSuggest() {
+            try {
+                const snap = await withLogin(() => getDocs(query(collection(db, "cw_rooms"), where("account", "==", "staff"))));
+                const names = [...new Set(snap.docs.map(d => d.data().name).filter(Boolean))].sort();
+                $('sellerSuggest').innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+            } catch (e) { /* 候補が出せなくても入力はできる */ }
+        }
+        $('sellerCheckBtn').addEventListener('click', checkSeller);
+        kanriInput.addEventListener('change', checkSeller);
+        // よく使うセラー（この端末で直近に使った5件）
+        function getRecentSellers() { try { return JSON.parse(localStorage.getItem(RECENT_SELLERS_KEY)) || []; } catch (e) { return []; } }
+        function addRecentSeller(s) {
+            const key = x => x.kanriNo || ('名前:' + x.shopName);
+            const list = getRecentSellers().filter(x => key(x) !== key(s));
+            list.unshift(s);
+            localStorage.setItem(RECENT_SELLERS_KEY, JSON.stringify(list.slice(0, 5)));
+            renderRecentSellers();
+        }
+        function renderRecentSellers() {
+            $('recentSellers').innerHTML = getRecentSellers().map((s, i) =>
+                `<button type="button" class="chip" data-i="${i}">${escapeHtml(s.kanriNo || '')}${s.shopName ? ' ' + escapeHtml(s.shopName.slice(0, 12)) : ''}</button>`).join('');
+        }
+        $('recentSellers').addEventListener('click', e => {
+            const b = e.target.closest('button[data-i]');
+            if (!b) return;
+            const s = getRecentSellers()[Number(b.dataset.i)];
+            if (!s) return;
+            kanriInput.value = s.kanriNo || s.shopName;
+            seller = s;
+            sellerNameEl.className = "";
+            sellerNameEl.textContent = s.kanriNo ? `✓ ${s.kanriNo}　${s.shopName || ''}` : `✓ 管理番号なしの請求先「${s.shopName}」`;
+        });
+        function jstYmd(date) {
+            const j = new Date(date.getTime() + 9 * 3600 * 1000);
+            return `${j.getUTCFullYear()}-${String(j.getUTCMonth() + 1).padStart(2, '0')}-${String(j.getUTCDate()).padStart(2, '0')}`;
+        }
         // ===== 保存 =====
         logForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const num = normalizeTracking(trackingInput.value);
             const amountRaw = amountInput.value.trim();
             const memo = memoInput.value.trim();
-
+            if (!kanriInput.value.trim()) {
+                setStatus("請求先（管理番号または名前）を入力してください", "err");
+                kanriInput.focus();
+                return;
+            }
+            const cur = kanriInput.value.trim();
+            if (!seller || (seller.kanriNo !== normalizeKanri(cur) && seller.shopName !== cur)) await checkSeller();
             if (!num) {
                 setStatus("送り状番号を入力してください", "err");
                 trackingInput.focus();
@@ -548,36 +738,41 @@
                 return;
             }
             trackingInput.value = num;
-
             saveBtn.disabled = true;
             try {
                 if (!isValidTracking(num)) {
                     const ok = await confirmBox("番号の確認", `「${num}」は送り状番号の形式と違うようです。\nこのまま保存しますか？`, "保存する");
                     if (!ok) { setStatus(""); return; }
                 }
-
                 setStatus("登録済みか確認中...");
-                const dupSnap = await getDocs(query(invoicesCol, where("number", "==", num), limit(1)));
+                const dupSnap = await withLogin(() => getDocs(query(invoicesCol, where("trackingNo", "==", num), limit(1))));
                 if (!dupSnap.empty) {
                     const d = dupSnap.docs[0].data();
                     const ok = await confirmBox(
                         "登録済みの番号です",
-                        `「${num}」はすでに登録されています。\n登録日時：${formatJst(d.createdAt)}\n金額：${(d.amount || 0).toLocaleString()}円\n\nそれでも追加で保存しますか？`,
+                        `「${num}」はすでに登録されています。\n日付：${d.date || ''}\nセラー：${d.kanriNo || ''} ${d.shopName || ''}\n金額：${(d.amount || 0).toLocaleString()}円\n\nそれでも追加で保存しますか？`,
                         "追加で保存する"
                     );
                     if (!ok) { setStatus("保存を取りやめました"); return; }
                 }
-
                 setStatus("保存中...");
-                await addDoc(invoicesCol, {
-                    number: num,
-                    amount: amount,
+                const today = jstYmd(new Date());
+                await withLogin(() => addDoc(invoicesCol, {
+                    type: COD_TYPE, source: "scanner",
+                    trackingNo: num,
+                    kanriNo: seller.kanriNo, shopName: seller.shopName || "",
+                    date: today, month: today.slice(0, 7),
+                    unitPrice: amount, quantity: 1, amount: amount, taxMode: "税込",
                     memo: memo,
-                    createdAt: new Date().toISOString()
-                });
-                setStatus(`保存しました：${num}`, "ok");
-                logForm.reset();
-
+                    status: "unbilled", by: staffName(),
+                    createdAt: serverTimestamp()
+                }));
+                setStatus(`保存しました：${num}（${seller.kanriNo || seller.shopName}）`, "ok");
+                addRecentSeller(seller);
+                // 同じセラーの伝票を続けて読めるよう、セラー欄は残す
+                trackingInput.value = "";
+                amountInput.value = "";
+                memoInput.value = "";
                 // 今月を表示していなければ今月に切り替えて、保存した記録が見えるようにする
                 const thisMonth = jstYm(new Date());
                 if (monthFilter.value !== 'recent' && monthFilter.value !== thisMonth) monthFilter.value = thisMonth;
@@ -588,7 +783,6 @@
                 saveBtn.disabled = false;
             }
         });
-
         // ===== 履歴 =====
         function buildMonthOptions() {
             const now = new Date();
@@ -601,25 +795,17 @@
                 opts.push(`<option value="${ym}">${y}年${m}月${i === 0 ? '（今月）' : ''}</option>`);
                 m--; if (m === 0) { m = 12; y--; }
             }
-            opts.push(`<option value="recent">最新${RECENT_LIMIT}件（月をまたいで表示）</option>`);
             monthFilter.innerHTML = opts.join('');
             monthFilter.value = jstYm(now);
         }
-
         async function loadHistory() {
             const sel = monthFilter.value;
             historyList.innerHTML = '<li class="empty">読み込み中...</li>';
             try {
-                let q;
-                if (sel === 'recent') {
-                    q = query(invoicesCol, orderBy("createdAt", "desc"), limit(RECENT_LIMIT));
-                } else {
-                    const { start, end } = jstMonthRange(sel);
-                    q = query(invoicesCol, where("createdAt", ">=", start), where("createdAt", "<", end), orderBy("createdAt", "desc"));
-                }
-                const snap = await getDocs(q);
+                const snap = await withLogin(() => getDocs(query(invoicesCol, where("month", "==", sel), where("type", "==", COD_TYPE))));
                 if (monthFilter.value !== sel) return; // 読み込み中に月が変わった場合
-                currentData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                currentData = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || ((b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
                 renderHistory();
             } catch (err) {
                 currentData = [];
@@ -627,13 +813,11 @@
                 historyList.innerHTML = `<li class="empty" style="color: var(--danger-color);">履歴を読み込めませんでした：${escapeHtml(err?.message || err)}</li>`;
             }
         }
-
         function renderSummary() {
             const total = currentData.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
             summaryCount.textContent = `${currentData.length}件`;
             summaryTotal.textContent = total.toLocaleString();
         }
-
         function renderHistory() {
             renderSummary();
             if (currentData.length === 0) {
@@ -643,15 +827,15 @@
             historyList.innerHTML = currentData.map(item => `
                 <li class="history-item">
                     <div class="body">
-                        <strong>${escapeHtml(item.number)}</strong>（${item.amount ? Number(item.amount).toLocaleString() + '円' : '金額未設定'}）<br>
+                        <strong>${escapeHtml(item.trackingNo)}</strong>（${item.amount ? Number(item.amount).toLocaleString() + '円' : '金額未設定'}）<span class="tag ${item.status === 'billed' ? 'bi' : 'un'}">${item.status === 'billed' ? '請求済み' : '未請求'}</span><br>
+                        <span>${escapeHtml(item.kanriNo || '')} ${escapeHtml(item.shopName || '')}</span><br>
                         <span>${escapeHtml(item.memo || 'メモなし')}</span>
-                        <div class="meta">${escapeHtml(formatJst(item.createdAt))}</div>
+                        <div class="meta">${escapeHtml(item.date || '')}・${escapeHtml(item.by || '')}</div>
                     </div>
-                    <button type="button" class="btn btn-danger btn-small" data-id="${escapeHtml(item.id)}">削除</button>
+                    ${item.status === 'billed' ? '' : `<button type="button" class="btn btn-danger btn-small" data-id="${escapeHtml(item.id)}">削除</button>`}
                 </li>
             `).join('');
         }
-
         historyList.addEventListener('click', async (e) => {
             const btn = e.target.closest('button[data-id]');
             if (!btn) return;
@@ -659,22 +843,20 @@
             const item = currentData.find(x => x.id === id);
             const ok = await confirmBox(
                 "削除の確認",
-                `${item ? item.number + ' の' : 'この'}記録を削除してもよろしいですか？\n削除すると元に戻せません。`,
+                `${item ? item.trackingNo + ' の' : 'この'}記録を削除してもよろしいですか？\n削除すると元に戻せません。`,
                 "削除する",
                 true
             );
             if (!ok) return;
             try {
-                await deleteDoc(doc(db, "invoices", id));
+                await withLogin(() => deleteDoc(doc(db, "billing_records", id)));
                 setStatus("削除しました", "ok");
                 loadHistory();
             } catch (err) {
                 setStatus("削除できませんでした：" + (err?.message || err), "err");
             }
         });
-
         monthFilter.addEventListener('change', loadHistory);
-
         // ===== CSV出力（Excelで文字化けしないようBOM付き） =====
         csvBtn.addEventListener('click', () => {
             if (currentData.length === 0) {
@@ -682,15 +864,15 @@
                 return;
             }
             const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-            const rows = [["登録日時", "送り状番号", "請求金額", "宛先・メモ"]];
+            const rows = [["日付", "管理番号", "ショップ名", "送り状番号", "着払い金額", "宛先・メモ", "状態", "記録者"]];
             [...currentData].reverse().forEach(item => {
-                rows.push([formatJst(item.createdAt), item.number, Number(item.amount) || 0, item.memo || ""]);
+                rows.push([item.date, item.kanriNo, item.shopName, item.trackingNo, Number(item.amount) || 0, item.memo || "", item.status === 'billed' ? '請求済み' : '未請求', item.by || ""]);
             });
             const total = currentData.reduce((s, x) => s + (Number(x.amount) || 0), 0);
-            rows.push(["合計", `${currentData.length}件`, total, ""]);
+            rows.push(["合計", `${currentData.length}件`, "", "", total, "", "", ""]);
             const csv = "\uFEFF" + rows.map(r => r.map(q).join(",")).join("\r\n");
             const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-            const label = monthFilter.value === 'recent' ? '最新' : monthFilter.value;
+            const label = monthFilter.value;
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = `着払い台帳_${label}.csv`;
@@ -699,11 +881,233 @@
             a.remove();
             setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         });
-
         // ===== 起動時 =====
+
+        // ================= 請求台帳タブ =================
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const yen = n => '¥' + Math.round(Number(n) || 0).toLocaleString();
+        const now = new Date();
+        document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+        let records = [];
+
+        window.loadMonth = async function () {
+            const ym = document.getElementById('month').value;
+            const btn = document.getElementById('loadBtn');
+            const msg = document.getElementById('msg');
+            if (!ym) { msg.textContent = '対象月を選んでください'; return; }
+            btn.disabled = true; btn.textContent = '読み込み中…'; msg.textContent = '';
+            try {
+                await ensureLogin(false);
+                const load = async () => {
+                    const snap = await getDocs(query(collection(db, 'billing_records'), where('month', '==', ym)));
+                    return snap.docs.map(d => Object.assign({ _id: d.id }, d.data()));
+                };
+                try { records = await load(); }
+                catch (e) { if (e.code !== 'permission-denied') throw e; await ensureLogin(true); records = await load(); }
+                records.sort((a, b) => String(a.kanriNo).localeCompare(String(b.kanriNo)) || String(a.date).localeCompare(String(b.date)));
+                document.getElementById('result').style.display = 'block';
+                msg.textContent = `${ym} の記録を ${records.length} 件読み込みました。`;
+                render();
+            } catch (e) {
+                msg.textContent = '読み込みに失敗しました：' + e.message;
+            } finally {
+                btn.disabled = false; btn.textContent = '読み込む';
+            }
+        };
+
+        function shown() {
+            const f = document.getElementById('filter').value;
+            const kw = document.getElementById('kw').value.trim().toLowerCase();
+            return records.filter(r =>
+                (f === 'all' || (f === 'billed' ? r.status === 'billed' : r.status !== 'billed')) &&
+                (!kw || [r.kanriNo, r.shopName, r.roomName, r.memo, r.type, r.trackingNo].join(' ').toLowerCase().includes(kw)));
+        }
+
+        window.render = function () {
+            const list = shown();
+            const sum = (arr, mode) => arr.filter(r => (r.taxMode || '税抜') === mode).reduce((n, r) => n + (r.amount || 0), 0);
+            document.getElementById('stats').innerHTML = [
+                ['件数', `${list.length}件`],
+                ['合計（税抜）', yen(sum(list, '税抜'))],
+                ['合計（税込）', yen(sum(list, '税込'))]
+            ].map(([l, n]) => `<div class="stat"><div class="lb">${l}</div><div class="n">${n}</div></div>`).join('');
+
+            // セラー別
+            const by = {};
+            list.forEach(r => {
+                // 請求先ごとにまとめる（管理番号がなければ名前でまとめる）
+                const k = r.kanriNo ? 'K:' + r.kanriNo : 'N:' + (r.shopName || r.roomName || '（請求先なし）');
+                if (!by[k]) by[k] = { kanri: r.kanriNo || '（なし）', shop: r.shopName || r.roomName || '（請求先なし）', n: 0, ex: 0, inc: 0 };
+                by[k].n++;
+                if ((r.taxMode || '税抜') === '税抜') by[k].ex += r.amount || 0; else by[k].inc += r.amount || 0;
+            });
+            const rows = Object.values(by);
+            document.getElementById('sellerTable').innerHTML = rows.length
+                ? `<tr><th>管理番号</th><th>ショップ名</th><th class="num">件数</th><th class="num">税抜</th><th class="num">税込</th></tr>` +
+                  rows.map(x => `<tr><td>${esc(x.kanri)}</td><td>${esc(x.shop)}</td><td class="num">${x.n}</td><td class="num">${x.ex ? yen(x.ex) : '-'}</td><td class="num">${x.inc ? yen(x.inc) : '-'}</td></tr>`).join('')
+                : `<tr><td class="muted">該当する記録はありません</td></tr>`;
+
+            document.getElementById('list').innerHTML = list.length ? list.map(r => `
+                <div class="rec">
+                    <div class="row">
+                        <span class="tag ${r.status === 'billed' ? 'bi' : 'un'}">${r.status === 'billed' ? '請求済み' : '未請求'}</span>
+                        <b style="flex:1;min-width:0">${esc(r.date)}　${esc(r.kanriNo)}　${esc(r.shopName || r.roomName)}</b>
+                        <b>${yen(r.amount)}</b><span class="muted">（${esc(r.taxMode || '税抜')}）</span>
+                    </div>
+                    <div>${esc(r.type)}${r.trackingNo ? `　📦 ${esc(r.trackingNo)}` : ''}${r.memo ? '：' + esc(r.memo) : ''}</div>
+                    ${r.kanriNo ? '' : (r.shopName || r.roomName)
+                        ? `<div style="margin-top:4px"><span class="muted">管理番号なしの請求先</span> <button class="mini sub" onclick="setKanri('${r._id}')">管理番号を入れる</button></div>`
+                        : `<div style="margin-top:4px"><button class="mini" onclick="setKanri('${r._id}')">請求先を設定</button> <span class="muted">⚠ 請求先が未設定です</span></div>`}
+                    <div class="row" style="justify-content:space-between;margin-top:4px">
+                        <span class="muted">${yen(r.unitPrice)} × ${esc(r.quantity)}・記録：${esc(r.by || '')}</span>
+                        <span class="row">
+                            <button class="mini sub" onclick="toggleBilled('${r._id}')">${r.status === 'billed' ? '未請求に戻す' : '請求済みにする'}</button>
+                            <button class="mini del" onclick="removeRec('${r._id}')">削除</button>
+                        </span>
+                    </div>
+                    ${r.sourceText ? `<details class="muted" style="margin-top:4px"><summary>元のメッセージ</summary><div style="white-space:pre-wrap">${esc(r.sourceText)}</div></details>` : ''}
+                </div>`).join('') : '<div class="muted">該当する記録はありません</div>';
+        };
+
+        // 請求先（管理番号）を後から設定
+        window.setKanri = async function (id) {
+            const r = records.find(x => x._id === id);
+            if (!r) return;
+            const input = (prompt('請求先の管理番号を入力してください。\n管理番号がない場合は、名前（ショップ名など）を入力してください。', r.kanriNo || r.shopName || '') || '').trim();
+            if (!input) return;
+            const isKanri = /^[A-Za-z0-9][A-Za-z0-9\-_]{1,19}$/.test(input);
+            let kanri = isKanri ? input.toUpperCase() : '', shop = isKanri ? '' : input;
+            try {
+                const s = (await callGas('get_seller_info', { chatwork_id: isKanri ? kanri : input })).seller || {};
+                if (!s.error && s.kanriNo) { kanri = String(s.kanriNo); shop = [s.shopName, s.name].filter(v => v && v !== '不明').join('・'); }
+            } catch (e) {}
+            if (isKanri && !shop && !confirm(`管理番号「${kanri}」のセラーが見つかりませんでした。このまま設定しますか？`)) return;
+            try {
+                await updateDoc(doc(db, 'billing_records', id), { kanriNo: kanri, shopName: shop || r.shopName || '' });
+                r.kanriNo = kanri; r.shopName = shop || r.shopName || '';
+                render();
+            } catch (e) { alert('更新に失敗しました：' + e.message); }
+        };
+
+        // 以前の着払い台帳（invoices）を取り込む（同じIDで書くので、何回押しても二重にならない）
+        window.migrateInvoices = async function (btn) {
+            if (!confirm('以前の着払い台帳（invoices）の記録を、この台帳に取り込みますか？')) return;
+            btn.disabled = true; btn.textContent = '取り込み中…';
+            try {
+                await ensureLogin(false);
+                const snap = await getDocs(collection(db, 'invoices'));
+                // すでに取り込み済みのものは飛ばす（あとで入れた管理番号や請求済みを消さないため）
+                const done = new Set((await getDocs(query(collection(db, 'billing_records'), where('source', '==', 'invoices_migrated')))).docs.map(d => d.data().legacyId));
+                const docs = snap.docs.filter(d => !done.has(d.id));
+                const jst = iso => {
+                    const d = new Date(iso);
+                    if (isNaN(d)) return '';
+                    const j = new Date(d.getTime() + 9 * 3600 * 1000);
+                    return `${j.getUTCFullYear()}-${String(j.getUTCMonth() + 1).padStart(2, '0')}-${String(j.getUTCDate()).padStart(2, '0')}`;
+                };
+                for (let i = 0; i < docs.length; i += 400) {
+                    const b = writeBatch(db);
+                    docs.slice(i, i + 400).forEach(d => {
+                        const x = d.data();
+                        const date = jst(x.createdAt) || '2000-01-01';
+                        b.set(doc(db, 'billing_records', 'inv_' + d.id), {
+                            type: '着払い立替', source: 'invoices_migrated', legacyId: d.id,
+                            trackingNo: String(x.number || ''), kanriNo: '', shopName: '',
+                            date: date, month: date.slice(0, 7),
+                            unitPrice: Number(x.amount) || 0, quantity: 1, amount: Number(x.amount) || 0, taxMode: '税込',
+                            memo: x.memo || '', status: 'unbilled', by: '（以前の台帳）', createdAt: serverTimestamp()
+                        });
+                    });
+                    await b.commit();
+                }
+                alert(docs.length ? `${docs.length} 件を取り込みました。対象月を選んで「読み込む」で確認できます。` : '新しく取り込む記録はありませんでした（取り込み済みです）。');
+            } catch (e) {
+                alert('取り込みに失敗しました：' + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = '以前の着払いを取り込む';
+            }
+        };
+
+        window.toggleBilled = async function (id) {
+            const r = records.find(x => x._id === id);
+            if (!r) return;
+            const next = r.status === 'billed' ? 'unbilled' : 'billed';
+            try {
+                await updateDoc(doc(db, 'billing_records', id), { status: next, billedAt: next === 'billed' ? serverTimestamp() : null });
+                r.status = next;
+                render();
+            } catch (e) { alert('更新に失敗しました：' + e.message); }
+        };
+
+        window.removeRec = async function (id) {
+            const r = records.find(x => x._id === id);
+            if (!r || !confirm(`${r.date}「${r.type}」${yen(r.amount)} の記録を削除しますか？`)) return;
+            try {
+                await deleteDoc(doc(db, 'billing_records', id));
+                records = records.filter(x => x._id !== id);
+                render();
+            } catch (e) { alert('削除に失敗しました：' + e.message); }
+        };
+
+        window.markAllShown = async function () {
+            const targets = shown().filter(r => r.status !== 'billed');
+            if (!targets.length) { alert('「請求済み」にする記録がありません'); return; }
+            if (!confirm(`表示中の ${targets.length} 件を「請求済み」にしますか？`)) return;
+            try {
+                for (let i = 0; i < targets.length; i += 400) {
+                    const b = writeBatch(db);
+                    targets.slice(i, i + 400).forEach(r => b.update(doc(db, 'billing_records', r._id), { status: 'billed', billedAt: serverTimestamp() }));
+                    await b.commit();
+                }
+                targets.forEach(r => r.status = 'billed');
+                render();
+            } catch (e) { alert('更新に失敗しました：' + e.message); }
+        };
+
+        // 表の形にする（スプレッドシート貼り付け・CSV共通）
+        function tableRows() {
+            const head = ['日付', '管理番号', 'ショップ名', '種類', '送り状番号', '単価', '数量', '金額', '税', '内容メモ', '状態', '記録者', 'ルーム名'];
+            const rows = shown().map(r => [r.date, r.kanriNo, r.shopName, r.type, r.trackingNo || '', r.unitPrice, r.quantity, r.amount, r.taxMode || '税抜', r.memo,
+                r.status === 'billed' ? '請求済み' : '未請求', r.by, r.roomName]);
+            return [head, ...rows];
+        }
+        window.copyTsv = function () {
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ');
+            navigator.clipboard.writeText(tableRows().map(r => r.map(clean).join('\t')).join('\n'))
+                .then(() => alert('コピーしました。スプレッドシートにそのまま貼り付けできます。'))
+                .catch(e => alert('コピーに失敗しました：' + e));
+        };
+        window.downloadCsv = function () {
+            const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+            const csv = '\uFEFF' + tableRows().map(r => r.map(q).join(',')).join('\r\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+            a.download = `請求記録_${document.getElementById('month').value}.csv`;
+            document.body.appendChild(a); a.click();
+            setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        };
+
+        // ===== タブ切り替え（URLの末尾が #ledger なら台帳を開く） =====
+        let ledgerLoaded = false;
+        window.showTab = function (name) {
+            const ledger = name === 'ledger';
+            $('tabScan').style.display = ledger ? 'none' : 'block';
+            $('tabLedger').style.display = ledger ? 'block' : 'none';
+            $('tabBtnScan').classList.toggle('active', !ledger);
+            $('tabBtnLedger').classList.toggle('active', ledger);
+            if (ledger && scanning) stopCamera();
+            history.replaceState(null, '', ledger ? '#ledger' : '#scan');
+            if (ledger && !ledgerLoaded) { ledgerLoaded = true; loadMonth(); }
+            if (!ledger) loadHistory();
+        };
+
         buildMonthOptions();
+        renderRecentSellers();
         loadHistory();
+        loadSellerSuggest();
         getDetector().catch(() => {}); // 読み取り機能を先に準備しておく
+        if (location.hash === '#ledger') showTab('ledger');
     </script>
 </body>
 </html>
