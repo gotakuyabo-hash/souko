@@ -269,6 +269,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <label>ご依頼主：郵便番号<input id="sSZip"></label>
     <label>ご依頼主：住所<input id="sSAddr"></label>
     <label>ご依頼主：建物名（住所2）<input id="sSAddr2"></label>
+    <p id="settingsMsg" class="small" role="status" aria-live="polite" style="min-height:1.6em"></p>
     <div class="btns">
       <button id="btnTest" type="button" class="ghost">接続テスト</button>
       <button id="btnCloseSettings" type="button" class="ghost">閉じる</button>
@@ -339,7 +340,7 @@ function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function md(s){ const m=String(s||'').match(/^\d{4}-(\d{2})-(\d{2})$/); return m ? Number(m[1])+'/'+Number(m[2]) : (s||''); }
-function toast(msg, ms){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'), ms||3200); }
+function toast(msg, ms){ const t=$('#toast'); (document.querySelector('dialog[open]') || document.body).appendChild(t); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'), ms||3200); }
 function clientRef(){ return db.collection('deliveryClients').doc(state.clientId); }
 
 /* ===== ログイン ===== */
@@ -382,8 +383,14 @@ async function gas(action, extra, cfg){
   if (!c || !c.gasUrl) throw new Error('設定画面で連携GASのURLを登録してください');
   const payload = Object.assign({ action, key:c.apiKey, sheetId:c.sheetId, sheetName:c.sheetName || '入力シート' }, extra || {});
   let res;
-  try{ res = await fetch(c.gasUrl, { method:'POST', body: JSON.stringify(payload) }); }
-  catch(e){ throw new Error('連携GASに接続できませんでした。URLとデプロイ設定（アクセス：全員）を確認してください'); }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try{ res = await fetch(c.gasUrl, { method:'POST', body: JSON.stringify(payload), signal: ctrl.signal }); }
+  catch(e){
+    if (e.name === 'AbortError') throw new Error('連携GASから60秒応答がありませんでした。時間をおいてもう一度お試しください');
+    throw new Error('連携GASに接続できませんでした。URLが「/exec」で終わっているか、デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください');
+  }
+  finally{ clearTimeout(timer); }
   let j;
   try{ j = await res.json(); }catch(e){ throw new Error('連携GASの応答を読み取れませんでした'); }
   if (!j.ok) throw new Error(ERR[j.error] || ('エラー：'+j.error));
@@ -408,6 +415,7 @@ function openSettings(){
   $('#sSZip').value = c.senderZip || DEFAULTS.senderZip;
   $('#sSAddr').value = c.senderAddr || DEFAULTS.senderAddr;
   $('#sSAddr2').value = c.senderAddr2 || DEFAULTS.senderAddr2;
+  settingsMsg('');
   $('#dlgSettings').showModal();
 }
 function readSettingsForm(){
@@ -435,9 +443,15 @@ const DEFAULTS = {
   senderTel: '080-6457-5057', senderZip: '2140014',
   senderAddr: '神奈川県川崎市多摩区登戸1035', senderAddr2: 'GINZO101',
 };
+function settingsMsg(text, ok){ const m=$('#settingsMsg'); m.textContent=text; m.className='small '+(ok===true?'st-ok':ok===false?'st-ng':'muted'); }
 $('#btnTest').onclick = async () => {
-  try{ const j = await gas('info', null, readSettingsForm()); toast('接続できました：'+j.sheetTitle+'（'+(j.lastRow-1)+'行）'); }
-  catch(e){ toast(e.message, 6000); }
+  const cfg = readSettingsForm();
+  if (!cfg.gasUrl || !cfg.apiKey || !cfg.sheetId) { settingsMsg('シートのURL・連携GASのURL・API_KEYを入れてから押してください', false); return; }
+  const btn = $('#btnTest'); btn.disabled = true; btn.textContent = '確認中…';
+  settingsMsg('連携GASに接続しています…（初回は10秒ほどかかることがあります）');
+  try{ const j = await gas('info', null, cfg); settingsMsg('接続できました：'+j.sheetTitle+'（'+(j.lastRow-1)+'行）', true); }
+  catch(e){ settingsMsg(e.message, false); }
+  finally{ btn.disabled = false; btn.textContent = '接続テスト'; }
 };
 $('#btnSaveSettings').onclick = async () => {
   const cid = $('#sClient').value.trim();
