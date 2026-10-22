@@ -314,6 +314,13 @@ const SECTIONS = [
   { key: 'reflection', time: '終業時',       name: '振り返り（1分）',  from: null, to: null }
 ];
 
+// 毎日必ず表示する固定リンク（「項目を編集」では消えません。変更はここで行います）
+const PINNED_LINKS = {
+  noon: [
+    { title: "資材発注（管理者）を開く", url: "https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=adm-254028a933d3" }
+  ]
+};
+
 const DEFAULTS = {
   morning: [
     { title: "① 物量チェック（最重要） / 前回想定との差分", value: "", type: "text", placeholder: "例：＋500件、想定内 など" },
@@ -574,8 +581,16 @@ function renderChecklist() {
 
     const body = [];
     if (!collapsed) {
-      items.forEach((it, i) => body.push(CL.edit ? clItemEdit(sec.key, it, i, items.length) : clItemView(sec.key, it, i)));
-      if (!items.length && !CL.edit) body.push(h('p', { class: 'empty' }, '項目がありません。「項目を編集」から追加できます。'));
+      const pinned = PINNED_LINKS[sec.key] || [];
+      pinned.forEach(p => body.push(h('div', { class: 'linkrow' },
+        h('a', { class: 'linkbtn', href: p.url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', p.title),
+        CL.edit ? h('p', { class: 'small muted', style: 'margin:6px 0 0' }, '※ 毎日自動で表示される固定リンクです（ここでは編集できません）') : null)));
+      const pinnedUrls = pinned.map(p => p.url);
+      items.forEach((it, i) => {
+        if (!CL.edit && it.type === 'link' && pinnedUrls.includes(it.url)) return; // 同じリンクを手動で追加していても二重に出さない
+        body.push(CL.edit ? clItemEdit(sec.key, it, i, items.length) : clItemView(sec.key, it, i));
+      });
+      if (!items.length && !pinned.length && !CL.edit) body.push(h('p', { class: 'empty' }, '項目がありません。「項目を編集」から追加できます。'));
       if (CL.edit) body.push(clAddBar(sec.key));
     }
     root.append(h('section', { class: 'sec' + (isNow ? ' is-now' : ''), id: 'sec-' + sec.key }, head, body));
