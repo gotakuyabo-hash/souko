@@ -233,6 +233,21 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <div id="robotResult"></div>
         <div id="robotActions" class="search-row" hidden><button id="btnRobotWrite" class="primary">シートに反映する</button></div>
       </div>
+
+      <div class="panel stack" style="margin-top:16px">
+        <h2 class="h2">チャットでの報告</h2>
+        <p class="muted small">上のRobot-inの履歴を読み取ってから押してください。「連携失敗」はRobot-inで失敗だった受注番号、「連携不可」はこの出荷日にアプリで出荷日を入れた注文のうち、Robot-inの履歴に出てこなかった受注番号です。送る前に文面を直せます。</p>
+        <div class="search-row" style="justify-content:flex-start">
+          <label>出荷日 <input type="date" id="reportDate"></label>
+          <button id="btnReportMake" class="primary">報告文を作る</button>
+        </div>
+        <textarea id="reportText" rows="14"></textarea>
+        <div class="search-row">
+          <span id="reportInfo" class="muted"></span>
+          <button id="btnReportCopy" class="ghost">コピー</button>
+          <button id="btnReportSend" class="secondary">Chatworkに送る</button>
+        </div>
+      </div>
     </div>
 
     <div id="tabHist" hidden>
@@ -278,6 +293,9 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <label>ご依頼主：郵便番号<input id="sSZip"></label>
     <label>ご依頼主：住所<input id="sSAddr"></label>
     <label>ご依頼主：建物名（住所2）<input id="sSAddr2"></label>
+    <h3 style="margin:8px 0 0;font-size:15px">チャットでの報告</h3>
+    <label>ChatworkのルームID<input id="sRoom" inputmode="numeric"></label>
+    <label>宛先（報告文の1行目から）<textarea id="sTo" rows="2" style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface)"></textarea></label>
     <p id="settingsMsg" class="small" role="status" aria-live="polite" style="min-height:1.6em"></p>
     <div class="btns">
       <button id="btnTest" type="button" class="ghost">接続テスト</button>
@@ -393,6 +411,8 @@ const ERR = {
   'sheetId is required':'シートのURLが登録されていません',
   'sheet not found':'シートが見つかりません（シート名を確認してください）',
   'unexpected header':'B1が「No」ではありません。列の並びが変わっていないか確認してください',
+  'chatwork token missing':'連携GASのスクリプトプロパティに「CHATWORK_TOKEN」が入っていません',
+  'chatwork params':'ChatworkのルームIDか報告文が空です',
 };
 async function gas(action, extra, cfg){
   const c = cfg || state.config;
@@ -431,6 +451,8 @@ function openSettings(){
   $('#sSZip').value = c.senderZip || DEFAULTS.senderZip;
   $('#sSAddr').value = c.senderAddr || DEFAULTS.senderAddr;
   $('#sSAddr2').value = c.senderAddr2 || DEFAULTS.senderAddr2;
+  $('#sRoom').value = c.reportRoomId || DEFAULTS.reportRoomId;
+  $('#sTo').value = c.reportTo || DEFAULTS.reportTo;
   settingsMsg('');
   $('#dlgSettings').showModal();
 }
@@ -449,6 +471,8 @@ function readSettingsForm(){
     senderZip: $('#sSZip').value.trim(),
     senderAddr: $('#sSAddr').value.trim(),
     senderAddr2: $('#sSAddr2').value.trim(),
+    reportRoomId: $('#sRoom').value.trim(),
+    reportTo: $('#sTo').value.trim(),
   };
 }
 // ご依頼主・ヤマトの初期値（設定画面で変更できます）
@@ -458,6 +482,8 @@ const DEFAULTS = {
   yamatoBillCode: '09050540672', yamatoFareNo: '01', sagawaCustCode: '155924420000',
   senderTel: '080-6457-5057', senderZip: '2140014',
   senderAddr: '神奈川県川崎市多摩区登戸1035', senderAddr2: 'GINZO101',
+  reportRoomId: '357129706',
+  reportTo: '[To:6086404]Harunaさん\n[To:1122307]尾形さん',
 };
 function settingsMsg(text, ok){ const m=$('#settingsMsg'); m.textContent=text; m.className='small '+(ok===true?'st-ok':ok===false?'st-ng':'muted'); }
 $('#btnTest').onclick = async () => {
@@ -1490,6 +1516,68 @@ $('#histList').addEventListener('click', async e => {
   await doSearch(true);
   toast('検品書（'+fmtTs(d.printedAt)+'）の注文を全件選択しました。入荷日を確認して「入荷済みにする」を押してください', 6000);
 });
+
+/* ===== チャットでの報告 ===== */
+const REPORT_FIXED = '本日の出荷通知が完了致しました。';
+// 必ず入れる文言が消えていたら、あいさつの次の行に戻す
+function ensureFixed(){
+  let t = $('#reportText').value;
+  if (t.includes(REPORT_FIXED)) return t;
+  const lines = t.split('\n');
+  const i = lines.findIndex(l => l.includes('お世話になっております'));
+  if (i >= 0) lines.splice(i+1, 0, '', REPORT_FIXED);
+  else lines.unshift(REPORT_FIXED, '');
+  t = lines.join('\n');
+  $('#reportText').value = t;
+  toast('「'+REPORT_FIXED+'」が消えていたので入れ直しました', 5000);
+  return t;
+}
+$('#reportDate').value = todayStr();
+$('#btnReportMake').onclick = async () => {
+  if (!robotPlan || !robotPlan.length) { toast('先にRobot-inの受注反映履歴を貼り付けて「読み取る」を押してください', 5000); return; }
+  const date = $('#reportDate').value;
+  if (!date) { toast('出荷日を選んでください'); return; }
+  const btn = $('#btnReportMake'); btn.disabled = true;
+  try{
+    const inRobot = new Set(robotPlan.map(x => x.orderNo));
+    const failed = robotPlan.filter(x => x.status !== '成功').map(x => x.orderNo);
+    // この出荷日にアプリで出荷日を入れた注文のうち、Robot-inの履歴に出てこなかったもの
+    const snap = await ordersCol().where('shippedAt','==',date).get();
+    const notLinked = [];
+    snap.forEach(d => {
+      const o = String(d.data().orderId || '').trim();
+      if (!o || o === '有在庫用' || inRobot.has(o) || notLinked.indexOf(o) >= 0) return;
+      notLinked.push(o);
+    });
+    const cfg = labelCfg();
+    const lines = [];
+    if (cfg.reportTo) lines.push(cfg.reportTo);
+    lines.push('いつもお世話になっております。', '', REPORT_FIXED, '');
+    lines.push('連携不可', ...(notLinked.length ? notLinked : ['なし']), '');
+    lines.push('連携失敗', ...(failed.length ? failed : ['なし']), '');
+    lines.push('宜しくお願い致します。');
+    $('#reportText').value = lines.join('\n');
+    $('#reportInfo').textContent = '連携不可 '+notLinked.length+'件 ／ 連携失敗 '+failed.length+'件';
+  }catch(e){ toast('報告文を作れませんでした：'+e.message, 6000); }
+  finally{ btn.disabled = false; }
+};
+$('#btnReportCopy').onclick = async () => {
+  if (!$('#reportText').value.trim()) { toast('報告文がありません'); return; }
+  const t = ensureFixed();
+  try { await navigator.clipboard.writeText(t); toast('報告文をコピーしました'); }
+  catch(e){ $('#reportText').select(); document.execCommand('copy'); toast('報告文をコピーしました'); }
+};
+$('#btnReportSend').onclick = async () => {
+  if (!$('#reportText').value.trim()) { toast('報告文がありません'); return; }
+  const t = ensureFixed().trim();
+  const cfg = labelCfg();
+  if (!cfg.reportRoomId) { toast('設定画面でChatworkのルームIDを入れてください', 5000); return; }
+  if (!confirm('Chatwork（ルーム '+cfg.reportRoomId+'）にこの報告文を送ります。よろしいですか？')) return;
+  const btn = $('#btnReportSend'); btn.disabled = true;
+  try { await gas('chatwork', { roomId:cfg.reportRoomId, message:t }); toast('Chatworkに送りました'); }
+  catch(e){ toast(e.message, 8000); }
+  finally{ btn.disabled = false; }
+};
 </script>
 </body>
 </html>
