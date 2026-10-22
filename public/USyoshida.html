@@ -756,7 +756,7 @@ async function printSheets(){
       const img = r.imageUrl ? '<img src="'+esc(r.imageUrl)+'" alt="">' : '<span class="pnoimg">画像なし</span>';
       const note = esc(r.note) + inf.partners.map(p=>'<span class="pbadge">'+esc(p)+'</span>').join('');
       return '<tr class="'+(inf.highlight?'hl ':'')+(isBundle?'bundle':'')+'">'
-        + '<td>'+r.no+'</td><td>'+esc(r.address)+'</td>'
+        + '<td>'+r.no+'</td>'
         + '<td>'+esc(r.name)+'</td>'
         + '<td>'+esc(r.item)+'</td><td>'+img+'</td><td>'+esc(r.inboundTracking)+'</td><td>'+esc(r.pkgId)+'</td>'
         + '<td>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
@@ -766,9 +766,9 @@ async function printSheets(){
     pages.push('<section class="ppage"><div class="phead"><span class="ptrk">'+esc(g.key)+'</span>'
       + '<span class="pmeta">'+esc(shops)+' ／ '+rows.length+'件</span><span class="pdate">印刷日 '+md(today)+'</span></div>'
       + '<table class="ptable"><colgroup>'
-      + '<col style="width:5%"><col style="width:18%"><col style="width:9%"><col style="width:21%"><col style="width:8%">'
-      + '<col style="width:9%"><col style="width:7%"><col style="width:4%"><col style="width:5%"><col style="width:5%"><col style="width:9%">'
-      + '</colgroup><thead><tr><th>No</th><th>発送先住所</th><th>名前</th>'
+      + '<col style="width:5%"><col style="width:11%"><col style="width:28%"><col style="width:8%">'
+      + '<col style="width:11%"><col style="width:9%"><col style="width:4%"><col style="width:6%"><col style="width:6%"><col style="width:12%">'
+      + '</colgroup><thead><tr><th>No</th><th>名前</th>'
       + '<th>商品</th><th>画像</th><th>倉庫までの追跡番号</th><th>発送状況</th>'
       + '<th>数量</th><th>指定日</th><th>時間指定</th><th>備考欄</th></tr></thead><tbody>'+body+'</tbody></table></section>');
   });
@@ -890,7 +890,7 @@ function makeLabel(rows, key, splitFrom){
   if (!name) errors.push('お届け先名が空欄です');
   if (addr && !hasJa(addr)) {
     const z = L.zipInfo[zip7];
-    if (z) { addr = z.pref + z.city + ' ' + addr; warns.push('英語住所を変換'); }
+    if (z) { addr = convertEnglishAddress(addr, z); warns.push('英語住所を変換'); }
     else if (zip7.length===7) errors.push('郵便番号から住所が見つかりません');
   }
 
@@ -1578,6 +1578,63 @@ $('#btnReportSend').onclick = async () => {
   catch(e){ toast(e.message, 8000); }
   finally{ btn.disabled = false; }
 };
+
+/* ===== 英語住所 → 日本語（郵便番号の読みとローマ字を突き合わせて、重なる英語を外す） ===== */
+const KANA_ROMA = {ア:'a',イ:'i',ウ:'u',エ:'e',オ:'o',カ:'ka',キ:'ki',ク:'ku',ケ:'ke',コ:'ko',サ:'sa',シ:'si',ス:'su',セ:'se',ソ:'so',タ:'ta',チ:'ti',ツ:'tu',テ:'te',ト:'to',ナ:'na',ニ:'ni',ヌ:'nu',ネ:'ne',ノ:'no',ハ:'ha',ヒ:'hi',フ:'hu',ヘ:'he',ホ:'ho',マ:'ma',ミ:'mi',ム:'mu',メ:'me',モ:'mo',ヤ:'ya',ユ:'yu',ヨ:'yo',ラ:'ra',リ:'ri',ル:'ru',レ:'re',ロ:'ro',ワ:'wa',ヲ:'o',ン:'n',ガ:'ga',ギ:'gi',グ:'gu',ゲ:'ge',ゴ:'go',ザ:'za',ジ:'zi',ズ:'zu',ゼ:'ze',ゾ:'zo',ダ:'da',ヂ:'zi',ヅ:'zu',デ:'de',ド:'do',バ:'ba',ビ:'bi',ブ:'bu',ベ:'be',ボ:'bo',パ:'pa',ピ:'pi',プ:'pu',ペ:'pe',ポ:'po',ヴ:'bu',ァ:'a',ィ:'i',ゥ:'u',ェ:'e',ォ:'o'};
+function normRoma(s){
+  return String(s||'').toLowerCase().replace(/[^a-z]/g,'')
+    .replace(/tch/g,'tt').replace(/sh/g,'sy').replace(/ch/g,'ty').replace(/ts/g,'t').replace(/j/g,'zy').replace(/f/g,'h')
+    .replace(/(sy|ty|zy)i/g,(m,p)=>p[0]+'i').replace(/m(?=[bp])/g,'n').replace(/oh(?![aiueo])/g,'o').replace(/ou/g,'o')
+    .replace(/([aiueo])\1/g,'$1');
+}
+function kanaToRoma(kana){
+  const s = String(kana||'').normalize('NFKC');
+  let out = '';
+  for (let i=0; i<s.length; i++) {
+    const c = s[i], n = s[i+1];
+    if (c === 'ッ') { out += (KANA_ROMA[n]||'').charAt(0); continue; }
+    let r = KANA_ROMA[c];
+    if (r === undefined) continue;
+    if (n && 'ャュョ'.includes(n)) { r = r.replace(/i$/,'') + 'y' + ({ャ:'a',ュ:'u',ョ:'o'})[n]; i++; }
+    out += r;
+  }
+  return normRoma(out);
+}
+function romaTargets(z){
+  const pref = new Set(), city = new Set(), town = new Set();
+  const add = (set, r) => { if (r && r.length >= 2) set.add(r); };
+  const p = kanaToRoma(z.prefKana); add(pref, p); add(pref, p.replace(/(ken|hu|to|do)$/,''));
+  const c = kanaToRoma(z.cityKana); add(city, c);
+  const pieces = [];
+  c.split('gun').forEach((x, i, arr) => { if (i < arr.length-1) { pieces.push(x, x+'gun'); } else pieces.push(x); });
+  pieces.slice().forEach(x => { const m = x.match(/^(.+si)(.+ku)$/); if (m) pieces.push(m[1], m[2]); });
+  pieces.forEach(x => { add(city, x); add(city, x.replace(/(si|ku|tyo|mati|son|mura)$/,'')); });
+  if (z.town && !/[（(]|以下/.test(z.town)) { const t = kanaToRoma(z.townKana); add(town, t); add(town, t.replace(/(tyo|mati)$/,'')); }
+  return { pref, city, town };
+}
+function convertEnglishAddress(en, z){
+  const base = z.pref + z.city;
+  if (!z.prefKana) return base + ' ' + en; // 読みが取れないときは前に付けるだけ
+  const T = romaTargets(z);
+  const tk = String(en).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([A-Za-z])(\d)/g,'$1 $2').split(/[\s,]+/).filter(Boolean);
+  const keep = []; let removed = 0, townHit = false;
+  for (let i = 0; i < tk.length; ) {
+    let hit = 0;
+    for (const n of [3,2,1]) {
+      if (i+n > tk.length) continue;
+      const seg = tk.slice(i, i+n);
+      if (seg.some(s => /\d/.test(s))) continue;
+      const r = normRoma(seg.join(''));
+      if (r.length < 2) continue;
+      if (T.pref.has(r) || T.city.has(r)) { hit = n; break; }
+      if (T.town.has(r)) { hit = n; townHit = true; break; }
+    }
+    if (hit) { i += hit; removed += hit; } else { keep.push(tk[i]); i++; }
+  }
+  if (!removed) return base + ' ' + en;
+  const jp = base + (townHit ? z.town : '');
+  return keep.length ? jp + ' ' + keep.join(' ') : jp;
+}
 </script>
 </body>
 </html>
