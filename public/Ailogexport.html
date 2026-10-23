@@ -30,6 +30,14 @@
     .bar span { display:block; height:100%; }
     ol { margin:6px 0 0; padding-left: 22px; }
     .stack > * + * { margin-top:8px; }
+    textarea { width:100%; font-size:14px; line-height:1.6; padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); font-family:inherit; }
+    details { border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+    details summary { cursor:pointer; font-size:13px; font-weight:700; color:var(--sub); }
+    details pre { white-space:pre-wrap; word-break:break-word; font-family:inherit; font-size:13px; margin:8px 0 0; color:var(--sub); }
+    .badge { display:inline-block; font-size:12px; font-weight:800; padding:2px 8px; border-radius:99px; margin-left:6px; }
+    .badge.chg { background:#fef3c7; color:#92400e; }
+    .badge.same { background:var(--line); color:var(--sub); }
+    .field-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 </style>
 </head>
 <body>
@@ -51,6 +59,14 @@
             <div class="stats" id="stats"></div>
             <div id="levelBar"></div>
             <div id="topPrompts" style="margin-top:12px"></div>
+        </div>
+
+        <div class="card stack">
+            <div style="font-weight:800">🤖 AI文章ルールを改善する</div>
+            <div class="note">この期間に「直された」「送らなかった」AI案をAIが読み、何度も同じように直されている点をルールに反映した改善案を作ります。内容を確認・修正してから保存できます。</div>
+            <button id="suggestBtn" onclick="suggestRules()">直された例から改善案を作る</button>
+            <div id="suggestMsg" class="note"></div>
+            <div id="suggestArea" class="stack" style="display:none"></div>
         </div>
 
         <div class="card stack">
@@ -219,7 +235,7 @@ function buildRows() {
             aiLen: ai ? aiText.length : '', sentLen: sent.length,
             genCount: s.generateCount || (ai && ai.generateCount) || (ai ? 1 : 0),
             prompt: (ai && ai.customPrompt) || '', context: s.context || (ai && ai.context) || '',
-            aiText, sent
+            aiText, sent, reused: !!s.reusedLastSent
         };
     });
 
@@ -279,15 +295,114 @@ const stamp = () => `${document.getElementById('fromDate').value}_${document.get
 
 window.downloadAnalysis = function () {
     const header = ['送信日時', 'アカウント', '種類', 'タブ', 'ルーム名', 'ルームID', 'ひもづけ', 'AI使用', '判定', '修正率(%)',
-        'AI案の文字数', '送信文の文字数', 'AI作り直し回数', 'AIへの指示', '元のチャット', 'AI案', '送信文'];
+        'AI案の文字数', '送信文の文字数', 'AI作り直し回数', 'AIへの指示', '元のチャット', 'AI案', '送信文', '使い回し'];
     const data = rows.map(r => [fmt(r.sentAt), r.account, r.mode === 'compose' ? '新規発信' : '返信', r.tab, r.roomName, r.roomId,
         r.link, r.usedAi ? 'あり' : 'なし', r.level, r.ratio === null ? '' : Math.round(r.ratio * 100),
-        r.aiLen, r.sentLen, r.genCount, r.prompt, r.context, r.aiText, r.sent]);
+        r.aiLen, r.sentLen, r.genCount, r.prompt, r.context, r.aiText, r.sent, r.reused ? '直前の送信文' : '']);
     // 送らなかったAI案も末尾に追加（どんな案が捨てられたかも分析対象）
     window._unsent.forEach(a => data.push([fmt(toDate(a.createdAt)), a.account || '', a.type === 'compose' ? '新規発信' : '返信', a.tab || '',
         a.roomName || '', a.roomId || '', '未送信', 'あり', '送らなかった', '', bodyForCompare(a.aiGeneratedText).length, '', a.generateCount || 1,
-        a.customPrompt || '', a.context || '', bodyForCompare(a.aiGeneratedText), '']));
+        a.customPrompt || '', a.context || '', bodyForCompare(a.aiGeneratedText), '', '']));
     download(`AI添削分析_${stamp()}.csv`, toCsv(header, data));
+};
+
+// ===== GAS呼び出し（コックピットと同じ合言葉） =====
+async function callGas(action, params = {}) {
+    const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify(Object.assign({ action, secret: getSecret() }, params)) });
+    const data = await res.json();
+    if (data.code === "auth") { localStorage.removeItem(SECRET_KEY); throw new Error("合言葉が違います。もう一度お試しください"); }
+    if (data.status !== "success") throw new Error(data.message || "エラーが発生しました");
+    return data;
+}
+const escHtml = s => String(s || '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+function getStaffName() {
+    const KEY = "cw_staff_name";
+    let n = localStorage.getItem(KEY);
+    if (!n) {
+        n = (prompt("担当者名を入力してください（ルールの更新者として記録します）") || "").trim();
+        if (n) localStorage.setItem(KEY, n);
+    }
+    return n || "未設定";
+}
+
+// ===== AI文章ルールの改善案 =====
+const RULE_LABELS = { common: '共通ルール（すべてのルーム）', external: '社外ルーム（セラー様・取引先様）', internal: '社内ルーム' };
+let suggestCurrent = null;
+
+// 改善案づくりに使う例：大幅修正 → 軽い修正 → 送らなかった の順に最大60件
+function buildSamples(internalIds) {
+    const isIn = id => internalIds.indexOf(String(id)) !== -1;
+    const edited = rows.filter(r => r.usedAi && !r.reused && (r.level === '大幅修正' || r.level === '軽い修正'))
+        .sort((a, b) => (b.ratio || 0) - (a.ratio || 0))
+        .map(r => ({ mode: r.mode, internal: isIn(r.roomId), level: r.level, prompt: r.prompt, ai: r.aiText, sent: r.sent }));
+    const unsent = (window._unsent || []).filter(a => a.aiGeneratedText).slice(-15)
+        .map(a => ({ mode: a.type === 'compose' ? 'compose' : 'reply', internal: isIn(a.roomId), level: '送らなかった',
+            prompt: a.customPrompt || '', ai: bodyForCompare(a.aiGeneratedText), sent: '' }));
+    return edited.slice(0, 60 - Math.min(unsent.length, 15)).concat(unsent).slice(0, 60);
+}
+
+window.suggestRules = async function () {
+    const btn = document.getElementById('suggestBtn');
+    const msg = document.getElementById('suggestMsg');
+    const area = document.getElementById('suggestArea');
+    btn.disabled = true;
+    btn.textContent = 'AIが分析中…（30秒〜1分ほど）';
+    msg.textContent = '';
+    area.style.display = 'none';
+    try {
+        const cfg = await callGas('get_ai_config');
+        const idsText = (cfg.saved && cfg.saved.internalRoomIds) || (cfg.defaults && cfg.defaults.internalRoomIds) || '';
+        const ids = idsText.split(/[,、\s]+/).filter(x => /^\d+$/.test(x));
+        const samples = buildSamples(ids);
+        if (samples.length < 3) { msg.textContent = 'この期間は直された例が少ないため、改善案を作れません（3件以上必要です）。期間を広げてみてください。'; return; }
+        const d = await callGas('suggest_ai_rules', { samples });
+        suggestCurrent = d.current;
+        renderSuggestion(d, samples.length);
+        msg.textContent = `直された例・送らなかった例 ${samples.length} 件をもとに作りました。`;
+    } catch (e) {
+        msg.textContent = '改善案を作れませんでした：' + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '直された例から改善案を作る';
+    }
+};
+
+function renderSuggestion(d) {
+    const area = document.getElementById('suggestArea');
+    const findings = (d.findings || []).length
+        ? `<div><div style="font-weight:700">気づいたこと</div><ol>${d.findings.map(f => `<li>${escHtml(f)}</li>`).join('')}</ol></div>` : '';
+    const fields = Object.keys(RULE_LABELS).map(k => {
+        const cur = (d.current[k] || '').trim(), pro = (d.proposed[k] || '').trim();
+        const changed = cur !== pro;
+        return `<div class="stack">
+            <div class="field-head"><label>${RULE_LABELS[k]}<span class="badge ${changed ? 'chg' : 'same'}">${changed ? '変更あり' : '変更なし'}</span></label></div>
+            <details><summary>いまのルールを見る</summary><pre>${escHtml(cur)}</pre></details>
+            <textarea id="sg_${k}" rows="${Math.min(18, Math.max(5, pro.split('\n').length + 1))}">${escHtml(pro)}</textarea>
+        </div>`;
+    }).join('');
+    area.innerHTML = findings + fields + `
+        <div class="note">そのまま使えない部分は、上の欄で直してから保存してください。保存すると、スタッフ全員のAI作成に1分以内で反映されます（前のルールは履歴に残ります）。</div>
+        <button class="ok" id="applyBtn" onclick="applySuggestion()">この内容でAI文章ルールを保存</button>`;
+    area.style.display = 'block';
+}
+
+window.applySuggestion = async function () {
+    if (!suggestCurrent) return;
+    if (!confirm('AI文章ルールを保存しますか？\nスタッフ全員のAI作成に反映されます。')) return;
+    const btn = document.getElementById('applyBtn');
+    btn.disabled = true;
+    btn.textContent = '保存中…';
+    try {
+        const params = { internalRoomIds: suggestCurrent.internalRoomIds || '', by: getStaffName() };
+        Object.keys(RULE_LABELS).forEach(k => { params[k] = document.getElementById(`sg_${k}`).value; });
+        await callGas('save_ai_config', params);
+        btn.textContent = '✓ 保存しました';
+        document.getElementById('suggestMsg').textContent = 'AI文章ルールを保存しました。数日使ってから、またこの画面で効果を確認してみてください。';
+    } catch (e) {
+        alert('保存に失敗しました：' + e.message);
+        btn.disabled = false;
+        btn.textContent = 'この内容でAI文章ルールを保存';
+    }
 };
 
 window.downloadRaw = function (kind) {
