@@ -190,6 +190,7 @@ tr.drag-over td{border-top:2px solid var(--accent)}
             <button class="btn btn-ghost btn-sm" id="sortAB" onclick="sortOrderRowsByCol(27)">AB列（メモ1）</button>
             <button class="btn btn-ghost btn-sm" id="sortAF" onclick="sortOrderRowsByCol(31)">AF列（商品名）</button>
           </div>
+          <div id="shipNotice"></div>
           <div id="orderPreviewArea"></div>
         </div>
       </div>
@@ -479,7 +480,7 @@ function updateButtons() {
     else yHint = [yCount ? `元データ ${yCount}件` : '', okiConvertible ? `沖縄 ${okiCount}件を含む` : ''].filter(Boolean).join('・');
   }
   setBtn('yamatoBtn', hasOrder && (yCount > 0 || okiConvertible), 'yamatoHint', yHint);
-  setBtn('ehidenBtn', hasOrder && sCount > 0, 'sagawaHint', !hasOrder ? '受注CSVが必要です' : (sCount ? `沖縄 ${okiCount}件を除外` : '佐川CSVが必要です'));
+  setBtn('ehidenBtn', hasOrder && sCount > 0, 'sagawaHint', !hasOrder ? '受注CSVが必要です' : (!sCount ? '佐川CSVが必要です' : (okiOn && okiCount ? `沖縄 ${okiCount}件はヤマトへ` : '')));
   setBtn('calcPickBtn', hasOrder, 'calcHint', hasOrder ? (pickStale ? '受注が変わったので再計算してください' : '') : '受注CSVが必要です');
   const canSend = pickGroups.length > 0 && !pickStale;
   setBtn('zaicoBtn', canSend, 'zaicoHint', canSend ? `${pickGroups.filter(g => g.barcode && g.shelfNumber).length}明細` : '先にピック数を算出してください');
@@ -508,6 +509,39 @@ function getOkinawaOrderNos() {
   });
   return set;
 }
+// 受注番号（正規化済み）→ 画面表示用の受注番号
+function orderLabel(n) {
+  const r = getAllOrderRows().find(row => cleanOrderNoNormalized(row[COL.ORDER]) === n);
+  return r ? String(r[COL.ORDER]) : n;
+}
+// 受注ごとに、ヤマト・佐川どちらの送り状データがあるか
+function getShipDataCoverage() {
+  const ids = getOrderUniqueIds();
+  const yRows = getAllYamatoRows(), sRows = getAllSagawaRows();
+  const okiOn = getOkiSettings().enabled;
+  const oki = getOkinawaOrderNos();
+  const collect = (rows) => {
+    const set = new Set();
+    rows.forEach(r => { for (const c of r) { const n = cleanOrderNoNormalized(c); if (n && ids.has(n)) { set.add(n); break; } } });
+    return set;
+  };
+  const inY = collect(yRows), inS = collect(sRows);
+  const missing = [], both = [];
+  ids.forEach(n => {
+    const y = inY.has(n), sg = inS.has(n);
+    if (!y && !sg) missing.push(n);
+    // 沖縄設定ONなら佐川側は除外されるので重複にならない
+    else if (y && sg && !(okiOn && oki.has(n))) both.push(n);
+  });
+  return { missing, both, hasShipData: yRows.length + sRows.length > 0 };
+}
+function coverageWarnLines() {
+  const cov = getShipDataCoverage();
+  const lines = [];
+  if (cov.missing.length) lines.push(`送り状データが見つからない受注 ${cov.missing.length}件（ヤマト・佐川どちらにも出ていません）：\n${cov.missing.slice(0, 20).map(n => '・' + orderLabel(n)).join('\n')}${cov.missing.length > 20 ? `\n ほか${cov.missing.length - 20}件` : ''}`);
+  if (cov.both.length) lines.push(`ヤマト・佐川の両方にある受注 ${cov.both.length}件（二重に送り状が出ます）：\n${cov.both.slice(0, 20).map(n => '・' + orderLabel(n)).join('\n')}${cov.both.length > 20 ? `\n ほか${cov.both.length - 20}件` : ''}`);
+  return lines;
+}
 function getOrderUniqueIds() {
   const set = new Set();
   getAllOrderRows().forEach(r => { const n = cleanOrderNoNormalized(r[COL.ORDER]); if (n) set.add(n); });
@@ -525,6 +559,21 @@ function renderOrderSection() {
     `<span class="stat">受注 <b>${getOrderUniqueIds().size}</b> 件</span>` +
     `<span class="stat">明細 <b>${all.length}</b> 行</span>` +
     `<span class="stat ${oki.size ? 'alert' : ''}">沖縄宛て <b>${oki.size}</b> 件</span>`;
+
+  // 送り状データ（ヤマト・佐川）との突き合わせ
+  const cov = getShipDataCoverage();
+  let notice = '';
+  if (cov.hasShipData) {
+    if (cov.missing.length) {
+      document.getElementById('orderStats').innerHTML += `<span class="stat alert">送り状データなし <b>${cov.missing.length}</b> 件</span>`;
+      notice += `<div class="notice warn" style="margin-bottom:8px">ヤマトCSVにも佐川CSVにも見つからない受注があります（送り状が出ません）：${cov.missing.slice(0, 30).map(n => escapeHtml(orderLabel(n))).join('、')}${cov.missing.length > 30 ? ` ほか${cov.missing.length - 30}件` : ''}</div>`;
+    }
+    if (cov.both.length) {
+      document.getElementById('orderStats').innerHTML += `<span class="stat warn">ヤマト・佐川の両方にある <b>${cov.both.length}</b> 件</span>`;
+      notice += `<div class="notice warn" style="margin-bottom:8px">ヤマトCSVと佐川CSVの両方に入っている受注があります（両方で送り状が出ます）：${cov.both.slice(0, 30).map(n => escapeHtml(orderLabel(n))).join('、')}${cov.both.length > 30 ? ` ほか${cov.both.length - 30}件` : ''}</div>`;
+    }
+  }
+  document.getElementById('shipNotice').innerHTML = notice;
 
   ['sortAB', 'sortAF'].forEach(id => document.getElementById(id).classList.remove('on'));
   if (orderSortState.col !== null) {
@@ -1076,7 +1125,11 @@ function isCityToken(t, cityR) {
   if (t.marker && CITY_MARKERS.includes(t.marker)) return t.stem.length >= 2 && cityR.includes(t.stem);
   if (t.marker || t.stem.length < 4) return false;
   if (cityR.includes(t.stem + 'si')) return true;                                  // 「Yokohama」のような市の名前だけ
-  return /(si|ku|tyo|mati|gun|mura|son)$/.test(t.stem) && cityR.includes(t.stem); // 「Fujinomiyashi」のように区切りなし
+  // 「Fujinomiyashi」のように区切りなし。「Shinjuku（町名）」が「新宿区」に当たらないよう、
+  // 市区町村名の先頭に一致して残りが「ku」「si」だけになるものは町名とみなす
+  if (!/(si|ku|tyo|mati|gun|mura|son)$/.test(t.stem)) return false;
+  if (cityR === t.stem || cityR.endsWith(t.stem)) return true;
+  return cityR.startsWith(t.stem) && cityR.length - t.stem.length >= 3;
 }
 
 /**
@@ -1110,6 +1163,10 @@ function localizeAddress(addr, zip) {
   const prefSpans = toks.filter(t => isPrefToken(t, prefIdx) || ['japan', 'nihon', 'nippon'].map(canonRoma).includes(t.full));
   toks.forEach(t => { const o = otherPrefOf(t); if (o >= 0 && o !== prefIdx) res.warn = `住所に${PREFS[o]}とありますが、郵便番号は${info.pref}です`; });
   let rest = tidyAddress(removeSpans(work, prefSpans));
+  // 住所に紛れ込んだ郵便番号（その行の郵便番号と同じもの）を取り除く
+  const zipDigits = String(zip || '').replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+  rest = tidyAddress(rest.replace(/〒?\s*[0-9０-９]{3}\s*[-－‐ー]?\s*[0-9０-９]{4}/g, m =>
+    m.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '') === zipDigits ? ' ' : m));
 
   // 市区町村：日本語ですでに書かれていれば足さない
   let addCity = '';
@@ -1121,7 +1178,10 @@ function localizeAddress(addr, zip) {
     addCity = info.city;
   }
   if (addCity) {
-    const citySpans = romajiTokens(rest).filter(t => isCityToken(t, cityR));
+    const cands = romajiTokens(rest).filter(t => isCityToken(t, cityR));
+    // 「Fuji 1-2, Fuji-shi」のように、区切り語つき（Fuji-shi）と同じ名前の語は町名として残す
+    const marked = cands.filter(t => t.marker);
+    const citySpans = cands.filter(t => t.marker || !marked.some(m => m.full.startsWith(t.stem)));
     rest = tidyAddress(removeSpans(rest, citySpans));
   }
 
@@ -1182,6 +1242,7 @@ function initOkiSettings() {
     try { localStorage.setItem(OKI_KEY, JSON.stringify(getOkiSettings())); } catch (e) {}
     document.getElementById('okiSettings').classList.toggle('hidden', !cb.checked);
     updateButtons();
+    renderOrderSection();
   };
   [cb, sel].forEach(el => el.addEventListener('change', onChange));
   fare.addEventListener('input', onChange);
@@ -1316,8 +1377,8 @@ window.exportYamatoCsv = () => {
         [newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]] = split.fields;
         if (split.overflow) warnLines.push(`・${who}：建物名・会社名が長く、末尾が入りきりませんでした`);
       }
-      const abStr = String(newRow[27] || '');
-      if (abStr.length > 25) newRow[27] = abStr.substring(0, 25);
+      const itemStr = String(newRow[B2.ITEM1] || '');
+      if (widthOf(itemStr) > 50) newRow[B2.ITEM1] = cutByWidth(itemStr, 50);
       outputRows.push(newRow);
       fromYamato++;
       return;
@@ -1336,13 +1397,15 @@ window.exportYamatoCsv = () => {
   if (!outputRows.length) { alert("ヤマトで出力できる注文が見つかりませんでした。"); return; }
   const maxLen = Math.max(...outputRows.map(r => r.length));
   outputRows.forEach(r => { while (r.length < maxLen) r.push(''); });
-  exportCsvGeneric(outputRows, "yamato_processed.csv");
+  warnLines.push(...exportCsvGeneric(outputRows, "yamato_processed.csv", r => normText(r[B2.NAME]) || normText(r[B2.MGMT])));
+  const covLines = coverageWarnLines();
 
-  if (converted || missingOki.length || warnLines.length) {
+  if (converted || missingOki.length || warnLines.length || covLines.length) {
     let msg = `ヤマトCSVを出力しました（${outputRows.length}件）。\n・ヤマトCSVから：${fromYamato}件\n・沖縄宛てを佐川データから書き換え：${converted}件`;
     if (addrChangedY) msg += `\n・英語の住所を日本語にした件数：${addrChangedY}件`;
     if (missingOki.length) msg += `\n\n佐川CSVにもヤマトCSVにもない沖縄宛てが ${missingOki.length}件あり、出力できませんでした。`;
     if (warnLines.length) msg += `\n\n確認が必要な行：\n${warnLines.join('\n')}`;
+    if (covLines.length) msg += `\n\n${covLines.join('\n\n')}`;
     alert(msg);
   } else {
     toast(`ヤマトCSVを出力しました（${outputRows.length}件${addrChangedY ? `・住所の日本語化 ${addrChangedY}件` : ''}）`);
@@ -1356,6 +1419,7 @@ window.exportEhidenCsv = () => {
 
   // 沖縄判定：受注CSVのAR列＋佐川CSVの郵便番号
   const okinawaOrderNos = getOkinawaOrderNos();
+  const okiOn = getOkiSettings().enabled;
   const addrOn = isAddrConvertOn();
   const warnLines = [];
   let addrChanged = 0;
@@ -1367,14 +1431,14 @@ window.exportEhidenCsv = () => {
 
   let excludedCount = 0;
   uniqueOrderNos.forEach(oNum => {
-    if (okinawaOrderNos.has(oNum)) { excludedCount++; return; }
+    if (okiOn && okinawaOrderNos.has(oNum)) { excludedCount++; return; }
     const matched = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
     if (!matched) return;
     const newRow = [...matched];
     for (let c = 0; c < newRow.length; c++) {
       if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
     }
-    if (newRow[targetIdx] && String(newRow[targetIdx]).length > 16) newRow[targetIdx] = String(newRow[targetIdx]).substring(0, 16);
+    if (newRow[targetIdx] && widthOf(String(newRow[targetIdx])) > 32) newRow[targetIdx] = cutByWidth(String(newRow[targetIdx]), 32);
     // 住所1〜3（各全角16文字）：英語の住所なら、郵便番号から都道府県・市区町村を日本語に
     if (addrOn) {
       const who = normText(newRow[SG.NAME1]) || oNum;
@@ -1391,10 +1455,14 @@ window.exportEhidenCsv = () => {
   });
 
   if (outputRows.length <= (header.length > 0 ? 1 : 0)) { alert("佐川データと一致する有効なデータがありません。"); return; }
-  exportCsvGeneric(outputRows, "ehiden_processed.csv");
-  let msg = `佐川CSVを出力しました（${outputRows.length - (header.length > 0 ? 1 : 0)}件）。\n・沖縄宛て ${excludedCount} 件を除外しています。`;
+  warnLines.push(...exportCsvGeneric(outputRows, "ehiden_processed.csv", r => normText(r[SG.NAME1]) || normText(r[SG.MGMT])));
+  let msg = `佐川CSVを出力しました（${outputRows.length - (header.length > 0 ? 1 : 0)}件）。`;
+  if (okiOn) msg += `\n・沖縄宛て ${excludedCount} 件はヤマトで出すため除外しています。`;
+  else if (okinawaOrderNos.size) msg += `\n・沖縄宛ても佐川に含めています（「沖縄宛てはヤマト」の設定がOFFのため）。`;
   if (addrOn) msg += `\n・英語の住所を日本語にした件数：${addrChanged}件`;
   if (warnLines.length) msg += `\n\n確認が必要な行：\n${warnLines.join('\n')}`;
+  const cov = coverageWarnLines();
+  if (cov.length) msg += `\n\n${cov.join('\n\n')}`;
   alert(msg);
 };
 
@@ -1428,15 +1496,37 @@ window.openPrintPreview = () => {
     group.rows.push(r);
   });
 
+  // ショップ順に並べる（同じショップ内は今の並び順のまま。ショップ名が空のものは最後）
+  const groups = Array.from(orderGroupMap.values());
+  groups.sort((a, b) => {
+    const sa = String(a.shop || '').trim(), sb = String(b.shop || '').trim();
+    if (!sa && sb) return 1;
+    if (sa && !sb) return -1;
+    return sa.localeCompare(sb, 'ja', { numeric: true });
+  });
+  const shopTotals = new Map();
+  groups.forEach(g => { const k = String(g.shop || '').trim(); shopTotals.set(k, (shopTotals.get(k) || 0) + 1); });
+  const shopSeen = new Map();
+
   const htmlPages = [];
-  orderGroupMap.forEach((group) => {
+  groups.forEach((group) => {
+    const shopKey = String(group.shop || '').trim();
+    const shopNo = (shopSeen.get(shopKey) || 0) + 1;
+    shopSeen.set(shopKey, shopNo);
+    const shopCountLabel = `${shopNo}/${shopTotals.get(shopKey)}`;
     let itemRowsHtml = '', totalQty = 0;
+    // セット品の親行（同じ受注に子行 N-1, N-2… がある N-0 行）は合計数量に入れない
+    const setParents = new Set();
+    group.rows.forEach(r => { const k = parseKoban(r[koBanIdx]); if (k && k.sub !== '0') setParents.add(k.main); });
     group.rows.forEach(mRow => {
       const koBan = mRow[koBanIdx] !== undefined ? String(mRow[koBanIdx]).trim() : '';
       const itemCode = mRow[COL.SKU] !== undefined ? mRow[COL.SKU] : '';
       const itemName = mRow[COL.ITEM] !== undefined ? mRow[COL.ITEM] : '';
-      const qty = mRow[COL.QTY] !== undefined ? mRow[COL.QTY] : '1';
-      totalQty += parseInt(qty, 10) || 1;
+      const qtyRaw = mRow[COL.QTY] !== undefined && String(mRow[COL.QTY]).trim() !== '' ? String(mRow[COL.QTY]).trim() : '1';
+      const kb = parseKoban(koBan);
+      const isSetParent = !!(kb && kb.sub === '0' && setParents.has(kb.main));
+      const qty = isSetParent ? `<span style="font-size:8pt;font-weight:normal;color:#666;">セット</span><br>${escapeHtml(qtyRaw)}` : escapeHtml(qtyRaw);
+      if (!isSetParent) totalQty += Number(qtyRaw) || 0;
       const isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
       itemRowsHtml += `
         <tr style="border-bottom: 1px solid #ddd; background:${isChild ? '#fafbfc' : '#ffffff'};">
@@ -1444,7 +1534,7 @@ window.openPrintPreview = () => {
           <td style="padding:4px; ${isChild ? 'padding-left:12px; font-size:9.5pt;' : 'font-weight:bold; font-size:10pt;'}">
             ${isChild ? '└ ' : ''}${escapeHtml(itemName)}<br><span style="font-size:7.5pt; color:#666;">${escapeHtml(itemCode)} ${koBan ? '(' + escapeHtml(koBan) + ')' : ''}</span>
           </td>
-          <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${escapeHtml(qty)}</td>
+          <td style="text-align:center; font-weight:bold; font-size:11pt; padding:4px;">${qty}</td>
         </tr>`;
     });
 
@@ -1453,7 +1543,7 @@ window.openPrintPreview = () => {
       <div style="font-size:13pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;">
         <span>出荷検品シート</span><span style="font-size:9pt;font-weight:normal;">合計数量: ${totalQty}</span>
       </div>
-      <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${escapeHtml(group.name) || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${escapeHtml(group.shop)}</td></tr></table>
+      <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${escapeHtml(group.name) || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${escapeHtml(group.shop) || '（ショップなし）'}<br><span style="font-size:8.5pt;color:#333;font-weight:normal;">このショップの ${shopCountLabel}</span></td></tr></table>
       <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${escapeHtml(group.orderNo)}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="background:#2c3e50;color:#fff;font-size:9pt;"><th style="width:12%;padding:4px;text-align:center;">確認</th><th style="width:73%;padding:4px;text-align:left;">商品名 / コード</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead>
@@ -1637,12 +1727,55 @@ function parseCsvStringToUint8(csvString) {
   return new Uint8Array(sjisCodeList);
 }
 
-function exportCsvGeneric(dataRows, filename) {
-  const csvString = dataRows.map(r => r.map(v => `"${String(v !== undefined && v !== null ? v : '').replace(/"/g, '""')}"`).join(",")).join("\r\n");
+// Shift_JIS（Windowsの拡張文字を含む）に入らない文字を置き換える
+const SJIS_FIX = { '〜': '～', '—': '―', '−': '－', '–': '-', '‑': '-', '﹣': '－', '·': '・', '•': '・', '\u00a0': ' ', '𠮷': '吉', '¢': '￠', '£': '￡', '¬': '￢', '‖': '∥' };
+const sjisOkCache = new Map();
+function sjisOk(ch) {
+  if (sjisOkCache.has(ch)) return sjisOkCache.get(ch);
+  const sj = Encoding.convert(Encoding.stringToCode(ch), { to: 'SJIS', from: 'UNICODE', type: 'array' });
+  const back = Encoding.codeToString(Encoding.convert(sj, { to: 'UNICODE', from: 'SJIS', type: 'array' }));
+  const ok = back === ch;
+  sjisOkCache.set(ch, ok);
+  return ok;
+}
+function toSjisSafe(str) {
+  let out = '';
+  const bad = [];
+  for (const ch of str) {
+    if (sjisOk(ch)) { out += ch; continue; }
+    let r = SJIS_FIX[ch];
+    if (r === undefined) {
+      const d = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');   // é → e など
+      if (d && d !== ch && [...d].every(sjisOk)) r = d;
+    }
+    if (r === undefined) {
+      bad.push(ch);
+      r = /[\u200d\ufe0f]|\p{Extended_Pictographic}/u.test(ch) ? '' : '〓';   // 絵文字は消す、それ以外は〓
+    }
+    out += r;
+  }
+  return { out, bad };
+}
+
+// CSVを書き出す。使えない文字があった行は、確認用のメッセージを返す
+function exportCsvGeneric(dataRows, filename, labelOf) {
+  const warns = [];
+  const safeRows = dataRows.map(r => {
+    const bad = new Set();
+    const row = r.map(v => {
+      const res = toSjisSafe(String(v !== undefined && v !== null ? v : ''));
+      res.bad.filter(c => !/[\u200d\ufe0f]/.test(c)).forEach(c => bad.add(c));
+      return res.out;
+    });
+    if (bad.size) warns.push(`・${(labelOf && labelOf(r)) || '（名前なし）'}：送り状に使えない文字（${[...bad].join(' ')}）を〓に置き換えたか削除しました`);
+    return row;
+  });
+  const csvString = safeRows.map(r => r.map(v => `"${v.replace(/"/g, '""')}"`).join(",")).join("\r\n");
   const blob = new Blob([parseCsvStringToUint8(csvString)], { type: 'text/csv;charset=shift_jis;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  return warns;
 }
 
 function getTodayString() {
