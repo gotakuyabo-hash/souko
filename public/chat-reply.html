@@ -34,13 +34,32 @@
         .room-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer; }
         .room-row:active { background: #f8fafc; }
         #toast { transition: opacity .2s; }
+
+        /* 画面の幅（スマホは今まで通り、PCは広く使う） */
+        .app-w { width: 100%; max-width: 28rem; }
+        @media (min-width: 1024px) {
+            .app-w { max-width: 1100px; }
+            /* 要対応・後で：カードを2列に並べる */
+            #burstModeContainer, #laterModeContainer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+            #burstModeContainer > *, #laterModeContainer > * { margin-top: 0 !important; }
+            #burstModeContainer > :not(.burst-card), #laterModeContainer > :not(.burst-card) { grid-column: 1 / -1; }
+            /* ルーム・検索：読みやすい幅で中央に */
+            #normalModeContainer, #searchModeContainer { max-width: 760px; margin: 0 auto; }
+            /* 下から出るシートは、画面中央のウィンドウに */
+            .sheet { top: 50%; bottom: auto; transform: translateY(-50%); max-width: 32rem; max-height: 80vh; border-radius: 20px; padding-bottom: 0; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+            .sheet-head::before { display: none; }
+            .sheet-head { padding-top: 14px; }
+            .btn:hover { filter: brightness(.96); }
+            .room-row:hover, .sheet-row:hover { background: #f8fafc; }
+            .tab-btn:hover { color: #6366f1; }
+        }
     </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800">
 
     <!-- ヘッダー -->
     <header class="sticky top-0 z-30 bg-indigo-600 text-white shadow" style="padding-top: env(safe-area-inset-top, 0px);">
-        <div class="max-w-md mx-auto px-3 py-2.5 flex items-center gap-2">
+        <div class="app-w mx-auto px-3 py-2.5 flex items-center gap-2">
             <select id="accountSelect" onchange="onAccountChange()" class="flex-1 min-w-0 bg-indigo-500 text-white font-bold rounded-xl px-3 h-11 text-[16px] border-0">
                 <option value="staff" selected>ラクロジスタッフ</option>
                 <option value="matsushita">松下</option>
@@ -52,7 +71,7 @@
 
     <div id="toast" class="fixed left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-full shadow-lg pointer-events-none opacity-0 text-center" style="top: calc(70px + env(safe-area-inset-top, 0px)); max-width: 90vw;"></div>
 
-    <main class="max-w-md mx-auto px-3 pt-3" style="padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));">
+    <main class="app-w mx-auto px-3 pt-3" style="padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));">
 
         <!-- 一覧用ツールバー（未読・後で） -->
         <div id="listToolbar" class="flex items-center justify-between mb-2 px-1 gap-2">
@@ -108,7 +127,7 @@
 
     <!-- 選択中バー -->
     <div id="selectionBar" class="fixed inset-x-0 z-30" style="display:none; bottom: calc(60px + env(safe-area-inset-bottom, 0px));">
-        <div class="max-w-md mx-auto px-3 pb-2">
+        <div class="app-w mx-auto px-3 pb-2">
             <div class="bg-slate-900 text-white rounded-2xl flex items-center justify-between pl-4 pr-2 py-2 shadow-lg">
                 <span class="text-sm font-bold"><span id="selectedCount">0</span>件 選択中</span>
                 <button onclick="batchMarkAsRead()" class="btn btn-ok">✓ 対応済みにする</button>
@@ -118,7 +137,7 @@
 
     <!-- 下部タブ -->
     <nav class="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom, 0px);">
-        <div class="max-w-md mx-auto grid grid-cols-4">
+        <div class="app-w mx-auto grid grid-cols-4">
             <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">🚨</span>要対応</button>
             <button id="tabLater" class="tab-btn" onclick="switchMode('later')"><span class="ico">⏳</span>後で (<span id="laterCountBadge">0</span>)</button>
             <button id="tabNormal" class="tab-btn" onclick="switchMode('normal')"><span class="ico">📁</span>ルーム</button>
@@ -528,7 +547,7 @@
             if (currentMode === 'burst') fetchAllUnreadRooms(force);
             else if (currentMode === 'later') renderLaterRooms(force);
             else if (currentMode === 'search') { if (lastSearch && !lastSearch.running && lastSearch.nextOffset !== null) runSearch(true); }
-            else if (currentRoomId) openRoom(currentRoomId);
+            else if (currentRoomId) openRoom(currentRoomId, { fresh: !!force });
             else fetchNormalRooms(true);
         }
 
@@ -753,16 +772,6 @@
                     <div><label class="field-label">ショップ名・お名前</label><input id="bl_shop" class="inp" placeholder="読込中…"></div>
                     <div><label class="field-label">種類</label>
                         <select id="bl_type" class="inp" onchange="onBillingTypeChange()">${BILLING_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>
-                    <div>
-                        <label class="field-label">送り状番号（任意・着払いや再発送の時）</label>
-                        <div class="flex gap-2">
-                            <input id="bl_tracking" class="inp flex-1 min-w-0" inputmode="numeric" autocomplete="off" placeholder="手入力または📷で読み取り">
-                            <label class="btn btn-sub shrink-0 cursor-pointer">📷 読取
-                                <input type="file" accept="image/*" capture="environment" style="display:none" onchange="scanTrackingPhoto(this)">
-                            </label>
-                        </div>
-                        <div id="bl_scan_msg" class="text-xs text-slate-500 mt-1"></div>
-                    </div>
                     <div class="grid grid-cols-3 gap-2">
                         <div><label class="field-label">単価（円）</label><input id="bl_price" type="number" inputmode="numeric" class="inp" oninput="calcBilling()"></div>
                         <div><label class="field-label">数量</label><input id="bl_qty" type="number" inputmode="numeric" class="inp" value="1" oninput="calcBilling()"></div>
@@ -793,95 +802,6 @@
             if (document.getElementById('bl_type').value === '着払い立替') document.getElementById('bl_tax').value = '税込';
         };
 
-        // ===== 送り状番号の読み取り（写真から。伝票スキャナーと同じ仕組み） =====
-        function normalizeTracking(raw) {
-            let v = String(raw || '').trim();
-            v = v.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-            v = v.replace(/[\s\-‐‑–—－ー]/g, '');
-            v = v.replace(/^[A-Da-d](\d+)[A-Da-d]$/, '$1');
-            return v.toUpperCase();
-        }
-        function isValidTracking(v) { return /^\d{10,14}$/.test(v) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(v); }
-        let _detector = null;
-        function getBarcodeDetector() {
-            if (_detector) return _detector;
-            _detector = (async () => {
-                if ('BarcodeDetector' in window) {
-                    try {
-                        const sup = await BarcodeDetector.getSupportedFormats();
-                        const want = ['codabar', 'code_128', 'itf', 'code_39', 'ean_13', 'qr_code'].filter(f => sup.includes(f));
-                        if (want.length) { const det = new BarcodeDetector({ formats: want }); return async c => (await det.detect(c)).map(b => b.rawValue); }
-                    } catch (e) {}
-                }
-                // iPhoneなど：ZXingを読み込む
-                await new Promise((res, rej) => {
-                    if (window.ZXing) return res();
-                    const sc = document.createElement('script');
-                    sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-                    sc.onload = res; sc.onerror = () => rej(new Error('読み取りライブラリを読み込めませんでした'));
-                    document.head.appendChild(sc);
-                });
-                const ZX = window.ZXing;
-                const hints = new Map();
-                hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODABAR, ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.ITF, ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE]);
-                hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-                const reader = new ZX.MultiFormatReader();
-                reader.setHints(hints);
-                return async c => {
-                    try { const r = reader.decodeWithState(new ZX.BinaryBitmap(new ZX.HybridBinarizer(new ZX.HTMLCanvasElementLuminanceSource(c)))); return r ? [r.getText()] : []; }
-                    catch (e) { return []; } finally { reader.reset(); }
-                };
-            })().catch(e => { _detector = null; throw e; });
-            return _detector;
-        }
-        function drawForScan(img, cropW, cropH, rotate) {
-            const W = img.naturalWidth, H = img.naturalHeight;
-            const sw = Math.round(W * cropW), sh = Math.round(H * cropH), sx = Math.round((W - sw) / 2), sy = Math.round((H - sh) / 2);
-            const scale = Math.min(1, 1600 / Math.max(sw, sh)), dw = Math.round(sw * scale), dh = Math.round(sh * scale);
-            const c = document.createElement('canvas');
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            if (rotate) {
-                c.width = dh; c.height = dw;
-                ctx.translate(dh / 2, dw / 2); ctx.rotate(Math.PI / 2);
-                ctx.drawImage(img, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
-            } else {
-                c.width = dw; c.height = dh;
-                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
-            }
-            return c;
-        }
-        window.scanTrackingPhoto = async function(input) {
-            const file = input.files && input.files[0];
-            input.value = '';
-            if (!file) return;
-            const msg = document.getElementById('bl_scan_msg');
-            msg.textContent = '読み取り中…';
-            try {
-                const detect = await getBarcodeDetector();
-                const url = URL.createObjectURL(file);
-                const img = new Image();
-                await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
-                URL.revokeObjectURL(url);
-                let found = null;
-                for (const [cw, ch, rot] of [[1, 1, 0], [0.8, 0.5, 0], [1, 1, 1]]) {
-                    for (const raw of await detect(drawForScan(img, cw, ch, rot))) {
-                        const v = normalizeTracking(raw);
-                        if (isValidTracking(v)) { found = v; break; }
-                    }
-                    if (found) break;
-                }
-                if (found) {
-                    document.getElementById('bl_tracking').value = found;
-                    msg.textContent = `✓ 読み取りました：${found}`;
-                    if (navigator.vibrate) navigator.vibrate(80);
-                } else {
-                    msg.textContent = 'バーコードが見つかりませんでした。明るい場所で、バーコードが大きく写るように撮り直してください';
-                }
-            } catch (e) {
-                msg.textContent = '読み取れませんでした：' + e.message;
-            }
-        };
-
         window.calcBilling = function() {
             const p = Number(document.getElementById('bl_price').value) || 0;
             const q = Number(document.getElementById('bl_qty').value) || 0;
@@ -894,22 +814,11 @@
             const qty = Number(document.getElementById('bl_qty').value) || 1;
             const date = document.getElementById('bl_date').value || todayYmd();
             if (!document.getElementById('bl_price').value) { showToast('単価を入力してください'); return; }
-            const tracking = normalizeTracking(document.getElementById('bl_tracking').value);
             btn.disabled = true;
             btn.textContent = '保存中…';
             try {
-                if (tracking) {
-                    const f = await loadFirestore();
-                    const dup = await f.getDocs(f.query(f.collection(f.db, 'billing_records'), f.where('trackingNo', '==', tracking)));
-                    if (!dup.empty) {
-                        const d = dup.docs[0].data();
-                        if (!confirm(`送り状番号「${tracking}」はすでに記録されています。\n${d.date}　${d.kanriNo || ''}　${d.type}　${yen(d.amount)}\n\nそれでも記録しますか？`)) {
-                            btn.disabled = false; btn.textContent = '🧾 記録する'; return;
-                        }
-                    }
-                }
                 await fsAdd('billing_records', {
-                    trackingNo: tracking,
+                    trackingNo: '',   // 送り状番号の入力は廃止（請求台帳と項目をそろえるため空で保存）
                     account: getAccount(), roomId: String(billingCtx.roomId), roomName: billingCtx.roomName,
                     kanriNo: document.getElementById('bl_kanri').value.trim(),
                     shopName: document.getElementById('bl_shop').value.trim(),
@@ -1708,7 +1617,8 @@
             fetchNormalRooms(false);
         };
 
-        async function openRoom(roomId) {
+        // opts.fresh=true の時は、Firestoreの同期を待たずにGASから最新を取る（送信直後・🔄）
+        async function openRoom(roomId, opts = {}) {
             currentRoomId = safeId(roomId);
             document.getElementById('roomListView').style.display = 'none';
             document.getElementById('roomDetailView').style.display = 'block';
@@ -1716,7 +1626,7 @@
             container.innerHTML = emptyBox('読み込み中…');
             try {
                 // Firestoreに最新の本文があればそれを使い、なければGASから
-                let msgs = fsActive() ? await getMsgsFromFs(currentRoomId) : null;
+                let msgs = (fsActive() && !opts.fresh) ? await getMsgsFromFs(currentRoomId) : null;
                 let members = roomMembersCache[currentRoomId] || null;
                 if (!msgs) {
                     const roomData = await callApi("get_room_data", { room_id: currentRoomId });
@@ -2018,7 +1928,7 @@
                 attachStore[key] = [];
                 if (finalMsg) saveSendLog(m, finalMsg, 'compose');
                 showToast("送信しました");
-                openRoom(m.roomId);
+                openRoom(m.roomId, { fresh: true });
             } catch (e) {
                 alert("送信失敗: " + e.message);
                 btn.disabled = false;
@@ -2733,7 +2643,7 @@
                 markReadInCache([m.roomId]);
                 showToast(done ? "送信して完了にしました" : "送信しました");
                 if (done) removeCard(m.roomId);
-                else openRoom(m.roomId);
+                else openRoom(m.roomId, { fresh: true });
             } catch (e) {
                 alert("送信失敗: " + e.message);
                 btn.disabled = false;
