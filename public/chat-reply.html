@@ -66,6 +66,7 @@
                 <option value="matsushita">松下</option>
             </select>
             <span id="loadStatus" class="shrink-0 text-xs font-bold bg-indigo-500 px-2.5 py-1 rounded-full">読込中</span>
+            <button onclick="openAiRules()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="AI文章ルール">⚙️</button>
             <button onclick="refreshCurrentView(true)" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="更新">🔄</button>
         </div>
     </header>
@@ -183,6 +184,33 @@
         </div>
     </div>
 
+    <div id="modalAiRules" class="sheet">
+        <div class="sheet-head"><div class="font-bold text-base text-center">🤖 AI文章ルール</div></div>
+        <div class="p-5 space-y-4">
+            <div id="aiRulesInfo" class="text-xs text-slate-500">読み込み中…</div>
+            <div>
+                <div class="flex items-center justify-between"><label class="field-label">共通ルール（すべてのルーム）</label><button onclick="fillAiDefault('common')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
+                <textarea id="aiRule_common" rows="10" class="inp text-sm"></textarea>
+            </div>
+            <div>
+                <div class="flex items-center justify-between"><label class="field-label">社外ルーム（セラー様・取引先様）</label><button onclick="fillAiDefault('external')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
+                <textarea id="aiRule_external" rows="5" class="inp text-sm"></textarea>
+            </div>
+            <div>
+                <div class="flex items-center justify-between"><label class="field-label">社内ルーム</label><button onclick="fillAiDefault('internal')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
+                <textarea id="aiRule_internal" rows="5" class="inp text-sm"></textarea>
+            </div>
+            <div>
+                <div class="flex items-center justify-between"><label class="field-label">社内ルームのID（カンマ区切り）</label><button onclick="fillAiDefault('internalRoomIds')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
+                <input type="text" id="aiRule_internalRoomIds" class="inp text-sm" placeholder="例：380072256,123456789" inputmode="numeric">
+                <div class="text-xs text-slate-500 mt-1">ルームIDは、ChatworkのURLの「rid」のあとの数字です</div>
+            </div>
+            <div class="text-xs text-slate-500">空欄の項目は、GASに書いてある初期値が使われます。保存すると1分以内に反映されます。</div>
+            <button id="aiRulesSaveBtn" onclick="saveAiRules(this)" class="btn btn-main w-full">💾 保存する</button>
+            <button onclick="closeAllModals()" class="btn btn-sub w-full">閉じる</button>
+        </div>
+    </div>
+
     <!-- 画像ビューア -->
     <div id="imageViewer" class="fixed inset-0 z-[70] bg-black/95 flex-col" style="display:none;">
         <div class="flex items-center gap-2 px-3 text-white" style="padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px;">
@@ -200,7 +228,7 @@
     </div>
 
     <script>
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
+        const GAS_URL = "https://asia-northeast1-souko-2de57.cloudfunctions.net/api";   // Cloud Functions（元のGAS：https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec）
         const SECRET_KEY = "chatwork_cockpit_secret_v1";
         const BUNDLE_CACHE_KEY = "cw_unread_bundle_v2_";
         const LATER_CACHE_KEY = "cw_later_cache_v1_";
@@ -472,13 +500,13 @@
 
         // ===== シート =====
         function openSheet(id) {
-            ['sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
+            ['sheetActions', 'modalSellerInfo', 'modalLinkCopy', 'modalAiRules'].forEach(s => document.getElementById(s).style.display = 'none');
             document.getElementById('modalOverlay').style.display = 'block';
             document.getElementById(id).style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
         function closeAllModals() {
-            ['modalOverlay', 'sheetActions', 'modalSellerInfo', 'modalLinkCopy'].forEach(s => document.getElementById(s).style.display = 'none');
+            ['modalOverlay', 'sheetActions', 'modalSellerInfo', 'modalLinkCopy', 'modalAiRules'].forEach(s => document.getElementById(s).style.display = 'none');
             document.body.style.overflow = '';
         }
 
@@ -741,6 +769,7 @@
                         <button onclick="generateAiReplyForMessage('${key}', this)" class="btn btn-ai shrink-0">✨ AI作成</button>
                     </div>
                     <textarea id="reply_text_${key}" rows="6" placeholder="返信文" class="inp"></textarea>
+                    <button onclick="useLastSent('${key}')" class="btn btn-sub w-full">📋 直前の送信文を使う</button>
                     ${rp && rp.mid ? `<label class="flex items-center gap-2 text-sm text-slate-600 py-1 cursor-pointer">
                         <input type="checkbox" id="rp_${key}" checked class="w-5 h-5 accent-indigo-600 shrink-0">
                         <span>${esc(rp.name)}さんのメッセージへの返信として送る（↩）</span></label>` : ''}
@@ -1886,6 +1915,7 @@
                     <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
                     <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
                     <textarea id="reply_text_${key}" rows="6" placeholder="送信するメッセージ（直接入力もOK）" class="inp"></textarea>
+                    <button onclick="useLastSent('${key}')" class="btn btn-sub w-full">📋 直前の送信文を使う</button>
                     ${attachBoxHtml(key)}
                     <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok w-full">📤 送信</button>
                 </div>`;
@@ -1927,7 +1957,7 @@
                 if (files.length) await uploadFiles(m.roomId, files, finalMsg, false, btn);
                 else await callApi("send_message", { room_id: m.roomId, body: finalMsg });
                 attachStore[key] = [];
-                if (finalMsg) saveSendLog(m, finalMsg, 'compose');
+                if (finalMsg) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'compose'); }
                 showToast("送信しました");
                 openRoom(m.roomId, { fresh: true });
             } catch (e) {
@@ -2575,6 +2605,7 @@
                 usedAi: !!d, draftId: d ? d.id : null,
                 aiGeneratedText: d ? d.text : null, customPrompt: d ? d.prompt : null,
                 generateCount: d ? d.count : 0,
+                reusedLastSent: !!m.reusedLastSent,
                 context: (m.context || m.body || "").slice(0, 3000),
                 updatedAt: FS_TS
             };
@@ -2587,7 +2618,98 @@
             }
             fsAdd("ai_brushup_feedback", data).catch(e => console.error("送信ログ保存失敗:", e));
             m.aiDraft = null;
+            m.reusedLastSent = false;
         }
+
+        // ===== AI文章ルール（Firestore の cw_config/ai_prompt。読み書きはGAS経由） =====
+        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds'];
+        let aiRuleDefaults = null;
+
+        window.openAiRules = async function() {
+            const info = document.getElementById('aiRulesInfo');
+            const saveBtn = document.getElementById('aiRulesSaveBtn');
+            info.textContent = '読み込み中…';
+            saveBtn.disabled = true;
+            AI_RULE_FIELDS.forEach(k => { document.getElementById(`aiRule_${k}`).value = ''; });
+            openSheet('modalAiRules');
+            try {
+                const d = await callApi("get_ai_config");
+                aiRuleDefaults = d.defaults || {};
+                const saved = d.saved || {};
+                // 保存がない項目は、今使われている初期値を表示（そのまま直して保存できる）
+                AI_RULE_FIELDS.forEach(k => {
+                    document.getElementById(`aiRule_${k}`).value = (saved[k] && saved[k].trim()) ? saved[k] : (aiRuleDefaults[k] || '');
+                });
+                info.textContent = d.updatedAt
+                    ? `最終更新：${new Date(d.updatedAt * 1000).toLocaleString('ja-JP')}${d.updatedBy ? '（' + d.updatedBy + '）' : ''}`
+                    : 'まだ編集されていません（初期値を使っています）';
+                saveBtn.disabled = false;
+            } catch (e) {
+                info.textContent = '読み込みに失敗しました：' + e.message;
+            }
+        };
+
+        window.fillAiDefault = function(k) {
+            if (!aiRuleDefaults) return;
+            const el = document.getElementById(`aiRule_${k}`);
+            if (el.value.trim() && el.value !== aiRuleDefaults[k] && !confirm('入力中の内容を初期値に置き換えますか？')) return;
+            el.value = aiRuleDefaults[k] || '';
+        };
+
+        window.saveAiRules = async function(btn) {
+            const params = {};
+            AI_RULE_FIELDS.forEach(k => { params[k] = document.getElementById(`aiRule_${k}`).value; });
+            if (!confirm('AI文章ルールを保存しますか？\nスタッフ全員のAI作成に反映されます。')) return;
+            params.by = getStaffName();
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+            try {
+                await callApi("save_ai_config", params);
+                showToast('保存しました（1分以内に反映されます）');
+                closeAllModals();
+            } catch (e) {
+                alert('保存に失敗しました：' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 保存する';
+            }
+        };
+
+        // ===== 直前の送信文を別ルームにも使う =====
+        //   送信した本文（宛先・返信マークの行は外す）を、この端末にアカウントごとに保存
+        const LAST_SENT_KEY = "cw_last_sent_v1_";
+        function rememberLastSent(m, sentText) {
+            const body = bodyForCompare(sentText);
+            if (!body) return;
+            try {
+                localStorage.setItem(LAST_SENT_KEY + getAccount(), JSON.stringify({
+                    body: body, roomId: String(m.roomId || ''), roomName: m.roomName || '', at: Date.now()
+                }));
+            } catch (e) {}
+        }
+        function getLastSent() {
+            try { return JSON.parse(localStorage.getItem(LAST_SENT_KEY + getAccount())); } catch (e) { return null; }
+        }
+        window.useLastSent = function(key) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            if (!textarea) return;
+            const last = getLastSent();
+            if (!last || !last.body) { showToast("まだ送信した文がありません"); return; }
+            if (String(last.roomId) === String(m.roomId)) {
+                if (!confirm("直前の送信文は、このルームに送ったものです。\nそれでも入れますか？")) return;
+            }
+            // 宛先（[To:…]）の行は残して、本文だけ入れ替える
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            const current = bodyForCompare(textarea.value);
+            if (current && !confirm("入力中の文章を、直前の送信文に置き換えますか？")) return;
+            textarea.value = toLines + last.body;
+            m.aiDraft = null;          // AI案とは別物なので、添削ログでは「AIなし」として記録
+            m.reusedLastSent = true;
+            const d = new Date(last.at || Date.now());
+            showToast(`「${last.roomName || '前のルーム'}」に${hm(d)}に送った文を入れました`);
+            textarea.focus();
+        };
 
         window.insertMentionForMsg = function(key) {
             const selectEl = document.getElementById(`member_select_${key}`);
@@ -2639,7 +2761,7 @@
                 if (files.length) await uploadFiles(m.roomId, files, finalMsg, true, btn);
                 else await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
                 attachStore[key] = [];
-                if (preview) saveSendLog(m, finalMsg, 'reply');
+                if (preview) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'reply'); }
                 setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
                 markReadInCache([m.roomId]);
                 showToast(done ? "送信して完了にしました" : "送信しました");
