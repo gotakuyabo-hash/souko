@@ -235,7 +235,8 @@ function buildRows() {
             aiLen: ai ? aiText.length : '', sentLen: sent.length,
             genCount: s.generateCount || (ai && ai.generateCount) || (ai ? 1 : 0),
             prompt: (ai && ai.customPrompt) || '', context: s.context || (ai && ai.context) || '',
-            aiText, sent, reused: !!s.reusedLastSent
+            aiText, sent, reused: !!s.reusedLastSent,
+            direct: s.source === 'chatwork_direct'
         };
     });
 
@@ -246,7 +247,8 @@ function buildRows() {
 }
 
 function renderSummary() {
-    const total = rows.length;
+    const directCount = rows.filter(r => r.direct).length;
+    const total = rows.length - directCount;   // コックピットから送った数
     const withAi = rows.filter(r => r.usedAi);
     const lv = { 'そのまま': 0, '軽い修正': 0, '大幅修正': 0 };
     withAi.forEach(r => lv[r.level]++);
@@ -255,7 +257,8 @@ function renderSummary() {
     const unsent = window._unsent.length;
 
     document.getElementById('stats').innerHTML = [
-        ['送信した数', total],
+        ['コックピットから送信', total],
+        ['Chatworkで直接返信', directCount],
         ['AIを使った送信', `${withAi.length}（${pct(withAi.length, total)}%）`],
         ['AI案の平均修正率', `${avg}%`],
         ['作ったが送らなかったAI案', unsent]
@@ -295,14 +298,15 @@ const stamp = () => `${document.getElementById('fromDate').value}_${document.get
 
 window.downloadAnalysis = function () {
     const header = ['送信日時', 'アカウント', '種類', 'タブ', 'ルーム名', 'ルームID', 'ひもづけ', 'AI使用', '判定', '修正率(%)',
-        'AI案の文字数', '送信文の文字数', 'AI作り直し回数', 'AIへの指示', '元のチャット', 'AI案', '送信文', '使い回し'];
+        'AI案の文字数', '送信文の文字数', 'AI作り直し回数', 'AIへの指示', '元のチャット', 'AI案', '送信文', '使い回し', '送信元'];
     const data = rows.map(r => [fmt(r.sentAt), r.account, r.mode === 'compose' ? '新規発信' : '返信', r.tab, r.roomName, r.roomId,
         r.link, r.usedAi ? 'あり' : 'なし', r.level, r.ratio === null ? '' : Math.round(r.ratio * 100),
-        r.aiLen, r.sentLen, r.genCount, r.prompt, r.context, r.aiText, r.sent, r.reused ? '直前の送信文' : '']);
+        r.aiLen, r.sentLen, r.genCount, r.prompt, r.context, r.aiText, r.sent, r.reused ? '直前の送信文' : '',
+        r.direct ? 'Chatwork直接' : 'コックピット']);
     // 送らなかったAI案も末尾に追加（どんな案が捨てられたかも分析対象）
     window._unsent.forEach(a => data.push([fmt(toDate(a.createdAt)), a.account || '', a.type === 'compose' ? '新規発信' : '返信', a.tab || '',
         a.roomName || '', a.roomId || '', '未送信', 'あり', '送らなかった', '', bodyForCompare(a.aiGeneratedText).length, '', a.generateCount || 1,
-        a.customPrompt || '', a.context || '', bodyForCompare(a.aiGeneratedText), '', '']));
+        a.customPrompt || '', a.context || '', bodyForCompare(a.aiGeneratedText), '', '', 'コックピット']));
     download(`AI添削分析_${stamp()}.csv`, toCsv(header, data));
 };
 
