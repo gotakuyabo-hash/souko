@@ -117,6 +117,10 @@ button,input,textarea{font:inherit;color:inherit}
 .bullet .dot{color:var(--primary);font-weight:800}
 .linkrow{padding:10px 14px;border-top:1px solid var(--line)}
 .linkbtn{display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:9px;background:var(--primary);color:var(--primary-ink);font-weight:800;text-decoration:none}
+.req-badge{margin-left:auto;flex:none;font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--muted);white-space:nowrap}
+.req-badge.is-pending{background:var(--danger);color:#fff}
+.req-badge.is-clear{background:var(--ok-soft);color:var(--ok)}
+.req-badge.is-error{background:var(--surface);color:var(--warn)}
 
 /* 編集モード */
 .eitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-top:1px dashed var(--line)}
@@ -320,10 +324,14 @@ const PINNED_LINKS = {
     { title: "資材発注（管理者）を開く", url: "https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=adm-254028a933d3" }
   ],
   afternoon: [
-    { title: "13時 RSショップ依頼（スプレッドシート）を開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk" },
-    { title: "自己配依頼（スプレッドシート）を開く", url: "https://docs.google.com/spreadsheets/d/1RY90UxU2mSTrJTqMbON3K2CC_onAOCrbV7pls8Sjwrg/edit?gid=1733646125#gid=1733646125" }
+    { title: "13時 RSショップ依頼（スプレッドシート）を開く", req: "rs", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk" },
+    { title: "自己配依頼（スプレッドシート）を開く", req: "jikohai", url: "https://docs.google.com/spreadsheets/d/1RY90UxU2mSTrJTqMbON3K2CC_onAOCrbV7pls8Sjwrg/edit?gid=1733646125#gid=1733646125" }
   ]
 };
+
+// 依頼状況（GASウェブアプリ）のURL。デプロイ後に発行されたURLの末尾に ?k=合言葉 を付けて貼り付けます
+// 空のままなら件数表示はオフになります
+const REQUEST_STATUS_URL = "";
 
 const DEFAULTS = {
   morning: [
@@ -337,7 +345,7 @@ const DEFAULTS = {
   ],
   afternoon: [
     { title: "午後立ち上げ状況・記入欄", value: "", type: "textarea", placeholder: "午後の進捗や懸念点" },
-    { title: "依頼フォーム確認", checked: false, type: "checkbox" },
+    { title: "RSショップ依頼フォーム確認", checked: false, type: "checkbox" },
     { title: "RSショップ スプレッドシートを開く", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk", type: "link" }
   ],
   peak: [
@@ -587,7 +595,8 @@ function renderChecklist() {
     if (!collapsed) {
       const pinned = PINNED_LINKS[sec.key] || [];
       pinned.forEach(p => body.push(h('div', { class: 'linkrow' },
-        h('a', { class: 'linkbtn', href: p.url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', p.title),
+        h('a', { class: 'linkbtn', href: p.url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', p.title,
+          p.req && REQUEST_STATUS_URL ? reqBadge(p.req) : null),
         CL.edit ? h('p', { class: 'small muted', style: 'margin:6px 0 0' }, '※ 毎日自動で表示される固定リンクです（ここでは編集できません）') : null)));
       const pinnedUrls = pinned.map(p => p.url);
       items.forEach((it, i) => {
@@ -1083,6 +1092,51 @@ async function ensureLogin() {
 }
 
 /* =========================================================
+   依頼状況（RSショップ・自己配）の件数表示
+   ========================================================= */
+const REQ = { data: null, loading: false, error: false, lastAt: 0 };
+
+function reqBadgeState(key) {
+  if (REQ.error || REQ.data?.[key]?.error) return { cls: 'is-error', text: '⚠️ 確認できません' };
+  const r = REQ.data?.[key];
+  if (!r) return { cls: '', text: '確認中…' };
+  if (r.pending > 0) return { cls: 'is-pending', text: `未完了 ${r.pending}件` + (r.today ? `（今日 ${r.today}件）` : '') };
+  return { cls: 'is-clear', text: r.today ? `✓ 完了（今日 ${r.today}件）` : '✓ 依頼なし' };
+}
+function reqBadge(key) {
+  const st = reqBadgeState(key);
+  return h('span', { class: 'req-badge ' + st.cls, 'data-req': key }, st.text);
+}
+// 画面を作り直さずにバッジだけ更新する（入力中の欄に影響させないため）
+function paintReqBadges() {
+  document.querySelectorAll('[data-req]').forEach(el => {
+    const st = reqBadgeState(el.dataset.req);
+    el.className = 'req-badge ' + st.cls;
+    el.textContent = st.text;
+  });
+}
+async function refreshRequests() {
+  if (!REQUEST_STATUS_URL || REQ.loading) return;
+  REQ.loading = true;
+  try {
+    const res = await fetch(REQUEST_STATUS_URL, { cache: 'no-store' });
+    const d = await res.json();
+    if (!d.ok) throw new Error(d.error || 'error');
+    REQ.data = d; REQ.error = false;
+  } catch (e) {
+    console.warn('request status', e);
+    REQ.error = true;
+  } finally {
+    REQ.loading = false; REQ.lastAt = Date.now();
+    paintReqBadges();
+  }
+}
+// 別アプリ（スプレッドシート等）から戻ってきたら確認し直す（30秒以内の連続確認はしない）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Date.now() - REQ.lastAt > 30000) refreshRequests();
+});
+
+/* =========================================================
    起動
    ========================================================= */
 (async () => {
@@ -1093,6 +1147,7 @@ async function ensureLogin() {
   try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
   switchTab(tab);
   goDate(todayJST());
+  refreshRequests();
 })();
 </script>
 </body>
