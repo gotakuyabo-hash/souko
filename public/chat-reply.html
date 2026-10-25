@@ -1472,4 +1472,1186 @@
                     }
                 } catch (e) {}
             }
-  
+            if (optionLoading) return optionLoading;
+            optionLoading = (async () => {
+                try {
+                    const data = await callApi("get_option_sellers", { label: "動画撮影オプション" });
+                    const d = { t: Date.now(), sellers: data.sellers || [], removed: data.removed || [] };
+                    try { localStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
+                    setOptionData(d);
+                    applyOptionBadges();
+                    if (currentMode === 'normal' && roomFilter === 'option') renderOptionList();
+                } finally {
+                    optionLoading = null;
+                }
+            })();
+            return optionLoading;
+        }
+
+        // 撮影オプション◯のセラーのルーム名に 🎥 を付ける
+        function applyOptionBadges() {
+            document.querySelectorAll('[data-op-room]').forEach(el => {
+                const on = optionRoomIds.has(el.getAttribute('data-op-room'));
+                const has = el.querySelector('.op-badge');
+                if (on && !has) el.insertAdjacentHTML('afterbegin', '<span class="op-badge" title="撮影オプションあり">🎥 </span>');
+                if (!on && has) has.remove();
+            });
+        }
+
+        window.setRoomFilter = function(f) {
+            roomFilter = f;
+            document.getElementById('chipAll').className = `btn ${f === 'all' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('chipOption').className = `btn ${f === 'option' ? 'btn-main' : 'btn-sub'}`;
+            document.getElementById('roomSearchInput').placeholder = f === 'option' ? '🔍 管理番号・ショップ名・ルーム名で検索' : '🔍 ルーム名で検索';
+            renderRoomList();
+            if (f === 'option' && !optionData) {
+                document.getElementById('roomList').innerHTML = '<div class="p-6 text-center text-slate-400">撮影オプションのセラーを読み込み中…</div>';
+                loadOptionSellers(true).catch(e => {
+                    document.getElementById('roomList').innerHTML = `<div class="p-6 text-center text-red-500">取得失敗: ${esc(e.message)}</div>`;
+                });
+            }
+        };
+
+        function filteredOptionSellers() {
+            const kw = toHalf(document.getElementById('roomSearchInput').value.trim()).toLowerCase();
+            return (optionData && optionData.sellers || []).filter(x => !kw ||
+                toHalf([x.kanriNo, x.shopName, x.name, x.room_name].join(' ')).toLowerCase().includes(kw));
+        }
+
+        function renderOptionList() {
+            const head = document.getElementById('optionHeader');
+            const list = document.getElementById('roomList');
+            if (!optionData) return;
+            const all = optionData.sellers || [];
+            const sellers = filteredOptionSellers();
+            const unread = all.filter(x => x.unread_num > 0).length;
+            const noRoom = all.filter(x => !x.room_id).length;
+            const t = new Date(optionData.t);
+
+            head.style.display = 'block';
+            head.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <div class="font-bold text-base">🎥 撮影オプションあり ${all.length}名</div>
+                    <div class="text-xs text-slate-500 mt-1">未読あり ${unread}名${noRoom ? `・ルーム未発見 ${noRoom}名` : ''}・${t.getMonth() + 1}/${t.getDate()} ${hm(t)} 時点</div>
+                    <div class="grid grid-cols-3 gap-2 mt-3">
+                        <button onclick="addOptionSeller()" class="btn btn-sub px-1 text-[13px]">＋ 追加</button>
+                        <button onclick="copyOptionList()" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
+                        <button onclick="reloadOptionList(this)" class="btn btn-sub px-1 text-[13px]">🔄 取り直す</button>
+                    </div>
+                </div>`;
+
+            if (!sellers.length) { list.innerHTML = '<div class="p-6 text-center text-slate-400">該当するセラーがいません</div>'; return; }
+            optionRowMap = sellers;
+            const manualTag = x => x.manual ? `<span class="text-[11px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded ml-1">✎手動</span>` : '';
+            const noteLine = x => x.manual && x.note ? `<span class="block text-xs text-violet-700 truncate">メモ：${esc(x.note)}${x.by ? `（${esc(x.by)}）` : ''}</span>` : '';
+            let html = sellers.map((x, i) => {
+                const sub = `${esc(x.kanriNo)}・${esc(x.shopName)}`;
+                const main = x.room_id
+                    ? `<button onclick="openRoomFromList('${safeId(x.room_id)}')" class="room-row flex-1 min-w-0 pr-1">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate">${sub}${manualTag(x)}</span>
+                                <span class="block text-xs text-slate-500 truncate">${esc(x.room_name)}・${fmtTime(x.last_update_time)}</span>
+                                ${noteLine(x)}
+                            </span>
+                            ${x.unread_num > 0 ? `<span class="shrink-0 text-xs font-bold bg-red-500 text-white px-2 py-1 rounded-full">${x.unread_num}</span>` : ''}
+                        </button>`
+                    : `<div class="room-row flex-1 min-w-0 pr-1 opacity-60">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate">${sub}${manualTag(x)}</span>
+                                <span class="block text-xs text-slate-400">Chatworkルームが見つかりません（ルーム名に管理番号がありません）</span>
+                                ${noteLine(x)}
+                            </span>
+                        </div>`;
+                return `<div class="flex items-stretch">${main}
+                    <button onclick="openOptionEdit(${i})" class="shrink-0 w-12 text-slate-400 text-lg cursor-pointer" aria-label="修正">✎</button></div>`;
+            }).join('');
+
+            // 手動で「未加入」にしたセラー
+            const removed = (optionData.removed || []);
+            if (removed.length) {
+                html += `<div class="px-4 pt-4 pb-2 text-xs font-bold text-slate-500 bg-slate-50">手動で一覧から外したセラー（${removed.length}名）</div>` +
+                    removed.map((x, i) => `
+                        <div class="flex items-center gap-2 px-4 py-3 bg-slate-50">
+                            <span class="flex-1 min-w-0">
+                                <span class="block font-bold text-[15px] truncate text-slate-500">${esc(x.kanriNo)}</span>
+                                <span class="block text-xs text-slate-400 truncate">${x.note ? `メモ：${esc(x.note)}` : 'メモなし'}${x.by ? `（${esc(x.by)}）` : ''}</span>
+                            </span>
+                            <button onclick="undoRemoved(${i})" class="btn btn-sub shrink-0" style="height:38px">元に戻す</button>
+                        </div>`).join('');
+            }
+            list.innerHTML = html;
+        }
+
+        // ===== 撮影オプションの手動修正（元のシートは保護されているため、アプリ側で上書き） =====
+        let optionRowMap = [];
+
+        async function saveOptionOverride(kanri, value, note) {
+            const k = normKanri(kanri);
+            if (k.length < 2) throw new Error('管理番号を正しく入力してください');
+            const f = await loadFirestore();
+            const ref = f.doc(f.db, 'option_overrides', `${OPTION_LABEL}_${k}`);
+            if (value === '') {
+                await f.deleteDoc(ref);          // シートの内容に戻す
+                delete optionOv[k];
+            } else {
+                const data = { label: OPTION_LABEL, k: k, kanriNo: String(kanri).trim(), v: value, note: note || '', by: getStaffName(), updatedAt: f.serverTimestamp() };
+                await f.setDoc(ref, data);
+                optionOv[k] = data;
+            }
+            recomputeOption();
+            startOptionOvSync();
+        }
+
+        window.openOptionEdit = function(i) {
+            const x = optionRowMap[i];
+            if (!x) return;
+            document.getElementById('sheetActionsTitle').textContent = `${x.kanriNo}・${x.shopName}`;
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="px-5 pt-4 pb-2 text-sm text-slate-600 leading-relaxed">
+                    今の表示：<b>${x.manual ? '手動で「加入」' : 'シートで「加入」'}</b><br>
+                    元のシートは変更せず、このアプリの表示だけを修正します。
+                </div>
+                <div class="px-5 pb-3"><input type="text" id="optionNote" class="inp" placeholder="メモ（例：10/20 解約の連絡あり）" value="${esc(x.manual ? x.note : '')}"></div>` +
+                sheetBtn('×', '未加入にする（一覧から外す）', `applyOptionEdit(${i}, '×')`) +
+                (x.manual ? sheetBtn('↺', 'シートの内容に戻す（手動修正を取り消す）', `applyOptionEdit(${i}, '')`) : '');
+            openSheet('sheetActions');
+        };
+
+        window.applyOptionEdit = async function(i, value) {
+            const x = optionRowMap[i];
+            if (!x) return;
+            const note = (document.getElementById('optionNote') || {}).value || '';
+            closeAllModals();
+            try {
+                setStatus('保存中…');
+                await saveOptionOverride(x.kanriNo, value, note);
+                showToast(value === '×' ? `${x.kanriNo} を一覧から外しました` : `${x.kanriNo} をシートの内容に戻しました`);
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.undoRemoved = async function(i) {
+            const x = (optionData && optionData.removed || [])[i];
+            if (!x) return;
+            if (!confirm(`${x.kanriNo} の手動修正を取り消して、シートの内容に戻しますか？`)) return;
+            try {
+                await saveOptionOverride(x.kanriNo, '', '');
+                showToast(`${x.kanriNo} をシートの内容に戻しました`);
+                renderRoomList();
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.addOptionSeller = async function() {
+            const kanri = (prompt("撮影オプションに加入しているセラーの管理番号を入力してください") || "").trim();
+            if (!kanri) return;
+            const note = (prompt("メモ（任意）例：10/20 口頭で加入の連絡あり") || "").trim();
+            try {
+                setStatus('保存中…');
+                await saveOptionOverride(kanri, '◯', note);
+                showToast(`${kanri} を一覧に追加しました`);
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+            }
+        };
+
+        window.reloadOptionList = async function(btn) {
+            btn.disabled = true;
+            btn.textContent = '取得中…';
+            try { await loadOptionSellers(true); showToast('最新の一覧にしました'); }
+            catch (e) { alert('取得に失敗しました: ' + e.message); }
+            finally { btn.disabled = false; btn.textContent = '🔄 取り直す'; }
+        };
+
+        // タブ区切り → スプレッドシートにそのまま貼れる
+        window.copyOptionList = function() {
+            const sellers = filteredOptionSellers();
+            if (!sellers.length) return;
+            const clean = v => String(v == null ? '' : v).replace(/[\t\n\r]+/g, ' ').trim();
+            const rows = [['管理番号', 'ショップ名', 'お名前', 'ルーム名', '未読', '最終更新'].join('\t')];
+            sellers.forEach(x => {
+                const d = x.last_update_time ? new Date(x.last_update_time * 1000) : null;
+                rows.push([x.kanriNo, x.shopName, x.name, x.room_name || '（ルームなし）', x.unread_num || '',
+                    d ? `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}` : ''].map(clean).join('\t'));
+            });
+            navigator.clipboard.writeText(rows.join('\n'))
+                .then(() => showToast(`${sellers.length} 名をコピーしました`))
+                .catch(err => alert("コピーに失敗しました: " + err));
+        };
+        window.openRoomFromList = function(roomId) {
+            if (currentMode !== 'normal') switchMode('normal');
+            openRoom(roomId);
+        };
+        window.backToRoomList = function() {
+            currentRoomId = null;
+            document.getElementById('roomDetailView').style.display = 'none';
+            document.getElementById('roomListView').style.display = 'block';
+            document.getElementById('singleRoomMessageContainer').innerHTML = '';
+            fetchNormalRooms(false);
+        };
+
+        // opts.fresh=true の時は、Firestoreの同期を待たずにGASから最新を取る（送信直後・🔄）
+        async function openRoom(roomId, opts = {}) {
+            currentRoomId = safeId(roomId);
+            document.getElementById('roomListView').style.display = 'none';
+            document.getElementById('roomDetailView').style.display = 'block';
+            const container = document.getElementById('singleRoomMessageContainer');
+            container.innerHTML = emptyBox('読み込み中…');
+            try {
+                // Firestoreに最新の本文があればそれを使い、なければGASから
+                let msgs = (fsActive() && !opts.fresh) ? await getMsgsFromFs(currentRoomId) : null;
+                let members = roomMembersCache[currentRoomId] || null;
+                if (!msgs) {
+                    const roomData = await callApi("get_room_data", { room_id: currentRoomId });
+                    msgs = roomData.messages || [];
+                    members = roomData.members || [];
+                    roomMembersCache[currentRoomId] = members;
+                }
+                if (currentRoomId !== safeId(roomId)) return;
+                lastFetchAt = Date.now();
+                const roomObj = allRoomsCache.find(r => String(r.room_id) === currentRoomId);
+                const roomName = roomObj ? roomObj.name : "ルーム";
+                window.roomNameMap[currentRoomId] = roomName;
+                const latest = msgs[msgs.length - 1] || {};
+                const recent = msgs.slice(-20);
+                const later = isLater(currentRoomId);
+
+                let html = `
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="font-bold text-base" data-op-room="${currentRoomId}">${esc(roomName)}</div>
+                        <div class="grid grid-cols-4 gap-2 mt-3">
+                            <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
+                            <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
+                            <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
+                            <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
+                        </div>
+                        <button id="billingCountBtn" onclick="openBillingList('${currentRoomId}')" class="btn btn-sub w-full mt-2 text-[13px]" style="display:none"></button>
+                    </div>`;
+
+                if (recent.length === 0) {
+                    html += emptyBox('まだメッセージがありません');
+                } else {
+                    html += `<div class="text-xs font-bold text-slate-400 px-1">直近 ${recent.length} 件（下が最新）</div>`;
+                    recent.forEach((m, idx) => {
+                        const key = storeMessage(currentRoomId, roomName, m);
+                        // AIには、このメッセージまでの直近6件の流れを渡す
+                        const absIdx = msgs.length - recent.length + idx;
+                        window.messageStore[key].context = msgs.slice(Math.max(0, absIdx - 5), absIdx + 1).map(lineFor).join('\n\n');
+                        const mine = isMine(m);
+                        html += `
+                            <div class="bg-white rounded-2xl shadow-sm p-4">
+                                ${messageHtml(key, m)}
+                                <div class="flex gap-2 mt-3">
+                                    ${mine ? '' : `<button onclick="toggleReply('${key}', this)" class="btn btn-sub flex-1">💬 返信</button>`}
+                                    <button onclick="openMsgActions('${key}')" class="btn btn-sub ${mine ? 'flex-1' : 'w-12 shrink-0'} text-lg" aria-label="その他">⋯</button>
+                                </div>
+                                ${mine ? '' : replyPanelHtml(key, members, '📤 送信')}
+                            </div>`;
+                    });
+                }
+                html += buildComposeBox(currentRoomId, roomName, msgs, members, recent);
+                container.innerHTML = html;
+                applyOptionBadges();
+                refreshBillingCount(currentRoomId);
+                setStatus(roomName.length > 8 ? roomName.slice(0, 8) + '…' : roomName);
+                setTimeout(() => container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50);
+            } catch (e) {
+                container.innerHTML = `<div class="text-sm text-red-500 bg-white p-4 rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
+            }
+        }
+
+        // ===== 新規発信 =====
+        function buildComposeBox(roomId, roomName, messages, members, recent) {
+            const rid = safeId(roomId);
+            const key = `compose_${rid}`;
+            window.messageStore[key] = {
+                body: '', context: messages.slice(-10).map(lineFor).join("\n\n"),
+                fullText: (recent || []).map(lineFor).join("\n\n"),
+                sender: "", roomId: rid, roomName, replyTo: null
+            };
+            return `
+                <div class="bg-white border-2 border-emerald-300 rounded-2xl shadow-sm p-4 space-y-2">
+                    <div class="font-bold text-base text-emerald-800">✏️ 新しく発信する</div>
+                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onfocus="ensureMembers('${key}')" onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
+                    <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
+                    <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
+                    <textarea id="reply_text_${key}" rows="6" placeholder="送信するメッセージ（直接入力もOK）" class="inp"></textarea>
+                    <button onclick="useLastSent('${key}')" class="btn btn-sub w-full">📋 直前の送信文を使う</button>
+                    ${attachBoxHtml(key)}
+                    <button onclick="sendComposeMessage('${key}', this)" class="btn btn-ok w-full">📤 送信</button>
+                </div>`;
+        }
+
+        window.generateComposeAi = async function(key, btnEl) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            const intent = document.getElementById(`custom_prompt_${key}`).value.trim();
+            if (!intent) { showToast("伝えたい内容を入力してください"); return; }
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            btnEl.disabled = true;
+            btnEl.textContent = "AI作成中…";
+            try {
+                const data = await callApi("generate_ai_reply", {
+                    mode: "compose", room_id: m.roomId, room_name: m.roomName || "ルーム",
+                    context: m.context || "", custom_prompt: intent
+                });
+                textarea.value = toLines + (data.ai_reply || "");
+                logAiDraft(m, data.ai_reply || "", intent, m.context || "", 'compose');
+            } catch (e) {
+                alert("AI作成エラー: " + e.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ AIで文章を作成";
+            }
+        };
+
+        window.sendComposeMessage = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const finalMsg = document.getElementById(`reply_text_${key}`).value.trim();
+            const files = attachStore[key] || [];
+            if (!finalMsg && !files.length) { showToast("メッセージを入力するか、ファイルを添付してください"); return; }
+            const fileNote = files.length ? `\n\n📎 添付 ${files.length}件：${files.map(f => f.name).join('、').slice(0, 80)}` : '';
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${finalMsg.slice(0, 80)}${finalMsg.length > 80 ? '…' : ''}${fileNote}`)) return;
+            btn.disabled = true;
+            btn.textContent = "送信中…";
+            try {
+                if (files.length) await uploadFiles(m.roomId, files, finalMsg, false, btn);
+                else await callApi("send_message", { room_id: m.roomId, body: finalMsg });
+                attachStore[key] = [];
+                if (finalMsg) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'compose'); }
+                showToast("送信しました");
+                openRoom(m.roomId, { fresh: true });
+            } catch (e) {
+                alert("送信失敗: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "📤 送信";
+            }
+        };
+
+        // ===== 要対応タブ（対応済みフラグはFirestoreでスタッフ全員と共有） =====
+        //   cw_handled/{アカウント}_{ルームID} : { handledAt(秒), reopen, by, auto }
+        //   cw_handled_meta/{アカウント}       : { baselineAt } 使い始めた時刻
+        //   cw_handled_log                      : 手動で対応済み・未対応に戻した記録
+        const HANDLED_CACHE_KEY = "cw_handled_cache_v1_";
+        const STAFF_NAME_KEY = "cw_staff_name";
+        let handledMap = {};
+        let baselineAt = null;
+        let handledAcc = null;
+        let handledReady = null;
+        let handledSynced = false;
+        let handledUnsub = null;
+        let lastBundle = null;
+
+        function getStaffName() {
+            let n = localStorage.getItem(STAFF_NAME_KEY);
+            if (!n) {
+                n = (prompt("担当者名を入力してください（対応済みの記録に使います）") || "").trim();
+                if (n) localStorage.setItem(STAFF_NAME_KEY, n);
+            }
+            return n || "未設定";
+        }
+        window.changeStaffName = function() {
+            const cur = localStorage.getItem(STAFF_NAME_KEY) || "";
+            const n = (prompt("担当者名", cur) || "").trim();
+            if (n) { localStorage.setItem(STAFF_NAME_KEY, n); showToast(`担当者名を「${n}」にしました`); }
+            closeAllModals();
+        };
+
+        // 前回の対応状況を端末から復元（Firestoreの読み込みを待たずに表示するため）
+        function restoreHandledCache(acc) {
+            if (handledAcc === acc && handledSynced) return;
+            try {
+                const c = JSON.parse(localStorage.getItem(HANDLED_CACHE_KEY + acc));
+                handledMap = (c && c.map) || {};
+                baselineAt = (c && c.baselineAt) || null;
+            } catch (e) { handledMap = {}; baselineAt = null; }
+        }
+        function saveHandledCache() {
+            try { localStorage.setItem(HANDLED_CACHE_KEY + handledAcc, JSON.stringify({ map: handledMap, baselineAt: baselineAt })); } catch (e) {}
+        }
+
+        // Firestoreの対応状況をリアルタイムで受け取る（他のスタッフの操作もすぐ反映）
+        function startHandledSync() {
+            const acc = getAccount();
+            if (handledAcc === acc && handledReady) return handledReady;
+            if (handledUnsub) { handledUnsub(); handledUnsub = null; }
+            handledAcc = acc;
+            handledSynced = false;
+            handledReady = (async () => {
+                const f = await loadFirestore();
+                const metaRef = f.doc(f.db, 'cw_handled_meta', acc);
+                const meta = await f.getDoc(metaRef);
+                if (meta.exists()) {
+                    baselineAt = meta.data().baselineAt;
+                } else {
+                    baselineAt = Math.floor(Date.now() / 1000);
+                    await f.setDoc(metaRef, { account: acc, baselineAt: baselineAt, createdAt: f.serverTimestamp() });
+                }
+                await new Promise((resolve, reject) => {
+                    let first = true;
+                    handledUnsub = f.onSnapshot(
+                        f.query(f.collection(f.db, 'cw_handled'), f.where('account', '==', acc)),
+                        qs => {
+                            const map = {};
+                            qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                            if (handledAcc !== acc) return;
+                            handledMap = map;
+                            handledSynced = true;
+                            saveHandledCache();
+                            if (first) { first = false; resolve(); } else onHandledChanged();
+                        },
+                        err => { handleFsDenied(err); if (first) { first = false; reject(err); } else console.error(err); }
+                    );
+                });
+            })().catch(e => { handledReady = null; throw e; });
+            return handledReady;
+        }
+
+        // 他のスタッフが対応済み・未対応に戻した時
+        function onHandledChanged() {
+            if (fsActive()) { onRoomsMetaChanged(); return; }
+            if (currentMode !== 'burst' || !lastBundle) return;
+            const container = document.getElementById('burstModeContainer');
+            const needFetch = Object.keys(handledMap).some(rid => handledMap[rid].reopen && !(lastBundle.latest || {})[rid]);
+            if (needFetch) { fetchAllUnreadRooms(false); return; }
+            if (!isUserBusy(container)) renderTodo(lastBundle, false);
+        }
+
+        // 手動で「対応済み」「未対応に戻す」
+        async function setHandled(roomIds, opts) {
+            await startHandledSync().catch(() => {});
+            const f = await loadFirestore();
+            const acc = getAccount();
+            const by = getStaffName();
+            const now = Math.floor(Date.now() / 1000);
+            const batch = f.writeBatch(f.db);
+            roomIds.map(String).forEach(rid => {
+                const data = { account: acc, roomId: rid, handledAt: opts.reopen ? 0 : (opts.at || now), reopen: !!opts.reopen, by: by, auto: false, updatedAt: f.serverTimestamp() };
+                batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), data);
+                batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.reopen ? 'reopen' : 'done', by: by, at: f.serverTimestamp() });
+                handledMap[rid] = Object.assign({}, data, { updatedAt: null });   // 画面にはすぐ反映
+            });
+            saveHandledCache();
+            await batch.commit();
+        }
+
+        // 自社が返信済み・動きがメッセージ以外だったルームは自動で対応済みに（次回から取りに行かない）
+        async function autoHandleRooms(list) {
+            if (!handledSynced || !list.length) return;
+            const fresh = list.filter(([rid, t]) => { const h = handledMap[rid]; return !(h && (h.reopen || Number(h.handledAt) >= t)); });
+            if (!fresh.length) return;
+            try {
+                const f = await loadFirestore();
+                const acc = getAccount();
+                for (let i = 0; i < fresh.length; i += 400) {
+                    const batch = f.writeBatch(f.db);
+                    fresh.slice(i, i + 400).forEach(([rid, t]) => {
+                        batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), { account: acc, roomId: rid, handledAt: t, reopen: false, by: '自動', auto: true, updatedAt: f.serverTimestamp() });
+                    });
+                    await batch.commit();
+                }
+            } catch (e) { console.error('自動の対応済み保存に失敗:', e); }
+        }
+
+        function handledForRequest() {
+            const out = {};
+            Object.keys(handledMap).forEach(rid => { const h = handledMap[rid]; out[rid] = h.reopen ? 0 : (Number(h.handledAt) || 0); });
+            return out;
+        }
+
+        // 要対応の判定：対応済みの後にお客様の発言があり、最後の発言がお客様のルーム
+        function computeTodo(data, autoList) {
+            const latest = data.latest || {};
+            const out = [];
+            (data.rooms || []).forEach(r => {
+                const rid = String(r.room_id);
+                const h = handledMap[rid];
+                const reopen = !!(h && h.reopen);
+                const eff = h ? (Number(h.handledAt) || 0) : (getUnread(r) > 0 ? 0 : (baselineAt || 0));
+                if (!reopen && (r.last_update_time || 0) <= eff) return;
+                const entry = latest[rid];
+                if (!entry) return;
+                if (entry.error) { out.push({ r, error: entry.error, waitSince: r.last_update_time || 0, reopen }); return; }
+                const msgs = entry.messages || [];
+                if (!msgs.length) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                const last = msgs[msgs.length - 1];
+                if (!reopen) {
+                    if (isMine(last)) { if (autoList) autoList.push([rid, Math.max(last.send_time || 0, r.last_update_time || 0)]); return; }
+                    if ((last.send_time || 0) <= eff) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
+                }
+                const shown = reopen ? msgs : msgs.filter(m => (m.send_time || 0) > eff);
+                let lastMine = -1;
+                shown.forEach((m, i) => { if (isMine(m)) lastMine = i; });
+                const waiting = shown.slice(lastMine + 1);
+                out.push({ r, all: msgs, count: Math.max(shown.length, 1), reopen, waitSince: (waiting[0] || last).send_time || 0 });
+            });
+            out.sort((a, b) => (a.waitSince || 0) - (b.waitSince || 0));   // 待たせている時間が長い順
+            return out;
+        }
+
+        function waitLabel(sec) {
+            const min = Math.max(0, Math.floor((Date.now() / 1000 - sec) / 60));
+            if (min < 60) return `${min}分待ち`;
+            const h = Math.floor(min / 60);
+            return h < 24 ? `${h}時間待ち` : `${Math.floor(h / 24)}日待ち`;
+        }
+        function waitCls(sec) {
+            const h = (Date.now() / 1000 - sec) / 3600;
+            return h >= 3 ? 'bg-red-500 text-white' : h >= 1 ? 'bg-amber-400 text-amber-950' : 'bg-slate-200 text-slate-700';
+        }
+        function setTodoStatus(n) {
+            if (n === 0) setStatus('要対応ゼロ', 'bg-emerald-500');
+            else setStatus(`要対応 ${n}`, 'bg-red-500');
+        }
+
+        function renderTodo(data, allowAuto) {
+            const container = document.getElementById('burstModeContainer');
+            allRoomsCache = data.rooms || [];
+            const auto = [];
+            const items = computeTodo(data, auto);
+            if (allowAuto) autoHandleRooms(auto);
+            setTodoStatus(items.length);
+            if (items.length === 0) { container.innerHTML = emptyBox('🎉 要対応のチャットはありません'); updateSelectionBar(); return; }
+            const note = data.truncated ? `<div class="text-xs text-amber-700 px-1">※ 動きのあったルームが多いため、新しい100ルームだけを確認しました。対応済みにしていくと漏れがなくなります。</div>` : '';
+            container.innerHTML = note + items.map(it => {
+                const u = getUnread(it.r);
+                const badge = `${it.reopen ? '↺ ' : ''}${waitLabel(it.waitSince)}${u > 0 ? `・未読${u}` : ''}`;
+                const entry = it.error ? { error: it.error } : { messages: it.all };
+                return burstCardHtml(it.r.room_id, it.r.name, badge, waitCls(it.waitSince), entry, it.count);
+            }).join('');
+            updateSelectionBar();
+            applyOptionBadges();
+        }
+
+        function todoSignature(data) {
+            return computeTodo(data).map(it => {
+                const ms = it.all || [];
+                return `${it.r.room_id}:${ms.length ? ms[ms.length - 1].message_id : ''}:${it.reopen ? 1 : 0}`;
+            }).join('|');
+        }
+        function isUserBusy(container) {
+            const panelOpen = Array.from(container.querySelectorAll('[id^="reply_panel_"]')).some(p => p.style.display !== 'none');
+            const typed = Array.from(container.querySelectorAll('textarea, input[type="text"]')).some(t => t.value.trim());
+            return panelOpen || typed || !!container.querySelector('.room-checkbox:checked');
+        }
+        function readBundleCache(acc) {
+            try { return JSON.parse(localStorage.getItem(BUNDLE_CACHE_KEY + acc)); } catch (e) { return null; }
+        }
+        function markReadInCache(ids) {
+            const c = readBundleCache(getAccount());
+            if (!c || !c.data) return;
+            const set = new Set(ids.map(String));
+            (c.data.rooms || []).forEach(r => { if (set.has(String(r.room_id))) r.unread_num = 0; });
+            try { localStorage.setItem(BUNDLE_CACHE_KEY + getAccount(), JSON.stringify(c)); } catch (e) {}
+        }
+
+        // ===== Firestore同期モード（GASが1分ごとに cw_rooms を更新 → 画面は見るだけ） =====
+        //   cw_rooms/{アカウント}_{ルームID} : name, unread, lastUpdate, msgUpdate, lastMsgId, lastMsgTime, lastMine, custTimes
+        //   cw_sync_status/{アカウント}      : lastRunAt, pending
+        //   ※ メッセージ本文はFirestoreに置かず、表示する分だけGASから取得
+        const MSG_CACHE_KEY = "cw_msg_cache_v1_";
+        let roomsMeta = {};
+        let syncStatus = null;
+        let roomsAcc = null;
+        let roomsReady = null;
+        let roomsUnsubs = [];
+        let msgCache = {};
+        let needBodies = new Set();
+        let bodyTimer = null;
+        let bodyLoading = false;
+        let busyToastAt = 0;
+
+        function fsActive() {
+            return !!(syncStatus && syncStatus.lastRunAt && Date.now() / 1000 - syncStatus.lastRunAt < 300 && Object.keys(roomsMeta).length);
+        }
+        function resetRoomsSync() {
+            roomsUnsubs.forEach(u => { try { u(); } catch (e) {} });
+            roomsUnsubs = [];
+            roomsMeta = {};
+            syncStatus = null;
+            roomsAcc = null;
+            roomsReady = null;
+            needBodies = new Set();
+            loadMsgCache();
+        }
+        function loadMsgCache() {
+            try { msgCache = JSON.parse(localStorage.getItem(MSG_CACHE_KEY + getAccount())) || {}; } catch (e) { msgCache = {}; }
+        }
+        function saveMsgCache(keepIds) {
+            const keep = new Set(keepIds || Object.keys(msgCache));
+            const out = {};
+            Object.keys(msgCache).forEach(rid => { if (keep.has(rid)) out[rid] = msgCache[rid]; });
+            msgCache = out;
+            try { localStorage.setItem(MSG_CACHE_KEY + getAccount(), JSON.stringify(out)); } catch (e) {}
+        }
+
+        function startRoomsSync() {
+            const acc = getAccount();
+            if (roomsAcc === acc && roomsReady) return roomsReady;
+            resetRoomsSync();
+            roomsAcc = acc;
+            roomsReady = (async () => {
+                const f = await loadFirestore();
+                let gotStatus = false, gotRooms = false;
+                await new Promise(resolve => {
+                    const done = () => { if (gotStatus && gotRooms) resolve(); };
+                    setTimeout(resolve, 4000);   // 4秒待っても届かなければ、従来の方式で表示
+                    roomsUnsubs.push(f.onSnapshot(f.doc(f.db, 'cw_sync_status', acc), d => {
+                        if (roomsAcc !== acc) return;
+                        syncStatus = d.exists() ? d.data() : null;
+                        gotStatus = true; done();
+                        if (currentMode === 'burst' && fsActive()) setLastUpdatedFs();
+                    }, err => { handleFsDenied(err); gotStatus = true; done(); }));
+                    roomsUnsubs.push(f.onSnapshot(f.query(f.collection(f.db, 'cw_rooms'), f.where('account', '==', acc)), qs => {
+                        if (roomsAcc !== acc) return;
+                        const map = {};
+                        qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                        roomsMeta = map;
+                        const first = !gotRooms;
+                        gotRooms = true; done();
+                        if (!first) onRoomsMetaChanged();
+                    }, err => { handleFsDenied(err); gotRooms = true; done(); }));
+                });
+            })().catch(e => { console.error(e); roomsReady = null; });
+            return roomsReady;
+        }
+        async function useFsMode() {
+            try { await startRoomsSync(); } catch (e) {}
+            return fsActive();
+        }
+
+        // 本文のコレクション名（GASと同じ計算：合言葉から作る推測できない名前）
+        let _msgColPromise = null;
+        function msgColName() {
+            if (!_msgColPromise) {
+                _msgColPromise = (async () => {
+                    const data = new TextEncoder().encode(getSecret() + ":cwm");
+                    const buf = await crypto.subtle.digest('SHA-256', data);
+                    return "cwm_" + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+                })().catch(e => { _msgColPromise = null; throw e; });
+            }
+            return _msgColPromise;
+        }
+        // Firestoreから本文を読む（同期済みで最新なら返す。古い・ない時は null）
+        async function getMsgsFromFs(rid) {
+            try {
+                const f = await loadFirestore();
+                const col = await msgColName();
+                const snap = await f.getDoc(f.doc(f.db, col, `${getAccount()}_${rid}`));
+                if (!snap.exists()) return null;
+                const d = snap.data();
+                const meta = roomsMeta[rid];
+                if (meta && String(meta.lastMsgId || '') !== String(d.lastMsgId || '')) return null;
+                return Array.isArray(d.messages) ? d.messages : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function metaToRooms() {
+            return Object.keys(roomsMeta).map(rid => {
+                const d = roomsMeta[rid];
+                return { room_id: Number(rid) || rid, name: d.name || '', unread_num: d.unread || 0, last_update_time: d.lastUpdate || 0 };
+            });
+        }
+
+        function setLastUpdatedFs() {
+            const el = document.getElementById('lastUpdated');
+            if (!syncStatus || !syncStatus.lastRunAt) return;
+            const pend = syncStatus.pending ? `・確認待ち${syncStatus.pending}` : '';
+            el.textContent = `自動同期 ${hm(new Date(syncStatus.lastRunAt * 1000))}${pend}`;
+        }
+
+        // 要対応の判定（Firestoreの情報だけで判断）
+        function computeTodoMeta(autoList) {
+            const out = [];
+            Object.keys(roomsMeta).forEach(rid => {
+                const d = roomsMeta[rid];
+                const h = handledMap[rid];
+                const reopen = !!(h && h.reopen);
+                const eff = h ? (Number(h.handledAt) || 0) : ((d.unread || 0) > 0 ? 0 : (baselineAt || 0));
+                const lu = d.lastUpdate || 0;
+                if (!reopen && lu <= eff) return;
+                if (!d.msgUpdate || d.msgUpdate < lu) {     // まだ同期待ち（1〜2分で反映）
+                    if (reopen) out.push({ rid, d, reopen, eff, waitSince: lu });
+                    return;
+                }
+                if (!reopen) {
+                    if (d.lastMine) { if (autoList) autoList.push([rid, Math.max(d.lastMsgTime || 0, lu)]); return; }
+                    if ((d.lastMsgTime || 0) <= eff) { if (autoList) autoList.push([rid, lu]); return; }
+                }
+                const ct = (d.custTimes || []).filter(t => t > eff);
+                out.push({ rid, d, reopen, eff, waitSince: ct[0] || d.lastMsgTime || lu });
+            });
+            out.sort((a, b) => a.waitSince - b.waitSince);
+            return out;
+        }
+
+        function todoCardHtml(it) {
+            const u = it.d.unread || 0;
+            const badge = `${it.reopen ? '↺ ' : ''}${waitLabel(it.waitSince)}${u > 0 ? `・未読${u}` : ''}`;
+            const c = msgCache[it.rid];
+            let entry = null, count = 1;
+            if (c && c.forMsgId === String(it.d.lastMsgId || '')) {
+                if (c.error) entry = { error: c.error };
+                else {
+                    entry = { messages: c.messages };
+                    count = it.reopen ? c.messages.length : Math.max(1, c.messages.filter(m => (m.send_time || 0) > it.eff).length);
+                }
+            } else {
+                needBodies.add(it.rid);
+            }
+            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count);
+        }
+
+        function renderTodoFs() {
+            const container = document.getElementById('burstModeContainer');
+            allRoomsCache = metaToRooms();
+            const auto = [];
+            const items = computeTodoMeta(auto);
+            autoHandleRooms(auto);
+            setTodoStatus(items.length);
+            setLastUpdatedFs();
+            if (items.length === 0) {
+                container.innerHTML = emptyBox('🎉 要対応のチャットはありません');
+            } else {
+                container.innerHTML = items.map(todoCardHtml).join('');
+                if (needBodies.size) queueBodies();
+            }
+            saveMsgCache(items.map(it => it.rid));
+            updateSelectionBar();
+            applyOptionBadges();
+        }
+
+        // 本文は、表示するルームの分だけまとめてGASから取得
+        function queueBodies() { clearTimeout(bodyTimer); bodyTimer = setTimeout(loadBodies, 50); }
+        async function loadBodies() {
+            if (bodyLoading || !needBodies.size) return;
+            bodyLoading = true;
+            const ids = Array.from(needBodies);
+            needBodies.clear();
+            const forIds = {};
+            ids.forEach(rid => { forIds[rid] = String((roomsMeta[rid] || {}).lastMsgId || ''); });
+            try {
+                // ① Firestoreにある分はそこから（速い）
+                const fromFs = await Promise.all(ids.map(rid => getMsgsFromFs(rid)));
+                const gasIds = [];
+                ids.forEach((rid, i) => {
+                    if (fromFs[i]) msgCache[rid] = { forMsgId: forIds[rid], messages: fromFs[i].slice(-5) };
+                    else gasIds.push(rid);
+                });
+                // ② 足りない分だけGASから
+                const data = gasIds.length ? await callApi("get_latest_messages", { room_ids: gasIds }) : { latest: {} };
+                const latest = data.latest || {};
+                gasIds.forEach(rid => {
+                    const e = latest[rid];
+                    if (e && e.messages) msgCache[rid] = { forMsgId: forIds[rid], messages: e.messages };
+                    else msgCache[rid] = { forMsgId: forIds[rid], error: (e && e.error) || '取得できませんでした' };
+                });
+                saveMsgCache();
+                fillCards(ids);
+            } catch (e) {
+                showToast('メッセージの読み込みに失敗しました。🔄で再読み込みできます');
+            } finally {
+                bodyLoading = false;
+            }
+        }
+        // 読み込み中のカードだけを差し替える（書きかけの返信は消さない）
+        function fillCards(ids) {
+            if (currentMode !== 'burst' || !fsActive()) return;
+            const items = computeTodoMeta();
+            ids.forEach(rid => {
+                const it = items.find(x => x.rid === rid);
+                const el = document.querySelector(`#burstModeContainer .burst-card[data-room-id="${safeId(rid)}"]`);
+                if (!it || !el || el.querySelector('[id^="reply_panel_"]')) return;
+                const tmp = document.createElement('div');
+                tmp.innerHTML = todoCardHtml(it);
+                if (tmp.firstElementChild) el.replaceWith(tmp.firstElementChild);
+            });
+            needBodies.clear();
+            applyOptionBadges();
+        }
+
+        // Firestoreが変わった時（新着・他のスタッフの対応）
+        function onRoomsMetaChanged() {
+            if (!fsActive()) return;
+            if (currentMode === 'burst') {
+                const container = document.getElementById('burstModeContainer');
+                if (isUserBusy(container)) {
+                    setTodoStatus(computeTodoMeta().length);
+                    if (Date.now() - busyToastAt > 60000) { busyToastAt = Date.now(); showToast('新着があります。🔄で更新できます'); }
+                } else {
+                    renderTodoFs();
+                }
+            } else if (currentMode === 'normal' && !currentRoomId) {
+                allRoomsCache = metaToRooms();
+                renderRoomList();
+            }
+        }
+
+        async function fsTodoRefresh(force) {
+            try { await startHandledSync(); } catch (e) {}
+            if (force) {
+                // 🔄：本文を取り直す
+                Object.keys(msgCache).forEach(rid => { delete msgCache[rid].forMsgId; });
+            }
+            lastFetchAt = Date.now();
+            renderTodoFs();
+            migrateOldLater();
+            if (force) syncNowFromChatwork();
+        }
+
+        // 🔄：1分ごとの自動同期を待たずに、今すぐChatworkを確認（結果はFirestore経由で自動で画面に出る）
+        let syncNowAt = 0;
+        async function syncNowFromChatwork() {
+            if (Date.now() - syncNowAt < 10000) return;   // 連打よけ
+            syncNowAt = Date.now();
+            setStatus('Chatworkを確認中…');
+            try {
+                await callApi("sync_now");
+                setStatus('最新を確認しました');
+            } catch (e) {
+                console.error('今すぐ確認に失敗:', e);
+                setStatus('確認に失敗しました（自動同期は続いています）');
+            }
+        }
+
+        let bundleSeq = 0;
+        async function fetchAllUnreadRooms(force) {
+            if (await useFsMode()) { if (currentMode === 'burst') await fsTodoRefresh(force); return; }
+            const container = document.getElementById('burstModeContainer');
+            const acc = getAccount();
+            const seq = ++bundleSeq;
+
+            // ① 前回の内容を一瞬で表示
+            let shownSig = null;
+            const cached = readBundleCache(acc);
+            if (cached && cached.data && !container.querySelector('.burst-card')) {
+                lastBundle = cached.data;
+                renderTodo(cached.data, false);
+                shownSig = todoSignature(cached.data);
+                setLastUpdated(true);
+            } else if (container.querySelector('.burst-card') && lastBundle) {
+                shownSig = todoSignature(lastBundle);
+            } else {
+                container.innerHTML = emptyBox('要対応のチャットを確認中…');
+            }
+            setStatus('更新中…');
+
+            // ② 対応状況（Firestore）を読み込んでから、最新を取得
+            try {
+                await startHandledSync();
+                const data = await callApi("get_todo_bundle", { handled: handledForRequest(), baseline: baselineAt });
+                try { localStorage.setItem(BUNDLE_CACHE_KEY + acc, JSON.stringify({ t: Date.now(), data: data })); } catch (e) {}
+                if (seq !== bundleSeq || acc !== getAccount() || currentMode !== 'burst') return;
+                lastBundle = data;
+                lastFetchAt = Date.now();
+                allRoomsCache = data.rooms || [];
+                setLastUpdated(false);
+                migrateOldLater();
+
+                const sig = todoSignature(data);
+                if (shownSig !== null && sig === shownSig && !force) {
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
+                    return;
+                }
+                if (shownSig !== null && !force && isUserBusy(container)) {
+                    const auto = [];
+                    setTodoStatus(computeTodo(data, auto).length);
+                    autoHandleRooms(auto);
+                    showToast('新着があります。🔄で更新できます');
+                    return;
+                }
+                renderTodo(data, true);
+            } catch (e) {
+                if (seq !== bundleSeq) return;
+                if (shownSig === null) {
+                    container.innerHTML = `<div class="text-sm text-red-500 text-center p-4 bg-white rounded-2xl shadow-sm">エラー: ${esc(e.message)}</div>`;
+                } else {
+                    showToast('最新の取得に失敗しました（前回の内容を表示中）');
+                }
+                setStatus('エラー', 'bg-red-500');
+            }
+        }
+
+        // 「✓ 対応済み」：対応済みにして、Chatwork側も既読に
+        window.markDone = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = "処理中…";
+            try {
+                await setHandled([roomId], { reopen: false });
+                callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId }).catch(() => {});
+                markReadInCache([roomId]);
+                if (currentMode === 'later') callApi("set_later", { room_ids: [roomId], on: false }).catch(() => {});
+                showToast("対応済みにしました");
+                if (currentMode === 'burst' || currentMode === 'later') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
+            } catch (e) {
+                alert("対応済みの保存に失敗しました: " + e.message);
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+
+        // 「↺ 未対応に戻す」：要対応タブにもう一度表示
+        window.reopenRoom = async function(roomId) {
+            closeAllModals();
+            try {
+                await setHandled([roomId], { reopen: true });
+                showToast("要対応に戻しました");
+                if (currentMode === 'burst') fetchAllUnreadRooms(true);
+            } catch (e) {
+                alert("保存に失敗しました: " + e.message);
+            }
+        };
+
+        // ===== 返信 =====
+        window.generateAiReplyForMessage = async function(key, btnEl) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            const promptInput = document.getElementById(`custom_prompt_${key}`);
+            const customPrompt = promptInput ? promptInput.value.trim() : "";
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            btnEl.disabled = true;
+            btnEl.textContent = "作成中…";
+            try {
+                const data = await callApi("generate_ai_reply", {
+                    room_id: m.roomId, room_name: m.roomName || "ルーム",
+                    context: m.context || m.body || "", custom_prompt: customPrompt
+                });
+                textarea.value = toLines + (data.ai_reply || "");
+                logAiDraft(m, data.ai_reply || "", customPrompt, m.context || m.body || "", 'reply');
+            } catch (e) {
+                alert("AI作成エラー: " + e.message);
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = "✨ AI作成";
+            }
+        };
+
+        // ===== AI添削ログ（AI案と送信文を1件にひもづけて記録） =====
+        function newId() {
+            return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        }
+        // 比較用：宛先・返信マークの行を外して整える
+        function bodyForCompare(t) {
+            return String(t || '')
+                .replace(/^\[(To:\d+|rp aid=\d+ to=\d+-\d+)\][^\n]*\n?/gm, '')
+                .replace(/\[toall\]/gi, '')
+                .trim();
+        }
+        // 2つの文の違いの割合（0＝同じ、1＝まったく別）
+        function editRatio(a, b) {
+            a = String(a).slice(0, 1500);
+            b = String(b).slice(0, 1500);
+            if (!a.length && !b.length) return 0;
+            let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+            for (let i = 1; i <= a.length; i++) {
+                const cur = [i];
+                for (let j = 1; j <= b.length; j++) {
+                    cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+                }
+                prev = cur;
+            }
+            return prev[b.length] / Math.max(a.length, b.length);
+        }
+        function editLevel(r) { return r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正'; }
+
+        function logAiDraft(m, aiText, prompt, context, mode) {
+            const id = newId();
+            m.aiDraft = { id: id, text: aiText, prompt: prompt, count: ((m.aiDraft && m.aiDraft.count) || 0) + 1 };
+            fsAdd("ai_reply_logs", {
+                draftId: id, account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "", context: context,
+                aiGeneratedText: aiText, customPrompt: prompt, generateCount: m.aiDraft.count,
+                type: mode, status: 'generated', createdAt: FS_TS
+            }).catch(err => console.error("AIログ保存失敗:", err));
+        }
+
+        function saveSendLog(m, sentText, mode) {
+            if (!sentText || !sentText.trim()) return;
+            const final = bodyForCompare(sentText);
+            const d = m.aiDraft || null;
+            const data = {
+                account: getAccount(), mode: mode, tab: currentMode,
+                roomId: String(m.roomId), roomName: m.roomName || "",
+                userEditedText: sentText.trim(), finalText: final,
+                usedAi: !!d, draftId: d ? d.id : null,
+                aiGeneratedText: d ? d.text : null, customPrompt: d ? d.prompt : null,
+                generateCount: d ? d.count : 0,
+                reusedLastSent: !!m.reusedLastSent,
+                context: (m.context || m.body || "").slice(0, 3000),
+                updatedAt: FS_TS
+            };
+            if (d) {
+                const r = editRatio(bodyForCompare(d.text), final);
+                data.editRatio = Math.round(r * 1000) / 1000;
+                data.editLevel = editLevel(r);
+                data.aiLength = bodyForCompare(d.text).length;
+                data.finalLength = final.length;
+            }
+            fsAdd("ai_brushup_feedback", data).catch(e => console.error("送信ログ保存失敗:", e));
+            m.aiDraft = null;
+            m.reusedLastSent = false;
+        }
+
+        // ===== AI文章ルール（Firestore の cw_config/ai_prompt。読み書きはGAS経由） =====
+        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds'];
+        let aiRuleDefaults = null;
+
+        window.openAiRules = async function() {
+            const info = document.getElementById('aiRulesInfo');
+            const saveBtn = document.getElementById('aiRulesSaveBtn');
+            info.textContent = '読み込み中…';
+            saveBtn.disabled = true;
+            AI_RULE_FIELDS.forEach(k => { document.getElementById(`aiRule_${k}`).value = ''; });
+            openSheet('modalAiRules');
+            try {
+                const d = await callApi("get_ai_config");
+                aiRuleDefaults = d.defaults || {};
+                const saved = d.saved || {};
+                // 保存がない項目は、今使われている初期値を表示（そのまま直して保存できる）
+                AI_RULE_FIELDS.forEach(k => {
+                    document.getElementById(`aiRule_${k}`).value = (saved[k] && saved[k].trim()) ? saved[k] : (aiRuleDefaults[k] || '');
+                });
+                info.textContent = d.updatedAt
+                    ? `最終更新：${new Date(d.updatedAt * 1000).toLocaleString('ja-JP')}${d.updatedBy ? '（' + d.updatedBy + '）' : ''}`
+                    : 'まだ編集されていません（初期値を使っています）';
+                saveBtn.disabled = false;
+            } catch (e) {
+                info.textContent = '読み込みに失敗しました：' + e.message;
+            }
+        };
+
+        window.fillAiDefault = function(k) {
+            if (!aiRuleDefaults) return;
+            const el = document.getElementById(`aiRule_${k}`);
+            if (el.value.trim() && el.value !== aiRuleDefaults[k] && !confirm('入力中の内容を初期値に置き換えますか？')) return;
+            el.value = aiRuleDefaults[k] || '';
+        };
+
+        window.saveAiRules = async function(btn) {
+            const params = {};
+            AI_RULE_FIELDS.forEach(k => { params[k] = document.getElementById(`aiRule_${k}`).value; });
+            if (!confirm('AI文章ルールを保存しますか？\nスタッフ全員のAI作成に反映されます。')) return;
+            params.by = getStaffName();
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+            try {
+                await callApi("save_ai_config", params);
+                showToast('保存しました（1分以内に反映されます）');
+                closeAllModals();
+            } catch (e) {
+                alert('保存に失敗しました：' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 保存する';
+            }
+        };
+
+        // ===== 直前の送信文を別ルームにも使う =====
+        //   送信した本文（宛先・返信マークの行は外す）を、この端末にアカウントごとに保存
+        const LAST_SENT_KEY = "cw_last_sent_v1_";
+        function rememberLastSent(m, sentText) {
+            const body = bodyForCompare(sentText);
+            if (!body) return;
+            try {
+                localStorage.setItem(LAST_SENT_KEY + getAccount(), JSON.stringify({
+                    body: body, roomId: String(m.roomId || ''), roomName: m.roomName || '', at: Date.now()
+                }));
+            } catch (e) {}
+        }
+        function getLastSent() {
+            try { return JSON.parse(localStorage.getItem(LAST_SENT_KEY + getAccount())); } catch (e) { return null; }
+        }
+        window.useLastSent = function(key) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            if (!textarea) return;
+            const last = getLastSent();
+            if (!last || !last.body) { showToast("まだ送信した文がありません"); return; }
+            if (String(last.roomId) === String(m.roomId)) {
+                if (!confirm("直前の送信文は、このルームに送ったものです。\nそれでも入れますか？")) return;
+            }
+            // 宛先（[To:…]）の行は残して、本文だけ入れ替える
+            const toLines = (textarea.value.match(/^\[To:\d+\][^\n]*\n/gm) || []).join("");
+            const current = bodyForCompare(textarea.value);
+            if (current && !confirm("入力中の文章を、直前の送信文に置き換えますか？")) return;
+            textarea.value = toLines + last.body;
+            m.aiDraft = null;          // AI案とは別物なので、添削ログでは「AIなし」として記録
+            m.reusedLastSent = true;
+            const d = new Date(last.at || Date.now());
+            showToast(`「${last.roomName || '前のルーム'}」に${hm(d)}に送った文を入れました`);
+            textarea.focus();
+        };
+
+        window.insertMentionForMsg = function(key) {
+            const selectEl = document.getElementById(`member_select_${key}`);
+            const textarea = document.getElementById(`reply_text_${key}`);
+            if (!selectEl || !textarea || !selectEl.value) return;
+            const memberName = selectEl.options[selectEl.selectedIndex].text;
+            textarea.value = `[To:${selectEl.value}] ${memberName}さん\n` + textarea.value;
+            selectEl.value = '';
+            showToast(`${memberName}さんを宛先に追加しました`);
+        };
+
+        window.markAsRead = async function(roomId, lastChatId, btn) {
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = "処理中…";
+            try {
+                await callApi("mark_read", { room_id: roomId, last_chat_id: lastChatId });
+                markReadInCache([roomId]);
+                showToast("既読にしました");
+                if (currentMode === 'burst') removeCard(roomId);
+                else { btn.disabled = false; btn.textContent = label; }
+            } catch (e) {
+                alert("既読エラー: " + e.message);
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+
+        // 送信：未読・後でタブでは「送信＋既読＋後で対応から外す」までまとめて完了
+        window.sendReplyForMessage = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const textarea = document.getElementById(`reply_text_${key}`);
+            let finalMsg = textarea.value.trim();
+            const files = attachStore[key] || [];
+            if (!finalMsg && !files.length) { showToast("返信文を入力するか、ファイルを添付してください"); return; }
+
+            const rpBox = document.getElementById(`rp_${key}`);
+            if (rpBox && rpBox.checked && m.replyTo && m.replyTo.mid) {
+                finalMsg = `[rp aid=${m.replyTo.aid} to=${m.roomId}-${m.replyTo.mid}]${m.replyTo.name}さん\n` + finalMsg;
+            }
+            const preview = textarea.value.trim();
+            const fileNote = files.length ? `\n\n📎 添付 ${files.length}件：${files.map(f => f.name).join('、').slice(0, 80)}` : '';
+            if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}${fileNote}`)) return;
+
+            const done = currentMode !== 'normal';
+            btn.disabled = true;
+            btn.textContent = "送信中…";
+            try {
+                if (files.length) await uploadFiles(m.roomId, files, finalMsg, true, btn);
+                else await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
+                attachStore[key] = [];
+                if (preview) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'reply'); }
+                setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
+                markReadInCache([m.roomId]);
+                showToast(done ? "送信して完了にしました" : "送信しました");
+                if (done) removeCard(m.roomId);
+                else openRoom(m.roomId, { fresh: true });
+            } catch (e) {
+                alert("送信失敗: " + e.message);
+                btn.disabled = false;
+                btn.textContent = done ? "📤 送信して完了" : "📤 送信";
+            }
+        };
+    </script>
+</body>
+</html>
