@@ -194,7 +194,12 @@ async function handleRequest(p) {
       } else if (action === "sync_now") {
         result = await syncNow(p.account, token);
       } else if (action === "get_me") {
-        result = { me_id: await getMeId(p.account, token) };
+        const cfg = await getAiConfig();
+        result = {
+          me_id: await getMeId(p.account, token),
+          owner_ids: await getOwnerIds(),   // ラクロジスタッフ・松下のアカウント
+          internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x))
+        };
       } else if (action === "edit_message") {
         result = await editChatworkMessage(token, p.room_id, p.message_id, p.body);
         await refreshRoomMsgDoc(p.account, token, p.room_id);
@@ -1272,6 +1277,7 @@ async function saveSyncState(key, obj) {
 const syncStatusMem = {};
 
 async function syncAccount(acc, token, myIds, learn, opt = {}) {
+  const ownerIds = await getOwnerIds();   // ラクロジスタッフ・松下のアカウント
   const msgCol = msgCollection();
   const stateKey = "sync_" + acc;
   const state = await loadSyncState(stateKey, opt.freshState);   // 🔄からの時は、定期同期と食い違わないよう Firestore から読む
@@ -1325,7 +1331,10 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     if (msgs.length) {
       const last = msgs[msgs.length - 1];
       let lastMineIdx = -1;
-      msgs.forEach((m, idx) => { if (myIds.indexOf(String(m.account && m.account.account_id)) !== -1) lastMineIdx = idx; });
+      // 社内ルーム（渡辺さんとのルームなど）では、渡辺さんなど STAFF_ACCOUNT_IDS の人の発言は「相手からの連絡」として扱う
+      //   （自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
+      const mineIds = (learn && learn.internal.indexOf(rid) !== -1) ? ownerIds : myIds;
+      msgs.forEach((m, idx) => { if (mineIds.indexOf(String(m.account && m.account.account_id)) !== -1) lastMineIdx = idx; });
       meta.lastMsgId = String(last.message_id);
       meta.lastMsgTime = last.send_time || 0;
       meta.lastMine = lastMineIdx === msgs.length - 1;
