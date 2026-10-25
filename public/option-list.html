@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>撮影オプション 加入セラー一覧</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1d2b36;        /* 文字・見出し */
+    --sub: #5b6b78;        /* 補足 */
+    --line: #d5dde3;       /* 罫線 */
+    --bg: #eef2f4;         /* 背景（倉庫の床のような明るいグレー） */
+    --card: #ffffff;
+    --tape: #f2c200;       /* 安全テープの黄色（加入の目印） */
+    --tape-ink: #3a2f00;
+    --no: #b3261e;         /* 未加入 */
+    --no-bg: #fdecea;
+    --manual: #6b4fbb;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6edf2; --sub: #9fb0bd; --line: #33424d; --bg: #121a20; --card: #1b252d;
+      --tape: #f2c200; --tape-ink: #2a2200; --no: #ff8a80; --no-bg: #3a1b19; --manual: #b8a4ff;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: "BIZ UDPGothic", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 16px; }
+
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  header h1 { font-size: 20px; margin: 0; flex: 1; letter-spacing: .02em; }
+  header .meta { font-size: 13px; color: var(--sub); }
+  button {
+    font: inherit; font-weight: 700; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer;
+  }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--tape); outline-offset: 2px; }
+
+  /* 確認エリア：番号を入れると、加入かどうかが大きく出る */
+  .check {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px;
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  }
+  .check label { display: block; font-size: 14px; color: var(--sub); margin-bottom: 8px; }
+  .check input {
+    width: 100%; font: inherit; font-size: 28px; font-weight: 700; letter-spacing: .04em;
+    padding: 12px 14px; border: 2px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--ink);
+  }
+  .verdict { margin-top: 12px; border-radius: 12px; padding: 14px 16px; display: none; align-items: center; gap: 14px; }
+  .verdict.show { display: flex; }
+  .verdict .mark { font-size: 40px; font-weight: 700; line-height: 1; width: 48px; text-align: center; }
+  .verdict .text { font-size: 18px; font-weight: 700; }
+  .verdict .text small { display: block; font-size: 14px; font-weight: 400; margin-top: 4px; }
+  /* 加入：安全テープ風の斜線 */
+  .verdict.yes {
+    color: var(--tape-ink);
+    background: repeating-linear-gradient(-45deg, var(--tape) 0 18px, #ffd84a 18px 36px);
+  }
+  .verdict.no { background: var(--no-bg); color: var(--no); }
+  .verdict.many { background: var(--bg); color: var(--ink); }
+
+  .count { font-size: 14px; color: var(--sub); margin: 18px 4px 8px; }
+
+  /* 一覧 */
+  .list { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 8.5em 1fr; gap: 4px 14px; padding: 12px 16px; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .row .no { font-size: 20px; font-weight: 700; letter-spacing: .03em; border-left: 6px solid var(--tape); padding-left: 10px; align-self: start; }
+  .row .shop { font-size: 16px; font-weight: 700; }
+  .row .name { font-size: 14px; color: var(--sub); }
+  .row .manual { grid-column: 2; font-size: 13px; color: var(--manual); }
+  .empty { padding: 28px 16px; text-align: center; color: var(--sub); }
+  .err { padding: 16px; color: var(--no); background: var(--no-bg); border-radius: 12px; margin-top: 12px; display: none; }
+
+  @media (max-width: 520px) {
+    .row { grid-template-columns: 1fr; }
+    .row .manual { grid-column: 1; }
+    .check input { font-size: 24px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .verdict.show { animation: pop .15s ease-out; }
+    @keyframes pop { from { transform: scale(.98); opacity: .6; } to { transform: none; opacity: 1; } }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎥 撮影オプション 加入セラー</h1>
+    <span class="meta" id="meta"></span>
+    <button id="reloadBtn" type="button" onclick="load(true)">🔄 最新にする</button>
+  </header>
+
+  <div class="check">
+    <label for="q">管理番号・ショップ名・お名前で確認</label>
+    <input id="q" type="search" inputmode="text" autocomplete="off" placeholder="例：A-123" autofocus>
+    <div class="verdict" id="verdict" role="status" aria-live="polite">
+      <div class="mark" id="vMark"></div>
+      <div class="text" id="vText"></div>
+    </div>
+  </div>
+
+  <div class="err" id="err"></div>
+  <div class="count" id="count">読み込み中…</div>
+  <div class="list" id="list"></div>
+</div>
+
+<script>
+  const API_URL = "https://asia-northeast1-souko-2de57.cloudfunctions.net/api";
+  const PASS_KEY = "option_view_pass_v1";
+  let sellers = [];
+
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // 全角英数字を半角・小文字にして比べる（「Ａ－１２３」でも「a-123」でもヒット）
+  const norm = s => String(s || "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[－ー―‐]/g, "-").replace(/\s+/g, "").toLowerCase();
+
+  function getPass(ask) {
+    let p = localStorage.getItem(PASS_KEY) || "";
+    if (!p || ask) {
+      p = (prompt("倉庫用パスワードを入力してください") || "").trim();
+      if (p) localStorage.setItem(PASS_KEY, p);
+    }
+    return p;
+  }
+
+  async function load(fresh) {
+    const btn = document.getElementById("reloadBtn");
+    const err = document.getElementById("err");
+    btn.disabled = true;
+    err.style.display = "none";
+    try {
+      let pass = getPass(false);
+      for (let tryNo = 0; tryNo < 2; tryNo++) {
+        const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ action: "get_option_list", pass, fresh: !!fresh }) });
+        const d = await res.json();
+        if (d.code === "auth") {
+          localStorage.removeItem(PASS_KEY);
+          pass = getPass(true);
+          if (!pass) throw new Error("パスワードを入力すると一覧が表示されます。");
+          continue;
+        }
+        if (d.status !== "success") throw new Error(d.message || "一覧を読み込めませんでした。");
+        sellers = d.sellers || [];
+        sellers.forEach(s => { s._k = norm(s.kanriNo); s._t = norm(s.kanriNo + s.shopName + s.name); });
+        const t = new Date((d.updatedAt || 0) * 1000);
+        document.getElementById("meta").textContent = `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")} 時点`;
+        render();
+        return;
+      }
+      throw new Error("パスワードが違います。管理者に確認してください。");
+    } catch (e) {
+      err.textContent = e.message + "（🔄で読み込み直せます）";
+      err.style.display = "block";
+      document.getElementById("count").textContent = "";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function render() {
+    const q = norm(document.getElementById("q").value);
+    const list = q ? sellers.filter(s => s._t.includes(q)) : sellers;
+    const exact = q ? sellers.filter(s => s._k === q) : [];
+
+    // 確認の結果（番号がぴったり一致したら大きく表示）
+    const v = document.getElementById("verdict");
+    const mark = document.getElementById("vMark"), text = document.getElementById("vText");
+    v.className = "verdict";
+    if (q) {
+      if (exact.length) {
+        const s = exact[0];
+        v.classList.add("show", "yes");
+        mark.textContent = "◯";
+        text.innerHTML = `加入しています（撮影あり）<small>${esc(s.kanriNo)}　${esc(s.shopName)}</small>`;
+      } else if (list.length === 0) {
+        v.classList.add("show", "no");
+        mark.textContent = "×";
+        text.innerHTML = `一覧にありません（撮影なし）<small>番号の打ち間違いがないかも確認してください</small>`;
+      } else {
+        v.classList.add("show", "many");
+        mark.textContent = "…";
+        text.innerHTML = `候補が ${list.length} 件あります<small>管理番号を最後まで入れると、加入かどうかが出ます</small>`;
+      }
+    }
+
+    document.getElementById("count").textContent = q
+      ? `${list.length} 件（加入セラー全体 ${sellers.length} 件）`
+      : `加入セラー ${sellers.length} 件`;
+    document.getElementById("list").innerHTML = list.length
+      ? list.map(s => `
+        <div class="row">
+          <div class="no">${esc(s.kanriNo)}</div>
+          <div><div class="shop">${esc(s.shopName)}</div>${s.name ? `<div class="name">${esc(s.name)}</div>` : ""}</div>
+          ${s.manual ? `<div class="manual">✎ 手動で加入に変更${s.note ? `：${esc(s.note)}` : ""}</div>` : ""}
+        </div>`).join("")
+      : `<div class="empty">${q ? "該当するセラーはいません" : "加入セラーはいません"}</div>`;
+  }
+
+  document.getElementById("q").addEventListener("input", render);
+  load(false);
+  // 開きっぱなしでも新しい加入が反映されるよう、10分ごとに読み込み直す
+  setInterval(() => { if (!document.hidden) load(false); }, 10 * 60 * 1000);
+</script>
+</body>
+</html>
