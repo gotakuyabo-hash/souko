@@ -442,6 +442,7 @@
     </div>
   </div>
   <div class="ship-source-note" id="ship-source-note"></div>
+  <div class="ship-source-note" id="error-source-note"></div>
 
   <div class="section-title">📝 議事録・タスクメモ</div>
 
@@ -1171,6 +1172,85 @@
   }
 
   // =========================================================
+  // 前週の誤出荷件数を自動入力
+  // コックピット（バーストくん）の「🚨 誤出荷に記録」で保存した misship_records から、
+  // 出荷件数と同じ「前の週の月曜〜日曜」に起きた誤出荷（発生日で判定）の件数を集計する
+  // =========================================================
+  const errorNoteEl = document.getElementById('error-source-note');
+
+  function setErrorNote(text, isDiff = false) {
+    errorNoteEl.className = 'ship-source-note' + (isDiff ? ' is-diff' : '');
+    errorNoteEl.textContent = text;
+  }
+
+  async function fetchPrevWeekMisship(dateStr) {
+    const r = prevWeekRange(dateStr);
+    const qs = await getDocs(query(
+      collection(db, 'misship_records'),
+      where('date', '>=', r.start),
+      where('date', '<=', r.end)
+    ));
+    let total = 0;
+    const byType = {};
+    qs.forEach(d => {
+      const x = d.data();
+      const n = Math.max(1, toNum(x.count));
+      total += n;
+      const k = x.type || 'その他';
+      byType[k] = (byType[k] || 0) + n;
+    });
+    const breakdown = Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}件`).join('・');
+    return { ...r, total, breakdown };
+  }
+
+  async function autoFillErrorCount(dateStr) {
+    if (!dateStr) return;
+    setErrorNote('前週の誤出荷件数を集計中...');
+    let r;
+    try {
+      r = await fetchPrevWeekMisship(dateStr);
+    } catch (e) {
+      console.error('誤出荷件数の集計エラー:', e);
+      if (currentDate === dateStr) setErrorNote('前週の誤出荷件数を取得できませんでした。手入力してください');
+      return;
+    }
+    if (currentDate !== dateStr) return; // 集計中に日付が変わった
+
+    const input = document.getElementById('error-count');
+    const current = parseFloat(input.value) || 0;
+    const detail = r.breakdown ? `（${r.breakdown}）` : '';
+
+    if (r.total === 0) {
+      setErrorNote(current === 0
+        ? `${r.label} の誤出荷の記録はありません`
+        : `${r.label} の誤出荷の記録は 0件です（入力値は手入力のままにしています）`);
+      return;
+    }
+
+    if (current === 0) {
+      // 未入力なら自動で入れる（次に何か入力したときに一緒に保存されます）
+      input.value = r.total;
+      calcErrorRate(false);
+      setErrorNote(`${r.label} の誤出荷の記録から自動入力しました${detail}`);
+    } else if (current === r.total) {
+      setErrorNote(`${r.label} の誤出荷の記録と一致しています${detail}`);
+    } else {
+      // すでに別の数字が入っている場合は勝手に変えず、選べるようにする
+      setErrorNote(`${r.label} の誤出荷の記録は ${r.total}件です${detail}（入力値と違います）`, true);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-apply-ship';
+      btn.textContent = '記録の件数に置き換える';
+      btn.addEventListener('click', () => {
+        input.value = r.total;
+        calcErrorRate(true);
+        setErrorNote(`${r.label} の誤出荷の記録の件数に置き換えました${detail}`);
+      });
+      errorNoteEl.appendChild(btn);
+    }
+  }
+
+  // =========================================================
   // 読み込み
   // =========================================================
   async function loadDataFromCloud(dateStr) {
@@ -1202,7 +1282,7 @@
       isLoading = false;
       updateUncompletedBadge();
     }
-    if (loaded) autoFillShipCount(dateStr);
+    if (loaded) { autoFillShipCount(dateStr); autoFillErrorCount(dateStr); }
   }
 
   // 日付切り替え：保存待ちを先に旧日付へ保存してから読み込む
@@ -1333,6 +1413,7 @@
       saveDataToCloud(false);
       saveStatusEl.textContent = "開いた時点の内容に戻しました";
       autoFillShipCount(currentDate);
+      autoFillErrorCount(currentDate);
       updateUncompletedBadge();
     }, { title: '↩️ 元に戻す', yesText: '戻す', noText: 'キャンセル' });
   });
