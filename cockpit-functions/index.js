@@ -122,6 +122,18 @@ exports.api = onRequest(
 
 async function handleRequest(p) {
   try {
+    // 撮影オプション一覧アプリ（倉庫用）：倉庫用パスワードで、加入セラーの一覧だけ見られる
+    if (p.action === "get_option_list") {
+      const pass = String(process.env.OPTION_VIEW_PASS || "");
+      if (!pass) return { status: "error", message: "OPTION_VIEW_PASS（倉庫用パスワード）が設定されていません" };
+      if (String(p.pass || "") !== pass && p.secret !== APP_SECRET.value()) {
+        return { status: "error", code: "auth", message: "パスワードが違います" };
+      }
+      const r = await getOptionList(p.label, !!p.fresh);
+      r.status = "success";
+      return r;
+    }
+
     const secret = APP_SECRET.value();
     if (!secret) return { status: "error", message: "APP_SECRET が登録されていません" };
     if (p.secret !== secret) return { status: "error", code: "auth", message: "認証エラー：合言葉が違います" };
@@ -1012,6 +1024,58 @@ async function getOptionSellers(token, label) {
   sellers.sort((a, b) =>
     ((b.unread_num > 0) - (a.unread_num > 0)) || ((!!b.room_id) - (!!a.room_id)) || (b.last_update_time - a.last_update_time));
   return { label, sellers, removed };
+}
+
+// ==============================
+// 撮影オプション一覧アプリ用（Chatworkは使わない、表示専用）
+//   スプレッドシートの回答に、コックピットで手動修正した内容（Firestore の option_overrides）を反映して返す
+// ==============================
+async function getOptionList(label, fresh) {
+  label = String(label || "動画撮影オプション");
+  const cacheKey = "option_list_" + label;
+  const hit = fresh ? null : cacheGet(cacheKey);   // 🔄のときはキャッシュを使わない
+  if (hit) return hit;
+
+  // 手動修正（コックピットの「🎥 撮影オプション」で変更した内容）
+  const ov = {};
+  try {
+    const snap = await db.collection("option_overrides").where("label", "==", label).get();
+    snap.forEach(d => {
+      const o = d.data();
+      const k = normalize(o.k || o.kanriNo || "");
+      if (k.length >= 2) ov[k] = o;
+    });
+  } catch (e) {
+    console.error("手動修正の読み込みに失敗: " + e.message);
+  }
+
+  const seen = {};
+  const sellers = [];
+  for (let t = 0; t < SELLER_SHEETS.length; t++) {
+    let rows = [];
+    try { rows = await loadSellerRows(t, true); } catch (e) { console.error("シート" + (t + 1) + "を開けません: " + e.message); }
+    rows.forEach(row => {
+      if (seen[row.k]) return;
+      const o = ov[row.k];
+      const ex = (row.extras || []).filter(e => e.label === label)[0];
+      const value = o ? o.v : (ex ? ex.value : "");
+      if (value !== "◯") return;
+      seen[row.k] = true;
+      sellers.push({ kanriNo: row.kanriNo, shopName: row.shopName, name: row.name, sheetLabel: row.sheetLabel, manual: !!o, note: o ? (o.note || "") : "" });
+    });
+  }
+  // シートにないが、手動で「加入」にしたセラー
+  Object.keys(ov).forEach(k => {
+    const o = ov[k];
+    if (o.v !== "◯" || seen[k]) return;
+    seen[k] = true;
+    sellers.push({ kanriNo: o.kanriNo || k, shopName: o.shopName || "（シートに見当たりません）", name: "", sheetLabel: "手動", manual: true, note: o.note || "" });
+  });
+
+  sellers.sort((a, b) => String(a.kanriNo).localeCompare(String(b.kanriNo), "ja", { numeric: true }));
+  const result = { label, sellers, updatedAt: nowSec() };
+  cachePut(cacheKey, result, 120);   // 2分キャッシュ
+  return result;
 }
 
 // オプション加入状況の手動修正（シートより優先）
