@@ -548,6 +548,36 @@ function getOrderUniqueIds() {
   return set;
 }
 
+// 検品シートと送り状で共通の並び順（ショップ名順。同じショップ内は受注データの並び順のまま。ショップ名が空のものは最後）
+function compareShopOrder(a, b) {
+  const sa = String(a.shop || '').trim(), sb = String(b.shop || '').trim();
+  if (!sa && sb) return 1;
+  if (sa && !sb) return -1;
+  return sa.localeCompare(sb, 'ja', { numeric: true });
+}
+
+// 受注番号ごとのショップ名（検品シートと同じ決め方：N-0行か最初の行のショップ名）
+function getOrderShopMap() {
+  const map = new Map();
+  getAllOrderRows().forEach(r => {
+    const n = cleanOrderNoNormalized(r[COL.ORDER]);
+    if (!n) return;
+    const koBanVal = r[COL.KOBAN] !== undefined ? String(r[COL.KOBAN]).trim() : '';
+    if (!map.has(n)) { map.set(n, r[COL.SHOP] || ''); return; }
+    if ((koBanVal.endsWith('-0') || koBanVal === '0') && r[COL.SHOP]) map.set(n, r[COL.SHOP]);
+  });
+  return map;
+}
+
+// 送り状出力用：検品シートと同じ順番の受注番号リスト
+function getOrderNosInSheetOrder() {
+  const shopMap = getOrderShopMap();
+  return Array.from(shopMap.entries())
+    .map(([no, shop]) => ({ no, shop }))
+    .sort(compareShopOrder)
+    .map(o => o.no);
+}
+
 function renderOrderSection() {
   const all = getAllOrderRows();
   document.getElementById('orderEmpty').classList.toggle('hidden', all.length > 0);
@@ -1331,7 +1361,7 @@ function convertSagawaRowToB2(s, template, settings) {
 }
 
 window.exportYamatoCsv = () => {
-  const uniqueOrderNos = getOrderUniqueIds();
+  const uniqueOrderNos = getOrderNosInSheetOrder(); // 検品シートと同じ順番
   const yamatoRows = getAllYamatoRows();
   const sagawaRows = getAllSagawaRows();
   const settings = getOkiSettings();
@@ -1413,7 +1443,7 @@ window.exportYamatoCsv = () => {
 };
 
 window.exportEhidenCsv = () => {
-  const uniqueOrderNos = getOrderUniqueIds();
+  const uniqueOrderNos = getOrderNosInSheetOrder(); // 検品シートと同じ順番
   const sagawaRows = getAllSagawaRows();
   if (!sagawaRows.length) { alert("佐川データが読み込まれていません。"); return; }
 
@@ -1498,12 +1528,7 @@ window.openPrintPreview = () => {
 
   // ショップ順に並べる（同じショップ内は今の並び順のまま。ショップ名が空のものは最後）
   const groups = Array.from(orderGroupMap.values());
-  groups.sort((a, b) => {
-    const sa = String(a.shop || '').trim(), sb = String(b.shop || '').trim();
-    if (!sa && sb) return 1;
-    if (sa && !sb) return -1;
-    return sa.localeCompare(sb, 'ja', { numeric: true });
-  });
+  groups.sort(compareShopOrder);
   const shopTotals = new Map();
   groups.forEach(g => { const k = String(g.shop || '').trim(); shopTotals.set(k, (shopTotals.get(k) || 0) + 1); });
   const shopSeen = new Map();
