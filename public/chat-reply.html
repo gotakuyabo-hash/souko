@@ -374,7 +374,29 @@
         }
         function safeId(id) { return String(id || '').replace(/[^0-9]/g, ''); }
         function getUnread(r) { return Number(r.unread_num !== undefined ? r.unread_num : (r.unread_count || 0)); }
-        function isMine(m) { return !!(m && m.account && myIds.has(String(m.account.account_id))); }
+        // 自社の発言かどうか
+        //   社内ルーム（渡辺さんとのルームなど）では、ラクロジスタッフ・松下のアカウントだけを自社とみなす
+        //   （渡辺さんの発言を自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
+        const MINE_CFG_KEY = "cw_mine_cfg_v1";
+        let mineCfg = (() => { try { return JSON.parse(localStorage.getItem(MINE_CFG_KEY)) || { owner: [], internal: [] }; } catch (e) { return { owner: [], internal: [] }; } })();
+        function isMine(m, rid) {
+            if (!(m && m.account)) return false;
+            const id = String(m.account.account_id);
+            if (rid && mineCfg.internal.indexOf(String(rid)) !== -1 && mineCfg.owner.length) return mineCfg.owner.indexOf(id) !== -1;
+            return myIds.has(id);
+        }
+        async function loadMineCfg() {
+            try {
+                const d = await callApi("get_me");
+                if (!d.owner_ids) return;
+                const next = { owner: d.owner_ids.map(String), internal: (d.internal_room_ids || []).map(String) };
+                if (JSON.stringify(next) === JSON.stringify(mineCfg)) return;
+                mineCfg = next;
+                localStorage.setItem(MINE_CFG_KEY, JSON.stringify(next));
+                if (currentMode === 'burst') refreshCurrentView(false);
+            } catch (e) {}
+        }
+        setTimeout(loadMineCfg, 2000);
         function senderName(m) { return m && m.account ? m.account.name : "相手"; }
         function hm(d) { return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 
@@ -424,10 +446,10 @@
         }
 
         // AI・コピー用の1行（自社の発言には【自社】を付ける）
-        function lineFor(m) {
+        function lineFor(m, rid) {
             const files = parseFiles(m.body);
             const text = cleanBody(m.body) + (files.length ? '\n' + files.map(f => '📎 ' + f.name).join('\n') : '');
-            return `${isMine(m) ? '【自社】' : ''}${senderName(m)}: ${text}`;
+            return `${isMine(m, rid) ? '【自社】' : ''}${senderName(m)}: ${text}`;
         }
 
         // ===== 添付ファイル =====
@@ -735,15 +757,15 @@
             const body = display + (files.length ? (display ? '\n' : '') + files.map(f => '📎 ' + f.name).join('\n') : '');
             window.messageStore[key] = {
                 body, displayBody: display, files, sender: senderName(m), roomId: rid, roomName,
-                mid: safeId(m.message_id), aid: safeId(m.account && m.account.account_id), rawBody: String(m.body || ''), mine: isMine(m),
-                replyTo: isMine(m) ? null : { aid: safeId(m.account && m.account.account_id), mid: safeId(m.message_id), name: senderName(m) }
+                mid: safeId(m.message_id), aid: safeId(m.account && m.account.account_id), rawBody: String(m.body || ''), mine: isMine(m, rid),
+                replyTo: isMine(m, rid) ? null : { aid: safeId(m.account && m.account.account_id), mid: safeId(m.message_id), name: senderName(m) }
             };
             return key;
         }
 
         function messageHtml(key, m, opts = {}) {
             const st = window.messageStore[key];
-            const mine = isMine(m);
+            const mine = isMine(m, st && st.roomId);
             const avatarUrl = m.account && m.account.avatar_image_url;
             const avatar = avatarUrl
                 ? `<img src="${esc(avatarUrl)}" alt="" class="w-8 h-8 rounded-full shrink-0 bg-slate-200 object-cover" loading="lazy">`
@@ -1092,14 +1114,14 @@
             const n = Math.min(Math.max(Number(unreadNum) || 1, 1), msgs.length, MAX_SHOW);
             const shown = msgs.slice(-n);
             const last = msgs[msgs.length - 1];
-            const lastIsMine = isMine(last);
-            const lastCustomer = msgs.slice().reverse().find(m => !isMine(m));
+            const lastIsMine = isMine(last, rid);
+            const lastCustomer = msgs.slice().reverse().find(m => !isMine(m, rid));
 
             // カード全体用（AIには取得した最大5件の流れを渡す）
             const cardKey = `c_${rid}_${Math.random().toString(36).slice(2, 8)}`;
-            const thread = msgs.map(lineFor).join('\n\n');
+            const thread = msgs.map(m => lineFor(m, rid)).join('\n\n');
             window.messageStore[cardKey] = {
-                body: shown.map(lineFor).join('\n\n'), context: thread, roomId: rid, roomName,
+                body: shown.map(m => lineFor(m, rid)).join('\n\n'), context: thread, roomId: rid, roomName,
                 sender: lastCustomer ? senderName(lastCustomer) : senderName(last),
                 replyTo: lastCustomer ? { aid: safeId(lastCustomer.account && lastCustomer.account.account_id), mid: safeId(lastCustomer.message_id), name: senderName(lastCustomer) } : null
             };
@@ -1777,8 +1799,8 @@
                         const key = storeMessage(currentRoomId, roomName, m);
                         // AIには、このメッセージまでの直近6件の流れを渡す
                         const absIdx = msgs.length - recent.length + idx;
-                        window.messageStore[key].context = msgs.slice(Math.max(0, absIdx - 5), absIdx + 1).map(lineFor).join('\n\n');
-                        const mine = isMine(m);
+                        window.messageStore[key].context = msgs.slice(Math.max(0, absIdx - 5), absIdx + 1).map(x => lineFor(x, currentRoomId)).join('\n\n');
+                        const mine = isMine(m, currentRoomId);
                         html += `
                             <div class="bg-white rounded-2xl shadow-sm p-4">
                                 ${messageHtml(key, m)}
@@ -1806,8 +1828,8 @@
             const rid = safeId(roomId);
             const key = `compose_${rid}`;
             window.messageStore[key] = {
-                body: '', context: messages.slice(-10).map(lineFor).join("\n\n"),
-                fullText: (recent || []).map(lineFor).join("\n\n"),
+                body: '', context: messages.slice(-10).map(m => lineFor(m, rid)).join("\n\n"),
+                fullText: (recent || []).map(m => lineFor(m, rid)).join("\n\n"),
                 sender: "", roomId: rid, roomName, replyTo: null
             };
             return `
@@ -2018,12 +2040,12 @@
                 if (!msgs.length) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
                 const last = msgs[msgs.length - 1];
                 if (!reopen) {
-                    if (isMine(last)) { if (autoList) autoList.push([rid, Math.max(last.send_time || 0, r.last_update_time || 0)]); return; }
+                    if (isMine(last, rid)) { if (autoList) autoList.push([rid, Math.max(last.send_time || 0, r.last_update_time || 0)]); return; }
                     if ((last.send_time || 0) <= eff) { if (autoList) autoList.push([rid, r.last_update_time || 0]); return; }
                 }
                 const shown = reopen ? msgs : msgs.filter(m => (m.send_time || 0) > eff);
                 let lastMine = -1;
-                shown.forEach((m, i) => { if (isMine(m)) lastMine = i; });
+                shown.forEach((m, i) => { if (isMine(m, rid)) lastMine = i; });
                 const waiting = shown.slice(lastMine + 1);
                 out.push({ r, all: msgs, count: Math.max(shown.length, 1), reopen, waitSince: (waiting[0] || last).send_time || 0 });
             });
