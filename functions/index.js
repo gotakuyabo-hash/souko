@@ -399,6 +399,11 @@ exports.apiCreateZaicoShipment = onRequest(
                 }
             }
 
+            // 出庫予定日：画面から届いた日付（YYYY-MM-DD）を使い、なければ日本時間の当日
+            const jstToday = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+            const reqDate = String(req.body.estimatedDeliveryDate || '').trim();
+            const scheduledDate = /^\d{4}-\d{2}-\d{2}$/.test(reqDate) ? reqDate : jstToday;
+
             const deliveries = [];
             const missingBarcodes = [];
 
@@ -409,7 +414,8 @@ exports.apiCreateZaicoShipment = onRequest(
                 if (inventoryId) {
                     deliveries.push({
                         inventory_id: String(inventoryId),
-                        quantity: String(item.pickCount)
+                        quantity: String(item.pickCount),
+                        estimated_delivery_date: scheduledDate // 出庫予定日
                     });
                 } else {
                     missingBarcodes.push(bc);
