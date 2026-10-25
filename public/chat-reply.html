@@ -38,8 +38,8 @@
         .app-w { width: 100%; max-width: 28rem; }
         /* PC表示（html に pc クラスが付いた時。幅と操作方法から自動で判定、ヘッダーのボタンで切替も可） */
         html.pc .app-w { max-width: 1100px; }
-        /* 要対応・後で：カードを2列に並べる */
-        html.pc #burstModeContainer, html.pc #laterModeContainer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+        /* 要対応・後で：カードは常に2列（ウィンドウを狭めても2列のまま） */
+        html.pc #burstModeContainer, html.pc #laterModeContainer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
         html.pc #burstModeContainer > *, html.pc #laterModeContainer > * { margin-top: 0 !important; }
         html.pc #burstModeContainer > :not(.burst-card), html.pc #laterModeContainer > :not(.burst-card) { grid-column: 1 / -1; }
         /* ルーム：読みやすい幅で中央に */
@@ -51,22 +51,24 @@
         html.pc .btn:hover { filter: brightness(.96); }
         html.pc .room-row:hover, html.pc .sheet-row:hover { background: #f8fafc; }
         html.pc .tab-btn:hover { color: #6366f1; }
-        /* 表示切替ボタンは、マウスで操作する端末か、手動で切り替えた時だけ出す */
+        /* 表示切替ボタンは、PC表示の時・マウスが使える端末・手動で切り替えた時に出す（スマホでは出さない） */
         #layoutBtn { display: none; }
-        @media (pointer: fine) { #layoutBtn { display: block; } }
-        html.layout-manual #layoutBtn { display: block; }
+        @media (any-pointer: fine) { #layoutBtn { display: block; } }
+        html.pc #layoutBtn, html.layout-manual #layoutBtn { display: block; }
     </style>
     <script>
         // PC表示かスマホ表示かを決める（ページが描かれる前に判定して、表示のちらつきを防ぐ）
-        //   自動：画面幅1024px以上、またはマウス操作で760px以上ならPC表示
+        //   自動：画面（モニター）の幅が1024px以上の端末はPC表示。ウィンドウを狭めても、PCならPC表示のまま
+        //         （それ以外でも、ウィンドウ幅1024px以上、またはマウスが使えて760px以上ならPC表示）
         //   ヘッダーの 🖥️／📱 ボタンで手動切替（この端末に記憶。もう一度押すと切り替わる）
         (function () {
             var KEY = 'cw_layout_v1';
             function pref() { try { return localStorage.getItem(KEY) || 'auto'; } catch (e) { return 'auto'; } }
             function apply() {
                 var p = pref(), w = window.innerWidth;
-                var fine = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
-                var pc = p === 'pc' || (p === 'auto' && (w >= 1024 || (fine && w >= 760)));
+                var fine = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+                var sw = Math.max(screen.width || 0, screen.height || 0);
+                var pc = p === 'pc' || (p === 'auto' && (sw >= 1024 || w >= 1024 || (fine && w >= 760)));
                 var root = document.documentElement;
                 root.classList.toggle('pc', pc);
                 root.classList.toggle('layout-manual', p !== 'auto');
