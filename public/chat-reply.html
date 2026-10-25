@@ -829,6 +829,69 @@
         }
         function yen(n) { const v = Math.round(Number(n) || 0); return (v < 0 ? '−¥' : '¥') + Math.abs(v).toLocaleString(); }
 
+        // ===== 誤出荷の記録 =====
+        //   Firestore：misship_records（議事録アプリ meeting.html で週ごとの件数を自動で読み込む）
+        //   ※ 議事録アプリは合言葉ログインなしで読むため、お客様のチャット本文は保存しない（スタッフが書いたメモだけ）
+        const MISSHIP_TYPES = ['商品違い', '数量違い', '欠品・入れ忘れ', '発送先違い', '配送方法違い', '破損', 'その他'];
+        let misshipCtx = null;
+
+        window.openMisshipForm = async function(key) {
+            const m = window.messageStore[key] || {};
+            misshipCtx = { roomId: m.roomId, roomName: m.roomName || '', sourceMsgId: (m.replyTo && m.replyTo.mid) || '' };
+            document.getElementById('sheetActionsTitle').textContent = '🚨 誤出荷に記録';
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="p-5 space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div><label class="field-label">管理番号</label><input id="ms_kanri" class="inp" placeholder="読込中…"></div>
+                        <div><label class="field-label">発生日（出荷日）</label><input id="ms_date" type="date" class="inp" value="${todayYmd()}"></div>
+                    </div>
+                    <div><label class="field-label">ショップ名・お名前</label><input id="ms_shop" class="inp" placeholder="読込中…"></div>
+                    <div><label class="field-label">内容</label>
+                        <select id="ms_type" class="inp">${MISSHIP_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>
+                    <div><label class="field-label">件数</label><input id="ms_count" type="number" inputmode="numeric" min="1" class="inp" value="1"></div>
+                    <div><label class="field-label">状況・原因メモ</label><textarea id="ms_memo" rows="3" class="inp" placeholder="例：A商品とB商品の取り違え。ピック時の確認漏れ"></textarea></div>
+                    <div class="text-xs text-slate-500">日付は「誤出荷が起きた日（出荷した日）」を入れてください。議事録の週ごとの件数は、この日付で数えます。</div>
+                    <button id="ms_save" onclick="saveMisship(this)" class="btn btn-main w-full">🚨 記録する</button>
+                </div>`;
+            openSheet('sheetActions');
+            try {
+                const data = await callApi("get_seller_info", { chatwork_id: misshipCtx.roomName });
+                const s = data.seller || {};
+                const k = document.getElementById('ms_kanri'), sh = document.getElementById('ms_shop');
+                if (k && !k.value) k.value = s.error ? '' : (s.kanriNo || '');
+                if (sh && !sh.value) sh.value = s.error ? misshipCtx.roomName : [s.shopName, s.name].filter(v => v && v !== '不明').join('・');
+                if (k) k.placeholder = '管理番号'; if (sh) sh.placeholder = 'ショップ名';
+            } catch (e) {
+                const sh = document.getElementById('ms_shop');
+                if (sh && !sh.value) sh.value = misshipCtx.roomName;
+            }
+        };
+
+        window.saveMisship = async function(btn) {
+            if (!misshipCtx) return;
+            const date = document.getElementById('ms_date').value || todayYmd();
+            const count = Math.max(1, Math.round(Number(document.getElementById('ms_count').value) || 1));
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+            try {
+                await fsAdd('misship_records', {
+                    date: date, month: date.slice(0, 7), count: count,
+                    type: document.getElementById('ms_type').value,
+                    kanriNo: document.getElementById('ms_kanri').value.trim(),
+                    shopName: document.getElementById('ms_shop').value.trim(),
+                    memo: document.getElementById('ms_memo').value.trim(),
+                    roomId: String(misshipCtx.roomId || ''), sourceMsgId: misshipCtx.sourceMsgId,
+                    account: getAccount(), by: getStaffName(), createdAt: FS_TS
+                });
+                closeAllModals();
+                showToast('誤出荷に記録しました');
+            } catch (e) {
+                alert('保存に失敗しました: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '🚨 記録する';
+            }
+        };
+
         window.openBillingForm = async function(key) {
             const m = window.messageStore[key] || {};
             billingCtx = { roomId: m.roomId, roomName: m.roomName || '', sourceText: (m.body || '').slice(0, 500), sourceMsgId: (m.replyTo && m.replyTo.mid) || '' };
@@ -1188,6 +1251,7 @@
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
+                sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
                 sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
                 (m.mine ? sheetBtn('✏️', 'このメッセージを編集', `openEditMsg('${key}')`) + sheetBtn('🗑️', 'このメッセージを削除', `deleteMsg('${key}')`) : '') +
                 sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
