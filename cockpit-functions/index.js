@@ -155,6 +155,8 @@ async function handleRequest(p) {
         result = await getOptionSellers(token, p.label);
       } else if (action === "get_later_bundle") {
         result = await getLaterBundle(token, p.account);
+      } else if (action === "get_later") {
+        result = { later: await getLater(p.account) };
       } else if (action === "set_later") {
         result = { later: await setLater(p.account, p.room_ids, p.on !== false) };
       } else if (action === "get_latest_messages") {
@@ -450,32 +452,14 @@ async function uploadChatworkFile(token, roomId, fileData, fileName, mimeType, m
 const DEFAULT_INTERNAL_ROOM_IDS = "380072256"; // 渡辺大輔
 
 const DEFAULT_RULES_COMMON =
-  "【文章のルール】\n"
-  + "・書いてよいのは【指示】と【これまでのメッセージ】に書かれている内容だけ。手順・仕様・設定方法・原因・今後の対応を推測で書かない\n"
-  + "・指示が短いときに、チャット履歴から別の話題（請求・調査・発送など）を拾って書き足さない\n"
-  + "・指示にない約束や予定（「完了次第ご連絡します」「改めてご報告します」「今しばらくお待ちください」など）は書かない\n"
-  + "・「お気軽にご相談ください」「ご不明点があれば」などの締めの一文は入れない\n"
-  + "・指示の中の丁寧な決まり文句（「承知致しました」など）は表記を変えずに使ってよい。くだけた言葉・ひらがな・誤字は書き直す\n"
-  + "・番号は「1.」、項目は「・」を使う。アスタリスク（*）や「---」などの記号は使わない\n\n"
-  + "【締めの一文】\n"
-  + "・相手に確認や作業をお願いする文：「お手数お掛け致しますが、よろしくお願いいたします。」\n"
-  + "・お詫びを含む文：「何卒よろしくお願いいたします。」\n"
-  + "・それ以外の業務連絡：「よろしくお願いいたします。」\n"
-  + "・お祝い・お見舞いなど業務以外のひとこと：締めの一文は付けない\n\n"
-  + "【実際に送った文章の例（長さと書き方の目安）】\n"
-  + "例1：\n公開鍵情報をご共有いただき、誠にありがとうございます。\n更新完了いたしました。\n\n引き続きよろしくお願いいたします。\n\n"
-  + "例2：\nかしこまりました。\n穴のあいた該当商品につきましては、当方にて破棄処分いたします。\n\n引き続きよろしくお願いいたします。\n\n";
+  "【追加ルール】\n"
+  + "・指示やチャットにない事実（日付・数量・理由・約束など）は書かない\n";
 
 const DEFAULT_RULES_EXTERNAL =
-  "【このルームは社外（セラー様・取引先様）です】\n"
-  + "・こちらから新しく連絡する文、案内・報告・依頼・お詫びを含む返信は、1行目を「いつもお世話になっております。」にして、1行空けて本文を書く\n"
-  + "・短いお礼や「承知いたしました」だけの返信には、「いつもお世話になっております。」は付けない\n\n";
+  "・こちらから新しく連絡する時は、1行目を「いつもお世話になっております。」にする\n";
 
 const DEFAULT_RULES_INTERNAL =
-  "【このルームは社内メンバーとのやり取りです】\n"
-  + "・「いつもお世話になっております。」は付けない\n"
-  + "・指示が「ありがとう」「承知しました」「了解」など短い時は、「ありがとうございます。」「承知致しました。」のような一言だけにする。2行目や締めの一文は付けない\n"
-  + "・質問や相談の文は、要点だけを簡潔に書き、締めは「よろしくお願いいたします。」にする\n\n";
+  "・社内メンバーとのやり取りなので、短く簡潔に。「いつもお世話になっております。」は付けない\n";
 
 function aiDefaults() {
   return {
@@ -604,23 +588,9 @@ async function callGemini(prompt, opt = {}) {
   throw new Error("AIの文章を作成できませんでした：" + lastReason);
 }
 
-// 文章の質の決まり（画面の⚙️では変えられない固定部分。AI文章ルールより優先）
-//   AIが指示をひらがな・話し言葉のまま写したり、ぶっきらぼうな文になったりするのを防ぐ
-const AI_QUALITY_RULES =
-  "【いちばん大事な決まり（ほかのルールより優先）】\n"
-  + "・【指示】は担当者の走り書きのメモです。ひらがな・話し言葉・単語だけ・誤字が混ざっていても、そのまま写さないでください。意味をくみ取り、取引先に送るビジネスチャットとして自然な丁寧語（です・ます、謙譲語）に書き直してください\n"
-  + "・ひらがなの言葉は適切な漢字に直す（例：かくにん→確認、はっそう→発送、あした→明日、ざいこ→在庫）\n"
-  + "・ため口、命令口調、ぶっきらぼうな言い切りはしない。お願いは「〜いただけますでしょうか」「〜いただけますと幸いです」などやわらかく\n"
-  + "・相手を責める言い方や、否定から始める言い方はしない。できない・断る時は、お詫びの言葉を添えて、指示にある理由や代わりの案を伝える\n"
-  + "・丁寧にするための挨拶・お礼・お詫びの言葉は足してよい。ただし、指示にない事実（日付・数量・理由・約束など）は足さない\n\n"
-  + "【書き直しの例（指示 → 文章）】\n"
-  + "・「かくにんします」→「承知いたしました。確認いたします。」\n"
-  + "・「あしたはっそうできる」→「明日発送が可能です。」\n"
-  + "・「在庫ないって伝えて」→「確認いたしましたところ、現在在庫がございません。」\n"
-  + "・「それはむり」→「誠に申し訳ございませんが、そちらのご対応は難しい状況です。」\n"
-  + "・「写真おくって」→「お手数ですが、お写真をお送りいただけますでしょうか。」\n\n";
-
-const AI_FINAL_CHECK = "\n\n出力する前に、ひらがなのままの言葉・話し言葉・ため口・失礼な言い方が残っていないか見直し、直してから出力してください。";
+// 文章の基本（画面の⚙️では変えられない固定部分）
+//   ルールを増やしすぎると、軽いモデル（flash）は文章が硬く・雑になりやすいので、最小限にしている
+const AI_BASE_NOTE = "【指示】は担当者の走り書きのメモです。そのまま写さず、意味をくみ取って、取引先に送る丁寧なビジネス敬語の文章に整えてください。\n\n";
 
 // 返信案・新規発信の文章を作成
 async function generateAiReply(params) {
@@ -629,34 +599,25 @@ async function generateAiReply(params) {
   const customPrompt = params.custom_prompt || "";
   const cfg = await getAiConfig();
   const internal = isInternalRoom(params.room_id, cfg);
-  const commonRules = block(cfg.common);
-  const roomRules = block(internal ? cfg.internal : cfg.external);
+  const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
 
   let prompt;
   if (params.mode === "compose") {
     if (!customPrompt) throw new Error("伝えたい内容を入力してください");
-    prompt = "あなたは物流倉庫のカスタマーサポート担当です。以下の【指示】の内容を、こちらから相手へ送るチャットメッセージにしてください。宛名・自己紹介は不要です。丁寧かつ簡潔にし、【指示】にない内容は足さないでください。\n\n"
+    prompt = "あなたは物流倉庫のカスタマーサポート担当です。以下の【指示】の内容を、こちらから相手へ送るチャットメッセージにしてください。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
       + "【指示】\n" + customPrompt + "\n\n"
-      + AI_QUALITY_RULES
-      + commonRules
-      + roomRules
-      + "【ルーム名】" + roomName + "\n"
-      + "【参考：このルームの最近のやり取り（言葉づかいの参考のみ。ここから話題を足さない）】\n" + (contextText || "なし")
-      + "\n\n送信するメッセージ本文のみを出力してください。" + AI_FINAL_CHECK;
+      + AI_BASE_NOTE
+      + rules
+      + "【参考：このルームの最近のやり取り】\n" + (contextText || "なし")
+      + "\n\n送信するメッセージ本文のみを、記号（*や#）を使わずに出力してください。";
   } else {
     prompt = "あなたは物流倉庫のカスタマーサポート担当です。以下のチャットで、相手の最後のメッセージに対する返信文を作成してください。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n";
     if (customPrompt) {
-      prompt += "【指示（この内容を中心に書く）】\n" + customPrompt + "\n\n";
-    } else {
-      prompt += "【指示】\n特になし。お礼や「承知いたしました」など、事実を足さずに短く返してください。"
-        + "こちらでの確認や判断が必要な質問には答えを作らず、「確認いたします」と一言だけ書いてください。\n\n";
+      prompt += "【指示（返信で伝える内容）】\n" + customPrompt + "\n\n" + AI_BASE_NOTE;
     }
-    prompt += AI_QUALITY_RULES
-      + commonRules
-      + roomRules
-      + "【ルーム名】" + roomName + "\n"
-      + "【これまでのメッセージ（返信するのは最後の相手のメッセージ。前の話題は蒸し返さない）】\n" + contextText
-      + "\n\n返信文のみを出力してください。" + AI_FINAL_CHECK;
+    prompt += rules
+      + "【これまでのメッセージ】\n" + contextText
+      + "\n\n返信文のみを、記号（*や#）を使わずに出力してください。";
   }
   return { ai_reply: await callGemini(prompt) };
 }
@@ -1223,7 +1184,7 @@ async function syncNow(account, token) {
   if (lastSyncNow[account] && now - lastSyncNow[account] < 10000) return { skipped: true };   // 連打よけ（10秒）
   lastSyncNow[account] = now;
   await syncAccount(account, token, await getMyIds(), await buildLearn(), { freshState: true });
-  return { synced: true };
+  return { synced: true, later: await getLater(account) };
 }
 
 // 同期の進み具合はサーバーのメモリに持ち、Firestoreは「起動直後に1回読む」「変わった時だけ書く」
