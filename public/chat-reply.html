@@ -455,7 +455,9 @@
         // ===== 添付ファイル =====
         const fileNameMap = {};
         const fileUrlCache = {};
-        const URL_CACHE_MS = 3 * 60 * 1000;
+        // Chatworkのダウンロード用URLは、発行してから短い時間で無効になる（古いURLを開くと AccessDenied になる）
+        //   そのため使い回しは15秒以内だけにして、それ以降は毎回新しいURLをもらう
+        const URL_CACHE_MS = 15 * 1000;
 
         function parseFiles(raw) {
             const files = [];
@@ -486,9 +488,9 @@
             }).join('') + `</div>`;
         }
 
-        async function getFileUrl(roomId, fileId) {
+        async function getFileUrl(roomId, fileId, fresh) {
             const c = fileUrlCache[fileId];
-            if (c && Date.now() - c.t < URL_CACHE_MS) return c.url;
+            if (!fresh && c && Date.now() - c.t < URL_CACHE_MS) return c.url;
             const data = await callApi("get_room_file", { room_id: roomId, file_id: fileId });
             const url = data.file && data.file.download_url;
             if (!url) throw new Error("ファイルのURLを取得できませんでした");
@@ -511,8 +513,14 @@
             document.body.style.overflow = 'hidden';
             try {
                 const url = await getFileUrl(roomId, fileId);
+                let retried = false;
                 img.onload = () => { loading.style.display = 'none'; img.style.display = 'block'; };
-                img.onerror = () => {
+                img.onerror = async () => {
+                    // URLの期限切れの可能性があるので、1回だけ新しいURLで読み直す
+                    if (!retried) {
+                        retried = true;
+                        try { img.src = await getFileUrl(roomId, fileId, true); return; } catch (e) {}
+                    }
                     loading.style.display = 'none';
                     err.textContent = 'この端末では画像を表示できませんでした（HEIC形式など）。下の「ダウンロード」から開いてください。';
                     err.style.display = 'block';
@@ -530,12 +538,11 @@
             document.body.style.overflow = '';
         };
         window.downloadFile = async function(roomId, fileId) {
-            const c = fileUrlCache[fileId];
-            if (c && Date.now() - c.t < URL_CACHE_MS) { window.open(c.url, '_blank'); return; }
+            // 保存は、開くまでに時間がかかることがあるので、毎回新しいURLをもらう
             const w = window.open('', '_blank');
             if (w) w.document.write('<p style="font-family:sans-serif;font-size:18px;padding:24px">ファイルを準備中…</p>');
             try {
-                const url = await getFileUrl(roomId, fileId);
+                const url = await getFileUrl(roomId, fileId, true);
                 if (w) w.location.href = url; else location.href = url;
             } catch (e) {
                 if (w) w.close();
