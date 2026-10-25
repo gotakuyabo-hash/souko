@@ -676,6 +676,8 @@
             const before = getLaterLocal();
             saveLaterLocal(on ? before.concat([String(roomId)]) : before.filter(id => id !== String(roomId)));
             showToast(on ? "「後で対応」に入れました" : "「後で対応」から外しました");
+            // 要対応の一覧からはすぐ消す（外した時は、次の表示で要対応に戻る）
+            if (on && currentMode === 'burst') removeCard(roomId);
             try {
                 await callApi("set_later", { room_ids: [roomId], on: on });
             } catch (e) {
@@ -683,6 +685,7 @@
                 alert("「後で対応」の保存に失敗しました: " + e.message);
             }
             if (currentMode === 'later') renderLaterRooms(true);
+            else if (currentMode === 'burst' && !on) fetchAllUnreadRooms(false);
         };
 
         async function renderLaterRooms(force) {
@@ -2047,7 +2050,7 @@
             const container = document.getElementById('burstModeContainer');
             allRoomsCache = data.rooms || [];
             const auto = [];
-            const items = computeTodo(data, auto);
+            const items = computeTodo(data, auto).filter(it => !isLater(it.r.room_id));   // 「後で対応」に入れたルームは出さない
             if (allowAuto) autoHandleRooms(auto);
             setTodoStatus(items.length);
             if (items.length === 0) { container.innerHTML = emptyBox('🎉 要対応のチャットはありません'); updateSelectionBar(); return; }
@@ -2247,7 +2250,7 @@
             const container = document.getElementById('burstModeContainer');
             allRoomsCache = metaToRooms();
             const auto = [];
-            const items = computeTodoMeta(auto);
+            const items = computeTodoMeta(auto).filter(it => !isLater(it.rid));   // 「後で対応」に入れたルームは出さない
             autoHandleRooms(auto);
             setTodoStatus(items.length);
             setLastUpdatedFs();
@@ -2338,6 +2341,19 @@
             renderTodoFs();
             migrateOldLater();
             if (force) syncNowFromChatwork();
+            else refreshLaterList();
+        }
+
+        // ほかのスタッフが「後で対応」に入れたルームも、要対応から消えるように（1分に1回まで確認）
+        let laterCheckedAt = 0;
+        async function refreshLaterList() {
+            if (Date.now() - laterCheckedAt < 60000) return;
+            laterCheckedAt = Date.now();
+            const before = JSON.stringify(getLaterLocal());
+            try {
+                await callApi("get_later");   // 結果は callApi の中で保存される
+                if (JSON.stringify(getLaterLocal()) !== before && currentMode === 'burst') renderTodoFs();
+            } catch (e) {}
         }
 
         // 🔄：1分ごとの自動同期を待たずに、今すぐChatworkを確認（結果はFirestore経由で自動で画面に出る）
@@ -2347,7 +2363,9 @@
             syncNowAt = Date.now();
             setStatus('Chatworkを確認中…');
             try {
-                await callApi("sync_now");
+                const before = JSON.stringify(getLaterLocal());
+                await callApi("sync_now");   // 「後で対応」の最新リストも一緒に届く
+                if (JSON.stringify(getLaterLocal()) !== before && currentMode === 'burst') renderTodoFs();
                 setStatus('最新を確認しました');
             } catch (e) {
                 console.error('今すぐ確認に失敗:', e);
