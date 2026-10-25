@@ -254,6 +254,11 @@
             <div style="margin-top:6px">伝票スキャナーで以前に記録した着払いを、この台帳に取り込みます。何回押しても二重には入りません。取り込んだ記録は管理番号が空なので、明細の「管理番号を入れる」から設定してください。</div>
             <button class="sub" onclick="migrateInvoices(this)" style="margin-top:8px;width:100%">以前の着払いを取り込む</button>
         </details>
+        <details class="note" style="margin-top:10px">
+            <summary>「補填」の金額をマイナスに直す</summary>
+            <div style="margin-top:6px">「補填」「補填・相殺」は請求から差し引く金額なので、マイナスで記録します。以前にプラスで記録した分を、まとめてマイナスに直します。対象は、読み込んだ月の「未請求」の記録だけです（請求済みの記録は変えません）。</div>
+            <button class="sub" onclick="fixMinusRecords(this)" style="margin-top:8px;width:100%">読み込んだ月の補填をマイナスに直す</button>
+        </details>
     </div>
 
     <div id="result" style="display:none">
@@ -307,7 +312,7 @@
         const COD_TYPE = "着払い立替";
         const auth = getAuth(app);
         // ===== 合言葉ログイン（コックピットと共通） =====
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec";
+        const GAS_URL = "https://asia-northeast1-souko-2de57.cloudfunctions.net/api";   // Cloud Functions（元のGAS：https://script.google.com/macros/s/AKfycbzbGircW91tKx9NIihoWRMCiyIYnVbJJoeJZ9IoUf5s6vI71zNVnqJOo38vSOqfeMYzzA/exec）
         const SECRET_KEY = "chatwork_cockpit_secret_v1";
         function getSecret() {
             let s = localStorage.getItem(SECRET_KEY);
@@ -885,7 +890,10 @@
 
         // ================= 請求台帳タブ =================
         const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-        const yen = n => '¥' + Math.round(Number(n) || 0).toLocaleString();
+        const yen = n => { const v = Math.round(Number(n) || 0); return (v < 0 ? '−¥' : '¥') + Math.abs(v).toLocaleString(); };
+        // 請求から差し引く種類（コックピットの請求記録と同じ。金額はマイナスで記録）
+        const MINUS_TYPES = ['補填', '補填・相殺'];
+        const minusCls = n => Number(n) < 0 ? ' style="color:#e11d48"' : '';
         const now = new Date();
         document.getElementById('month').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -927,10 +935,12 @@
         window.render = function () {
             const list = shown();
             const sum = (arr, mode) => arr.filter(r => (r.taxMode || '税抜') === mode).reduce((n, r) => n + (r.amount || 0), 0);
+            const minus = list.filter(r => Number(r.amount) < 0).reduce((n, r) => n + Number(r.amount), 0);
             document.getElementById('stats').innerHTML = [
                 ['件数', `${list.length}件`],
                 ['合計（税抜）', yen(sum(list, '税抜'))],
-                ['合計（税込）', yen(sum(list, '税込'))]
+                ['合計（税込）', yen(sum(list, '税込'))],
+                ['うち差し引き（補填など）', minus ? yen(minus) : '-']
             ].map(([l, n]) => `<div class="stat"><div class="lb">${l}</div><div class="n">${n}</div></div>`).join('');
 
             // セラー別
@@ -945,7 +955,7 @@
             const rows = Object.values(by);
             document.getElementById('sellerTable').innerHTML = rows.length
                 ? `<tr><th>管理番号</th><th>ショップ名</th><th class="num">件数</th><th class="num">税抜</th><th class="num">税込</th></tr>` +
-                  rows.map(x => `<tr><td>${esc(x.kanri)}</td><td>${esc(x.shop)}</td><td class="num">${x.n}</td><td class="num">${x.ex ? yen(x.ex) : '-'}</td><td class="num">${x.inc ? yen(x.inc) : '-'}</td></tr>`).join('')
+                  rows.map(x => `<tr><td>${esc(x.kanri)}</td><td>${esc(x.shop)}</td><td class="num">${x.n}</td><td class="num"${minusCls(x.ex)}>${x.ex ? yen(x.ex) : '-'}</td><td class="num"${minusCls(x.inc)}>${x.inc ? yen(x.inc) : '-'}</td></tr>`).join('')
                 : `<tr><td class="muted">該当する記録はありません</td></tr>`;
 
             document.getElementById('list').innerHTML = list.length ? list.map(r => `
@@ -953,7 +963,7 @@
                     <div class="row">
                         <span class="tag ${r.status === 'billed' ? 'bi' : 'un'}">${r.status === 'billed' ? '請求済み' : '未請求'}</span>
                         <b style="flex:1;min-width:0">${esc(r.date)}　${esc(r.kanriNo)}　${esc(r.shopName || r.roomName)}</b>
-                        <b>${yen(r.amount)}</b><span class="muted">（${esc(r.taxMode || '税抜')}）</span>
+                        <b${minusCls(r.amount)}>${yen(r.amount)}</b><span class="muted">（${esc(r.taxMode || '税抜')}）</span>
                     </div>
                     <div>${esc(r.type)}${r.trackingNo ? `　📦 ${esc(r.trackingNo)}` : ''}${r.memo ? '：' + esc(r.memo) : ''}</div>
                     ${r.kanriNo ? '' : (r.shopName || r.roomName)
@@ -1026,6 +1036,32 @@
                 alert('取り込みに失敗しました：' + e.message);
             } finally {
                 btn.disabled = false; btn.textContent = '以前の着払いを取り込む';
+            }
+        };
+
+        // 以前プラスで記録した「補填」を、まとめてマイナスに直す（未請求だけ）
+        window.fixMinusRecords = async function (btn) {
+            if (!records.length) { alert('先に対象月を選んで「読み込む」を押してください'); return; }
+            const targets = records.filter(r => MINUS_TYPES.indexOf(r.type) !== -1 && r.status !== 'billed' && Number(r.amount) > 0);
+            if (!targets.length) { alert('マイナスに直す記録はありませんでした'); return; }
+            const total = targets.reduce((n, r) => n + Number(r.amount), 0);
+            if (!confirm(`未請求の「補填」${targets.length} 件（合計 ${yen(total)}）を、マイナスの金額に直しますか？`)) return;
+            btn.disabled = true;
+            try {
+                for (let i = 0; i < targets.length; i += 400) {
+                    const b = writeBatch(db);
+                    targets.slice(i, i + 400).forEach(r => b.update(doc(db, 'billing_records', r._id), {
+                        unitPrice: -Math.abs(Number(r.unitPrice) || 0), amount: -Math.abs(Number(r.amount) || 0)
+                    }));
+                    await b.commit();
+                }
+                targets.forEach(r => { r.unitPrice = -Math.abs(Number(r.unitPrice) || 0); r.amount = -Math.abs(Number(r.amount) || 0); });
+                render();
+                alert(`${targets.length} 件をマイナスに直しました。`);
+            } catch (e) {
+                alert('更新に失敗しました：' + e.message);
+            } finally {
+                btn.disabled = false;
             }
         };
 
