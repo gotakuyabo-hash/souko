@@ -1289,6 +1289,9 @@ function getOkiSettings() {
 function charWidth(ch) { const c = ch.charCodeAt(0); return (c <= 0x7e || (c >= 0xff61 && c <= 0xff9f)) ? 1 : 2; }
 function widthOf(str) { let w = 0; for (const ch of str) w += charWidth(ch); return w; }
 function cutByWidth(str, max) { let w = 0, out = ''; for (const ch of String(str || '')) { const cw = charWidth(ch); if (w + cw > max) break; out += ch; w += cw; } return out; }
+// 佐川e飛伝の品名1：半角・全角に関係なく、この文字数まで
+const SAGAWA_ITEM_MAX = 16;
+function cutByChars(str, max) { return Array.from(String(str || '')).slice(0, max).join('').trim(); }
 function normText(v) { return String(v === undefined || v === null ? '' : v).replace(/[\s\u3000]+/g, ' ').trim(); }
 
 // 住所などを、空白の区切りをなるべく保ちながら複数の欄に振り分ける
@@ -1459,7 +1462,7 @@ window.exportEhidenCsv = () => {
   let targetIdx = header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
   if (targetIdx === -1) targetIdx = 24;
 
-  let excludedCount = 0;
+  let excludedCount = 0, itemCutCount = 0;
   uniqueOrderNos.forEach(oNum => {
     if (okiOn && okinawaOrderNos.has(oNum)) { excludedCount++; return; }
     const matched = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
@@ -1468,7 +1471,13 @@ window.exportEhidenCsv = () => {
     for (let c = 0; c < newRow.length; c++) {
       if (String(newRow[c]).startsWith('+81')) newRow[c] = cleanPhone(newRow[c]);
     }
-    if (newRow[targetIdx] && widthOf(String(newRow[targetIdx])) > 32) newRow[targetIdx] = cutByWidth(String(newRow[targetIdx]), 32);
+    // 品名1：半角・全角に関係なく16文字まで（余分な空白はまとめ、最後の空白は削る）
+    if (newRow[targetIdx]) {
+      const item = normText(newRow[targetIdx]);
+      const cut = cutByChars(item, SAGAWA_ITEM_MAX);
+      if (cut !== item) itemCutCount++;
+      newRow[targetIdx] = cut;
+    }
     // 住所1〜3（各全角16文字）：英語の住所なら、郵便番号から都道府県・市区町村を日本語に
     if (addrOn) {
       const who = normText(newRow[SG.NAME1]) || oNum;
@@ -1489,6 +1498,7 @@ window.exportEhidenCsv = () => {
   let msg = `佐川CSVを出力しました（${outputRows.length - (header.length > 0 ? 1 : 0)}件）。`;
   if (okiOn) msg += `\n・沖縄宛て ${excludedCount} 件はヤマトで出すため除外しています。`;
   else if (okinawaOrderNos.size) msg += `\n・沖縄宛ても佐川に含めています（「沖縄宛てはヤマト」の設定がOFFのため）。`;
+  if (itemCutCount) msg += `\n・品名を${SAGAWA_ITEM_MAX}文字に切り詰めた件数：${itemCutCount}件`;
   if (addrOn) msg += `\n・英語の住所を日本語にした件数：${addrChanged}件`;
   if (warnLines.length) msg += `\n\n確認が必要な行：\n${warnLines.join('\n')}`;
   const cov = coverageWarnLines();
