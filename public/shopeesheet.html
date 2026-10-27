@@ -295,6 +295,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
     <h1>配送管理シート</h1>
     <p id="gateMsg">社内のGoogleアカウントでログインしてください。</p>
     <button id="login" class="btn primary" type="button">Googleでログイン</button>
+    <p style="margin:16px 0 0"><button id="loginRedirect" class="all" type="button">ログイン画面が閉じない・進まないときはこちら</button></p>
   </div>
 </div>
 
@@ -304,7 +305,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
@@ -790,7 +791,19 @@ document.addEventListener('click', e => {
   if (t.dataset.f){ S.filter = t.dataset.f; S.limit = 300; if (S.tab !== 'orders') switchTab('orders'); render(); return; }
   if (t.dataset.tab){ switchTab(t.dataset.tab); return; }
   if (t.id === 'reload'){ load(); return; }
-  if (t.id === 'login'){ signInWithPopup(auth, new GoogleAuthProvider()).catch(err => { $('gateMsg').textContent = 'ログインできませんでした：' + (err.code || err.message); }); return; }
+  if (t.id === 'login'){
+    signInWithPopup(auth, new GoogleAuthProvider()).catch(err => {
+      // ポップアップが使えない環境では、ページを切り替える方式でログインし直す
+      if (['auth/popup-blocked','auth/cancelled-popup-request','auth/operation-not-supported-in-this-environment','auth/internal-error'].includes(err.code)){
+        signInWithRedirect(auth, new GoogleAuthProvider());
+        return;
+      }
+      if (err.code === 'auth/popup-closed-by-user') return;
+      $('gateMsg').textContent = 'ログインできませんでした：' + (err.code || err.message);
+    });
+    return;
+  }
+  if (t.id === 'loginRedirect'){ signInWithRedirect(auth, new GoogleAuthProvider()); return; }
   if (t.id === 'logout'){ signOut(auth); return; }
   if (t.id === 'sellerAdmin'){ openSellerAdmin(); return; }
   if (t.dataset.del){ removeSeller(t.dataset.del); return; }
@@ -913,6 +926,7 @@ async function removeSeller(id){
 }
 
 /* ===== ログイン ===== */
+getRedirectResult(auth).catch(err => { $('gateMsg').textContent = 'ログインできませんでした：' + (err.code || err.message); });
 onAuthStateChanged(auth, async user => {
   $('gate').hidden = !!user;
   $('who').textContent = user ? user.email : '';
