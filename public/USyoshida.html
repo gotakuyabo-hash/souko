@@ -51,6 +51,14 @@ main{max-width:1180px;margin:0 auto;padding:20px}
 textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface);resize:vertical;font-variant-numeric:tabular-nums}
 .search-row{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .search-row .muted{margin-right:auto}
+.qwrap{position:relative}
+.sugg{position:absolute;left:0;right:0;top:100%;margin:4px 0 0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.15);z-index:4;max-height:320px;overflow:auto}
+.sugg li{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:4px;cursor:pointer;font-variant-numeric:tabular-nums}
+.sugg li.on,.sugg li:hover{background:var(--sel)}
+.sugg li .t{font-weight:700;letter-spacing:.03em}
+.sugg li .t mark{background:var(--tape-soft);color:inherit;border-radius:2px}
+.sugg li .c{font-size:12px;color:var(--muted);white-space:nowrap}
+.sugg .hint{display:block;cursor:default;font-size:12px;color:var(--muted)}
 
 #summary{margin:16px 0 8px}
 .sum-line{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
@@ -195,7 +203,10 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <button data-mode="tracking" class="on" role="tab" aria-selected="true">倉庫追跡番号</button>
         <button data-mode="no" role="tab" aria-selected="false">No.</button>
       </div>
-      <textarea id="q" rows="4" placeholder="倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK）"></textarea>
+      <div class="qwrap">
+        <textarea id="q" rows="4" placeholder="倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK。3桁以上で候補が出ます）" autocomplete="off" aria-autocomplete="list" aria-controls="qSugg"></textarea>
+        <ul id="qSugg" class="sugg" role="listbox" aria-label="倉庫追跡番号の候補" hidden></ul>
+      </div>
       <div class="search-row">
         <span id="qCount" class="muted">0件</span>
         <button id="btnClear" class="ghost">クリア</button>
@@ -358,6 +369,7 @@ const state = {
   rows: {},        // No → 行データ
   groups: [],      // [{key, rows:[No...]}]
   notFound: [],
+  dupKeys: [],     // ほかの番号と同じ注文しか出てこなかった番号
   selected: new Set(),
   inq: {},         // No → 問い合わせ中の情報
 };
@@ -507,6 +519,7 @@ $('#btnSaveSettings').onclick = async () => {
       updatedBy: state.user.email || '',
     }), { merge:true });
     state.config = cfg;
+    SUG.items = null; SUG.off = false;
     $('#dlgSettings').close();
     toast('設定を保存しました');
     loadConfig();
@@ -519,7 +532,8 @@ document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.seg button').forEach(x => { x.classList.toggle('on', x===b); x.setAttribute('aria-selected', x===b); });
   $('#q').placeholder = state.mode === 'no'
     ? 'No.を入力または貼り付け（例：10266 10267）'
-    : '倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK）';
+    : '倉庫追跡番号を入力または貼り付け（改行・スペース・カンマ区切りで複数OK。3桁以上で候補が出ます）';
+  closeSugg();
   updateCount();
 });
 
@@ -535,11 +549,12 @@ function parseTokens(){
 }
 function updateCount(){ $('#qCount').textContent = parseTokens().length + '件（重複は1つにまとめます）'; }
 $('#q').addEventListener('input', updateCount);
-$('#btnClear').onclick = () => { $('#q').value=''; updateCount(); $('#q').focus(); };
+$('#btnClear').onclick = () => { $('#q').value=''; updateCount(); closeSugg(); $('#q').focus(); };
 $('#q').addEventListener('keydown', e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) doSearch(); });
 $('#btnSearch').onclick = () => doSearch(false);
 
 async function doSearch(preselect){
+  closeSugg();
   const tokens = parseTokens();
   if (!tokens.length) { toast('番号を入力してください'); return; }
   const btn = $('#btnSearch'); btn.disabled = true; btn.textContent = '検索中…';
@@ -552,10 +567,15 @@ async function doSearch(preselect){
 
     state.groups = [];
     state.notFound = j.results.filter(r => !r.rowNumbers.length).map(r => r.key);
+    state.dupKeys = [];
     if (state.mode === 'tracking') {
+      const used = new Set(); // 同じ行が2つの番号に出ないようにする
       j.results.forEach(res => {
         if (!res.rowNumbers.length) return;
-        state.groups.push({ key: res.key, rows: res.rowNumbers.map(rn => byRowNum[rn].no) });
+        const rows = res.rowNumbers.map(rn => byRowNum[rn].no).filter(no => !used.has(no));
+        rows.forEach(no => used.add(no));
+        if (rows.length) state.groups.push({ key: res.key, rows });
+        else state.dupKeys.push(res.key);
       });
     } else {
       const map = {};
@@ -568,14 +588,91 @@ async function doSearch(preselect){
     }
     state.selected = new Set(preselect ? j.rows.map(r=>r.no) : []);
     render();
-    saveOrders(j.rows);
-    await loadInquiryFlags(j.rows.map(r=>r.no));
+    const saved = await loadInquiryFlags(j.rows.map(r=>r.no));
     render();
+    saveOrders(j.rows, saved);
   }catch(e){ toast(e.message, 6000); }
   finally{ btn.disabled = false; btn.textContent = '検索する'; }
 }
 
+/* ===== 倉庫追跡番号の候補（部分入力） ===== */
+// 連携GASの action「trackings」でシートの倉庫追跡番号を一度だけ取り寄せ、手元で絞り込む
+const SUG = { items:null, at:0, loading:null, off:false, list:[], idx:-1 };
+async function loadTrackings(force){
+  if (SUG.off) return null;
+  if (!force && SUG.items && Date.now() - SUG.at < 10*60*1000) return SUG.items; // 10分は使い回す
+  if (SUG.loading) return SUG.loading;
+  SUG.loading = gas('trackings').then(j => {
+    SUG.items = (j.items || []).map(x => ({ t:normTracking(x.t), n:x.n||1, last:x.last||0 })).filter(x => x.t);
+    SUG.at = Date.now(); return SUG.items;
+  }).catch(e => {
+    SUG.off = true;
+    toast('候補を出せませんでした。連携GASに「trackings」を追加すると使えるようになります（'+e.message+'）', 8000);
+    return null;
+  }).finally(() => { SUG.loading = null; });
+  return SUG.loading;
+}
+// カーソル位置の入力途中の番号
+function currentToken(){
+  const ta = $('#q'), v = ta.value, pos = ta.selectionStart;
+  const before = v.slice(0, pos), after = v.slice(pos);
+  const a = before.search(/[^\s,、，]*$/);
+  const bm = after.match(/^[^\s,、，]*/);
+  return { start:a, end:pos + bm[0].length, text:normTracking(before.slice(a) + bm[0]) };
+}
+function closeSugg(){ SUG.list = []; SUG.idx = -1; const u=$('#qSugg'); if (u) { u.hidden = true; u.innerHTML = ''; } $('#q').setAttribute('aria-expanded','false'); }
+async function showSugg(){
+  if (state.mode !== 'tracking') return closeSugg();
+  const tok = currentToken();
+  if (tok.text.length < 3) return closeSugg();
+  const items = await loadTrackings();
+  if (!items) return closeSugg();
+  const now = currentToken(); if (now.text !== tok.text) return; // 取り寄せ中に入力が変わった
+  const already = new Set(parseTokens());
+  const hits = items.filter(x => x.t.includes(tok.text) && x.t !== tok.text && !already.has(x.t))
+    .sort((a,b) => (b.t.startsWith(tok.text) - a.t.startsWith(tok.text)) || (b.last - a.last))
+    .slice(0, 8);
+  SUG.list = hits; SUG.idx = hits.length ? 0 : -1;
+  const u = $('#qSugg');
+  if (!hits.length) { u.innerHTML = '<li class="hint">「'+esc(tok.text)+'」を含む番号はシートにありません</li>'; u.hidden = false; return; }
+  u.innerHTML = hits.map((x, i) => {
+    const p = x.t.indexOf(tok.text);
+    const t = esc(x.t.slice(0,p)) + '<mark>' + esc(tok.text) + '</mark>' + esc(x.t.slice(p + tok.text.length));
+    return '<li role="option" data-i="'+i+'" class="'+(i===SUG.idx?'on':'')+'" aria-selected="'+(i===SUG.idx)+'"><span class="t">'+t+'</span><span class="c">'+x.n+'件'+(x.last ? '・No.'+x.last : '')+'</span></li>';
+  }).join('');
+  u.hidden = false; $('#q').setAttribute('aria-expanded','true');
+}
+function moveSugg(d){
+  if (!SUG.list.length) return;
+  SUG.idx = (SUG.idx + d + SUG.list.length) % SUG.list.length;
+  document.querySelectorAll('#qSugg li[data-i]').forEach(li => { const on = Number(li.dataset.i)===SUG.idx; li.classList.toggle('on', on); li.setAttribute('aria-selected', on); if (on) li.scrollIntoView({ block:'nearest' }); });
+}
+function pickSugg(i){
+  const x = SUG.list[i]; if (!x) return;
+  const ta = $('#q'), tok = currentToken(), v = ta.value;
+  const rest = v.slice(tok.end).replace(/^[^\S\n]*/, '');
+  const ins = x.t + '\n';
+  ta.value = v.slice(0, tok.start) + ins + rest;
+  const pos = tok.start + ins.length;
+  ta.setSelectionRange(pos, pos); ta.focus();
+  closeSugg(); updateCount();
+}
+let suggTimer = null;
+$('#q').addEventListener('input', () => { clearTimeout(suggTimer); suggTimer = setTimeout(showSugg, 150); });
+$('#q').addEventListener('focus', () => { if (state.mode==='tracking') loadTrackings(); });
+$('#q').addEventListener('keydown', e => {
+  if ($('#qSugg').hidden || !SUG.list.length) { if (e.key==='Escape') closeSugg(); return; }
+  if (e.key==='ArrowDown') { e.preventDefault(); moveSugg(1); }
+  else if (e.key==='ArrowUp') { e.preventDefault(); moveSugg(-1); }
+  else if ((e.key==='Enter' && !e.ctrlKey && !e.metaKey) || e.key==='Tab') { e.preventDefault(); pickSugg(SUG.idx); }
+  else if (e.key==='Escape') { e.preventDefault(); closeSugg(); }
+});
+$('#qSugg').addEventListener('mousedown', e => { const li = e.target.closest('li[data-i]'); if (li) { e.preventDefault(); pickSugg(Number(li.dataset.i)); } });
+$('#q').addEventListener('blur', () => setTimeout(closeSugg, 120));
+
 /* ===== 同梱・注意の判定 ===== */
+// 備考欄のNo.（5〜6桁。電話番号など長い数字の一部は拾わない）
+function noteNos(note){ return (String(note||'').match(/(?<!\d)\d{5,6}(?!\d)/g) || []).map(Number); }
 function groupOf(no){ const g = state.groups.find(g => g.rows.indexOf(no) >= 0); return g ? g.key : ''; }
 function infoOf(r){
   const badges = [];
@@ -587,7 +684,7 @@ function infoOf(r){
   }
   if (/同梱/.test(r.note||'')) {
     badges.push({ t:'同梱指示あり', warn:false });
-    const nums = (String(r.note).match(/\d{5}/g) || []).map(Number).filter(n => n !== r.no);
+    const nums = noteNos(r.note).filter(n => n !== r.no);
     [...new Set(nums)].forEach(n => {
       const p = state.rows[n];
       if (!p) partners.push('同梱相手：No.'+n+'（今回の検索結果にありません）');
@@ -608,6 +705,7 @@ function render(){
     + (state.mode==='tracking' ? '見つかった番号 '+state.groups.length+'件' : '倉庫追跡番号 '+state.groups.length+'件に分かれています')
     + ' ／ 該当なし '+state.notFound.length+'件</span></div>';
   if (state.notFound.length) html += '<div class="chips" aria-label="該当なしの'+label+'">'+state.notFound.map(k=>'<span class="chip">'+esc(k)+'</span>').join('')+'</div>';
+  if (state.dupKeys.length) html += '<p class="small muted" style="margin-top:6px">ほかの番号と同じ注文だったため、まとめて表示した番号：'+state.dupKeys.map(esc).join('、')+'</p>';
   $('#summary').innerHTML = html;
 
   $('#groups').innerHTML = state.groups.map((g, gi) => {
@@ -709,28 +807,36 @@ async function setArrived(clear){
 }
 
 /* ===== Firestore への記録 ===== */
-async function saveOrders(rows){
+// まとめて書き込む（Firestoreの1回の上限500件に当たらないよう400件ずつ）
+async function batchSetAll(items){
+  for (let i=0; i<items.length; i+=400) {
+    const batch = db.batch();
+    items.slice(i, i+400).forEach(([ref, data]) => batch.set(ref, data, { merge:true }));
+    await batch.commit();
+  }
+}
+// シートの内容が前回の記録と違う行だけ書く（書き込み回数を減らす）
+function rowChanged(r, old){
+  if (!old) return true;
+  return Object.keys(r).some(k => String(r[k] == null ? '' : r[k]) !== String(old[k] == null ? '' : old[k]));
+}
+async function saveOrders(rows, saved){
   try{
     const col = clientRef().collection('orders');
-    for (let i=0; i<rows.length; i+=400) {
-      const batch = db.batch();
-      rows.slice(i, i+400).forEach(r => batch.set(col.doc(String(r.no)), Object.assign({}, r, {
-        lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }), { merge:true }));
-      await batch.commit();
-    }
+    const items = rows.filter(r => !saved || rowChanged(r, saved[r.no])).map(r => [col.doc(String(r.no)), Object.assign({}, r, {
+      lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
+    })]);
+    await batchSetAll(items);
   }catch(e){ console.warn('Firestoreへの保存に失敗', e); }
 }
 async function logArrival(nos, date){
   try{
     const col = clientRef().collection('orders');
-    const batch = db.batch();
-    nos.forEach(no => batch.set(col.doc(String(no)), {
+    await batchSetAll(nos.map(no => [col.doc(String(no)), {
       arrivedAt: date,
       arrivedLoggedAt: firebase.firestore.FieldValue.serverTimestamp(),
       arrivedBy: state.user.email || '',
-    }, { merge:true }));
-    await batch.commit();
+    }]));
   }catch(e){ console.warn('入荷記録の保存に失敗', e); }
 }
 
@@ -863,7 +969,7 @@ function buildLabels(){
   const union = (a,b) => { a=find(a); b=find(b); if (a!==b) parent[Math.max(a,b)] = Math.min(a,b); };
   const byOid = {};
   rows.forEach(r => { const o=String(r.orderId||'').trim(); if (o && o!=='有在庫用') { if (byOid[o]!==undefined) union(byOid[o], r.no); else byOid[o]=r.no; } });
-  rows.forEach(r => { if (/同梱/.test(r.note||'')) (String(r.note).match(/\d{5}/g)||[]).map(Number).forEach(n => { if (parent[n]!==undefined) union(r.no, n); }); });
+  rows.forEach(r => { if (/同梱/.test(r.note||'')) noteNos(r.note).forEach(n => { if (parent[n]!==undefined) union(r.no, n); }); });
   const groups = {};
   rows.forEach(r => { const k=find(r.no); (groups[k] = groups[k] || []).push(r); });
   const labels = [];
@@ -897,6 +1003,7 @@ function makeLabel(rows, key, splitFrom){
   const okinawa = zip7.length===7 ? isOkinawaZip(zip7) : /沖縄県|okinawa/i.test(addr);
   const auto = okinawa ? 'yamato' : 'sagawa';
   const carrier = L.overrides[key] || (L.mode==='auto' ? auto : L.mode);
+  if (!noTag(rows, carrier==='yamato' ? 50 : 32).all) warns.push('同梱のNo.が品名に入りきりません（紐づけ後に確認してください）');
 
   const t = rows.map(r=>r.deliveryTime).find(Boolean) || '';
   const tm = t ? TIME_MAP[normTime(t)] : null;
@@ -990,7 +1097,7 @@ function yamatoRow(l, cfg){
   v['ご依頼主名'] = cutB(shop, 32);
   v['品名コード１'] = cutB(r0.asin, 30);
   v['品名１'] = cutB(r0.item, 50);
-  v['品名２'] = cutB('(No.'+l.rows.map(r=>r.no).join(',')+')', 50);
+  v['品名２'] = noTag(l.rows, 50).text;
   v['記事'] = cutB(r0.orderId, 20);
   v['営業所止置き'] = '0';
   v['発行枚数'] = '1';
@@ -1020,7 +1127,7 @@ function sagawaRow(l, cfg){
   v['ご依頼主住所２'] = cutB(toZen(cfg.senderAddr2), 32);
   v['ご依頼主名称１'] = cutB(toZen(shop), 32);
   v['品名１'] = cutB(toZen(r0.item), 32);
-  v['品名２'] = cutB('(No.'+l.rows.map(r=>r.no).join(',')+')', 32);
+  v['品名２'] = noTag(l.rows, 32).text;
   v['品名３'] = cutB(r0.orderId, 32);
   v['出荷個数'] = '1';
   v['配達日'] = compactDate(l.dd);
@@ -1030,6 +1137,16 @@ function sagawaRow(l, cfg){
   return fill(SAGAWA_HEADERS, v);
 }
 
+// 品名２の「(No.…)」：入るところまでNo.を入れ、必ず「)」で閉じる（途中で切れた番号を作らない）
+function noTag(rows, max){
+  let s = '(No.', n = 0;
+  for (const r of rows) {
+    const add = (n ? ',' : '') + r.no;
+    if (blen(s + add + ')') > max) break;
+    s += add; n++;
+  }
+  return { text: s + ')', all: n === rows.length };
+}
 function fill(headers, v){
   Object.keys(v).forEach(k => { if (headers.indexOf(k) < 0) throw new Error('列名が見つかりません：'+k); });
   return headers.map(h => v[h] == null ? '' : String(v[h]));
@@ -1065,16 +1182,16 @@ function saveCsv(carrier){
 async function logLabels(list){
   try{
     const col = clientRef().collection('orders');
-    const batch = db.batch();
-    list.forEach(l => l.rows.forEach(r => batch.set(col.doc(String(r.no)), {
+    const items = [];
+    list.forEach(l => l.rows.forEach(r => items.push([col.doc(String(r.no)), {
       bundleNos: l.rows.map(x=>x.no),
       labelCarrier: l.carrier,
       labelType: l.carrier==='yamato' ? l.type : '',
       labelShipDate: L.shipDate,
       labelCreatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       labelCreatedBy: state.user.email || '',
-    }, { merge:true })));
-    await batch.commit();
+    }])));
+    await batchSetAll(items);
   }catch(e){ console.warn('送り状の記録に失敗', e); }
 }
 
@@ -1111,14 +1228,17 @@ async function ordersByOrderIds(ids){
 }
 
 /* ===== 問い合わせ中 ===== */
+// 問い合わせ中の読み込み。読んだ記録は No.→内容 で返す（読めなかったときは null）
 async function loadInquiryFlags(nos){
+  const saved = {};
   try{
     for (const part of chunk([...new Set(nos)].map(String), 30)) {
       const snap = await ordersCol().where(firebase.firestore.FieldPath.documentId(),'in',part).get();
       part.forEach(id => delete state.inq[Number(id)]);
-      snap.forEach(d => { const iq=d.data().inquiry; if (iq && iq.active) state.inq[Number(d.id)] = iq; });
+      snap.forEach(d => { const v=d.data(); saved[Number(d.id)] = v; const iq=v.inquiry; if (iq && iq.active) state.inq[Number(d.id)] = iq; });
     }
-  }catch(e){ console.warn('問い合わせ中の読み込みに失敗', e); }
+    return saved;
+  }catch(e){ console.warn('問い合わせ中の読み込みに失敗', e); return null; }
 }
 
 async function toggleInquiry(no){
@@ -1199,7 +1319,8 @@ function logList(title, items, limit){
   items.slice(0, limit||30).forEach(x => linkLog('  - '+x));
   if (items.length > (limit||30)) linkLog('  …ほか'+(items.length-(limit||30))+'件');
 }
-function parseNos(s){ const m=String(s||'').match(/No\.?\s*([\d,，、\s]+)/i); return m ? m[1].split(/[,，、\s]+/).map(Number).filter(Boolean) : []; }
+// 「(No.…)」を「)」まで読めたときだけ使う。切れているものは受注番号で照合する
+function parseNos(s){ const m=String(s||'').match(/No\.?\s*([\d,，、\s]+)\)/i); return m ? m[1].split(/[,，、\s]+/).map(Number).filter(Boolean) : []; }
 function pad2(n){ return String(n).padStart(2,'0'); }
 function normDate(s){
   const t = String(s||'').trim();
@@ -1251,9 +1372,10 @@ $('#btnLink').onclick = async () => {
     const plan = nos.map(no => {
       const c = byNo[no], r = cur[no];
       if (!r) return { no, c, status:'nf' };
+      if (state.inq[no]) return { no, c, r, status:'inq' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
       const ex = normTracking(r.tracking);
       if (ex && ex !== normTracking(c.tracking)) return { no, c, r, status:'conflict' };
-      return { no, c, r, status: ex ? 'same' : 'ok', inq: !!state.inq[no] };
+      return { no, c, r, status: ex ? 'same' : 'ok' };
     });
     linkPlan = { plan, unlinked };
     renderLinkPlan();
@@ -1266,9 +1388,9 @@ function renderLinkPlan(){
   const w = plan.filter(p => p.status==='ok' || p.status==='same');
   const label = p => {
     if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
+    if (p.status==='inq') return '<span class="st-ng">問い合わせ中のため書き込みません</span>';
     if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
-    const base = p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます';
-    return '<span class="st-ok">'+base+'</span>' + (p.inq ? '<br><span class="st-ng">問い合わせ中のため出荷日は入れません</span>' : '');
+    return '<span class="st-ok">'+(p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます')+'</span>';
   };
   $('#linkResult').innerHTML = '<p><b>書き込み対象 '+w.length+'件</b><span class="muted"> ／ 書き込まない '+(plan.length-w.length)+'件 ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
     + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
@@ -1289,24 +1411,18 @@ $('#btnLinkWrite').onclick = async () => {
   try{
     let done = 0; const notFound = [];
     for (const part of chunk(targets, 100)) {
-      const updates = part.map(p => {
-        const fields = { carrier:p.c.carrier, tracking:p.c.tracking };
-        if (!p.inq) fields.shippedAt = p.c.date || todayStr();
-        return { no:p.no, rowNumber:p.r.rowNumber, fields };
-      });
+      const updates = part.map(p => ({ no:p.no, rowNumber:p.r.rowNumber,
+        fields:{ carrier:p.c.carrier, tracking:p.c.tracking, shippedAt:p.c.date || todayStr() } }));
       const j = await gas('write', { updates });
       done += j.updated; notFound.push(...j.notFound);
-      const batch = db.batch();
-      part.forEach(p => batch.set(ordersCol().doc(String(p.no)), {
+      await batchSetAll(part.map(p => [ordersCol().doc(String(p.no)), {
         carrier:p.c.carrier, tracking:p.c.tracking,
-        shippedAt: p.inq ? (p.r.shippedAt||'') : (p.c.date || todayStr()),
+        shippedAt: p.c.date || todayStr(),
         trackingLinkedAt: serverTs(),
-      }, { merge:true }));
-      await batch.commit().catch(e => console.warn(e));
+      }])).catch(e => console.warn(e));
     }
-    linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号'+(targets.some(p=>!p.inq)?'・出荷日':'')+'）');
-    const inq = targets.filter(p=>p.inq).map(p=>'No.'+p.no);
-    logList('問い合わせ中のため出荷日を入れなかった注文', inq);
+    linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号・出荷日）');
+    logList('問い合わせ中のため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='inq').map(p=>'No.'+p.no));
     logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
     toast(done+'件をシートに反映しました');
   }catch(e){ linkLog('❌ '+e.message); toast(e.message, 6000); }
@@ -1453,9 +1569,7 @@ $('#btnRobotWrite').onclick = async () => {
     for (const part of chunk(updates, 100)) {
       const j = await gas('write', { updates: part.map(u => ({ no:u.no, rowNumber:u.rowNumber, fields:u.fields })) });
       done += j.updated; nf.push(...j.notFound);
-      const batch = db.batch();
-      part.forEach(u => batch.set(ordersCol().doc(String(u.no)), { robotStatus:u._x.status, robotMessage:u._x.msg, robotAt:serverTs() }, { merge:true }));
-      await batch.commit().catch(e => console.warn(e));
+      await batchSetAll(part.map(u => [ordersCol().doc(String(u.no)), { robotStatus:u._x.status, robotMessage:u._x.msg, robotAt:serverTs() }])).catch(e => console.warn(e));
     }
     toast(done+'件をシートに反映しました'+(nf.length ? ' ／ シートで見つからなかったNo.：'+nf.join('、') : ''), nf.length ? 8000 : 3200);
   }catch(e){ toast(e.message, 6000); }
