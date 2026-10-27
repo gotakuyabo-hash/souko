@@ -28,6 +28,7 @@
   }
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{margin:0}
 body{background:var(--paper);color:var(--ink);font-family:'BIZ UDPGothic','Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.55;padding-bottom:84px}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -800,7 +801,10 @@ document.addEventListener('click', e => {
   if (t.id === 'login'){
     // ポップアップは使わず、ページを切り替える方式でログイン（ブラウザの制限で失敗しにくい）
     $('gateMsg').textContent = 'Googleのログイン画面に移動します…';
-    signInWithRedirect(auth, new GoogleAuthProvider());
+    try { sessionStorage.setItem('loginTried', String(Date.now())); } catch(e){}
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt:'select_account' }); // 毎回アカウント選択を出す
+    signInWithRedirect(auth, provider).catch(err => showLoginError(err));
     return;
   }
   if (t.id === 'logout'){ signOut(auth); return; }
@@ -926,10 +930,27 @@ async function removeSeller(id){
 
 /* ===== ログイン ===== */
 $('gateWhere').textContent = '開いている場所：' + (location.protocol === 'file:' ? 'パソコン内のファイル（file://）' : location.hostname);
-getRedirectResult(auth).catch(err => {
-  $('gateMsg').textContent = 'ログインできませんでした（' + (err.code || err.message) + '）' +
-    (err.code === 'auth/unauthorized-domain' ? '：' + location.hostname + ' をFirebaseの承認済みドメインに追加してください。' : '');
-});
+function showLoginError(err){
+  const code = (err && (err.code || err.message)) || String(err);
+  const hint = {
+    'auth/unauthorized-domain':'：' + location.hostname + ' をFirebaseの承認済みドメインに追加してください。',
+    'auth/operation-not-allowed':'：FirebaseでGoogleログインを有効にしてください。',
+    'auth/network-request-failed':'：通信できませんでした。APIキーの制限やネットワークを確認してください。',
+  }[err && err.code] || '';
+  $('gateMsg').textContent = 'ログインできませんでした（' + code + '）' + hint;
+}
+window.addEventListener('unhandledrejection', e => { if (!auth.currentUser) showLoginError(e.reason); });
+window.addEventListener('error', e => { if (!auth.currentUser) $('gateMsg').textContent = '画面のエラー：' + e.message; });
+
+let tried = '';
+try { tried = sessionStorage.getItem('loginTried') || ''; sessionStorage.removeItem('loginTried'); } catch(e){}
+getRedirectResult(auth)
+  .then(r => {
+    if (!r && tried && !auth.currentUser){
+      $('gateMsg').textContent = 'Googleから戻りましたが、ログイン情報を受け取れませんでした（手順を確認してください）。';
+    }
+  })
+  .catch(showLoginError);
 onAuthStateChanged(auth, async user => {
   $('gate').hidden = !!user;
   $('who').textContent = user ? user.email : '';
