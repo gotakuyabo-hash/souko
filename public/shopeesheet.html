@@ -610,14 +610,16 @@ function openEdit(o){
     '<div class="two"><label>発送日<input name="shipDate" type="date" value="'+esc(/^\d{4}-\d{2}-\d{2}$/.test(o.shipDate)?o.shipDate:'')+'"></label>' +
     '<label>配送業者<input name="carrier" list="dlCarriers" value="'+esc(o.carrier)+'" autocomplete="off"></label></div>' +
     '<div class="two"><label>配送番号<input name="tracking" value="'+esc(o.tracking)+'" autocomplete="off"></label>' +
-    '<label>サイズ（120以上のとき）<input name="size" value="'+esc(o.size)+'" autocomplete="off"></label></div>' +
+    (o.sizeCheck
+      ? '<label class="opt" style="align-self:end;margin-bottom:8px"><input type="checkbox" name="size"'+(o.size?' checked':'')+'>120サイズ以上</label></div>'
+      : '<label>サイズ（120以上のとき）<input name="size" value="'+esc(o.size)+'" autocomplete="off"></label></div>') +
     '<label>備考<textarea name="note">'+esc(o.note)+'</textarea></label>' +
     '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">保存する</button></div></form>',
     async fd => {
       const fields = {
         received: fd.get('received') === 'on', shipped: fd.get('shipped') === 'on',
         shipDate: fd.get('shipDate'), carrier: fd.get('carrier').trim(), tracking: fd.get('tracking').trim(),
-        size: fd.get('size').trim(), note: fd.get('note'),
+        size: o.sizeCheck ? fd.get('size') === 'on' : (fd.get('size') || '').trim(), note: fd.get('note'),
       };
       const res = await call('updateOrders', [{ row:o.row, orderId:o.orderId, fields }]);
       applyResult(res);
