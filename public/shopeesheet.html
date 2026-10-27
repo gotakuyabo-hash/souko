@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<title>配送管理シート</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+:root{
+  --paper:#EEF2F1; --surface:#FFFFFF; --ink:#1F2B2E; --muted:#5F6E73; --line:#D5DDDB;
+  --seller:#2D6CB5; --seller-bg:#E8F0FA;
+  --wh:#1F7A52; --wh-bg:#E1F1E8;
+  --wait:#9E5C0C; --wait-bg:#FBEEDB;
+  --danger:#B3372E; --danger-bg:#FBE6E3;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#141A1C; --surface:#1D2528; --ink:#E5ECEA; --muted:#9AA8AB; --line:#34413F;
+    --seller:#86B4EC; --seller-bg:#1C2B3B;
+    --wh:#6FCB9C; --wh-bg:#17311F;
+    --wait:#E9A957; --wait-bg:#382813;
+    --danger:#F08B81; --danger-bg:#3B1E1B;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:'BIZ UDPGothic','Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.55;padding-bottom:84px}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--seller);outline-offset:2px}
+h1,h2{margin:0;font-weight:700}
+h1{font-size:20px;line-height:1.3}
+h2{font-size:16px}
+.muted{color:var(--muted)}
+.hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.num{font-variant-numeric:tabular-nums}
+
+/* ヘッダー */
+.top{display:flex;align-items:center;gap:16px;padding:16px 20px 8px;max-width:1360px;margin:0 auto}
+.top .title{flex:1;min-width:0}
+.top p{margin:2px 0 0;font-size:13px}
+
+/* 状況（受領待ち → 出荷待ち → 出荷済） */
+.flow{max-width:1360px;margin:0 auto;padding:8px 20px 16px;display:flex;align-items:stretch;gap:12px;flex-wrap:wrap}
+.flow .total{display:flex;align-items:baseline;gap:6px;padding:10px 18px;border:2px solid var(--wait);border-radius:14px;background:var(--wait-bg);color:var(--wait);cursor:pointer;text-align:left}
+.flow .total b{font-size:40px;line-height:1;font-variant-numeric:tabular-nums}
+.flow .total .l{font-weight:700;font-size:15px}
+.pipe{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+.stage{display:flex;flex-direction:column;align-items:flex-start;padding:8px 16px;border:1px solid var(--line);background:var(--surface);cursor:pointer;min-width:112px}
+.stage:first-child{border-radius:12px 0 0 12px}
+.stage:last-of-type{border-radius:0 12px 12px 0}
+.stage + .arrow + .stage{border-left:none}
+.stage span{font-size:13px;color:var(--muted)}
+.stage b{font-size:24px;line-height:1.2;font-variant-numeric:tabular-nums}
+.arrow{width:0;height:0;border-top:10px solid transparent;border-bottom:10px solid transparent;border-left:10px solid var(--line);margin:0 -1px;position:relative;z-index:1}
+.stage[aria-pressed="true"],.flow .total[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--ink)}
+.all{align-self:center;background:none;border:none;color:var(--seller);text-decoration:underline;cursor:pointer;padding:6px}
+.all[aria-pressed="true"]{color:var(--ink);font-weight:700;text-decoration:none}
+
+/* タブ */
+.tabs{max-width:1360px;margin:0 auto;padding:0 20px;display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.tab{background:none;border:none;border-bottom:3px solid transparent;padding:10px 18px;cursor:pointer;color:var(--muted);font-weight:700}
+.tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+main{max-width:1360px;margin:0 auto;padding:16px 20px}
+
+/* ボタン・入力 */
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:700;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--wh);border-color:var(--wh);color:#fff}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--danger)}
+.btn:disabled{opacity:.5;cursor:default}
+input[type=text],input[type=search],input[type=number],input[type=date],input:not([type]),select,textarea{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+textarea{min-height:64px;resize:vertical}
+label{display:block;font-size:13px;color:var(--muted)}
+label > input,label > select,label > textarea{margin-top:4px;color:var(--ink);font-size:15px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.toolbar input[type=search]{flex:1;min-width:220px;max-width:460px}
+.opt{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--ink)}
+.opt input{width:18px;height:18px}
+.legend{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:0 0 8px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-left:8px}
+.sw.seller{background:var(--seller-bg);border:1px solid var(--seller)}
+.sw.wh{background:var(--wh-bg);border:1px solid var(--wh)}
+
+/* 注文一覧 */
+.list{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.row{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 78px 56px;gap:10px;align-items:start;padding:10px 12px;border-top:1px solid var(--line)}
+.row:first-child{border-top:none}
+.row.cont{border-top:1px dashed var(--line)}
+.row.cont .oid{visibility:hidden}
+.row.is-sel{background:var(--seller-bg)}
+.row .ck input{width:20px;height:20px;margin:2px 0 0}
+.row .no{color:var(--muted);font-size:13px;padding-top:3px}
+.oid{font-weight:700;font-variant-numeric:tabular-nums;word-break:break-all}
+.oid small{font-weight:400;color:var(--muted);margin-left:6px}
+.item{color:var(--seller)}
+.qty{font-weight:700;font-size:17px;color:var(--seller);font-variant-numeric:tabular-nums}
+.state{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--surface);cursor:pointer;font-size:13px;font-weight:700;color:var(--muted)}
+.chip.ship:not(.on){border-color:var(--wait);color:var(--wait)}
+.chip.on{background:var(--wh);border-color:var(--wh);color:#fff}
+.wh{background:var(--wh-bg);border-radius:8px;padding:6px 10px;font-size:14px;min-height:34px;font-variant-numeric:tabular-nums;word-break:break-all}
+.wh .empty{color:var(--muted)}
+.size{display:inline-block;margin-left:6px;padding:0 6px;border-radius:4px;background:var(--wait-bg);color:var(--wait);font-size:12px;font-weight:700}
+.note{font-size:13px;color:var(--ink);word-break:break-word}
+.lbl a{color:var(--seller);font-weight:700}
+.lbl .none{color:var(--danger);font-size:12px}
+.edit{background:none;border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer;font-size:13px}
+.more{display:block;width:100%;padding:14px;background:none;border:none;border-top:1px solid var(--line);color:var(--seller);cursor:pointer;font-weight:700}
+.empty-state{padding:40px 20px;text-align:center;color:var(--muted)}
+.list-head{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 78px 56px;gap:10px;padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);background:var(--paper)}
+
+/* 一括操作バー */
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--ink);padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;z-index:10}
+.bar #selCount{font-weight:700;margin-right:8px}
+
+/* パネル（入庫・在庫） */
+.cols{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:16px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.panel h2{margin-bottom:12px}
+.panel form > label,.panel > label{margin-bottom:10px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.two label{margin:0}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.ph h2{margin:0}
+.ph select{width:auto}
+.tablewrap{overflow-x:auto;padding:0}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:700;background:var(--paper);position:sticky;top:0}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.neg td{background:var(--danger-bg)}
+.neg-v{color:var(--danger);font-weight:700}
+.diff{color:var(--danger);font-weight:700}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:var(--wait-bg);color:var(--wait);margin-left:6px;font-weight:700}
+.pend{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.pend:first-child{border-top:none}
+details summary{cursor:pointer;font-weight:700}
+details ul{margin:10px 0 0;padding-left:20px;font-size:14px}
+
+/* ダイアログ */
+dialog{border:none;border-radius:14px;padding:0;width:min(560px,94vw);background:var(--surface);color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.35)}
+dialog::backdrop{background:rgba(20,30,32,.45)}
+.dlg{padding:20px}
+.dlg h2{margin-bottom:6px}
+.dlg .sub{color:var(--muted);font-size:13px;margin:0 0 14px;max-height:120px;overflow:auto}
+.dlg label{margin-bottom:10px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
+.dlg .checks{display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 10px}
+.dlg ul{margin:6px 0;padding-left:20px;font-size:13px}
+.prog{height:8px;background:var(--paper);border-radius:4px;overflow:hidden;margin:12px 0}
+.prog i{display:block;height:100%;background:var(--wh);width:0;transition:width .2s}
+
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90vw}
+.toast.show{opacity:1}
+.toast.err{background:var(--danger);color:#fff}
+.busy{position:fixed;inset:0;background:rgba(20,30,32,.15);display:flex;align-items:center;justify-content:center;z-index:40}
+.spin{width:36px;height:36px;border:4px solid var(--line);border-top-color:var(--wh);border-radius:50%;animation:sp 0.8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}.toast,.prog i{transition:none}}
+
+/* ログイン・セラー選択 */
+.gate{position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.gate .box{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center}
+.gate h1{margin-bottom:8px}
+.gate p{color:var(--muted);margin:0 0 20px}
+.top .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.top select{width:auto;max-width:260px;font-weight:700}
+.who{font-size:12px;color:var(--muted)}
+.sellers{list-style:none;margin:0 0 16px;padding:0;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.sellers li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--line);font-size:14px}
+.sellers li:first-child{border-top:none}
+.sellers small{color:var(--muted);display:block}
+
+/* スマホ */
+@media (max-width:860px){
+  .list-head{display:none}
+  .row{grid-template-columns:32px 1fr auto;grid-template-areas:"ck main qty" "ck state state" "ck wh wh" "ck note note" "ck lbl edit";row-gap:8px}
+  .row .ck{grid-area:ck}.row .no{display:none}.row .main{grid-area:main}.row .qty{grid-area:qty}
+  .row .state{grid-area:state}.row .wh{grid-area:wh}.row .note{grid-area:note}.row .lbl{grid-area:lbl}.row .edit{grid-area:edit;justify-self:end}
+  .row.cont .oid{visibility:visible;color:var(--muted);font-weight:400}
+  .cols{grid-template-columns:1fr}
+  .flow .total b{font-size:32px}
+  .stage{min-width:92px;padding:6px 10px}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="title">
+    <h1 id="title">読み込み中…</h1>
+    <p id="meta" class="muted"></p>
+  </div>
+  <div class="ctrl">
+    <select id="seller" aria-label="セラー"></select>
+    <button id="sellerAdmin" class="btn ghost" type="button">セラー管理</button>
+    <button id="reload" class="btn ghost" type="button">最新にする</button>
+    <button id="logout" class="btn ghost" type="button">ログアウト</button>
+    <span id="who" class="who"></span>
+  </div>
+</header>
+
+<section id="flow" class="flow" aria-label="出荷の状況"></section>
+
+<nav class="tabs" role="tablist">
+  <button class="tab on" data-tab="orders" role="tab" type="button">出荷</button>
+  <button class="tab" data-tab="inbound" role="tab" type="button">入庫</button>
+  <button class="tab" data-tab="stock" role="tab" type="button">在庫</button>
+</nav>
+
+<main>
+  <!-- 出荷 -->
+  <section id="v-orders" class="view">
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Order ID・商品名・配送番号で探す">
+      <label class="opt"><input type="checkbox" id="groupSel" checked>同じOrder IDをまとめて選択</label>
+      <button class="btn ghost" id="selAll" type="button">表示中をすべて選択</button>
+    </div>
+    <div class="legend">色の意味：<span class="sw seller"></span>セラー記入<span class="sw wh"></span>倉庫記入</div>
+    <div id="list" class="list"></div>
+  </section>
+
+  <!-- 入庫 -->
+  <section id="v-inbound" class="view" hidden>
+    <div class="cols">
+      <div class="panel">
+        <h2>入庫を登録</h2>
+        <form id="inForm">
+          <label>商品名<input name="name" list="dlNames" required autocomplete="off"></label>
+          <div class="two">
+            <label>商品コード<input name="code" autocomplete="off"></label>
+            <label>賞味期限<input name="expiry" placeholder="2026/06" autocomplete="off"></label>
+          </div>
+          <div class="two">
+            <label>入荷予定数<input name="planned" type="number" min="0" inputmode="numeric"></label>
+            <label>入庫数量<input name="inQty" type="number" min="0" inputmode="numeric"></label>
+          </div>
+          <div class="two">
+            <label>入荷日<input name="inDate" type="date"></label>
+            <label>担当者<input name="staff" list="dlStaff" autocomplete="off"></label>
+          </div>
+          <label>備考<input name="note" autocomplete="off"></label>
+          <button class="btn primary" type="submit">入庫を登録</button>
+          <p class="hint">入荷日を空にすると「入荷待ち」として登録します。届いたら右の一覧から入荷処理できます。</p>
+        </form>
+      </div>
+      <div>
+        <div class="panel">
+          <h2>入荷待ち</h2>
+          <div id="pendingIn"></div>
+        </div>
+        <div class="panel tablewrap" style="padding:0">
+          <div class="ph" style="padding:16px 16px 0">
+            <h2>入庫履歴</h2>
+            <select id="inMonth" aria-label="入庫年月"></select>
+          </div>
+          <div id="inHist" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 在庫 -->
+  <section id="v-stock" class="view" hidden>
+    <div class="toolbar">
+      <input id="sq" type="search" placeholder="商品名で探す">
+      <button id="addStock" class="btn" type="button" hidden></button>
+    </div>
+    <div class="panel tablewrap" style="padding:0"><table id="stockTbl"></table></div>
+    <details id="unmatched" class="panel" hidden></details>
+    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量。引当後＝在庫 − まだ出荷していない注文の数量。商品名が完全に一致するものだけを数えます（在庫シートと同じルール）。</p>
+  </section>
+</main>
+
+<div id="bar" class="bar" hidden>
+  <span id="selCount"></span>
+  <button class="btn" data-bulk="recv" type="button">受領にする</button>
+  <button class="btn primary" data-bulk="ship" type="button">出荷登録</button>
+  <button class="btn" data-bulk="label" type="button">ラベル印刷</button>
+  <button class="btn ghost" data-bulk="clear" type="button">選択解除</button>
+</div>
+
+<datalist id="dlNames"></datalist>
+<datalist id="dlStaff"></datalist>
+<datalist id="dlCarriers"></datalist>
+
+<div id="gate" class="gate">
+  <div class="box">
+    <h1>配送管理シート</h1>
+    <p id="gateMsg">社内のGoogleアカウントでログインしてください。</p>
+    <button id="login" class="btn primary" type="button">Googleでログイン</button>
+  </div>
+</div>
+
+<dialog id="dlg"><div class="dlg" id="dlgBody"></div></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="busy" class="busy" hidden><div class="spin" aria-label="処理中"></div></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+/* ===== 設定（ここだけ書き換えてください） ===== */
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0',
+  authDomain: 'souko-2de57.firebaseapp.com',
+  projectId: 'souko-2de57',
+  storageBucket: 'souko-2de57.firebasestorage.app',
+  messagingSenderId: '642116656086',
+  appId: '1:642116656086:web:139cc5558a4ef6ebda6277',
+};
+const API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec'; // GASのウェブアプリURL
+const SELLER_COLLECTION = 'deliverySellers'; // セラー一覧を入れるFirestoreのコレクション名
+
+const fbApp = initializeApp(FIREBASE_CONFIG);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+
+/* ===== 状態 ===== */
+let D = null;
+let SELLERS = [];
+const S = { sheetId:'', tab:'orders', filter:'pending', q:'', sel:new Set(), groupSel:true, limit:300, inMonth:'', sq:'' };
+const $ = id => document.getElementById(id);
+
+/* ===== 便利関数 ===== */
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nl = s => esc(s).replace(/\n/g, '<br>');
+const isUrl = s => /^https?:\/\//i.test(String(s || '').trim());
+function today(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function fmtMD(s){
+  const m = String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return esc(s);
+  const y = Number(m[1]), md = Number(m[2])+'/'+Number(m[3]);
+  return y === new Date().getFullYear() ? md : y+'/'+md;
+}
+function store(k, v){ try{ if (v === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, v); }catch(e){ return ''; } }
+async function run(fn, ...args){
+  const user = auth.currentUser;
+  if (!user) throw new Error('ログインしてください');
+  const idToken = await user.getIdToken();
+  const sheetId = fn === 'checkSheet' ? args.shift() : S.sheetId;
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // GASに送るときはこの形（事前確認の通信を出さない）
+      body: JSON.stringify({ idToken, sheetId, fn, args }),
+    });
+  } catch(e){ throw new Error('APIにつながりません。API_URLとGASの公開設定（アクセス：全員）を確認してください'); }
+  let j;
+  try { j = await res.json(); } catch(e){ throw new Error('APIの返事が読めません。GASを「新バージョン」でデプロイし直したか確認してください'); }
+  if (!j.ok) throw new Error(j.error || '処理に失敗しました');
+  return j.result;
+}
+let toastTimer;
+function toast(msg, err){
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = 'toast', err ? 6000 : 2600);
+}
+function busy(on){ $('busy').hidden = !on; }
+async function call(fn, ...args){
+  busy(true);
+  try { return await run(fn, ...args); }
+  catch(e){ toast(String(e && e.message || e), true); throw e; }
+  finally { busy(false); }
+}
+
+/* ===== 読み込み ===== */
+async function load(){
+  if (!S.sheetId){
+    D = null;
+    $('title').textContent = 'セラーを追加してください';
+    $('meta').textContent = '右上の「セラー管理」から、セラーの配送管理シートを登録します。';
+    $('flow').innerHTML = '';
+    $('list').innerHTML = '<div class="empty-state">セラーが登録されていません。「セラー管理」から追加してください。</div>';
+    return;
+  }
+  try { D = await call('getData'); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
+  render();
+}
+function applyResult(res){
+  if (res && res.data) D = res.data;
+  if (res && res.errors && res.errors.length) toast(res.errors.join(' / '), true);
+  render();
+}
+
+/* ===== 注文のまとまり ===== */
+function groups(){
+  const m = new Map();
+  D.orders.forEach(o => { const k = o.orderId || ('#'+o.row); if (!m.has(k)) m.set(k, []); m.get(k).push(o); });
+  return m;
+}
+function gStatus(rows){
+  if (rows.every(r => r.shipped)) return 'shipped';
+  if (rows.every(r => r.received || r.shipped)) return 'ready';
+  return 'waiting';
+}
+function keyOf(o){ return o.orderId || ('#'+o.row); }
+
+/* ===== 描画 ===== */
+function render(){
+  if (!D) return;
+  $('title').textContent = D.title;
+  $('meta').textContent = '注文シート「' + D.orderSheet + '」・' + D.loadedAt + ' に読み込み';
+  renderFlow();
+  if (S.tab === 'orders') renderOrders();
+  if (S.tab === 'inbound') renderInbound();
+  if (S.tab === 'stock') renderStock();
+  renderBar();
+  fillLists();
+}
+
+function renderFlow(){
+  const c = { waiting:0, ready:0, shipped:0 };
+  groups().forEach(rows => c[gStatus(rows)]++);
+  const p = f => S.filter === f ? 'true' : 'false';
+  $('flow').innerHTML =
+    '<button class="total" type="button" data-f="pending" aria-pressed="'+p('pending')+'"><span class="l">未出荷</span><b>'+(c.waiting+c.ready)+'</b><span class="l">件</span></button>' +
+    '<div class="pipe">' +
+      '<button class="stage" type="button" data-f="waiting" aria-pressed="'+p('waiting')+'"><span>受領待ち</span><b>'+c.waiting+'</b></button><i class="arrow"></i>' +
+      '<button class="stage" type="button" data-f="ready" aria-pressed="'+p('ready')+'"><span>出荷待ち</span><b>'+c.ready+'</b></button><i class="arrow"></i>' +
+      '<button class="stage" type="button" data-f="shipped" aria-pressed="'+p('shipped')+'"><span>出荷済</span><b>'+c.shipped+'</b></button>' +
+    '</div>' +
+    '<button class="all" type="button" data-f="all" aria-pressed="'+p('all')+'">すべて表示</button>';
+}
+
+function visibleOrders(){
+  const gm = groups();
+  const st = new Map(); gm.forEach((rows, k) => st.set(k, gStatus(rows)));
+  const q = S.q.trim().toLowerCase();
+  let list = D.orders.filter(o => {
+    const s = st.get(keyOf(o));
+    if (S.filter === 'pending' && s === 'shipped') return false;
+    if (['waiting','ready','shipped'].includes(S.filter) && s !== S.filter) return false;
+    if (q){
+      const hay = [o.orderId, o.item, o.tracking, o.note, o.seller, o.no, o.carrier].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  if (S.filter === 'shipped'){
+    // 新しい出荷から。同じOrder IDの行は並びを保つ
+    const order = []; const seen = new Map();
+    list.forEach(o => { const k = keyOf(o); if (!seen.has(k)){ seen.set(k, []); order.push(k); } seen.get(k).push(o); });
+    list = order.reverse().flatMap(k => seen.get(k));
+  }
+  return list;
+}
+
+function renderOrders(){
+  const list = visibleOrders();
+  if (!list.length){
+    const msg = S.q ? '「'+esc(S.q)+'」に当てはまる注文はありません。' :
+      S.filter === 'pending' ? '未出荷の注文はありません。' : 'この区分の注文はありません。';
+    $('list').innerHTML = '<div class="empty-state">'+msg+'</div>';
+    return;
+  }
+  const shown = list.slice(0, S.limit);
+  let prev = null;
+  const head = '<div class="list-head"><span></span><span>No</span><span>Order ID・商品名</span><span>数量</span><span>受領・出荷</span><span>発送日・業者・配送番号</span><span>備考</span><span>送り状</span><span></span></div>';
+  const rows = shown.map(o => { const cont = prev && keyOf(prev) === keyOf(o); prev = o; return rowHtml(o, cont); }).join('');
+  const more = list.length > S.limit ? '<button class="more" type="button" id="more">さらに表示（残り'+(list.length-S.limit)+'行）</button>' : '';
+  $('list').innerHTML = head + rows + more;
+}
+
+function rowHtml(o, cont){
+  const sel = S.sel.has(o.row);
+  const multiSeller = new Set(D.orders.map(x => x.seller)).size > 1;
+  const wh = (o.shipDate || o.carrier || o.tracking || o.size)
+    ? (o.shipDate ? fmtMD(o.shipDate) : '') + (o.carrier ? ' ' + esc(o.carrier) : '') +
+      (o.tracking ? '<br>' + esc(o.tracking) : '') + (o.size ? '<span class="size">' + esc(o.size) + '</span>' : '')
+    : '<span class="empty">未入力</span>';
+  const lbl = isUrl(o.label) ? '<a href="'+esc(o.label)+'" target="_blank" rel="noopener">開く</a>'
+    : o.label ? '<span class="none" title="'+esc(o.label)+'">リンクなし</span>' : '<span class="none">未登録</span>';
+  return '<div class="row'+(cont?' cont':'')+(sel?' is-sel':'')+'" data-row="'+o.row+'">' +
+    '<label class="ck"><input type="checkbox" data-act="sel" aria-label="選択"'+(sel?' checked':'')+'></label>' +
+    '<div class="no">'+esc(o.no)+'</div>' +
+    '<div class="main"><div class="oid">'+esc(o.orderId)+(multiSeller && o.seller ? '<small>'+esc(o.seller)+'</small>' : '')+'</div><div class="item">'+nl(o.item)+'</div></div>' +
+    '<div class="qty">×'+o.qty+'</div>' +
+    '<div class="state"><button type="button" class="chip'+(o.received?' on':'')+'" data-act="recv">'+(o.received?'受領済':'未受領')+'</button>' +
+      '<button type="button" class="chip ship'+(o.shipped?' on':'')+'" data-act="ship">'+(o.shipped?'出荷済':'未出荷')+'</button></div>' +
+    '<div class="wh">'+wh+'</div>' +
+    '<div class="note">'+nl(o.note)+'</div>' +
+    '<div class="lbl">'+lbl+'</div>' +
+    '<button type="button" class="edit" data-act="edit">編集</button>' +
+  '</div>';
+}
+
+function renderBar(){
+  const n = S.sel.size;
+  $('bar').hidden = !(n && S.tab === 'orders');
+  if (n){
+    const ids = new Set(selectedRows().map(keyOf));
+    $('selCount').textContent = ids.size + '件（' + n + '行）選択中';
+  }
+}
+
+function fillLists(){
+  const names = new Set([...D.inbound.map(b => b.name), ...D.stock.map(s => s.name)].filter(Boolean));
+  $('dlNames').innerHTML = [...names].map(n => '<option value="'+esc(n)+'">').join('');
+  const staff = new Set(D.inbound.map(b => b.staff).filter(Boolean));
+  $('dlStaff').innerHTML = [...staff].map(n => '<option value="'+esc(n)+'">').join('');
+  const car = new Set([...D.carriers, ...D.orders.map(o => o.carrier)].filter(Boolean));
+  $('dlCarriers').innerHTML = [...car].map(n => '<option value="'+esc(n)+'">').join('');
+}
+
+/* ===== 選択 ===== */
+const byRow = r => D.orders.find(o => o.row === r);
+function selectedRows(){ return [...S.sel].map(byRow).filter(Boolean).sort((a,b) => a.row - b.row); }
+function siblings(o){ const k = keyOf(o); return D.orders.filter(x => keyOf(x) === k); }
+function toggleSel(o, on){
+  const rows = S.groupSel ? siblings(o) : [o];
+  rows.forEach(r => on ? S.sel.add(r.row) : S.sel.delete(r.row));
+}
+
+/* ===== ダイアログ ===== */
+function openDlg(html, onSubmit){
+  $('dlgBody').innerHTML = html;
+  const dlg = $('dlg');
+  const form = $('dlgBody').querySelector('form');
+  if (form){
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const ok = await onSubmit(new FormData(form), form);
+      if (ok !== false) dlg.close();
+    };
+  }
+  $('dlgBody').querySelectorAll('[data-close]').forEach(b => b.onclick = () => dlg.close());
+  dlg.showModal();
+}
+function summaryOf(rows){
+  const ids = [...new Set(rows.map(keyOf))];
+  return ids.slice(0, 8).map(esc).join('、') + (ids.length > 8 ? ' ほか' + (ids.length - 8) + '件' : '');
+}
+
+/* ===== 受領・出荷 ===== */
+async function setReceived(rows, val){
+  const res = await call('updateOrders', rows.map(o => ({ row:o.row, orderId:o.orderId, fields:{ received:val } })));
+  applyResult(res);
+  toast(val ? '受領にしました（' + rows.length + '行）' : '受領を外しました');
+}
+
+function openShip(rows){
+  const ids = new Set(rows.map(keyOf));
+  const lastCarrier = store('lastCarrier');
+  openDlg(
+    '<form><h2>出荷登録（'+ids.size+'件・'+rows.length+'行）</h2>' +
+    '<p class="sub">'+summaryOf(rows)+'</p>' +
+    '<div class="two"><label>発送日<input name="shipDate" type="date" value="'+today()+'"></label>' +
+    '<label>配送業者<input name="carrier" list="dlCarriers" value="'+esc(lastCarrier)+'" autocomplete="off"></label></div>' +
+    '<label>配送番号<input name="tracking" autocomplete="off" inputmode="numeric" placeholder="まとめて送る場合は同じ番号が全行に入ります"></label>' +
+    '<div class="checks"><label class="opt"><input type="checkbox" name="received" checked>受領にもチェック</label>' +
+    '<label class="opt"><input type="checkbox" name="keepTracking">入力済みの配送番号は残す</label></div>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">出荷にする</button></div></form>',
+    async fd => {
+      const carrier = fd.get('carrier').trim();
+      if (carrier) store('lastCarrier', carrier);
+      const keep = fd.get('keepTracking') === 'on';
+      const updates = rows.map(o => {
+        const f = { shipped:true, shipDate:fd.get('shipDate'), carrier:carrier };
+        if (!(keep && o.tracking)) f.tracking = fd.get('tracking').trim();
+        if (fd.get('received') === 'on') f.received = true;
+        return { row:o.row, orderId:o.orderId, fields:f };
+      });
+      const res = await call('updateOrders', updates);
+      S.sel.clear();
+      applyResult(res);
+      toast('出荷にしました（' + ids.size + '件）');
+    }
+  );
+}
+
+function openUnship(rows){
+  openDlg(
+    '<form><h2>出荷を取り消しますか？</h2><p class="sub">'+summaryOf(rows)+'</p>' +
+    '<div class="checks"><label class="opt"><input type="checkbox" name="clear">発送日・配送業者・配送番号も消す</label></div>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn danger" type="submit">出荷を取り消す</button></div></form>',
+    async fd => {
+      const clear = fd.get('clear') === 'on';
+      const res = await call('updateOrders', rows.map(o => ({ row:o.row, orderId:o.orderId,
+        fields: clear ? { shipped:false, shipDate:'', carrier:'', tracking:'' } : { shipped:false } })));
+      applyResult(res);
+      toast('出荷を取り消しました');
+    }
+  );
+}
+
+function openEdit(o){
+  const lbl = isUrl(o.label) ? '<a href="'+esc(o.label)+'" target="_blank" rel="noopener">送り状を開く</a>' : (o.label ? esc(o.label) + '（リンクではありません）' : '送り状は未登録');
+  openDlg(
+    '<form><h2>'+esc(o.orderId)+'</h2>' +
+    '<p class="sub">'+nl(o.item)+' ×'+o.qty+'<br>'+lbl+'</p>' +
+    '<div class="checks"><label class="opt"><input type="checkbox" name="received"'+(o.received?' checked':'')+'>受領</label>' +
+    '<label class="opt"><input type="checkbox" name="shipped"'+(o.shipped?' checked':'')+'>出荷</label></div>' +
+    '<div class="two"><label>発送日<input name="shipDate" type="date" value="'+esc(/^\d{4}-\d{2}-\d{2}$/.test(o.shipDate)?o.shipDate:'')+'"></label>' +
+    '<label>配送業者<input name="carrier" list="dlCarriers" value="'+esc(o.carrier)+'" autocomplete="off"></label></div>' +
+    '<div class="two"><label>配送番号<input name="tracking" value="'+esc(o.tracking)+'" autocomplete="off"></label>' +
+    '<label>サイズ（120以上のとき）<input name="size" value="'+esc(o.size)+'" autocomplete="off"></label></div>' +
+    '<label>備考<textarea name="note">'+esc(o.note)+'</textarea></label>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">保存する</button></div></form>',
+    async fd => {
+      const fields = {
+        received: fd.get('received') === 'on', shipped: fd.get('shipped') === 'on',
+        shipDate: fd.get('shipDate'), carrier: fd.get('carrier').trim(), tracking: fd.get('tracking').trim(),
+        size: fd.get('size').trim(), note: fd.get('note'),
+      };
+      const res = await call('updateOrders', [{ row:o.row, orderId:o.orderId, fields }]);
+      applyResult(res);
+      toast('保存しました');
+    }
+  );
+}
+
+/* ===== ラベル印刷 ===== */
+function b64ToBytes(b64){ const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) a[i] = bin.charCodeAt(i); return a; }
+
+async function printLabels(rows){
+  const urls = [...new Set(rows.map(o => o.label).filter(isUrl))];
+  const noLink = [...new Set(rows.filter(o => !isUrl(o.label)).map(keyOf))];
+  if (!urls.length){ toast('選んだ注文に送り状のリンクがありません', true); return; }
+  if (!window.PDFLib){ toast('PDFを結合する部品を読み込めませんでした。ページを開き直してください', true); return; }
+
+  openDlg('<h2>ラベルを準備しています</h2><p class="sub" id="lbMsg">0 / '+urls.length+'</p><div class="prog"><i id="lbBar"></i></div>');
+  const results = [];
+  const CHUNK = 5;
+  for (let i = 0; i < urls.length; i += CHUNK){
+    try { results.push(...await run('getLabels', urls.slice(i, i + CHUNK))); }
+    catch(e){ urls.slice(i, i + CHUNK).forEach(u => results.push({ url:u, ok:false, error:String(e.message || e) })); }
+    const done = Math.min(i + CHUNK, urls.length);
+    if ($('lbMsg')) $('lbMsg').textContent = done + ' / ' + urls.length;
+    if ($('lbBar')) $('lbBar').style.width = (done / urls.length * 100) + '%';
+  }
+
+  const out = await PDFLib.PDFDocument.create();
+  const failed = results.filter(r => !r.ok);
+  let pages = 0;
+  for (const r of results.filter(r => r.ok)){
+    try {
+      const bytes = b64ToBytes(r.b64);
+      if (/pdf/.test(r.type)){
+        const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption:true });
+        const copied = await out.copyPages(src, src.getPageIndices());
+        copied.forEach(p => { out.addPage(p); pages++; });
+      } else {
+        const img = /png/.test(r.type) ? await out.embedPng(bytes) : await out.embedJpg(bytes);
+        const scale = Math.min(1, 420 / Math.max(img.width, img.height)); // A6程度に収める
+        const w = img.width * scale, h = img.height * scale;
+        const page = out.addPage([w, h]);
+        page.drawImage(img, { x:0, y:0, width:w, height:h });
+        pages++;
+      }
+    } catch(e){ failed.push({ url:r.url, error:'PDFとして読めませんでした' }); }
+  }
+
+  const orderOf = u => [...new Set(rows.filter(o => o.label === u).map(keyOf))].join('、');
+  const failHtml = failed.length ? '<p><b>開けなかった送り状（'+failed.length+'件）</b></p><ul>' +
+    failed.map(f => '<li>'+esc(orderOf(f.url))+'：'+esc(f.error)+' <a href="'+esc(f.url)+'" target="_blank" rel="noopener">開く</a></li>').join('') + '</ul>' : '';
+  const noHtml = noLink.length ? '<p><b>送り状リンクがない注文（'+noLink.length+'件）</b></p><ul>' + noLink.map(k => '<li>'+esc(k)+'</li>').join('') + '</ul>' : '';
+
+  if (!pages){
+    openDlg('<h2>印刷できるラベルがありません</h2>' + failHtml + noHtml + '<div class="acts"><button type="button" class="btn" data-close>閉じる</button></div>');
+    return;
+  }
+  const blob = new Blob([await out.save()], { type:'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const fname = 'labels_' + today() + '.pdf';
+  openDlg(
+    '<h2>'+pages+'枚のラベルをまとめました</h2>' +
+    '<p class="sub">選んだ順（シートの並び順）に並んでいます。</p>' + failHtml + noHtml +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>閉じる</button>' +
+    '<a class="btn" href="'+url+'" download="'+fname+'">ダウンロード</a>' +
+    '<a class="btn primary" href="'+url+'" target="_blank" rel="noopener">開いて印刷</a></div>'
+  );
+}
+
+/* ===== 入庫 ===== */
+function renderInbound(){
+  if (!D.hasInbound){
+    $('pendingIn').innerHTML = '<p class="muted">「入庫シート」が見つかりません。シート名を確認してください。</p>';
+    $('inHist').innerHTML = ''; return;
+  }
+  const f = $('inForm');
+  if (!f.elements.inDate.value) f.elements.inDate.value = today();
+  if (!f.elements.staff.value) f.elements.staff.value = store('lastStaff');
+
+  // 入荷待ち
+  const pend = D.inbound.filter(b => !b.inDate && b.inQty === '' && Number(b.planned) > 0);
+  $('pendingIn').innerHTML = pend.length ? pend.map(b =>
+    '<div class="pend"><div><b>'+esc(b.name)+'</b><div class="muted" style="font-size:13px">予定 '+b.planned+'個'+(b.expiry?'・賞味期限 '+esc(b.expiry):'')+(b.note?'・'+esc(b.note):'')+'</div></div>' +
+    '<button class="btn primary" type="button" data-recv-in="'+b.row+'">入荷処理</button></div>').join('')
+    : '<p class="muted" style="margin:0">入荷待ちの商品はありません。</p>';
+
+  // 月の選択肢（入庫年月ごとの合計つき）
+  const byMonth = new Map();
+  D.inbound.forEach(b => { if (!b.inDate) return; const m = b.inDate.slice(0,7); byMonth.set(m, (byMonth.get(m)||0) + (Number(b.inQty)||0)); });
+  const months = [...byMonth.keys()].sort().reverse();
+  if (!S.inMonth || (S.inMonth !== 'all' && !byMonth.has(S.inMonth))) S.inMonth = months[0] || 'all';
+  $('inMonth').innerHTML = months.map(m => '<option value="'+m+'"'+(S.inMonth===m?' selected':'')+'>'+m.replace('-','年')+'月（'+byMonth.get(m)+'個）</option>').join('') +
+    '<option value="all"'+(S.inMonth==='all'?' selected':'')+'>すべて</option>';
+
+  const hist = D.inbound.filter(b => b.inDate && (S.inMonth === 'all' || b.inDate.slice(0,7) === S.inMonth))
+    .sort((a,b) => (b.inDate.localeCompare(a.inDate)) || (b.row - a.row));
+  $('inHist').innerHTML = hist.length ?
+    '<table><thead><tr><th>入荷日</th><th>商品名</th><th class="n">予定</th><th class="n">入庫</th><th>賞味期限</th><th>担当</th><th>備考</th></tr></thead><tbody>' +
+    hist.map(b => {
+      const diff = b.planned !== '' && b.inQty !== '' && Number(b.planned) !== Number(b.inQty);
+      return '<tr><td class="num">'+fmtMD(b.inDate)+'</td><td>'+esc(b.name)+(b.code?'<div class="muted" style="font-size:12px">'+esc(b.code)+'</div>':'')+'</td>' +
+        '<td class="n">'+esc(b.planned)+'</td><td class="n'+(diff?' diff':'')+'">'+esc(b.inQty)+(diff?'<span class="tag">差あり</span>':'')+'</td>' +
+        '<td>'+esc(b.expiry)+'</td><td>'+esc(b.staff)+'</td><td>'+esc(b.note)+'</td></tr>';
+    }).join('') + '</tbody></table>'
+    : '<p class="muted" style="padding:0 16px 16px">この月の入庫はありません。</p>';
+}
+
+function openReceiveIn(b){
+  openDlg(
+    '<form><h2>入荷処理</h2><p class="sub">'+esc(b.name)+'（予定 '+b.planned+'個）</p>' +
+    '<div class="two"><label>入荷日<input name="inDate" type="date" value="'+today()+'" required></label>' +
+    '<label>入庫数量<input name="inQty" type="number" min="0" inputmode="numeric" value="'+esc(b.planned)+'" required></label></div>' +
+    '<div class="two"><label>担当者<input name="staff" list="dlStaff" value="'+esc(store('lastStaff'))+'" autocomplete="off"></label>' +
+    '<label>賞味期限<input name="expiry" value="'+esc(b.expiry)+'" placeholder="2026/06" autocomplete="off"></label></div>' +
+    '<label>備考<input name="note" value="'+esc(b.note)+'" autocomplete="off"></label>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">入荷にする</button></div></form>',
+    async fd => {
+      const staff = fd.get('staff').trim(); if (staff) store('lastStaff', staff);
+      const res = await call('updateInbound', { row:b.row, name:b.name, fields:{
+        inDate:fd.get('inDate'), inQty:fd.get('inQty'), staff, expiry:fd.get('expiry').trim(), note:fd.get('note') } });
+      applyResult(res);
+      toast('入荷にしました');
+    }
+  );
+}
+
+/* ===== 在庫 ===== */
+function stockRows(){
+  const map = new Map();
+  const get = n => { if (!map.has(n)) map.set(n, { name:n, inQty:0, pend:0, out:0, resv:0, inSheet:false }); return map.get(n); };
+  D.stock.forEach(s => get(s.name).inSheet = true);
+  D.inbound.forEach(b => {
+    const x = get(b.name);
+    if (b.inQty !== '') x.inQty += Number(b.inQty) || 0;
+    else if (!b.inDate) x.pend += Number(b.planned) || 0;
+  });
+  const unmatched = new Map();
+  D.orders.forEach(o => {
+    const k = o.item.trim();
+    if (!map.has(k)){ unmatched.set(k, (unmatched.get(k)||0) + o.qty); return; }
+    const x = map.get(k);
+    if (o.shipped) x.out += o.qty; else x.resv += o.qty;
+  });
+  const rows = [...map.values()].map(x => ({ ...x, stock:x.inQty - x.out, avail:x.inQty - x.out - x.resv }));
+  return { rows, unmatched };
+}
+
+function renderStock(){
+  const { rows, unmatched } = stockRows();
+  const q = S.sq.trim().toLowerCase();
+  const list = rows.filter(r => !q || r.name.toLowerCase().includes(q)).sort((a,b) => a.avail - b.avail || a.name.localeCompare(b.name, 'ja'));
+  $('stockTbl').innerHTML = list.length ?
+    '<thead><tr><th>商品名</th><th class="n">入庫</th><th class="n">出庫</th><th class="n">在庫</th><th class="n">未出荷の注文</th><th class="n">引当後</th><th class="n">入荷待ち</th></tr></thead><tbody>' +
+    list.map(r => '<tr'+(r.avail < 0 ? ' class="neg"' : '')+'><td>'+esc(r.name)+(r.inSheet?'':'<span class="tag">在庫シート未登録</span>')+'</td>' +
+      '<td class="n">'+r.inQty+'</td><td class="n">'+r.out+'</td><td class="n'+(r.stock<0?' neg-v':'')+'"><b>'+r.stock+'</b></td>' +
+      '<td class="n">'+(r.resv||'')+'</td><td class="n'+(r.avail<0?' neg-v':'')+'">'+r.avail+'</td><td class="n">'+(r.pend||'')+'</td></tr>').join('') + '</tbody>'
+    : '<tbody><tr><td class="muted">商品がありません。入庫を登録すると、ここに在庫が出ます。</td></tr></tbody>';
+
+  const missing = rows.filter(r => !r.inSheet).map(r => r.name);
+  const btn = $('addStock');
+  btn.hidden = !(missing.length && D.hasStock);
+  btn.textContent = '在庫シートに未登録の商品を追加（' + missing.length + '件）';
+  btn.dataset.names = JSON.stringify(missing);
+
+  const um = $('unmatched');
+  um.hidden = !unmatched.size;
+  um.innerHTML = '<summary>在庫と結びついていない注文の商品名（'+unmatched.size+'件）</summary>' +
+    '<p class="hint">入庫シートと商品名が完全に一致していないため、在庫から引かれていません。1つのセルに複数商品を書いた注文もここに出ます。</p>' +
+    '<ul>' + [...unmatched.entries()].map(([n, q]) => '<li>'+nl(n || '（商品名なし）')+' ×'+q+'</li>').join('') + '</ul>';
+}
+
+/* ===== イベント ===== */
+document.addEventListener('click', e => {
+  const t = e.target.closest('button, input[type=checkbox]');
+  if (!t) return;
+
+  if (t.dataset.f){ S.filter = t.dataset.f; S.limit = 300; if (S.tab !== 'orders') switchTab('orders'); render(); return; }
+  if (t.dataset.tab){ switchTab(t.dataset.tab); return; }
+  if (t.id === 'reload'){ load(); return; }
+  if (t.id === 'login'){ signInWithPopup(auth, new GoogleAuthProvider()).catch(err => { $('gateMsg').textContent = 'ログインできませんでした：' + (err.code || err.message); }); return; }
+  if (t.id === 'logout'){ signOut(auth); return; }
+  if (t.id === 'sellerAdmin'){ openSellerAdmin(); return; }
+  if (t.dataset.del){ removeSeller(t.dataset.del); return; }
+  if (t.id === 'more'){ S.limit += 300; renderOrders(); return; }
+  if (t.id === 'selAll'){ visibleOrders().slice(0, S.limit).forEach(o => S.sel.add(o.row)); renderOrders(); renderBar(); return; }
+  if (t.dataset.recvIn){ const b = D.inbound.find(x => x.row === Number(t.dataset.recvIn)); if (b) openReceiveIn(b); return; }
+  if (t.id === 'addStock'){
+    const names = JSON.parse(t.dataset.names || '[]');
+    call('addStockItems', names).then(res => { applyResult(res); toast('在庫シートに' + res.added + '件追加しました'); }).catch(() => {});
+    return;
+  }
+
+  if (t.dataset.bulk){
+    const rows = selectedRows();
+    if (t.dataset.bulk === 'clear'){ S.sel.clear(); render(); return; }
+    if (!rows.length) return;
+    if (t.dataset.bulk === 'recv') setReceived(rows.filter(o => !o.received), true).catch(() => {});
+    if (t.dataset.bulk === 'ship') openShip(rows);
+    if (t.dataset.bulk === 'label') printLabels(rows).catch(err => toast(String(err.message || err), true));
+    return;
+  }
+
+  const rowEl = t.closest('.row');
+  if (!rowEl) return;
+  const o = byRow(Number(rowEl.dataset.row));
+  if (!o) return;
+  const act = t.dataset.act;
+  if (act === 'sel'){ toggleSel(o, t.checked); renderOrders(); renderBar(); return; }
+  if (act === 'recv'){ setReceived([o], !o.received).catch(() => {}); return; }
+  if (act === 'ship'){ const rows = siblings(o); o.shipped ? openUnship(rows.filter(r => r.shipped)) : openShip(rows.filter(r => !r.shipped)); return; }
+  if (act === 'edit'){ openEdit(o); return; }
+});
+
+function switchTab(tab){
+  S.tab = tab;
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== 'v-' + tab);
+  render();
+}
+
+$('q').addEventListener('input', e => { S.q = e.target.value; S.limit = 300; renderOrders(); });
+$('sq').addEventListener('input', e => { S.sq = e.target.value; renderStock(); });
+$('groupSel').addEventListener('change', e => { S.groupSel = e.target.checked; });
+$('inMonth').addEventListener('change', e => { S.inMonth = e.target.value; renderInbound(); });
+
+$('inForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  const v = k => f.elements[k].value;
+  const entry = {
+    name:v('name').trim(), code:v('code').trim(), planned:v('planned'), expiry:v('expiry').trim(),
+    inDate:v('inDate'), inQty:v('inQty'), staff:v('staff').trim(), note:v('note'),
+  };
+  if (entry.inDate && entry.inQty === ''){ toast('入荷日を入れたときは入庫数量も入れてください', true); return; }
+  if (!entry.inDate && entry.planned === ''){ toast('入荷待ちで登録するときは入荷予定数を入れてください', true); return; }
+  if (entry.staff) store('lastStaff', entry.staff);
+  try {
+    const res = await call('addInbound', entry);
+    ['name','code','planned','expiry','inQty','note'].forEach(k => f.elements[k].value = '');
+    applyResult(res);
+    toast(entry.inDate ? '入庫を登録しました' : '入荷待ちとして登録しました');
+  } catch(err){}
+});
+
+/* ===== セラー（Firestore） ===== */
+async function loadSellers(){
+  const snap = await getDocs(collection(db, SELLER_COLLECTION));
+  SELLERS = snap.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => String(a.name).localeCompare(String(b.name), 'ja'));
+  const saved = store('seller');
+  const cur = SELLERS.find(x => x.id === saved) || SELLERS[0];
+  $('seller').innerHTML = SELLERS.map(x => '<option value="'+esc(x.id)+'">'+esc(x.name)+(x.platform ? '（'+esc(x.platform)+'）' : '')+'</option>').join('');
+  $('seller').hidden = !SELLERS.length;
+  if (cur){ $('seller').value = cur.id; S.sheetId = cur.sheetId; } else { S.sheetId = ''; }
+}
+function selectSeller(id){
+  const x = SELLERS.find(s => s.id === id);
+  store('seller', id);
+  S.sheetId = x ? x.sheetId : '';
+  S.sel.clear(); S.inMonth = ''; S.limit = 300; D = null;
+  load();
+}
+$('seller').addEventListener('change', e => selectSeller(e.target.value));
+
+function openSellerAdmin(){
+  const list = SELLERS.length ? '<ul class="sellers">' + SELLERS.map(x =>
+    '<li><div><b>'+esc(x.name)+'</b>'+(x.platform?'（'+esc(x.platform)+'）':'')+'<small>'+esc(x.sheetId)+'</small></div>' +
+    '<button type="button" class="btn ghost danger" data-del="'+esc(x.id)+'">削除</button></li>').join('') + '</ul>'
+    : '<p class="muted">まだ登録されていません。</p>';
+  openDlg(
+    '<form><h2>セラー管理</h2>' + list +
+    '<label>配送管理シートのURL<input name="url" required placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off"></label>' +
+    '<div class="two"><label>表示名（空ならシート名）<input name="name" autocomplete="off"></label>' +
+    '<label>モール<select name="platform"><option>Lazada</option><option>Shopee</option><option value="">その他</option></select></label></div>' +
+    '<p class="hint">シートは、GASを作ったアカウントが編集できる状態にしておいてください。</p>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>閉じる</button><button class="btn primary" type="submit">セラーを追加</button></div></form>',
+    async fd => {
+      const url = fd.get('url').trim();
+      let info;
+      try { info = await call('checkSheet', url); } catch(e){ return false; }
+      if (SELLERS.some(x => x.sheetId === info.sheetId)){ toast('このシートはもう登録されています', true); return false; }
+      const ref = await addDoc(collection(db, SELLER_COLLECTION), {
+        name: fd.get('name').trim() || info.title, sheetId: info.sheetId, platform: fd.get('platform'),
+        createdAt: serverTimestamp(), createdBy: auth.currentUser.email,
+      });
+      await loadSellers();
+      $('seller').value = ref.id;
+      selectSeller(ref.id);
+      toast('セラーを追加しました');
+    }
+  );
+}
+async function removeSeller(id){
+  const x = SELLERS.find(s => s.id === id);
+  if (!x || !confirm('「' + x.name + '」を一覧から削除しますか？（シート自体は消えません）')) return;
+  try { await deleteDoc(doc(db, SELLER_COLLECTION, id)); } catch(e){ toast('削除できませんでした：' + (e.code || e.message), true); return; }
+  $('dlg').close();
+  await loadSellers();
+  if (store('seller') === id) selectSeller($('seller').value || '');
+  toast('削除しました');
+}
+
+/* ===== ログイン ===== */
+onAuthStateChanged(auth, async user => {
+  $('gate').hidden = !!user;
+  $('who').textContent = user ? user.email : '';
+  if (!user){ D = null; return; }
+  try { await loadSellers(); }
+  catch(e){ toast('セラー一覧を読み込めません：' + (e.code || e.message), true); }
+  load();
+});
+</script>
+</body>
+</html>
