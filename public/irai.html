@@ -127,7 +127,8 @@ dd a{color:var(--rs)}
       <div class="meta" id="meta">読み込み中…</div>
     </div>
     <div style="text-align:right">
-      <div class="user"><span id="userEmail"></span>　<button id="logout">ログアウト</button></div>
+      <button class="btn" id="syncNow">今すぐ更新</button>
+      <div class="user" style="margin-top:4px"><span id="userEmail"></span>　<button id="logout">ログアウト</button></div>
     </div>
   </div>
 
@@ -167,6 +168,9 @@ const firebaseConfig = {
   appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
   measurementId: "G-8WG8GWQGCR"
 };
+// =========================================
+// ===== GASのウェブアプリURL（「今すぐ更新」ボタン用） =====
+const SYNC_URL = "ここにGASのウェブアプリURL（…/exec）";
 // =========================================
 
 const app = initializeApp(firebaseConfig);
@@ -371,7 +375,25 @@ function copy(text) {
   }
 }
 
+// ---------- 今すぐ更新（GASで同期を実行） ----------
+async function syncNow() {
+  const b = $('syncNow');
+  b.disabled = true; b.textContent = '更新中…';
+  try {
+    const idToken = await S.user.getIdToken();
+    const res = await fetch(SYNC_URL, { method: 'POST', body: JSON.stringify({ idToken }) });
+    const r = await res.json();
+    if (r.ok) toast('シートの最新内容を反映しました');
+    else toast(r.message || ('一部のシートを同期できませんでした：' + (r.errors || []).join('／')));
+  } catch (e) {
+    toast('更新できませんでした。通信状況を確認して、もう一度お試しください。');
+  } finally {
+    b.disabled = false; b.textContent = '今すぐ更新';
+  }
+}
+
 // ---------- イベント ----------
+$('syncNow').onclick = syncNow;
 $('tabs').onclick = e => { const b = e.target.closest('.tab'); if (!b) return; S.form = b.dataset.f; S.type = 'all'; S.limit = 100; render(); };
 $('status').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.status = b.dataset.s; S.type = 'all'; S.limit = 100; render(); };
 $('chips').onclick = e => { const b = e.target.closest('.chip'); if (!b) return; S.type = b.dataset.t; S.limit = 100; render(); };
