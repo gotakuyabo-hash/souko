@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>依頼まとめ管理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --ink:#1B2433; --sub:#5B6576; --line:#D5DBE3;
+  --shopee:#D9480F; --domestic:#2B8A3E; --rs:#364FC7; --all:#1B2433;
+  --late:#C92A2A; --ok:#2B8A3E;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  font-size:15px;line-height:1.55;-webkit-text-size-adjust:100%}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid #74A3FF;outline-offset:2px}
+
+.wrap{max-width:860px;margin:0 auto;padding:12px 12px 80px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 2px 12px}
+.top h1{font-size:20px;margin:0;font-weight:700}
+.top .meta{font-size:12px;color:var(--sub)}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px}
+.btn:active{transform:translateY(1px)}
+
+/* フォーム切替：未対応件数を大きく */
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.tab{--c:var(--all);border:2px solid var(--c);background:var(--surface);border-radius:10px;
+  padding:8px 6px 6px;text-align:left;display:flex;flex-direction:column;gap:0;min-width:0}
+.tab .lb{font-size:12px;color:var(--c);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .num{font-size:28px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.tab .num small{font-size:11px;font-weight:400;color:var(--sub);margin-left:2px}
+.tab[aria-pressed="true"]{background:var(--c);color:#fff}
+.tab[aria-pressed="true"] .lb,.tab[aria-pressed="true"] .num small{color:#fff}
+.tab[data-f="shopee"]{--c:var(--shopee)} .tab[data-f="domestic"]{--c:var(--domestic)} .tab[data-f="rs"]{--c:var(--rs)}
+
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:7px 12px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.search{flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:none}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;white-space:nowrap;font-size:13px}
+.chip[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
+.chip span{opacity:.7;margin-left:4px}
+
+.alert{background:#FFF4E6;border:1px solid #FFC078;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:8px}
+
+/* 一覧：左端の色帯でフォームを区別 */
+.list{display:flex;flex-direction:column;gap:6px}
+.item{display:grid;grid-template-columns:6px 1fr auto;background:var(--surface);border-radius:8px;
+  border:1px solid var(--line);overflow:hidden}
+.item .strip{background:var(--c)}
+.item[data-f="shopee"]{--c:var(--shopee)} .item[data-f="domestic"]{--c:var(--domestic)} .item[data-f="rs"]{--c:var(--rs)}
+.item .body{padding:9px 10px;min-width:0;text-align:left;border:0;background:transparent}
+.item .l1{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--sub)}
+.type{color:var(--c);font-weight:700;font-size:13px}
+.age.late{color:var(--late);font-weight:700}
+.item .l2{font-weight:700;margin-top:1px}
+.item .l3{font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .l3 b{color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
+.item.is-done{opacity:.6}
+.quick{border:0;border-left:1px solid var(--line);background:transparent;padding:0 14px;font-size:13px;min-width:64px}
+.quick.do{color:var(--ok);font-weight:700}
+.empty{text-align:center;color:var(--sub);padding:40px 10px}
+.more{display:block;margin:10px auto}
+
+/* 詳細シート */
+.sheet-bg{position:fixed;inset:0;background:rgba(27,36,51,.45);display:none;z-index:10}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-height:88vh;overflow:auto;background:var(--surface);
+  border-radius:14px 14px 0 0;z-index:11;transform:translateY(100%);transition:transform .2s ease;padding:0 16px 24px}
+.sheet.open{transform:none}
+@media (min-width:760px){.sheet{left:50%;width:640px;margin-left:-320px}}
+@media (prefers-reduced-motion:reduce){.sheet{transition:none}}
+.sheet-h{position:sticky;top:0;background:var(--surface);padding:14px 0 10px;border-bottom:3px solid var(--c);
+  display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.sheet[data-f="shopee"]{--c:var(--shopee)} .sheet[data-f="domestic"]{--c:var(--domestic)} .sheet[data-f="rs"]{--c:var(--rs)}
+.sheet-h h2{margin:0;font-size:18px}
+.sheet-h .sub{font-size:12px;color:var(--sub)}
+.close{border:0;background:transparent;font-size:24px;line-height:1;padding:2px 6px}
+dl{margin:12px 0 0;display:grid;grid-template-columns:7.5em 1fr;gap:0}
+dt,dd{padding:8px 0;border-bottom:1px solid var(--line);margin:0}
+dt{color:var(--sub);font-size:13px;padding-right:8px}
+dd{white-space:pre-wrap;word-break:break-all}
+dd.copy{cursor:copy}
+dd a{color:var(--rs)}
+.hint{font-size:12px;color:var(--sub);margin:6px 0 0}
+.note{margin-top:14px}
+.note label{font-size:13px;color:var(--sub);display:block;margin-bottom:4px}
+.note-row{display:flex;gap:6px}
+.note-row input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.primary{background:var(--ok);color:#fff;border:0;border-radius:8px;padding:11px 18px;font-weight:700;flex:1}
+.primary.undo{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+.link{align-self:center;font-size:13px;color:var(--sub)}
+
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;
+  border-radius:10px;padding:10px 14px;font-size:14px;display:none;gap:12px;align-items:center;z-index:20;max-width:92vw}
+.toast button{background:transparent;border:0;color:#9EC5FE;font-weight:700;padding:0}
+.loading{color:var(--sub);text-align:center;padding:40px}
+.pending{color:#B35C00;font-weight:700}
+.err{color:var(--late);font-weight:700}
+.login{max-width:360px;margin:18vh auto 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px;text-align:center}
+.login h1{font-size:20px;margin:0 0 6px}
+.login p{color:var(--sub);font-size:14px;margin:0 0 18px}
+.login .primary{width:100%}
+.user{font-size:12px;color:var(--sub)}
+.user button{border:0;background:transparent;color:var(--rs);padding:0;font-size:12px}
+</style>
+</head>
+<body>
+<div id="loginView" class="login" hidden>
+  <h1>依頼まとめ管理</h1>
+  <p id="loginMsg">社内のGoogleアカウントでログインしてください。</p>
+  <button class="primary" id="loginBtn">Googleでログイン</button>
+</div>
+
+<div class="wrap" id="appView" hidden>
+  <div class="top">
+    <div>
+      <h1>依頼まとめ管理</h1>
+      <div class="meta" id="meta">読み込み中…</div>
+    </div>
+    <div style="text-align:right">
+      <div class="user"><span id="userEmail"></span>　<button id="logout">ログアウト</button></div>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="bar">
+    <div class="seg" id="status">
+      <button data-s="open" aria-pressed="true">未対応</button>
+      <button data-s="done" aria-pressed="false">対応済</button>
+      <button data-s="all" aria-pressed="false">すべて</button>
+    </div>
+    <input class="search" id="q" type="search" placeholder="注文番号・管理番号・名前・商品名で検索">
+  </div>
+  <div class="chips" id="chips"></div>
+  <div id="alerts"></div>
+  <div class="list" id="list"><div class="loading">読み込み中…</div></div>
+  <button class="btn more" id="more" hidden>さらに表示</button>
+  <p class="hint" style="text-align:center">対応済は直近120日分を表示しています。それより前はシートで確認できます。</p>
+</div>
+
+<div class="sheet-bg" id="bg"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo" hidden>元に戻す</button></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ===== Firebaseの設定（souko-2de57） =====
+const firebaseConfig = {
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app",
+  messagingSenderId: "642116656086",
+  appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+  measurementId: "G-8WG8GWQGCR"
+};
+// =========================================
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const FORM_ORDER = [['shopee', 'Shopee'], ['domestic', '国内EC'], ['rs', '注文配送']];
+const S = { reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [] };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const DAY = 86400000;
+const todayJST = () => new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+// ---------- ログイン ----------
+$('loginBtn').onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch(e => $('loginMsg').textContent = 'ログインできませんでした：' + e.message);
+$('logout').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  S.unsubs.forEach(u => u()); S.unsubs = [];
+  S.user = user;
+  $('loginView').hidden = !!user;
+  $('appView').hidden = !user;
+  if (!user) return;
+  $('userEmail').textContent = user.email;
+  listen();
+});
+
+function listen() {
+  const denied = e => {
+    $('list').innerHTML = `<div class="alert">${e.code === 'permission-denied'
+      ? 'このアカウントには閲覧の許可がありません。管理者に追加を依頼してください。'
+      : '読み込みに失敗しました：' + esc(e.message)}</div>`;
+  };
+  S.unsubs.push(onSnapshot(collection(db, 'irai_requests'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? S.reqs.delete(c.doc.id) : S.reqs.set(c.doc.id, c.doc.data()));
+    render();
+  }, denied));
+  S.unsubs.push(onSnapshot(collection(db, 'irai_actions'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? S.acts.delete(c.doc.id) : S.acts.set(c.doc.id, c.doc.data()));
+    render();
+  }, denied));
+  S.unsubs.push(onSnapshot(doc(db, 'irai_meta', 'status'), d => {
+    const m = d.data() || {};
+    $('meta').textContent = m.syncedAt ? 'シート同期 ' + m.syncedAt.slice(5) : 'シート同期 待機中';
+    $('alerts').innerHTML = (m.errors || []).map(e => `<div class="alert">同期できなかったシートがあります：${esc(e)}</div>`).join('');
+  }, () => {}));
+}
+
+// アプリで操作した内容（シート反映前）を上書きして表示
+function effective(r) {
+  const a = S.acts.get(r.id);
+  if (!a) return r;
+  return { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '' };
+}
+function allRecs() { return [...S.reqs.values()].map(effective); }
+function find(id) { const r = S.reqs.get(id); return r ? effective(r) : null; }
+
+function ageText(t) {
+  if (!t) return { txt: '', late: false };
+  const d = Math.floor((Date.now() - t) / DAY);
+  return { txt: d <= 0 ? '今日' : d + '日前', late: d >= 2 };
+}
+
+function filtered(recs) {
+  const q = S.q.trim().toLowerCase();
+  const list = recs.filter(r =>
+    (S.form === 'all' || r.form === S.form) &&
+    (S.status === 'all' || (S.status === 'open' ? !r.done : r.done)) &&
+    (S.type === 'all' || r.type === S.type) &&
+    (!q || [r.order, r.user, r.name, r.email, r.product, r.note, ...(r.fields || []).map(f => f.v)].join(' ').toLowerCase().includes(q))
+  );
+  list.sort((a, b) => S.status === 'open' ? a.t - b.t : b.t - a.t);
+  return list;
+}
+
+function render() {
+  const recs = allRecs();
+  const open = f => recs.filter(r => !r.done && (f === 'all' || r.form === f)).length;
+  const tabs = [['all', 'すべて'], ...FORM_ORDER];
+  $('tabs').innerHTML = tabs.map(([k, lb]) =>
+    `<button class="tab" data-f="${k}" aria-pressed="${S.form === k}"><span class="lb">${esc(lb)}</span><span class="num">${open(k)}<small>件</small></span></button>`).join('');
+
+  const base = recs.filter(r => (S.form === 'all' || r.form === S.form) &&
+    (S.status === 'all' || (S.status === 'open' ? !r.done : r.done)));
+  const types = {};
+  base.forEach(r => types[r.type] = (types[r.type] || 0) + 1);
+  if (S.type !== 'all' && !types[S.type]) S.type = 'all';
+  $('chips').innerHTML = `<button class="chip" data-t="all" aria-pressed="${S.type === 'all'}">すべての種別<span>${base.length}</span></button>` +
+    Object.keys(types).sort((a, b) => types[b] - types[a]).map(t =>
+      `<button class="chip" data-t="${esc(t)}" aria-pressed="${S.type === t}">${esc(t)}<span>${types[t]}</span></button>`).join('');
+
+  document.querySelectorAll('#status button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === S.status));
+
+  const list = filtered(recs);
+  const shown = list.slice(0, S.limit);
+  $('list').innerHTML = shown.length ? shown.map(itemHtml).join('') :
+    `<div class="empty">${S.status === 'open' && !S.q ? '未対応の依頼はありません。' : '条件に合う依頼はありません。検索語や種別を変えてみてください。'}</div>`;
+  $('more').hidden = list.length <= S.limit;
+  $('more').textContent = `さらに表示（残り${list.length - S.limit}件）`;
+
+  const openId = $('sheet').dataset.id;
+  if (openId && $('sheet').classList.contains('open')) { const r = find(openId); if (r) fillSheet(r); }
+}
+
+function statusTag(r) {
+  if (r.error) return `<span class="err">${esc(r.error)}</span>`;
+  if (r.pending) return `<span class="pending">シート反映待ち</span>`;
+  return '';
+}
+
+function itemHtml(r) {
+  const a = ageText(r.t);
+  const who = [r.user, r.name].filter(Boolean).join('　');
+  return `<div class="item ${r.done ? 'is-done' : ''}" data-f="${r.form}">
+    <div class="strip"></div>
+    <button class="body" data-open="${esc(r.id)}">
+      <div class="l1"><span class="type">${esc(r.type)}</span><span>${esc(r.formLabel)}</span>
+        <span class="age ${!r.done && a.late ? 'late' : ''}">${a.txt}</span>${r.done ? `<span>済 ${esc(r.doneDate)}</span>` : ''}${statusTag(r)}</div>
+      <div class="l2">${esc(who || '（名前なし）')}</div>
+      <div class="l3">${r.order ? `<b>${esc(r.order)}</b>　` : ''}${esc(r.product)}</div>
+    </button>
+    <button class="quick ${r.done ? '' : 'do'}" data-quick="${esc(r.id)}">${r.done ? '戻す' : '完了'}</button>
+  </div>`;
+}
+
+// ---------- 詳細 ----------
+function openSheet(r) {
+  $('sheet').dataset.id = r.id;
+  fillSheet(r);
+  $('bg').style.display = 'block';
+  requestAnimationFrame(() => $('sheet').classList.add('open'));
+}
+function fillSheet(r) {
+  const editing = document.activeElement && document.activeElement.id === 'noteIn';
+  if (editing) return; // メモ入力中は書き換えない
+  const rows = [['受付日時', r.ts], ['管理番号', r.user], ['名前', r.name], ['メール', r.email],
+    ...(r.fields || []).map(f => [f.k, f.v])].filter(x => x[1]);
+  const isUrl = v => /^https?:\/\//.test(v);
+  const val = v => isUrl(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">ファイルを開く</a>` : esc(v);
+  $('sheet').dataset.f = r.form;
+  $('sheet').innerHTML = `
+    <div class="sheet-h">
+      <div><h2>${esc(r.type)}</h2><div class="sub">${esc(r.formLabel)}　${r.done ? '対応済 ' + esc(r.doneDate) : '未対応・' + ageText(r.t).txt}　${statusTag(r)}</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button>
+    </div>
+    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${isUrl(v) ? '' : 'copy'}" data-copy="${esc(v)}">${val(v)}</dd>`).join('')}</dl>
+    <p class="hint">項目をタップするとコピーできます。</p>
+    ${r.noteLabel ? `<div class="note"><label for="noteIn">${esc(r.noteLabel)}</label>
+      <div class="note-row"><input id="noteIn" value="${esc(r.note || '')}"><button class="btn" id="saveNote">保存</button></div></div>` : ''}
+    <div class="actions">
+      <button class="primary ${r.done ? 'undo' : ''}" id="toggleDone">${r.done ? '未対応に戻す' : '完了にする'}</button>
+      <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">シートで開く</a>
+    </div>`;
+  $('closeSheet').onclick = closeSheet;
+  $('toggleDone').onclick = () => { toggleDone(r.id); closeSheet(); };
+  if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
+}
+function closeSheet() { $('sheet').classList.remove('open'); $('sheet').dataset.id = ''; $('bg').style.display = 'none'; }
+
+// ---------- 操作（Firestoreに記録 → GASがシートへ反映） ----------
+function writeAction(r, patch) {
+  return setDoc(doc(db, 'irai_actions', r.id), {
+    form: r.form,
+    done: r.done,
+    doneDate: r.doneDate || '',
+    note: r.note ?? null,
+    ...patch,
+    by: S.user.email,
+    at: serverTimestamp()
+  });
+}
+function toggleDone(id, isUndo) {
+  const r = find(id); if (!r) return;
+  const next = !r.done;
+  writeAction(r, { done: next, doneDate: next ? todayJST() : '' })
+    .then(() => { if (!isUndo) toast(next ? '完了にしました' : '未対応に戻しました', () => toggleDone(id, true)); })
+    .catch(e => toast('保存できませんでした：' + e.message));
+}
+function saveNote(id, v) {
+  const r = find(id); if (!r) return;
+  writeAction(r, { note: v })
+    .then(() => { document.activeElement.blur(); toast(r.noteLabel + 'を保存しました'); })
+    .catch(e => toast('保存できませんでした：' + e.message));
+}
+
+let toastTimer;
+function toast(msg, undo) {
+  $('toastMsg').textContent = msg;
+  $('toastUndo').hidden = !undo;
+  $('toastUndo').onclick = () => { $('toast').style.display = 'none'; undo && undo(); };
+  $('toast').style.display = 'flex';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').style.display = 'none', undo ? 5000 : 2500);
+}
+function copy(text) {
+  const done = () => toast('コピーしました');
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done).catch(fallback);
+  else fallback();
+  function fallback() {
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
+    t.select(); try { document.execCommand('copy'); done(); } catch (e) {} t.remove();
+  }
+}
+
+// ---------- イベント ----------
+$('tabs').onclick = e => { const b = e.target.closest('.tab'); if (!b) return; S.form = b.dataset.f; S.type = 'all'; S.limit = 100; render(); };
+$('status').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.status = b.dataset.s; S.type = 'all'; S.limit = 100; render(); };
+$('chips').onclick = e => { const b = e.target.closest('.chip'); if (!b) return; S.type = b.dataset.t; S.limit = 100; render(); };
+$('q').oninput = e => { S.q = e.target.value; S.limit = 100; render(); };
+$('more').onclick = () => { S.limit += 100; render(); };
+$('list').onclick = e => {
+  const q = e.target.closest('[data-quick]'); if (q) { toggleDone(q.dataset.quick); return; }
+  const o = e.target.closest('[data-open]'); if (o) { const r = find(o.dataset.open); if (r) openSheet(r); }
+};
+$('sheet').onclick = e => { const d = e.target.closest('dd.copy'); if (d) copy(d.dataset.copy); };
+$('bg').onclick = closeSheet;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+</script>
+</body>
+</html>
