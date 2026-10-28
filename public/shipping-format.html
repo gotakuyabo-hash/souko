@@ -135,6 +135,20 @@ tr.dragging{opacity:.4}
 tr.drag-over td{border-top:2px solid var(--accent)}
 .notice{padding:10px 12px;border-radius:6px;background:#f4f6f7;border:1px solid var(--line-soft);font-size:13px}
 .notice.warn{background:var(--tape-soft);border-color:#ecd27a}
+/* 商品マスタ一括登録 */
+.bulk-grid{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px}
+.bulk-grid .dropzone{padding:20px 12px;min-height:150px}
+textarea.bulk-paste{font:inherit;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;border:1px solid var(--line);border-radius:6px;padding:8px;width:100%;min-height:150px;resize:vertical;color:var(--ink);background:#fff}
+.bulk-help{margin:8px 0 0;color:var(--muted);font-size:12px}
+.bulk-help code{background:#f1f4f5;border-radius:4px;padding:0 4px}
+.chg{display:block;color:var(--muted);font-size:11px;text-decoration:line-through}
+td.changed{background:#e5f0f6}
+.badge-new{background:var(--yamato);color:#fff}
+.badge-upd{background:var(--accent);color:#fff}
+.badge-same{background:#dde2e4;color:var(--muted)}
+.badge-err{background:var(--danger);color:#fff}
+tr.row-err td{background:var(--danger-soft)}
+@media (max-width:760px){.bulk-grid{grid-template-columns:1fr}}
 
 /* トースト */
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:700;z-index:50;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -261,6 +275,40 @@ tr.drag-over td{border-top:2px solid var(--accent)}
   <div id="masterTab" class="tab-content">
     <section class="step">
       <div class="step-head">
+        <h2 class="step-title">商品マスタ一括登録</h2>
+        <span class="step-sub">CSVファイル、またはExcelからのコピー＆貼り付けでまとめて登録・更新できます</span>
+      </div>
+      <div class="step-body">
+        <div class="toolbar">
+          <button class="btn btn-ghost btn-sm" onclick="downloadMasterTemplate()">入力用テンプレートCSVをダウンロード</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportMasterCsv()">今のマスタをCSVで書き出す（修正して再登録用）</button>
+        </div>
+        <div class="bulk-grid">
+          <div class="dropzone" id="bulkDrop" tabindex="0" role="button" onclick="document.getElementById('bulkFile').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('bulkFile').click()}">
+            <strong>CSVファイルを選択</strong>
+            <small>ここにドラッグ＆ドロップもできます<br>（Shift_JIS・UTF-8どちらでもOK）</small>
+            <input type="file" id="bulkFile" accept=".csv,.tsv,.txt,text/csv" class="hidden" onchange="onBulkFile(this.files[0]); this.value='';">
+          </div>
+          <div>
+            <textarea id="bulkPaste" class="bulk-paste" placeholder="Excelで範囲をコピーして、ここに貼り付けてください（見出し行つき・なし どちらでもOK）&#10;&#10;例）&#10;SKUコード	商品名	バーコード	倍率	棚番&#10;ABC-001	サンプル商品A	4901234567890	1	A-1-1&#10;ABC-001-2P	サンプル商品A 2個セット	4901234567890	2	A-1-1"></textarea>
+          </div>
+        </div>
+        <p class="bulk-help">
+          列は <code>SKUコード</code>（必須）<code>商品名</code> <code>バーコード</code> <code>倍率</code> <code>棚番</code> です。見出し行があれば列の順番は自由、見出しがなければこの順番で読み取ります。<br>
+          同じSKUコードがすでにある場合は「更新」になります。
+        </p>
+        <div class="toolbar" style="margin-top:10px;margin-bottom:0">
+          <label class="check" style="font-weight:400"><input type="checkbox" id="bulkKeepBlank" checked onchange="if(bulkRows.length) previewBulk(true)"> 空欄のセルは、今のマスタの値をそのまま残す</label>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" onclick="clearBulk()">クリア</button>
+          <button class="btn btn-primary" onclick="previewBulk()">内容を確認する</button>
+        </div>
+        <div id="bulkPreviewArea" style="margin-top:12px"></div>
+      </div>
+    </section>
+
+    <section class="step">
+      <div class="step-head">
         <h2 class="step-title">商品マスタ（SKU単位）</h2>
         <span class="step-sub">棚番・倍率・バーコード・商品名を直接修正して保存できます</span>
       </div>
@@ -288,7 +336,7 @@ tr.drag-over td{border-top:2px solid var(--accent)}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -316,6 +364,7 @@ let draggedIndex = null;
 
 window.addEventListener('DOMContentLoaded', () => {
   initDropZone();
+  initBulkDrop();
   initCustomerNameStorage();
   initOkiSettings();
   initAddrSetting();
@@ -1733,6 +1782,240 @@ window.saveAllMasters = async () => {
   }
   alert(`${count} 件のマスタを保存しました。`);
   loadMasterItems();
+};
+
+/* ---------- 商品マスタ一括登録 ---------- */
+let bulkRows = [];   // 確認後の行
+const BULK_COLS = [
+  { key: 'skuCode', label: 'SKUコード', alias: ['sku', 'skuコード', 'sku_code', 'skucode', '商品コード', '品番', '管理番号'] },
+  { key: 'productName', label: '商品名', alias: ['商品名', '品名', 'name', 'productname', 'product_name', '和名'] },
+  { key: 'barcode', label: 'バーコード', alias: ['バーコード', 'jan', 'janコード', 'barcode', 'ean'] },
+  { key: 'multiplier', label: '倍率', alias: ['倍率', '入数', 'セット数', 'multiplier'] },
+  { key: 'shelfNumber', label: '棚番', alias: ['棚番', '棚番号', 'ロケ', 'ロケーション', 'shelf', 'shelfnumber', 'shelf_number'] }
+];
+
+function initBulkDrop() {
+  const dz = document.getElementById('bulkDrop');
+  if (!dz) return;
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('is-over'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('is-over'); }));
+  dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) onBulkFile(f); });
+}
+
+window.onBulkFile = async (file) => {
+  if (!file) return;
+  const buffer = await file.arrayBuffer();
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
+  catch (err) { text = new TextDecoder('shift_jis').decode(buffer); }
+  document.getElementById('bulkPaste').value = text.replace(/^\uFEFF/, '');
+  toast(`「${file.name}」を読み込みました`);
+  previewBulk();
+};
+
+window.clearBulk = () => {
+  document.getElementById('bulkPaste').value = '';
+  document.getElementById('bulkPreviewArea').innerHTML = '';
+  bulkRows = [];
+};
+
+// 区切り文字（カンマ／タブ）を指定して読む
+function parseDelimited(text, delim) {
+  const rows = []; let row = [], val = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], n = text[i + 1];
+    if (q) {
+      if (c === '"') { if (n === '"') { val += '"'; i++; } else q = false; }
+      else val += c;
+    } else if (c === '"' && val === '') q = true;
+    else if (c === delim) { row.push(val); val = ''; }
+    else if (c === '\r' || c === '\n') {
+      if (c === '\r' && n === '\n') i++;
+      row.push(val); rows.push(row); row = []; val = '';
+    } else val += c;
+  }
+  if (val !== '' || row.length) { row.push(val); rows.push(row); }
+  return rows.filter(r => r.some(v => String(v).trim() !== ''));
+}
+
+function toHalf(str) {
+  return String(str).replace(/[０-９Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)).replace(/[－ー―]/g, '-').replace(/　/g, ' ');
+}
+function normHeader(h) { return toHalf(String(h)).toLowerCase().replace(/[\s　()（）]/g, ''); }
+
+function mapHeader(row) {
+  const idx = {};
+  row.forEach((h, i) => {
+    const nh = normHeader(h);
+    BULK_COLS.forEach(c => { if (idx[c.key] === undefined && c.alias.some(a => normHeader(a) === nh)) idx[c.key] = i; });
+  });
+  return idx.skuCode !== undefined ? idx : null;
+}
+
+window.previewBulk = (keepScroll = false) => {
+  const text = document.getElementById('bulkPaste').value;
+  const area = document.getElementById('bulkPreviewArea');
+  if (!text.trim()) { area.innerHTML = '<div class="notice warn">CSVを選ぶか、データを貼り付けてください。</div>'; return; }
+
+  const firstLine = text.split(/\r?\n/).find(l => l.trim()) || '';
+  const delim = firstLine.includes('\t') ? '\t' : ',';
+  const rows = parseDelimited(text, delim);
+  let idx = mapHeader(rows[0] || []);
+  const hasHeader = !!idx;
+  if (!idx) idx = { skuCode: 0, productName: 1, barcode: 2, multiplier: 3, shelfNumber: 4 };
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const keepBlank = document.getElementById('bulkKeepBlank').checked;
+
+  const current = new Map();
+  masterItemsCache.forEach(it => current.set(String(it.skuCode || it.id), it));
+
+  bulkRows = dataRows.map((r, n) => {
+    const lineNo = n + 1 + (hasHeader ? 1 : 0);
+    const get = k => idx[k] === undefined ? '' : String(r[idx[k]] ?? '').trim();
+    const inp = {
+      skuCode: get('skuCode'),
+      productName: get('productName'),
+      barcode: toHalf(get('barcode')).replace(/\s/g, ''),
+      multiplier: toHalf(get('multiplier')),
+      shelfNumber: toHalf(get('shelfNumber')).trim()
+    };
+    const errors = [];
+    if (!inp.skuCode) errors.push('SKUコードが空です');
+    else if (inp.skuCode.includes('/') || inp.skuCode === '.' || inp.skuCode === '..' || /^__.*__$/.test(inp.skuCode)) errors.push('SKUコードに「/」などの使えない文字があります');
+    if (/e\+/i.test(inp.barcode)) errors.push('バーコードが「4.9E+12」の形になっています（Excelで列を文字列にしてください）');
+    let mult = null;
+    if (inp.multiplier !== '') {
+      mult = Number(inp.multiplier);
+      if (!Number.isInteger(mult) || mult < 1) { errors.push('倍率は1以上の整数で入れてください'); mult = null; }
+    }
+
+    const old = current.get(inp.skuCode);
+    const before = old ? {
+      productName: old.productName || old.product_name || '',
+      barcode: old.barcode || '',
+      multiplier: old.multiplier || 1,
+      shelfNumber: old.shelfNumber || old.shelf_number || ''
+    } : null;
+    const pick = (k, v, emptyVal) => (v === '' || v === null) ? (keepBlank && before ? before[k] : emptyVal) : v;
+    const after = {
+      skuCode: inp.skuCode,
+      productName: pick('productName', inp.productName, ''),
+      barcode: pick('barcode', inp.barcode, ''),
+      multiplier: pick('multiplier', mult, 1),
+      shelfNumber: pick('shelfNumber', inp.shelfNumber, '')
+    };
+    const changed = before ? ['productName', 'barcode', 'multiplier', 'shelfNumber'].filter(k => String(before[k]) !== String(after[k])) : [];
+    const status = errors.length ? 'error' : !before ? 'new' : changed.length ? 'update' : 'same';
+    return { lineNo, after, before, changed, status, errors };
+  });
+
+  // 同じSKUが複数行ある場合は、下の行を使う
+  const lastIdx = new Map();
+  bulkRows.forEach((b, i) => { if (b.status !== 'error') lastIdx.set(b.after.skuCode, i); });
+  bulkRows.forEach((b, i) => {
+    if (b.status !== 'error' && lastIdx.get(b.after.skuCode) !== i) { b.status = 'dup'; }
+  });
+
+  renderBulkPreview(hasHeader, delim);
+  if (!keepScroll) area.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+function renderBulkPreview(hasHeader, delim) {
+  const area = document.getElementById('bulkPreviewArea');
+  const cnt = s => bulkRows.filter(b => b.status === s).length;
+  const nNew = cnt('new'), nUpd = cnt('update'), nSame = cnt('same'), nErr = cnt('error'), nDup = cnt('dup');
+  const targets = nNew + nUpd;
+  const noShelf = bulkRows.filter(b => (b.status === 'new' || b.status === 'update') && !b.after.shelfNumber).length;
+
+  let html = `<div class="toolbar">
+    <div class="stats">
+      <span class="stat info">新規 <b>${nNew}</b></span>
+      <span class="stat info">更新 <b>${nUpd}</b></span>
+      <span class="stat">変更なし <b>${nSame}</b></span>
+      ${nDup ? `<span class="stat warn">重複（下の行を使用） <b>${nDup}</b></span>` : ''}
+      ${nErr ? `<span class="stat alert">エラー <b>${nErr}</b></span>` : ''}
+    </div>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" ${targets ? '' : 'disabled'} onclick="commitBulk()">新規・更新の ${targets} 件を登録する</button>
+  </div>
+  <p class="empty" style="margin:0 0 8px">${hasHeader ? '見出し行から列を読み取りました' : '見出し行がないため「SKUコード・商品名・バーコード・倍率・棚番」の順で読み取りました'}（${delim === '\t' ? 'タブ区切り' : 'カンマ区切り'}）。${nErr ? 'エラーの行は登録されません。' : ''}${noShelf ? `棚番が空のまま登録される商品が ${noShelf} 件あります。` : ''}</p>`;
+
+  const label = { new: '<span class="badge badge-new">新規</span>', update: '<span class="badge badge-upd">更新</span>', same: '<span class="badge badge-same">変更なし</span>', error: '<span class="badge badge-err">エラー</span>', dup: '<span class="badge badge-warn">重複</span>' };
+  const cell = (b, k) => {
+    const v = b.after[k];
+    if (b.status === 'update' && b.changed.includes(k)) {
+      return `<td class="changed">${escapeHtml(v) || '<span class="empty">（空）</span>'}<span class="chg">${escapeHtml(b.before[k]) || '（空）'}</span></td>`;
+    }
+    return `<td>${escapeHtml(v)}</td>`;
+  };
+  html += `<div class="table-wrap"><table><thead><tr>
+    <th>行</th><th>判定</th><th>SKUコード</th><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th>
+  </tr></thead><tbody>`;
+  // エラー → 新規 → 更新 → その他 の順に表示
+  const order = { error: 0, new: 1, update: 2, dup: 3, same: 4 };
+  [...bulkRows].sort((a, b) => order[a.status] - order[b.status] || a.lineNo - b.lineNo).forEach(b => {
+    html += `<tr class="${b.status === 'error' ? 'row-err' : ''}">
+      <td class="num">${b.lineNo}</td>
+      <td>${label[b.status]}${b.errors.length ? `<div style="color:var(--danger);font-size:11px;margin-top:2px">${b.errors.map(escapeHtml).join('<br>')}</div>` : ''}</td>
+      <td><code>${escapeHtml(b.after.skuCode)}</code></td>
+      ${cell(b, 'productName')}${cell(b, 'barcode')}${cell(b, 'multiplier')}${cell(b, 'shelfNumber')}
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  area.innerHTML = html;
+}
+
+window.commitBulk = async () => {
+  const targets = bulkRows.filter(b => b.status === 'new' || b.status === 'update');
+  if (!targets.length) return;
+  if (!confirm(`商品マスタに ${targets.length} 件を登録します。よろしいですか？\n（新規 ${targets.filter(b => b.status === 'new').length} 件／更新 ${targets.filter(b => b.status === 'update').length} 件）`)) return;
+  const area = document.getElementById('bulkPreviewArea');
+  const btn = area.querySelector('.btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = '登録しています…'; }
+  let done = 0;
+  try {
+    for (let i = 0; i < targets.length; i += 400) {
+      const batch = writeBatch(db);
+      targets.slice(i, i + 400).forEach(b => {
+        batch.set(doc(db, "product_masters", b.after.skuCode), { ...b.after, updatedAt: new Date() }, { merge: true });
+      });
+      await batch.commit();
+      done += Math.min(400, targets.length - i);
+      if (btn) btn.textContent = `登録しています… ${done}/${targets.length}`;
+    }
+    alert(`${done} 件を商品マスタに登録しました。`);
+    clearBulk();
+    loadMasterItems();
+  } catch (e) {
+    console.error(e);
+    alert(`途中で止まりました（${done} 件までは登録済み）：${e.message}\nもう一度「内容を確認する」からやり直してください。`);
+    await loadMasterItems();
+    previewBulk(true);
+  }
+};
+
+function downloadUtf8Csv(rows, filename) {
+  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+window.downloadMasterTemplate = () => {
+  downloadUtf8Csv([
+    BULK_COLS.map(c => c.label),
+    ['ABC-001', 'サンプル商品A', '4901234567890', '1', 'A-1-1'],
+    ['ABC-001-2P', 'サンプル商品A 2個セット', '4901234567890', '2', 'A-1-1']
+  ], '商品マスタ_一括登録テンプレート.csv');
+};
+
+window.exportMasterCsv = () => {
+  if (!masterItemsCache.length) { alert('マスタがまだ読み込まれていません。'); return; }
+  const rows = [...masterItemsCache]
+    .sort((a, b) => String(a.skuCode || a.id).localeCompare(String(b.skuCode || b.id)))
+    .map(it => [it.skuCode || it.id, it.productName || it.product_name || '', it.barcode || '', it.multiplier || 1, it.shelfNumber || it.shelf_number || '']);
+  downloadUtf8Csv([BULK_COLS.map(c => c.label), ...rows], `商品マスタ_${getTodayString().replace(/\//g, '')}.csv`);
 };
 
 /* ---------- CSVユーティリティ ---------- */
