@@ -90,7 +90,7 @@ label > input,label > select,label > textarea{margin-top:4px;color:var(--ink);fo
 
 /* 注文一覧 */
 .list{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.row{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 78px 56px;gap:10px;align-items:start;padding:10px 12px;border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 104px 56px;gap:10px;align-items:start;padding:10px 12px;border-top:1px solid var(--line)}
 .row:first-child{border-top:none}
 .row.cont{border-top:1px dashed var(--line)}
 .row.cont .oid{visibility:hidden}
@@ -111,10 +111,13 @@ label > input,label > select,label > textarea{margin-top:4px;color:var(--ink);fo
 .note{font-size:13px;color:var(--ink);word-break:break-word}
 .lbl a{color:var(--seller);font-weight:700}
 .lbl .none{color:var(--danger);font-size:12px}
+.lbl > div + div{margin-top:4px}
+.lbl small{color:var(--muted);font-size:11px;margin-right:4px}
+.pack{display:inline-block;margin-top:4px;padding:1px 8px;border-radius:4px;background:var(--danger);color:#fff;font-size:12px;font-weight:700}
 .edit{background:none;border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer;font-size:13px}
 .more{display:block;width:100%;padding:14px;background:none;border:none;border-top:1px solid var(--line);color:var(--seller);cursor:pointer;font-weight:700}
 .empty-state{padding:40px 20px;text-align:center;color:var(--muted)}
-.list-head{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 78px 56px;gap:10px;padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);background:var(--paper)}
+.list-head{display:grid;grid-template-columns:36px 48px minmax(220px,1.6fr) 56px 176px minmax(190px,1fr) minmax(140px,1fr) 104px 56px;gap:10px;padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);background:var(--paper)}
 
 /* 一括操作バー */
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--ink);padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;z-index:10}
@@ -284,6 +287,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <button class="btn" data-bulk="recv" type="button">受領にする</button>
   <button class="btn primary" data-bulk="ship" type="button">出荷登録</button>
   <button class="btn" data-bulk="label" type="button">ラベル印刷</button>
+  <button class="btn" data-bulk="invoice" type="button">Invoice印刷</button>
   <button class="btn ghost" data-bulk="clear" type="button">選択解除</button>
 </div>
 
@@ -465,7 +469,7 @@ function visibleOrders(){
     if (S.filter === 'pending' && s === 'shipped') return false;
     if (['waiting','ready','shipped'].includes(S.filter) && s !== S.filter) return false;
     if (q){
-      const hay = [o.orderId, o.item, o.tracking, o.note, o.seller, o.no, o.carrier].join(' ').toLowerCase();
+      const hay = [o.orderId, o.item, o.tracking, o.note, o.seller, o.no, o.carrier, o.packing ? '厳重梱包' : ''].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -489,7 +493,7 @@ function renderOrders(){
   }
   const shown = list.slice(0, S.limit);
   let prev = null;
-  const head = '<div class="list-head"><span></span><span>No</span><span>Order ID・商品名</span><span>数量</span><span>受領・出荷</span><span>発送日・業者・配送番号</span><span>備考</span><span>送り状</span><span></span></div>';
+  const head = '<div class="list-head"><span></span><span>No</span><span>Order ID・商品名</span><span>数量</span><span>受領・出荷</span><span>発送日・業者・配送番号</span><span>備考</span><span>送り状・Invoice</span><span></span></div>';
   const rows = shown.map(o => { const cont = prev && keyOf(prev) === keyOf(o); prev = o; return rowHtml(o, cont); }).join('');
   const more = list.length > S.limit ? '<button class="more" type="button" id="more">さらに表示（残り'+(list.length-S.limit)+'行）</button>' : '';
   $('list').innerHTML = head + rows + more;
@@ -502,12 +506,13 @@ function rowHtml(o, cont){
     ? (o.shipDate ? fmtMD(o.shipDate) : '') + (o.carrier ? ' ' + esc(o.carrier) : '') +
       (o.tracking ? '<br>' + esc(o.tracking) : '') + (o.size ? '<span class="size">' + esc(o.size) + '</span>' : '')
     : '<span class="empty">未入力</span>';
-  const lbl = isUrl(o.label) ? '<a href="'+esc(o.label)+'" target="_blank" rel="noopener">開く</a>'
-    : o.label ? '<span class="none" title="'+esc(o.label)+'">リンクなし</span>' : '<span class="none">未登録</span>';
+  const link = (v, name) => '<div><small>'+name+'</small>' + (isUrl(v) ? '<a href="'+esc(v)+'" target="_blank" rel="noopener">開く</a>'
+    : v ? '<span class="none" title="'+esc(v)+'">リンクなし</span>' : '<span class="none">未登録</span>') + '</div>';
+  const lbl = link(o.label, '送り状') + link(o.invoice, 'Invoice');
   return '<div class="row'+(cont?' cont':'')+(sel?' is-sel':'')+'" data-row="'+o.row+'">' +
     '<label class="ck"><input type="checkbox" data-act="sel" aria-label="選択"'+(sel?' checked':'')+'></label>' +
     '<div class="no">'+esc(o.no)+'</div>' +
-    '<div class="main"><div class="oid">'+esc(o.orderId)+(multiSeller && o.seller ? '<small>'+esc(o.seller)+'</small>' : '')+'</div><div class="item">'+nl(o.item)+'</div></div>' +
+    '<div class="main"><div class="oid">'+esc(o.orderId)+(multiSeller && o.seller ? '<small>'+esc(o.seller)+'</small>' : '')+'</div><div class="item">'+nl(o.item)+'</div>'+(o.packing ? '<span class="pack">厳重梱包</span>' : '')+'</div>' +
     '<div class="qty">×'+o.qty+'</div>' +
     '<div class="state"><button type="button" class="chip'+(o.received?' on':'')+'" data-act="recv">'+(o.received?'受領済':'未受領')+'</button>' +
       '<button type="button" class="chip ship'+(o.shipped?' on':'')+'" data-act="ship">'+(o.shipped?'出荷済':'未出荷')+'</button></div>' +
@@ -618,12 +623,14 @@ function openUnship(rows){
 }
 
 function openEdit(o){
-  const lbl = isUrl(o.label) ? '<a href="'+esc(o.label)+'" target="_blank" rel="noopener">送り状を開く</a>' : (o.label ? esc(o.label) + '（リンクではありません）' : '送り状は未登録');
+  const docLink = (v, name) => isUrl(v) ? '<a href="'+esc(v)+'" target="_blank" rel="noopener">'+name+'を開く</a>' : (v ? name + '：' + esc(v) + '（リンクではありません）' : name + 'は未登録');
+  const lbl = docLink(o.label, '送り状') + '　' + docLink(o.invoice, 'Invoice');
   openDlg(
     '<form><h2>'+esc(o.orderId)+'</h2>' +
     '<p class="sub">'+nl(o.item)+' ×'+o.qty+'<br>'+lbl+'</p>' +
     '<div class="checks"><label class="opt"><input type="checkbox" name="received"'+(o.received?' checked':'')+'>受領</label>' +
-    '<label class="opt"><input type="checkbox" name="shipped"'+(o.shipped?' checked':'')+'>出荷</label></div>' +
+    '<label class="opt"><input type="checkbox" name="shipped"'+(o.shipped?' checked':'')+'>出荷</label>' +
+    (D.hasPacking ? '<label class="opt"><input type="checkbox" name="packing"'+(o.packing?' checked':'')+'>厳重梱包</label>' : '') + '</div>' +
     '<div class="two"><label>発送日<input name="shipDate" type="date" value="'+esc(/^\d{4}-\d{2}-\d{2}$/.test(o.shipDate)?o.shipDate:'')+'"></label>' +
     '<label>配送業者<input name="carrier" list="dlCarriers" value="'+esc(o.carrier)+'" autocomplete="off"></label></div>' +
     '<div class="two"><label>配送番号<input name="tracking" value="'+esc(o.tracking)+'" autocomplete="off"></label>' +
@@ -638,6 +645,7 @@ function openEdit(o){
         shipDate: fd.get('shipDate'), carrier: fd.get('carrier').trim(), tracking: fd.get('tracking').trim(),
         size: o.sizeCheck ? fd.get('size') === 'on' : (fd.get('size') || '').trim(), note: fd.get('note'),
       };
+      if (D.hasPacking) fields.packing = fd.get('packing') === 'on';
       const res = await call('updateOrders', [{ row:o.row, orderId:o.orderId, fields }]);
       applyResult(res);
       toast('保存しました');
@@ -648,13 +656,18 @@ function openEdit(o){
 /* ===== ラベル印刷 ===== */
 function b64ToBytes(b64){ const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) a[i] = bin.charCodeAt(i); return a; }
 
-async function printLabels(rows){
-  const urls = [...new Set(rows.map(o => o.label).filter(isUrl))];
-  const noLink = [...new Set(rows.filter(o => !isUrl(o.label)).map(keyOf))];
-  if (!urls.length){ toast('選んだ注文に送り状のリンクがありません', true); return; }
+const DOC = {
+  label:   { name:'送り状',  unit:'ラベル',   file:'labels_',   max:420 }, // A6程度
+  invoice: { name:'Invoice', unit:'Invoice', file:'invoices_', max:842 }, // A4程度
+};
+async function printLabels(rows, kind = 'label'){
+  const K = DOC[kind];
+  const urls = [...new Set(rows.map(o => o[kind]).filter(isUrl))];
+  const noLink = [...new Set(rows.filter(o => !isUrl(o[kind])).map(keyOf))];
+  if (!urls.length){ toast('選んだ注文に'+K.name+'のリンクがありません', true); return; }
   if (!window.PDFLib){ toast('PDFを結合する部品を読み込めませんでした。ページを開き直してください', true); return; }
 
-  openDlg('<h2>ラベルを準備しています</h2><p class="sub" id="lbMsg">0 / '+urls.length+'</p><div class="prog"><i id="lbBar"></i></div>');
+  openDlg('<h2>'+K.unit+'を準備しています</h2><p class="sub" id="lbMsg">0 / '+urls.length+'</p><div class="prog"><i id="lbBar"></i></div>');
   const results = [];
   const CHUNK = 5;
   for (let i = 0; i < urls.length; i += CHUNK){
@@ -677,7 +690,7 @@ async function printLabels(rows){
         copied.forEach(p => { out.addPage(p); pages++; });
       } else {
         const img = /png/.test(r.type) ? await out.embedPng(bytes) : await out.embedJpg(bytes);
-        const scale = Math.min(1, 420 / Math.max(img.width, img.height)); // A6程度に収める
+        const scale = Math.min(1, K.max / Math.max(img.width, img.height));
         const w = img.width * scale, h = img.height * scale;
         const page = out.addPage([w, h]);
         page.drawImage(img, { x:0, y:0, width:w, height:h });
@@ -686,20 +699,20 @@ async function printLabels(rows){
     } catch(e){ failed.push({ url:r.url, error:'PDFとして読めませんでした' }); }
   }
 
-  const orderOf = u => [...new Set(rows.filter(o => o.label === u).map(keyOf))].join('、');
-  const failHtml = failed.length ? '<p><b>開けなかった送り状（'+failed.length+'件）</b></p><ul>' +
+  const orderOf = u => [...new Set(rows.filter(o => o[kind] === u).map(keyOf))].join('、');
+  const failHtml = failed.length ? '<p><b>開けなかった'+K.name+'（'+failed.length+'件）</b></p><ul>' +
     failed.map(f => '<li>'+esc(orderOf(f.url))+'：'+esc(f.error)+' <a href="'+esc(f.url)+'" target="_blank" rel="noopener">開く</a></li>').join('') + '</ul>' : '';
-  const noHtml = noLink.length ? '<p><b>送り状リンクがない注文（'+noLink.length+'件）</b></p><ul>' + noLink.map(k => '<li>'+esc(k)+'</li>').join('') + '</ul>' : '';
+  const noHtml = noLink.length ? '<p><b>'+K.name+'のリンクがない注文（'+noLink.length+'件）</b></p><ul>' + noLink.map(k => '<li>'+esc(k)+'</li>').join('') + '</ul>' : '';
 
   if (!pages){
-    openDlg('<h2>印刷できるラベルがありません</h2>' + failHtml + noHtml + '<div class="acts"><button type="button" class="btn" data-close>閉じる</button></div>');
+    openDlg('<h2>印刷できる'+K.unit+'がありません</h2>' + failHtml + noHtml + '<div class="acts"><button type="button" class="btn" data-close>閉じる</button></div>');
     return;
   }
   const blob = new Blob([await out.save()], { type:'application/pdf' });
   const url = URL.createObjectURL(blob);
-  const fname = 'labels_' + today() + '.pdf';
+  const fname = K.file + today() + '.pdf';
   openDlg(
-    '<h2>'+pages+'枚のラベルをまとめました</h2>' +
+    '<h2>'+pages+'枚の'+K.unit+'をまとめました</h2>' +
     '<p class="sub">選んだ順（シートの並び順）に並んでいます。</p>' + failHtml + noHtml +
     '<div class="acts"><button type="button" class="btn ghost" data-close>閉じる</button>' +
     '<a class="btn" href="'+url+'" download="'+fname+'">ダウンロード</a>' +
@@ -844,7 +857,7 @@ document.addEventListener('click', e => {
     if (!rows.length) return;
     if (t.dataset.bulk === 'recv') setReceived(rows.filter(o => !o.received), true).catch(() => {});
     if (t.dataset.bulk === 'ship') openShip(rows);
-    if (t.dataset.bulk === 'label') printLabels(rows).catch(err => toast(String(err.message || err), true));
+    if (t.dataset.bulk === 'label' || t.dataset.bulk === 'invoice') printLabels(rows, t.dataset.bulk).catch(err => toast(String(err.message || err), true));
     return;
   }
 
