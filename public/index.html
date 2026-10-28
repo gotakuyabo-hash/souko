@@ -143,6 +143,9 @@
             </div>
         </header>
 
+        <!-- 13時台ショートカット（並び替え対象外・常に一番上） -->
+        <div id="shortcut-13"></div>
+
         <div id="portal-container"></div>
     </div>
 
@@ -197,6 +200,53 @@
                 { id: "meeting", category: "communication", title: "📝 議事録", desc: "定例会議の議事録・共有事項・議題管理および前週出荷実績（Firestore同期）", href: "meeting.html", badge: 0 }
             ]
         };
+
+        // ---------- 13時台ショートカット ----------
+        //  ・ここに並べたIDのツールへ飛ぶボタンを、一番上に固定表示します
+        //  ・名前／リンク先は defaultData.cards から自動で読むので、二重管理なし
+        //  ・増やしたいときは、下の ids にツールのIDを足すだけ
+        const SHORTCUT_13 = {
+            title: "🕐 13時台",
+            ids: ["shipping-format", "bunkatusku", "bunkatuedaban"]
+        };
+
+        function renderShortcut13() {
+            const box = document.getElementById('shortcut-13');
+            if (!box) return;
+            const cards = SHORTCUT_13.ids
+                .map(id => defaultData.cards.find(c => c.id === id))
+                .filter(Boolean);
+            if (cards.length === 0) { box.innerHTML = ''; return; }
+
+            const section = document.createElement('section');
+            section.className = 'mb-6 bg-amber-500/10 border border-amber-400/40 rounded-2xl p-3.5 backdrop-blur';
+
+            const heading = document.createElement('h2');
+            heading.className = 'text-xs font-bold text-amber-200 tracking-wide mb-3 px-1';
+            heading.textContent = SHORTCUT_13.title;
+            section.appendChild(heading);
+
+            const grid = document.createElement('div');
+            grid.className = 'grid grid-cols-3 gap-2.5 sm:gap-3';
+            cards.forEach(card => {
+                const parsed = parseTitle(card.title);
+                const a = document.createElement('a');
+                a.href = card.href;
+                a.className = 'app-icon no-underline';
+                a.style.aspectRatio = 'auto';
+                a.style.padding = '12px 8px';
+                a.title = card.desc || '';
+                a.innerHTML = `
+                    <div class="app-emoji" style="font-size:1.8rem;margin-bottom:4px">${parsed.emoji}</div>
+                    <div class="app-title">${parsed.name}</div>
+                `;
+                grid.appendChild(a);
+            });
+            section.appendChild(grid);
+
+            box.innerHTML = '';
+            box.appendChild(section);
+        }
 
         // ---------- 保存データの読み書き ----------
 
@@ -658,6 +708,7 @@
             }
         });
 
+        renderShortcut13();
         render();
     </script>
 </body>
