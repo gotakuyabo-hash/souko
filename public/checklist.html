@@ -121,6 +121,13 @@ button,input,textarea{font:inherit;color:inherit}
 .req-badge.is-pending{background:var(--danger);color:#fff}
 .req-badge.is-clear{background:var(--ok-soft);color:var(--ok)}
 .req-badge.is-error{background:var(--surface);color:var(--warn)}
+.ship-detail{list-style:none;margin:8px 2px 0;padding:0;font-size:13px}
+.ship-detail li{display:flex;flex-wrap:wrap;gap:2px 8px;padding:5px 0;border-top:1px dashed var(--line)}
+.ship-detail li:first-child{border-top:0}
+.ship-detail .sd-name{font-weight:800}
+.ship-detail .sd-num{font-weight:800;color:var(--danger)}
+.ship-detail .sd-num.is-zero{color:var(--ok)}
+.ship-detail .sd-at{margin-left:auto;color:var(--muted);font-size:12px}
 
 /* 編集モード */
 .eitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-top:1px dashed var(--line)}
@@ -292,7 +299,7 @@ button,input,textarea{font:inherit;color:inherit}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, doc, setDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
    設定
@@ -318,23 +325,31 @@ const SECTIONS = [
   { key: 'reflection', time: '終業時',       name: '振り返り（1分）',  from: null, to: null }
 ];
 
+// Lazada・Shopee配送管理（shopeesheet.html）の未出荷件数
+// 配送管理アプリを開くたびにFirestore（deliverySellers）へ件数が保存され、ここに表示されます
+const SHIPSHEET_URL = "https://souko-2de57.firebaseapp.com/shopeesheet.html";
+const SHIPSHEET_API_URL = "https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec"; // 配送管理アプリと同じGAS
+const SELLER_COLLECTION = 'deliverySellers';
+
+// 依頼の未対応件数は「依頼まとめ管理」（irai.html）のデータから表示します
+// 固定リンクの req には、依頼まとめ管理のフォームのキー（shopee／domestic／rs）を入れます
+const IRAI_SUMMARY_DOC = ['settings', 'irai_summary']; // ログインしていない端末でも読める集計
+
 // 毎日必ず表示する固定リンク（「項目を編集」では消えません。変更はここで行います）
 const PINNED_LINKS = {
   morning: [
-    { title: "Shopee依頼シートを開く", req: "asa", url: "https://docs.google.com/spreadsheets/d/1DtpizUWJIeedPDOntqvcPuFWFczQ9tOfFf50NqqTAGM/edit?gid=613809574#gid=613809574" }
+    { title: "Lazada・Shopee配送管理を開く", ship: true, url: SHIPSHEET_URL },
+    { title: "Shopee依頼シートを開く", req: "shopee", url: "https://docs.google.com/spreadsheets/d/1DtpizUWJIeedPDOntqvcPuFWFczQ9tOfFf50NqqTAGM/edit?gid=613809574#gid=613809574" }
   ],
   noon: [
     { title: "資材発注（管理者）を開く", url: "https://script.google.com/macros/s/AKfycbzHVUTkzGleuPErLskecUJGUXpuIfArKkKsv-FGmD9MyzYTnNXhevN4fQQRilsdqOLf/exec?k=adm-254028a933d3" }
   ],
   afternoon: [
     { title: "RSショップ依頼シートを開く", req: "rs", url: "https://docs.google.com/spreadsheets/d/1YqZsM25wGlFFAJklup1ZAwNl-1fRYOOoVxTu04UoyWY/edit?usp=drivesdk" },
-    { title: "自己配依頼シートを開く", req: "jikohai", url: "https://docs.google.com/spreadsheets/d/1RY90UxU2mSTrJTqMbON3K2CC_onAOCrbV7pls8Sjwrg/edit?gid=1733646125#gid=1733646125" }
+    { title: "自己配依頼シートを開く", req: "domestic", url: "https://docs.google.com/spreadsheets/d/1RY90UxU2mSTrJTqMbON3K2CC_onAOCrbV7pls8Sjwrg/edit?gid=1733646125#gid=1733646125" }
   ]
 };
 
-// 依頼状況（GASウェブアプリ）のURL。デプロイ後に発行されたURLの末尾に ?k=合言葉 を付けて貼り付けます
-// 空のままなら件数表示はオフになります
-const REQUEST_STATUS_URL = "https://script.google.com/macros/s/AKfycbzIkugk5K4_CUDjQKBMuny4IzwlDdU-XEInBPi9dAB4potAeZtttf8HnCDws5q3dsDw/exec?k=req-0e02c42ea839";
 
 const DEFAULTS = {
   morning: [
@@ -599,7 +614,9 @@ function renderChecklist() {
       const pinned = PINNED_LINKS[sec.key] || [];
       pinned.forEach(p => body.push(h('div', { class: 'linkrow' },
         h('a', { class: 'linkbtn', href: p.url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', p.title,
-          p.req && REQUEST_STATUS_URL ? reqBadge(p.req) : null),
+          p.req ? reqBadge(p.req) : null,
+          p.ship ? h('span', { class: 'req-badge', 'data-ship': '' }) : null),
+        p.ship ? h('ul', { class: 'ship-detail', 'data-ship-detail': '' }) : null,
         CL.edit ? h('p', { class: 'small muted', style: 'margin:6px 0 0' }, '※ 毎日自動で表示される固定リンクです（ここでは編集できません）') : null)));
       const pinnedUrls = pinned.map(p => p.url);
       items.forEach((it, i) => {
@@ -612,6 +629,7 @@ function renderChecklist() {
     root.append(h('section', { class: 'sec' + (isNow ? ' is-now' : ''), id: 'sec-' + sec.key }, head, body));
   }
   requestAnimationFrame(() => root.querySelectorAll('textarea').forEach(autoGrow));
+  paintShip();
   updateProgress();
 }
 
@@ -1095,16 +1113,38 @@ async function ensureLogin() {
 }
 
 /* =========================================================
-   依頼状況（RSショップ・自己配）の件数表示
+   ログイン状態（任意）：配送管理・依頼まとめ管理と同じドメインで
+   ログイン済みなら、そのログインを使って最新の件数を読みます
    ========================================================= */
-const REQ = { data: null, loading: false, error: false, lastAt: 0 };
+let signedInPromise = null;
+function signedInUser() {
+  signedInPromise ||= (async () => {
+    try {
+      const m = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+      const auth = m.getAuth(app);
+      await auth.authStateReady();
+      return auth.currentUser;
+    } catch (e) { console.warn('auth', e); return null; }
+  })();
+  return signedInPromise;
+}
+
+/* =========================================================
+   依頼の未対応件数（依頼まとめ管理のデータ）
+   ========================================================= */
+const REQ = { data: null, at: null, live: false, error: false };
 
 function reqBadgeState(key) {
-  if (REQ.error || REQ.data?.[key]?.error) return { cls: 'is-error', text: '⚠️ 確認できません' };
-  const r = REQ.data?.[key];
-  if (!r) return { cls: '', text: '確認中…' };
-  if (r.pending > 0) return { cls: 'is-pending', text: `未完了 ${r.pending}件` + (r.today ? `（今日 ${r.today}件）` : '') };
-  return { cls: 'is-clear', text: r.today ? `✓ 完了（今日 ${r.today}件）` : '✓ 依頼なし' };
+  if (REQ.error && !REQ.data) return { cls: 'is-error', text: '⚠️ 確認できません' };
+  if (!REQ.data) return { cls: '', text: '確認中…' };
+  const r = REQ.data[key] || { pending: 0, today: 0 };
+  // 前日以前の集計なら「今日」の件数は出さない
+  const isToday = REQ.live || (REQ.at && REQ.at.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) === todayJST());
+  const today = isToday ? r.today : 0;
+  const when = !REQ.live && REQ.at && Date.now() - REQ.at.getTime() > 60 * 60 * 1000
+    ? '・' + REQ.at.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '時点' : '';
+  if (r.pending > 0) return { cls: 'is-pending', text: `未対応 ${r.pending}件` + (today ? `（今日 ${today}件）` : '') + when };
+  return { cls: 'is-clear', text: (today ? `✓ 完了（今日 ${today}件）` : '✓ 依頼なし') + when };
 }
 function reqBadge(key) {
   const st = reqBadgeState(key);
@@ -1118,25 +1158,153 @@ function paintReqBadges() {
     el.textContent = st.text;
   });
 }
-async function refreshRequests() {
-  if (!REQUEST_STATUS_URL || REQ.loading) return;
-  REQ.loading = true;
-  try {
-    const res = await fetch(REQUEST_STATUS_URL, { cache: 'no-store' });
-    const d = await res.json();
-    if (!d.ok) throw new Error(d.error || 'error');
-    REQ.data = d; REQ.error = false;
-  } catch (e) {
-    console.warn('request status', e);
-    REQ.error = true;
-  } finally {
-    REQ.loading = false; REQ.lastAt = Date.now();
-    paintReqBadges();
-  }
+
+// 依頼まとめ管理と同じ数え方（アプリで完了にした操作を、シート反映前でも優先）
+function iraiCount(reqs, acts) {
+  const out = {}; const today = todayJST();
+  reqs.forEach((r, id) => {
+    const a = acts.get(id);
+    const done = a ? a.done : r.done;
+    const f = out[r.form] ||= { pending: 0, today: 0 };
+    if (!done) f.pending++;
+    if (r.t && new Date(r.t).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) === today) f.today++;
+  });
+  return out;
 }
-// 別アプリ（スプレッドシート等）から戻ってきたら確認し直す（30秒以内の連続確認はしない）
+
+// ① 誰でも読める集計（依頼まとめ管理・ログイン済みのチェックリストが保存）
+function watchIraiSummary() {
+  onSnapshot(doc(db, ...IRAI_SUMMARY_DOC), snap => {
+    if (REQ.live) return;
+    const d = snap.data();
+    REQ.data = d?.forms || null; REQ.at = d?.at?.toDate ? d.at.toDate() : null; REQ.error = !d;
+    paintReqBadges();
+  }, e => { console.warn('irai_summary', e); if (!REQ.live) { REQ.error = true; paintReqBadges(); } });
+}
+
+// ② ログイン済みなら、依頼データを直接見てリアルタイムに数える（集計も保存しておく）
+async function watchIraiLive() {
+  const user = await signedInUser();
+  if (!user) return;
+  const reqs = new Map(), acts = new Map();
+  const loaded = { reqs: false, acts: false };
+  let saveTimer = null, lastSaved = '';
+  const unsubs = [];
+  const update = () => {
+    if (!loaded.reqs || !loaded.acts) return;
+    REQ.data = iraiCount(reqs, acts); REQ.live = true; REQ.error = false;
+    paintReqBadges();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const json = JSON.stringify(REQ.data);
+      if (json === lastSaved) return;
+      lastSaved = json;
+      setDoc(doc(db, ...IRAI_SUMMARY_DOC), { forms: REQ.data, at: serverTimestamp(), by: user.email || '' })
+        .catch(e => console.warn('irai_summary save', e));
+    }, 2000);
+  };
+  const fail = e => { // 閲覧の許可がないアカウントなら①の表示に戻す
+    console.warn('irai live', e);
+    unsubs.forEach(u => u()); REQ.live = false;
+  };
+  unsubs.push(onSnapshot(collection(db, 'irai_requests'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? reqs.delete(c.doc.id) : reqs.set(c.doc.id, c.doc.data()));
+    loaded.reqs = true; update();
+  }, fail));
+  unsubs.push(onSnapshot(collection(db, 'irai_actions'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? acts.delete(c.doc.id) : acts.set(c.doc.id, c.doc.data()));
+    loaded.acts = true; update();
+  }, fail));
+  // 日付が変わったら「今日」の件数を数え直す
+  setInterval(update, 10 * 60 * 1000);
+}
+
+/* =========================================================
+   Lazada・Shopee配送管理の未出荷件数
+   ========================================================= */
+const SHIP = { sellers: [], loaded: false, error: false, liveAt: 0, liveBusy: false };
+
+function shipTime(ts) {
+  if (!ts?.toDate) return '';
+  const d = ts.toDate();
+  const day = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const t = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+  return (day === todayJST() ? '今日 ' : shortDate(day) + ' ') + t + '時点';
+}
+// 画面を作り直さずに件数の表示だけ更新する（入力中の欄に影響させないため）
+function paintShip() {
+  const counted = SHIP.sellers.filter(x => x.shipSummary);
+  const total = counted.reduce((n, x) => n + (Number(x.shipSummary.pending) || 0), 0);
+  let cls = '', text = '確認中…';
+  if (SHIP.error) { cls = 'is-error'; text = '⚠️ 確認できません'; }
+  else if (SHIP.loaded && !SHIP.sellers.length) { cls = 'is-clear'; text = 'セラー未登録'; }
+  else if (SHIP.loaded && !counted.length) { cls = 'is-error'; text = '未集計'; }
+  else if (SHIP.loaded) { cls = total > 0 ? 'is-pending' : 'is-clear'; text = total > 0 ? `未出荷 ${total}件` : '✓ 未出荷なし'; }
+  document.querySelectorAll('[data-ship]').forEach(el => { el.className = 'req-badge ' + cls; el.textContent = text; });
+
+  const items = SHIP.error ? [] : SHIP.sellers.map(x => {
+    const s = x.shipSummary;
+    const name = h('span', { class: 'sd-name' }, x.name + (x.platform ? `（${x.platform}）` : ''));
+    if (!s) return h('li', {}, name, h('span', { class: 'muted' }, '未集計（配送管理アプリで一度開くと表示されます）'));
+    const n = Number(s.pending) || 0;
+    return h('li', {}, name,
+      h('span', { class: 'sd-num' + (n ? '' : ' is-zero') }, n ? `未出荷 ${n}件` : '未出荷なし'),
+      n ? h('span', { class: 'muted' }, `受領待ち ${s.waiting || 0}・出荷待ち ${s.ready || 0}`) : null,
+      h('span', { class: 'sd-at' }, shipTime(s.at)));
+  });
+  document.querySelectorAll('[data-ship-detail]').forEach(el => { el.replaceChildren(...items); el.hidden = !items.length; });
+}
+function watchShip() {
+  onSnapshot(collection(db, SELLER_COLLECTION), snap => {
+    SHIP.sellers = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+    const first = !SHIP.loaded;
+    SHIP.loaded = true; SHIP.error = false;
+    paintShip();
+    if (first) refreshShipLive();
+  }, e => { console.warn('deliverySellers', e); SHIP.error = true; paintShip(); });
+}
+
+// この端末で配送管理アプリにログイン済みなら、シートを直接読んで件数を最新にする
+// （ログインしていなければ何もしない＝最後に保存された件数を表示）
+function countOrders(orders) {
+  const m = new Map();
+  (orders || []).forEach(o => { const k = o.orderId || ('#' + o.row); if (!m.has(k)) m.set(k, []); m.get(k).push(o); });
+  const c = { waiting: 0, ready: 0 };
+  m.forEach(rows => {
+    if (rows.every(r => r.shipped)) return;
+    if (rows.every(r => r.received || r.shipped)) c.ready++; else c.waiting++;
+  });
+  return c;
+}
+async function refreshShipLive() {
+  if (!SHIPSHEET_API_URL || SHIP.liveBusy || !SHIP.sellers.length) return;
+  SHIP.liveBusy = true;
+  try {
+    const user = await signedInUser();
+    if (!user) return;
+    for (const x of SHIP.sellers) {
+      if (!x.sheetId) continue;
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(SHIPSHEET_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ idToken, sheetId: x.sheetId, fn: 'getData', args: [] }),
+        });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.error || 'error');
+        const c = countOrders(j.result?.orders);
+        await updateDoc(doc(db, SELLER_COLLECTION, x.id), {
+          shipSummary: { pending: c.waiting + c.ready, waiting: c.waiting, ready: c.ready, at: serverTimestamp(), by: user.email || '' },
+        });
+      } catch (e) { console.warn('未出荷件数の更新に失敗', x.name, e); }
+    }
+  } catch (e) { console.warn('ship live', e); }
+  finally { SHIP.liveBusy = false; SHIP.liveAt = Date.now(); }
+}
+// 別アプリから戻ってきたら確認し直す（5分以内の連続確認はしない）
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && Date.now() - REQ.lastAt > 30000) refreshRequests();
+  if (document.visibilityState === 'visible' && Date.now() - SHIP.liveAt > 5 * 60 * 1000) refreshShipLive();
 });
 
 /* =========================================================
@@ -1145,12 +1313,14 @@ document.addEventListener('visibilitychange', () => {
 (async () => {
   await ensureLogin();
   watchStaff();
+  watchShip();
   await watchServices();
   let tab = 'checklist';
   try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
   switchTab(tab);
   goDate(todayJST());
-  refreshRequests();
+  watchIraiSummary();
+  watchIraiLive();
 })();
 </script>
 </body>
