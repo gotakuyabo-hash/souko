@@ -179,7 +179,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const FORM_ORDER = [['shopee', 'Shopee'], ['domestic', '国内EC'], ['rs', '注文配送']];
-const S = { reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [] };
+const S = { reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DAY = 86400000;
@@ -191,6 +191,7 @@ $('logout').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, user => {
   S.unsubs.forEach(u => u()); S.unsubs = [];
+  S.loaded = { reqs: false, acts: false };
   S.user = user;
   $('loginView').hidden = !!user;
   $('appView').hidden = !user;
@@ -207,10 +208,12 @@ function listen() {
   };
   S.unsubs.push(onSnapshot(collection(db, 'irai_requests'), snap => {
     snap.docChanges().forEach(c => c.type === 'removed' ? S.reqs.delete(c.doc.id) : S.reqs.set(c.doc.id, c.doc.data()));
+    S.loaded.reqs = true;
     render();
   }, denied));
   S.unsubs.push(onSnapshot(collection(db, 'irai_actions'), snap => {
     snap.docChanges().forEach(c => c.type === 'removed' ? S.acts.delete(c.doc.id) : S.acts.set(c.doc.id, c.doc.data()));
+    S.loaded.acts = true;
     render();
   }, denied));
   S.unsubs.push(onSnapshot(doc(db, 'irai_meta', 'status'), d => {
@@ -247,8 +250,30 @@ function filtered(recs) {
   return list;
 }
 
+// ---------- 未対応件数をチェックリストアプリ用に保存（settings/irai_summary） ----------
+let summaryTimer = null, lastSummary = '';
+function saveSummary(recs) {
+  if (!S.loaded.reqs || !S.loaded.acts || !S.user) return;
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const forms = {};
+  recs.forEach(r => {
+    const f = forms[r.form] ||= { pending: 0, today: 0 };
+    if (!r.done) f.pending++;
+    if (r.t && new Date(r.t).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) === today) f.today++;
+  });
+  clearTimeout(summaryTimer);
+  summaryTimer = setTimeout(() => {
+    const json = JSON.stringify(forms);
+    if (json === lastSummary) return;
+    lastSummary = json;
+    setDoc(doc(db, 'settings', 'irai_summary'), { forms, at: serverTimestamp(), by: S.user.email })
+      .catch(e => console.warn('未対応件数の保存に失敗', e));
+  }, 2000);
+}
+
 function render() {
   const recs = allRecs();
+  saveSummary(recs);
   const open = f => recs.filter(r => !r.done && (f === 'all' || r.form === f)).length;
   const tabs = [['all', 'すべて'], ...FORM_ORDER];
   $('tabs').innerHTML = tabs.map(([k, lb]) =>
