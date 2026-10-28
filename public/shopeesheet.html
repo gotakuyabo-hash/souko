@@ -307,7 +307,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -334,7 +334,7 @@ const db = getFirestore(fbApp);
 /* ===== 状態 ===== */
 let D = null;
 let SELLERS = [];
-const S = { sheetId:'', tab:'orders', filter:'pending', q:'', sel:new Set(), groupSel:true, limit:300, inMonth:'', sq:'' };
+const S = { sellerId:'', sheetId:'', tab:'orders', filter:'pending', q:'', sel:new Set(), groupSel:true, limit:300, inMonth:'', sq:'' };
 const $ = id => document.getElementById(id);
 
 /* ===== 便利関数 ===== */
@@ -392,11 +392,24 @@ async function load(){
   }
   try { D = await call('getData'); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
   render();
+  saveSummary();
 }
 function applyResult(res){
   if (res && res.data) D = res.data;
   if (res && res.errors && res.errors.length) toast(res.errors.join(' / '), true);
   render();
+  saveSummary();
+}
+
+/* ===== 未出荷件数をFirestoreに保存（チェックリストアプリで表示するため） ===== */
+async function saveSummary(){
+  if (!D || !S.sellerId) return;
+  const c = countGroups();
+  try {
+    await updateDoc(doc(db, SELLER_COLLECTION, S.sellerId), {
+      shipSummary: { pending: c.waiting + c.ready, waiting: c.waiting, ready: c.ready, at: serverTimestamp(), by: auth.currentUser ? auth.currentUser.email : '' },
+    });
+  } catch(e){ console.warn('未出荷件数の保存に失敗', e); }
 }
 
 /* ===== 注文のまとまり ===== */
@@ -425,9 +438,13 @@ function render(){
   fillLists();
 }
 
-function renderFlow(){
+function countGroups(){
   const c = { waiting:0, ready:0, shipped:0 };
   groups().forEach(rows => c[gStatus(rows)]++);
+  return c;
+}
+function renderFlow(){
+  const c = countGroups();
   const p = f => S.filter === f ? 'true' : 'false';
   $('flow').innerHTML =
     '<button class="total" type="button" data-f="pending" aria-pressed="'+p('pending')+'"><span class="l">未出荷</span><b>'+(c.waiting+c.ready)+'</b><span class="l">件</span></button>' +
@@ -881,11 +898,12 @@ async function loadSellers(){
   const cur = SELLERS.find(x => x.id === saved) || SELLERS[0];
   $('seller').innerHTML = SELLERS.map(x => '<option value="'+esc(x.id)+'">'+esc(x.name)+(x.platform ? '（'+esc(x.platform)+'）' : '')+'</option>').join('');
   $('seller').hidden = !SELLERS.length;
-  if (cur){ $('seller').value = cur.id; S.sheetId = cur.sheetId; } else { S.sheetId = ''; }
+  if (cur){ $('seller').value = cur.id; S.sellerId = cur.id; S.sheetId = cur.sheetId; } else { S.sellerId = ''; S.sheetId = ''; }
 }
 function selectSeller(id){
   const x = SELLERS.find(s => s.id === id);
   store('seller', id);
+  S.sellerId = x ? x.id : '';
   S.sheetId = x ? x.sheetId : '';
   S.sel.clear(); S.inMonth = ''; S.limit = 300; D = null;
   load();
