@@ -11,7 +11,7 @@
  * 使い方
  *  コックピットの index.js と同じフォルダに置き、index.js の最後に次の1行を追加：
  *    exports.henso = require("./henso").henso;
- *  追加のインストールは不要。Chatworkトークンはコックピットと同じ CW_TOKEN_STAFF / CW_TOKEN_MATSUSHITA を使用
+ *  追加のインストールは不要。Chatworkトークンはコックピットと同じ CW_TOKEN_STAFF（ラクロジスタッフ）を使用
  *  合言葉だけ専用のSecret（HENSO_PASSPHRASE）を登録する
  */
 const { onRequest } = require("firebase-functions/v2/https");
@@ -21,9 +21,9 @@ const crypto = require("crypto");
 
 // コックピットで登録済みのSecretをそのまま使う
 const CHATWORK_TOKEN = defineSecret("CW_TOKEN_STAFF"); // ラクロジスタッフのChatwork
-const CHATWORK_TOKEN_MATSUSHITA = defineSecret("CW_TOKEN_MATSUSHITA"); // 以前のタスク（松下さん担当）用
-function tokenOf(account) {
-  return account === "matsushita" ? CHATWORK_TOKEN_MATSUSHITA.value() : CHATWORK_TOKEN.value();
+// 表示・完了はラクロジスタッフ担当のタスクだけ
+function tokenOf() {
+  return CHATWORK_TOKEN.value();
 }
 // このアプリ専用の合言葉（コックピットの合言葉とは別）
 //   firebase functions:secrets:set HENSO_PASSPHRASE  → 「logex」を入力
@@ -265,7 +265,7 @@ async function cwSetStatus(token, roomId, taskId, status) {
 
 /* ---------- 入口 ---------- */
 exports.henso = onRequest(
-  { region: "asia-northeast1", cors: true, secrets: [CHATWORK_TOKEN, CHATWORK_TOKEN_MATSUSHITA, HENSO_PASSPHRASE] },
+  { region: "asia-northeast1", cors: true, secrets: [CHATWORK_TOKEN, HENSO_PASSPHRASE] },
   async (req, res) => {
     res.set("Cache-Control", "no-store");
     const action = req.path.split("/").filter(Boolean).pop();
@@ -287,11 +287,8 @@ exports.henso = onRequest(
       const fresh = req.query.fresh === "1";
 
       if (action === "tasks" && req.method === "GET") {
-        // ラクロジスタッフのタスク＋（以前の）松下さんの返送タスク
-        const [staffTasks, mTasks] = await Promise.all([
-          cwMyTasks(tokenOf("staff")),
-          cwMyTasks(tokenOf("matsushita")).catch(() => []),
-        ]);
+        // ラクロジスタッフ担当のタスクだけ
+        const staffTasks = await cwMyTasks(tokenOf());
         const toItem = (account) => (t) => {
           const body = cleanBody(t.body);
           const nos = extractNos(body);
@@ -309,8 +306,7 @@ exports.henso = onRequest(
             isReturn: nos.length > 0 || /返送|返品|破棄/.test(body),
           };
         };
-        const list = staffTasks.map(toItem("staff"))
-          .concat(mTasks.map(toItem("matsushita")).filter((x) => x.isReturn));
+        const list = staffTasks.map(toItem("staff"));
 
         const allNos = [...new Set(list.flatMap((x) => x.nos))];
         const rows = allNos.length ? await findRows(allNos, fresh) : {};
