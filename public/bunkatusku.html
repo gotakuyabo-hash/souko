@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>分割くん吉原</title>
+    <title>分割くん</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -26,7 +26,7 @@
         const db = getFirestore(app);
 
         window.db = db;
-        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc };
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
         
         window.initFirestoreMaster();
     </script>
@@ -125,6 +125,7 @@
             <div class="flex bg-indigo-900/60 p-1 rounded-xl">
                 <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
+                <button onclick="switchTab('monthly')" id="tabBtnMonthly" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">月別出荷件数</button>
             </div>
         </div>
     </header>
@@ -164,6 +165,7 @@
                     </div>
                     <div class="flex flex-wrap gap-2 text-xs">
                         <button onclick="registerAllToMaster()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2.5 rounded-xl font-medium" title="マスタ登録済みSKUの商品名・棚番・倍率だけを更新します"><i class="fa-solid fa-database mr-1"></i>登録済みSKUを一括更新</button>
+                        <button onclick="openWriteModal()" class="bg-teal-600 hover:bg-teal-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-import mr-1"></i>出庫シートに書き込み</button>
                         <button onclick="openSheetCopyModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paste mr-1"></i>シート用データコピー</button>
                         <button onclick="openInspectionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-print mr-1"></i>検品書(100×150)印刷</button>
                         <button onclick="openTotalPickingModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-clipboard-list mr-1"></i>トータルピック</button>
@@ -212,18 +214,78 @@
                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400"></i>
                         <input type="text" id="masterSearchInput" oninput="renderMasterTable()" placeholder="SKU、商品名で検索..." class="w-full text-sm border rounded-lg pl-9 pr-3 py-2 bg-white">
                     </div>
+                    <select id="masterClientFilter" onchange="renderMasterTable()" class="text-sm border rounded-lg px-3 py-2 bg-white">
+                        <option value="all">取引先：すべて</option>
+                        <option value="none">取引先：未設定のみ</option>
+                    </select>
                     <button onclick="openMasterEditModal(-1)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-plus mr-1"></i>新規登録</button>
+                </div>
+                <div id="bulkEditBar" class="hidden bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3 text-xs">
+                    <div class="flex justify-between items-center flex-wrap gap-2">
+                        <span class="text-sm font-bold text-indigo-900"><i class="fa-solid fa-list-check mr-1"></i><span id="bulkSelCount">0</span>件のSKUを選択中</span>
+                        <div class="space-x-2">
+                            <button onclick="bulkDelete()" class="text-rose-600 bg-white px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 font-medium"><i class="fa-solid fa-trash mr-1"></i>選択したSKUを削除</button>
+                            <button onclick="clearMasterSelection()" class="bg-white px-3 py-1.5 rounded-lg border hover:bg-slate-50">選択解除</button>
+                        </div>
+                    </div>
+                    <div class="grid md:grid-cols-3 gap-3">
+                        <div class="bg-white rounded-lg border p-3 space-y-2">
+                            <p class="font-semibold text-slate-700">取引先を変更</p>
+                            <select id="bulkClient" class="w-full border rounded px-2 py-1.5 bg-white"></select>
+                            <button onclick="bulkSetClient()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-1.5 rounded font-medium">取引先を一括変更</button>
+                        </div>
+                        <div class="bg-white rounded-lg border p-3 space-y-2">
+                            <p class="font-semibold text-slate-700">棚番を変更</p>
+                            <div class="flex items-center gap-1">
+                                <input id="bulkShelfFrom" type="text" placeholder="変更前（空欄＝すべて）" class="w-full border rounded px-2 py-1.5">
+                                <span>→</span>
+                                <input id="bulkShelfTo" type="text" placeholder="変更後" class="w-full border rounded px-2 py-1.5">
+                            </div>
+                            <button onclick="bulkSetShelf()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-1.5 rounded font-medium">棚番を一括変更</button>
+                        </div>
+                        <div class="bg-white rounded-lg border p-3 space-y-2">
+                            <p class="font-semibold text-slate-700">商品名の文字を置き換え</p>
+                            <div class="flex items-center gap-1">
+                                <input id="bulkNameFrom" type="text" placeholder="置き換える文字" class="w-full border rounded px-2 py-1.5">
+                                <span>→</span>
+                                <input id="bulkNameTo" type="text" placeholder="新しい文字（空欄＝削除）" class="w-full border rounded px-2 py-1.5">
+                            </div>
+                            <button onclick="bulkReplaceName()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-1.5 rounded font-medium">商品名を一括置き換え</button>
+                        </div>
+                    </div>
+                    <p class="text-slate-500">※検索や取引先の絞り込みで対象を表示してから、見出しのチェックで「表示中をすべて選択」すると便利です。</p>
                 </div>
                 <div class="overflow-x-auto max-h-[600px] border rounded-xl">
                     <table class="w-full text-left border-collapse text-xs">
                         <thead class="bg-slate-100 text-slate-600 sticky top-0 border-b">
                             <tr>
                                 <th class="px-4 py-3">SKUコード (コピー可)</th>
+                                <th class="px-3 py-3 w-8"><input type="checkbox" id="masterCheckAll" onchange="toggleAllVisible(this.checked)" title="表示中をすべて選択"></th>
+                                <th class="px-4 py-3 w-40">取引先</th>
                                 <th class="px-4 py-3">紐付く商品・棚番・数量構成</th>
                                 <th class="px-4 py-3 text-right">操作</th>
                             </tr>
                         </thead>
                         <tbody id="masterTableBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="tabContentMonthly" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-teal-600 mr-2"></i>月別出荷件数（出庫シートから集計）</h2>
+                        <p class="text-xs text-slate-500 mt-1">出荷件数 ＝ 発送日が入っている行の受注番号の数（同じ受注番号は1件）。発送日が空の行は数えません。</p>
+                    </div>
+                    <button onclick="loadMonthly()" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                </div>
+                <p id="monthlyStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead id="monthlyHead" class="bg-slate-100 text-slate-600 text-xs border-b"></thead>
+                        <tbody id="monthlyBody" class="divide-y"></tbody>
                     </table>
                 </div>
             </div>
@@ -242,6 +304,10 @@
                 <div>
                     <label class="font-semibold block mb-1">SKUコード</label>
                     <input type="text" id="modalKey" class="w-full border rounded px-3 py-2 font-mono bg-slate-50">
+                </div>
+                <div>
+                    <label class="font-semibold block mb-1">取引先（出庫シートの書き込み先）</label>
+                    <select id="modalClient" class="w-full border rounded px-3 py-2 bg-white"></select>
                 </div>
                 
                 <div class="space-y-2">
@@ -268,7 +334,8 @@
             </div>
             <p class="text-xs text-slate-500">
                 以下の形式（CSVまたはタブ区切り）で入力してください。<br>
-                フォーマット: <code>SKUコード, 商品名, 棚番, 数量</code> (複数行可)
+                フォーマット: <code>SKUコード, 商品名, 棚番, 数量, 取引先</code> (複数行可)<br>
+                取引先は <code>吉原</code> または <code>今別府</code>（空欄なら今の設定のまま）
             </p>
             <div>
                 <textarea id="bulkMasterTextarea" rows="10" placeholder="SKU001, 商品A, 1-A, 1&#10;SKU002, 商品B, 1-B, 2" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50"></textarea>
@@ -330,11 +397,55 @@
         </div>
     </div>
 
+    <div id="writeModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center">
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-file-import text-teal-600 mr-2"></i>出庫シートに書き込み</h3>
+                <button onclick="closeWriteModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <label class="block space-y-1 text-sm">
+                <span class="text-xs font-semibold text-slate-600">発送日（全取引先共通）</span>
+                <input type="date" id="writeShipDate" class="w-full border rounded-lg px-3 py-2">
+            </label>
+            <div id="writeGroups" class="space-y-3"></div>
+            <p id="writeWarning" class="hidden text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
+            <p class="text-xs text-slate-500">※出庫シートにすでにある受注番号は、自動でスキップします（二重計上防止）。</p>
+            <div id="writeResult" class="hidden text-sm rounded-lg px-3 py-2"></div>
+            <div class="flex justify-end space-x-2">
+                <button onclick="closeWriteModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">閉じる</button>
+                <button id="writeSubmitBtn" onclick="submitWriteToSheet()" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-solid fa-paper-plane mr-1"></i>書き込む</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white text-xs px-4 py-2 rounded-lg shadow-lg hidden z-50 transition-all">
         コピーしました！
     </div>
 
     <script>
+        // ===== 出庫シート連携の設定 =====
+        // GASを「ウェブアプリ」でデプロイしたURL（…/exec）を貼り付けてください
+        const GAS_URL = 'ここにGASのURLを貼り付け';
+        const GAS_TOKEN = 'logex-bunkatsu-2026';   // GAS側の TOKEN と同じにする
+
+        // 取引先の一覧（key は GAS 側の CLIENTS と同じにする）
+        // carrier は書き込み画面で最初に選ばれている配送会社
+        const CLIENTS = [
+            { key: 'yoshihara', name: '吉原建設様', carrier: '佐川急便', color: 'bg-sky-100 text-sky-800' },
+            { key: 'imabeppu',  name: '今別府様',   carrier: '西濃運輸', color: 'bg-lime-100 text-lime-800' },
+        ];
+        const clientOf = key => CLIENTS.find(c => c.key === key);
+        function clientBadge(key) {
+            const c = clientOf(key);
+            return c
+                ? `<span class="${c.color} font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap">${esc(c.name)}</span>`
+                : `<span class="bg-amber-100 text-amber-800 font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap">取引先未設定</span>`;
+        }
+        function clientOptions(selected) {
+            return `<option value="">（未設定）</option>` + CLIENTS.map(c =>
+                `<option value="${c.key}" ${c.key === selected ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+        }
+
         const DEFAULT_PRESETS = [
             { key: "MYSHIPRO1", items: [{ jpName: "SHINSE プロテイン300g（JAN：9144）", shelf: "1-B", multiplier: 1 }] },
             { key: "MYSHIPRO2", items: [{ jpName: "SHINSE プロテイン300g（JAN：9144）", shelf: "1-B", multiplier: 2 }] },
@@ -423,6 +534,8 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             setupFileHandlers();
+            document.getElementById('masterClientFilter').insertAdjacentHTML('beforeend',
+                CLIENTS.map(c => `<option value="${c.key}">取引先：${esc(c.name)}</option>`).join(''));
         });
 
         // 9. 印刷後に印刷用クラスを外す（Safari・スマホ対策）
@@ -453,12 +566,14 @@
         }
 
         function switchTab(tabName) {
-            const isOrders = tabName === 'orders';
-            document.getElementById('tabBtnOrders').className = isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            document.getElementById('tabBtnMaster').className = !isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            document.getElementById('tabContentOrders').classList.toggle('hidden', !isOrders);
-            document.getElementById('tabContentMaster').classList.toggle('hidden', isOrders);
-            if (!isOrders) renderMasterTable();
+            const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
+            const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
+            [['orders','Orders'],['master','Master'],['monthly','Monthly']].forEach(([key, id]) => {
+                document.getElementById('tabBtn' + id).className = tabName === key ? on : off;
+                document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== key);
+            });
+            if (tabName === 'master') renderMasterTable();
+            if (tabName === 'monthly') loadMonthly();
         }
 
         function updateMasterCountBadge() {
@@ -502,23 +617,28 @@
             const tbody = document.getElementById('masterTableBody');
             const query = (document.getElementById('masterSearchInput')?.value || "").toLowerCase();
             tbody.innerHTML = '';
+            const cf = document.getElementById('masterClientFilter')?.value || 'all';
             const filtered = multiplierMaster.filter(r => {
+                if (cf === 'none' && clientOf(r.client)) return false;
+                if (cf !== 'all' && cf !== 'none' && r.client !== cf) return false;
                 let matchKey = r.key.toLowerCase().includes(query);
                 let matchItem = r.items.some(it => it.jpName.toLowerCase().includes(query) || (it.shelf && it.shelf.toLowerCase().includes(query)));
                 return matchKey || matchItem;
             });
             
+            visibleMasterKeys = filtered.map(r => r.key);
+            updateBulkBar();
             if (filtered.length === 0) {
                 tbody.innerHTML = multiplierMaster.length === 0
-                    ? `<tr><td colspan="3" class="px-4 py-4 text-center text-slate-400">マスタがありません。「初期プリセット一括登録」または「新規登録」から登録してください。</td></tr>`
-                    : `<tr><td colspan="3" class="px-4 py-4 text-center text-slate-400">該当するマスタがありません</td></tr>`;
+                    ? `<tr><td colspan="5" class="px-4 py-4 text-center text-slate-400">マスタがありません。「初期プリセット一括登録」または「新規登録」から登録してください。</td></tr>`
+                    : `<tr><td colspan="5" class="px-4 py-4 text-center text-slate-400">該当するマスタがありません</td></tr>`;
                 return;
             }
 
             filtered.forEach(rule => {
                 const idx = multiplierMaster.findIndex(m => m.key === rule.key);
                 const tr = document.createElement('tr');
-                tr.className = 'hover:bg-slate-50 align-top';
+                tr.className = (selectedMasterKeys.has(rule.key) ? 'bg-indigo-50/60 ' : '') + 'hover:bg-slate-50 align-top';
                 
                 let itemsHtml = rule.items.map(it => `
                     <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
@@ -529,11 +649,15 @@
                 `).join('');
 
                 tr.innerHTML = `
+                    <td class="px-3 py-3"><input type="checkbox" data-key="${esc(rule.key)}" ${selectedMasterKeys.has(rule.key) ? 'checked' : ''} onchange="toggleMasterSelect(this.dataset.key, this.checked)"></td>
                     <td class="px-4 py-3 font-mono font-medium w-48">
                         <button data-copy="${esc(rule.key)}" onclick="copyToClipboard(this.dataset.copy)" class="text-indigo-600 hover:text-indigo-800 flex items-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors" title="クリックしてコピー">
                             <span>${esc(rule.key)}</span>
                             <i class="fa-regular fa-copy text-[10px]"></i>
                         </button>
+                    </td>
+                    <td class="px-4 py-3">
+                        <select data-key="${esc(rule.key)}" onchange="setMasterClient(this.dataset.key, this.value, this)" class="border rounded px-2 py-1 text-xs bg-white w-full ${clientOf(rule.client) ? '' : 'border-amber-400 bg-amber-50'}">${clientOptions(rule.client)}</select>
                     </td>
                     <td class="px-4 py-3">${itemsHtml}</td>
                     <td class="px-4 py-3 text-right space-x-1 w-24">
@@ -555,6 +679,7 @@
                 document.getElementById('editMasterIndex').value = idx;
                 document.getElementById('modalKey').value = r.key;
                 document.getElementById('modalKey').readOnly = true;
+                document.getElementById('modalClient').innerHTML = clientOptions(r.client);
                 
                 if (r.items && r.items.length > 0) {
                     r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier));
@@ -565,6 +690,7 @@
                 document.getElementById('editMasterIndex').value = -1;
                 document.getElementById('modalKey').value = '';
                 document.getElementById('modalKey').readOnly = false;
+                document.getElementById('modalClient').innerHTML = clientOptions('');
                 addModalItemRow();
             }
         }
@@ -593,10 +719,13 @@
                     let jpName = cols[1].trim();
                     let shelf = cols[2] ? cols[2].trim() : '';
                     let multiplier = cols[3] ? parseInt(cols[3].trim(), 10) || 1 : 1;
+                    let clientText = cols[4] ? cols[4].trim() : '';
+                    let client = clientText ? (CLIENTS.find(c => c.key === clientText || c.name.includes(clientText.replace(/様$/, ''))) || {}).key || '' : null;
 
                     if (!key || !jpName) return;
-                    if (!map[key]) map[key] = [];
-                    map[key].push({ jpName, shelf, multiplier });
+                    if (!map[key]) map[key] = { items: [], client: null };
+                    map[key].items.push({ jpName, shelf, multiplier });
+                    if (client !== null) map[key].client = client;
                 }
             });
 
@@ -605,7 +734,9 @@
 
             try {
                 for (let key of keys) {
-                    let newData = { key, items: map[key] };
+                    const old = multiplierMaster.find(m => m.key === key);
+                    const client = map[key].client !== null ? map[key].client : (old?.client || '');
+                    let newData = { key, items: map[key].items, client };
                     await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), newData);
                 }
                 await window.initFirestoreMaster();
@@ -657,7 +788,7 @@
 
             if (items.length === 0) { alert('有効な商品名を入力してください'); return; }
 
-            const newData = { key, items };
+            const newData = { key, items, client: document.getElementById('modalClient').value };
 
             try {
                 await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), newData);
@@ -668,6 +799,151 @@
             } catch (e) {
                 console.error(e);
                 alert('保存に失敗しました');
+            }
+        }
+
+        // ===== 一括商品マスタ変更 =====
+        let selectedMasterKeys = new Set();
+        let visibleMasterKeys = [];
+
+        function toggleMasterSelect(key, on) {
+            on ? selectedMasterKeys.add(key) : selectedMasterKeys.delete(key);
+            renderMasterTable();
+        }
+
+        function toggleAllVisible(on) {
+            visibleMasterKeys.forEach(k => on ? selectedMasterKeys.add(k) : selectedMasterKeys.delete(k));
+            renderMasterTable();
+        }
+
+        function clearMasterSelection() {
+            selectedMasterKeys.clear();
+            renderMasterTable();
+        }
+
+        function updateBulkBar() {
+            // マスタから消えたSKUは選択から外す
+            const exists = new Set(multiplierMaster.map(m => m.key));
+            [...selectedMasterKeys].forEach(k => { if (!exists.has(k)) selectedMasterKeys.delete(k); });
+            const n = selectedMasterKeys.size;
+            document.getElementById('bulkEditBar').classList.toggle('hidden', n === 0);
+            document.getElementById('bulkSelCount').innerText = n;
+            const sel = document.getElementById('bulkClient');
+            if (!sel.options.length) sel.innerHTML = clientOptions('');
+            const all = document.getElementById('masterCheckAll');
+            const selVisible = visibleMasterKeys.filter(k => selectedMasterKeys.has(k)).length;
+            all.checked = visibleMasterKeys.length > 0 && selVisible === visibleMasterKeys.length;
+            all.indeterminate = selVisible > 0 && selVisible < visibleMasterKeys.length;
+        }
+
+        // まとめてFirestoreに保存（500件ずつ）
+        async function commitMasterDocs(docs) {
+            const { writeBatch, doc } = window.firebaseFns;
+            for (let i = 0; i < docs.length; i += 450) {
+                const batch = writeBatch(window.db);
+                docs.slice(i, i + 450).forEach(d => batch.set(doc(window.db, "products_master", d.key), d));
+                await batch.commit();
+            }
+            await window.initFirestoreMaster();
+            if (allFilesRawData.length) processAllData();
+        }
+
+        const selectedMasters = () => multiplierMaster.filter(m => selectedMasterKeys.has(m.key));
+        const cloneMaster = m => ({ key: m.key, items: m.items.map(it => ({ ...it })), client: m.client || '' });
+
+        async function bulkSetClient() {
+            const client = document.getElementById('bulkClient').value;
+            const name = clientOf(client)?.name || '（未設定）';
+            const targets = selectedMasters();
+            if (!confirm(`選択した ${targets.length} 件のSKUの取引先を「${name}」に変更します。よろしいですか？`)) return;
+            try {
+                await commitMasterDocs(targets.map(m => ({ ...cloneMaster(m), client })));
+                alert(`${targets.length} 件の取引先を変更しました`);
+            } catch (e) { console.error(e); alert('一括変更に失敗しました'); }
+        }
+
+        async function bulkSetShelf() {
+            const from = document.getElementById('bulkShelfFrom').value.trim();
+            const to = document.getElementById('bulkShelfTo').value.trim();
+            if (!to && !confirm('変更後の棚番が空欄です。棚番を空にしてよろしいですか？')) return;
+            let count = 0;
+            const changed = selectedMasters().map(cloneMaster).filter(d => {
+                let hit = false;
+                d.items.forEach(it => {
+                    if ((from === '' || (it.shelf || '') === from) && (it.shelf || '') !== to) { it.shelf = to; hit = true; count++; }
+                });
+                return hit;
+            });
+            if (!changed.length) { alert(from ? `選択したSKUに棚番「${from}」の商品はありませんでした` : '変更が必要な商品はありませんでした'); return; }
+            const msg = from
+                ? `選択したSKUのうち、棚番「${from}」の商品 ${count} 件を「${to || '空欄'}」に変更します。`
+                : `選択した ${changed.length} 件のSKUの商品 ${count} 件の棚番をすべて「${to || '空欄'}」にします。\n※セット商品（複数商品のSKU）も全部同じ棚番になります。`;
+            if (!confirm(msg + '\n\nよろしいですか？')) return;
+            try {
+                await commitMasterDocs(changed);
+                alert(`${changed.length} 件のSKUの棚番を変更しました`);
+            } catch (e) { console.error(e); alert('一括変更に失敗しました'); }
+        }
+
+        async function bulkReplaceName() {
+            const from = document.getElementById('bulkNameFrom').value;
+            const to = document.getElementById('bulkNameTo').value;
+            if (!from) { alert('置き換える文字を入力してください'); return; }
+            const examples = [];
+            const changed = selectedMasters().map(cloneMaster).filter(d => {
+                let hit = false;
+                d.items.forEach(it => {
+                    if (it.jpName.includes(from)) {
+                        const after = it.jpName.split(from).join(to).trim();
+                        if (examples.length < 3) examples.push(`${it.jpName}\n　→ ${after}`);
+                        it.jpName = after; hit = true;
+                    }
+                });
+                return hit;
+            });
+            if (!changed.length) { alert(`選択したSKUの商品名に「${from}」は見つかりませんでした`); return; }
+            if (changed.some(d => d.items.some(it => !it.jpName))) { alert('置き換えると商品名が空になるものがあります。文字を見直してください'); return; }
+            if (!confirm(`${changed.length} 件のSKUの商品名を置き換えます。\n\n例：\n${examples.join('\n')}\n\nよろしいですか？`)) return;
+            try {
+                await commitMasterDocs(changed);
+                alert(`${changed.length} 件のSKUの商品名を置き換えました`);
+            } catch (e) { console.error(e); alert('一括変更に失敗しました'); }
+        }
+
+        async function bulkDelete() {
+            const targets = selectedMasters();
+            if (!confirm(`選択した ${targets.length} 件のSKUをマスタから削除します。\n元に戻せません。よろしいですか？\n\n・${targets.slice(0, 10).map(m => m.key).join('\n・')}${targets.length > 10 ? '\n…ほか' : ''}`)) return;
+            try {
+                const { writeBatch, doc } = window.firebaseFns;
+                for (let i = 0; i < targets.length; i += 450) {
+                    const batch = writeBatch(window.db);
+                    targets.slice(i, i + 450).forEach(m => batch.delete(doc(window.db, "products_master", m.key)));
+                    await batch.commit();
+                }
+                selectedMasterKeys.clear();
+                await window.initFirestoreMaster();
+                if (allFilesRawData.length) processAllData();
+                alert(`${targets.length} 件のSKUを削除しました`);
+            } catch (e) { console.error(e); alert('削除に失敗しました'); }
+        }
+
+        // マスタ一覧から取引先だけを変更（商品構成はそのまま）
+        async function setMasterClient(key, client, el) {
+            try {
+                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { client }, { merge: true });
+                const m = multiplierMaster.find(x => x.key === key);
+                if (m) m.client = client;
+                el.classList.toggle('border-amber-400', !client);
+                el.classList.toggle('bg-amber-50', !client);
+                processedDataRows.forEach(r => { if (r.masterKey === key) r.client = client; });
+                if (processedDataRows.length) renderResults();
+                const toast = document.getElementById('toast');
+                toast.innerText = '取引先を保存しました';
+                toast.classList.remove('hidden');
+                setTimeout(() => { toast.classList.add('hidden'); toast.innerText = 'コピーしました！'; }, 1500);
+            } catch (e) {
+                console.error(e);
+                alert('取引先の保存に失敗しました');
             }
         }
 
@@ -772,7 +1048,8 @@
                         multiplier: it.multiplier || 1,
                         matched: true,
                         masterKey: matched.key,
-                        masterItemIdx: itemIdx
+                        masterItemIdx: itemIdx,
+                        client: matched.client || ''
                     });
                 });
             } else {
@@ -785,7 +1062,8 @@
                     shelf: '',
                     baseQty: qty,
                     multiplier: 1,
-                    matched: false
+                    matched: false,
+                    client: ''
                 });
             }
 
@@ -822,6 +1100,11 @@
             } else {
                 alertEl.classList.add('hidden');
             }
+            const noClient = processedDataRows.filter(r => r.matched && !clientOf(r.client)).length;
+            if (noClient > 0) {
+                alertEl.innerHTML += `${unmatched ? '<br>' : '<i class="fa-solid fa-triangle-exclamation mr-1"></i>'}取引先が未設定のSKUが ${noClient} 行あります。商品マスタ管理で取引先を設定してください（出庫シートに書き込めません）。`;
+                alertEl.classList.remove('hidden');
+            }
             
             const tbody = document.getElementById('previewBody');
             tbody.innerHTML = '';
@@ -847,6 +1130,7 @@
                     <td class="px-4 py-2 space-y-1">
                         <div class="flex items-center space-x-2">
                             ${statusHtml}
+                            ${row.matched ? clientBadge(row.client) : ''}
                             <input type="text" value="${esc(row.shelf)}" placeholder="棚番" onchange="processedDataRows[${i}].shelf=this.value.trim()" class="border rounded px-2 py-1 w-16 text-[11px] text-center font-bold text-indigo-700 bg-indigo-50" title="棚番">
                             <input type="text" value="${esc(row.jpName)}" onchange="processedDataRows[${i}].jpName=this.value" class="border rounded px-2 py-1 w-full text-xs font-bold bg-white">
                         </div>
@@ -903,7 +1187,7 @@
             const key = m ? m.key : r.sku;
 
             try {
-                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { key, items });
+                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { key, items, client: m?.client || '' });
                 await window.initFirestoreMaster();
                 processAllData();
                 alert('Firestoreのマスタに登録しました');
@@ -927,7 +1211,7 @@
             targets.forEach(r => {
                 const m = multiplierMaster.find(x => x.key === r.masterKey);
                 if (!m) return;
-                if (!bySku[m.key]) bySku[m.key] = { key: m.key, items: m.items.map(it => ({ ...it })) };
+                if (!bySku[m.key]) bySku[m.key] = { key: m.key, items: m.items.map(it => ({ ...it })), client: m.client || '' };
                 applyRowToItems(bySku[m.key].items, r);
             });
 
@@ -1111,6 +1395,177 @@
             let wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "処理結果");
             XLSX.writeFile(wb, `受注データ_処理結果_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }
+
+        // ===== 出庫シートに書き込み =====
+        function gasReady() {
+            if (!GAS_URL || !GAS_URL.startsWith('https://')) {
+                alert('GASのURLが設定されていません。\nファイル内の GAS_URL にウェブアプリのURLを貼り付けてください。');
+                return false;
+            }
+            return true;
+        }
+
+        function todayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        // 取引先ごとに行をまとめる（マスタ未登録・取引先未設定の行は書き込まない）
+        function groupRowsByClient() {
+            const groups = {};
+            const skipped = [];
+            processedDataRows.forEach(r => {
+                if (!r.matched || !clientOf(r.client)) { skipped.push(r); return; }
+                (groups[r.client] = groups[r.client] || []).push(r);
+            });
+            return { groups, skipped };
+        }
+
+        const countOrders = rows => new Set(rows.map(r => String(r.orderSn).trim()).filter(Boolean)).size;
+
+        function openWriteModal() {
+            if (!processedDataRows.length) return;
+            if (!gasReady()) return;
+            const { groups, skipped } = groupRowsByClient();
+
+            document.getElementById('writeGroups').innerHTML = CLIENTS.filter(c => groups[c.key]).map(c => `
+                <div class="border rounded-xl p-3 space-y-2" data-client="${c.key}">
+                    <div class="flex items-center justify-between">
+                        <span class="${c.color} font-bold text-xs px-2 py-1 rounded">${esc(c.name)}</span>
+                        <span class="text-sm"><b>${countOrders(groups[c.key])}件</b>（${groups[c.key].length}行）</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-sm">
+                        <select class="w-carrier border rounded-lg px-2 py-1.5 bg-white">
+                            ${['', '佐川急便', '西濃運輸', 'ヤマト運輸', '日本郵便'].map(v => `<option value="${v}" ${v === c.carrier ? 'selected' : ''}>${v || '（配送会社 空欄）'}</option>`).join('')}
+                        </select>
+                        <input type="text" class="w-tracking border rounded-lg px-2 py-1.5" placeholder="送り状番号（空欄OK）">
+                    </div>
+                    <p class="w-result hidden text-xs rounded-lg px-2 py-1.5"></p>
+                </div>`).join('') || '<p class="text-sm text-slate-500">書き込める行がありません。</p>';
+
+            const warn = document.getElementById('writeWarning');
+            if (skipped.length) {
+                warn.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>マスタ未登録・取引先未設定の ${skipped.length} 行（${countOrders(skipped)}件）は書き込みません。<br>先にマスタを登録・設定すると一緒に書き込めます。`;
+                warn.classList.remove('hidden');
+            } else {
+                warn.classList.add('hidden');
+            }
+
+            if (!document.getElementById('writeShipDate').value) document.getElementById('writeShipDate').value = todayStr();
+            const res = document.getElementById('writeResult');
+            res.classList.add('hidden'); res.innerHTML = '';
+            const btn = document.getElementById('writeSubmitBtn');
+            btn.disabled = !Object.keys(groups).length;
+            btn.innerHTML = '<i class="fa-solid fa-paper-plane mr-1"></i>書き込む';
+            document.getElementById('writeModal').classList.remove('hidden');
+        }
+
+        function closeWriteModal() {
+            document.getElementById('writeModal').classList.add('hidden');
+        }
+
+        async function submitWriteToSheet() {
+            const btn = document.getElementById('writeSubmitBtn');
+            const res = document.getElementById('writeResult');
+            const shipDate = document.getElementById('writeShipDate').value;
+            if (!shipDate && !confirm('発送日が空です。このまま書き込むと月別件数に数えられません。よろしいですか？')) return;
+
+            const { groups } = groupRowsByClient();
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
+            let failed = 0;
+
+            for (const box of document.querySelectorAll('#writeGroups [data-client]')) {
+                const key = box.dataset.client;
+                const out = box.querySelector('.w-result');
+                if (box.dataset.done) continue; // 成功済みの取引先は再送しない
+                try {
+                    const payload = {
+                        token: GAS_TOKEN,
+                        client: key,
+                        shipDate,
+                        carrier: box.querySelector('.w-carrier').value,
+                        tracking: box.querySelector('.w-tracking').value.trim(),
+                        rows: groups[key].map(r => ({ orderSn: r.orderSn, jpName: r.jpName, qty: r.baseQty * r.multiplier }))
+                    };
+                    // text/plain で送るとGAS側でCORSエラーになりにくい
+                    const resp = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    const data = await resp.json();
+                    if (!data.ok) throw new Error(data.error || '不明なエラー');
+
+                    let html = `<i class="fa-solid fa-circle-check mr-1"></i>${data.writtenOrders}件（${data.written}行）書き込みました`;
+                    if (data.startRow) html += `（${data.startRow}行目から）`;
+                    if (data.skippedOrders && data.skippedOrders.length) {
+                        html += `<br><span class="text-amber-700">登録済みのためスキップ：${data.skippedOrders.length}件（${data.skippedOrders.slice(0, 3).map(esc).join('、')}${data.skippedOrders.length > 3 ? ' ほか' : ''}）</span>`;
+                    }
+                    out.className = 'w-result text-xs rounded-lg px-2 py-1.5 bg-emerald-50 text-emerald-800';
+                    out.innerHTML = html;
+                    box.dataset.done = '1';
+                } catch (err) {
+                    failed++;
+                    out.className = 'w-result text-xs rounded-lg px-2 py-1.5 bg-rose-50 text-rose-700';
+                    out.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>失敗しました：${esc(err.message)}`;
+                }
+            }
+
+            if (failed) {
+                res.className = 'text-sm rounded-lg px-3 py-2 bg-rose-50 border border-rose-200 text-rose-700';
+                res.innerHTML = '失敗した取引先があります。「もう一度書き込む」を押すと、失敗した分だけ送り直します。';
+                res.classList.remove('hidden');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane mr-1"></i>もう一度書き込む';
+            } else {
+                res.classList.add('hidden');
+                btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>書き込み済み';
+            }
+        }
+
+        // ===== 月別出荷件数 =====
+        async function loadMonthly() {
+            const status = document.getElementById('monthlyStatus');
+            const head = document.getElementById('monthlyHead');
+            const body = document.getElementById('monthlyBody');
+            if (!gasReady()) { status.innerText = 'GASのURLが未設定です。'; return; }
+            status.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>出庫シートを読み込み中...';
+
+            // 取引先ごとに同時に読み込む
+            const results = await Promise.all(CLIENTS.map(async c => {
+                try {
+                    const url = `${GAS_URL}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}`;
+                    const data = await (await fetch(url)).json();
+                    if (!data.ok) throw new Error(data.error || '不明なエラー');
+                    return { c, months: data.months };
+                } catch (err) {
+                    return { c, error: err.message };
+                }
+            }));
+
+            const allMonths = [...new Set(results.flatMap(r => (r.months || []).map(m => m.month)))].sort().reverse();
+            const cell = (r, ym) => {
+                if (r.error) return '<td class="px-4 py-2.5 text-right text-rose-500">エラー</td>';
+                const m = r.months.find(x => x.month === ym);
+                return `<td class="px-4 py-2.5 text-right text-base font-bold text-teal-700">${m ? m.orders.toLocaleString() : '<span class="text-slate-300 font-normal">0</span>'}</td>`;
+            };
+
+            head.innerHTML = `<tr>
+                <th class="px-4 py-3">発送月</th>
+                ${results.map(r => `<th class="px-4 py-3 text-right">${esc(r.c.name)}</th>`).join('')}
+                <th class="px-4 py-3 text-right">合計</th>
+            </tr>`;
+            body.innerHTML = allMonths.length ? allMonths.map(ym => {
+                const total = results.reduce((s, r) => s + ((r.months || []).find(x => x.month === ym)?.orders || 0), 0);
+                return `<tr class="hover:bg-slate-50">
+                    <td class="px-4 py-2.5 font-medium">${esc(ym)}</td>
+                    ${results.map(r => cell(r, ym)).join('')}
+                    <td class="px-4 py-2.5 text-right text-slate-600 font-semibold">${total.toLocaleString()}</td>
+                </tr>`;
+            }).join('') : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center text-slate-400">データがありません</td></tr>`;
+
+            const errs = results.filter(r => r.error);
+            status.innerHTML = errs.length
+                ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
+                : `${new Date().toLocaleString('ja-JP')} 時点（件数＝注文数）`;
         }
 
         function resetApp() {
