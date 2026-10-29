@@ -424,15 +424,16 @@
 
     <script>
         // ===== 出庫シート連携の設定 =====
-        // GASを「ウェブアプリ」でデプロイしたURL（…/exec）を貼り付けてください
-        const GAS_URL = 'ここにGASのURLを貼り付け';
         const GAS_TOKEN = 'logex-bunkatsu-2026';   // GAS側の TOKEN と同じにする
 
         // 取引先の一覧（key は GAS 側の CLIENTS と同じにする）
-        // carrier は書き込み画面で最初に選ばれている配送会社
+        // carrier：書き込み画面で最初に選ばれている配送会社
+        // gasUrl ：その取引先の書き込み・集計に使うGASのURL（…/exec）
         const CLIENTS = [
-            { key: 'yoshihara', name: '吉原建設様', carrier: '佐川急便', color: 'bg-sky-100 text-sky-800' },
-            { key: 'imabeppu',  name: '今別府様',   carrier: '西濃運輸', color: 'bg-lime-100 text-lime-800' },
+            { key: 'yoshihara', name: '吉原建設様', carrier: '佐川急便', color: 'bg-sky-100 text-sky-800',
+              gasUrl: 'https://script.google.com/macros/s/AKfycbzN7qnB1sGj2pzte5JhnsfAnKvDprOmcbmxEQF7qAxgNQlFNKOtZYwXnhYsdFDuQ6A3Iw/exec' },
+            { key: 'imabeppu',  name: '今別府様',   carrier: '西濃運輸', color: 'bg-lime-100 text-lime-800',
+              gasUrl: 'https://script.google.com/macros/s/AKfycbybT7INyszYe9GvVJinLLEcoxL3vH_NbJlGKUB66SFVfdsoUeo6jVeYxp_sWNOiwqnQFQ/exec' },
         ];
         const clientOf = key => CLIENTS.find(c => c.key === key);
         function clientBadge(key) {
@@ -1399,8 +1400,9 @@
 
         // ===== 出庫シートに書き込み =====
         function gasReady() {
-            if (!GAS_URL || !GAS_URL.startsWith('https://')) {
-                alert('GASのURLが設定されていません。\nファイル内の GAS_URL にウェブアプリのURLを貼り付けてください。');
+            const missing = CLIENTS.filter(c => !c.gasUrl || !c.gasUrl.startsWith('https://'));
+            if (missing.length) {
+                alert(`GASのURLが設定されていません：${missing.map(c => c.name).join('、')}\nファイル内の CLIENTS の gasUrl を確認してください。`);
                 return false;
             }
             return true;
@@ -1490,7 +1492,7 @@
                         rows: groups[key].map(r => ({ orderSn: r.orderSn, jpName: r.jpName, qty: r.baseQty * r.multiplier }))
                     };
                     // text/plain で送るとGAS側でCORSエラーになりにくい
-                    const resp = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    const resp = await fetch(clientOf(key).gasUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
                     const data = await resp.json();
                     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
@@ -1532,7 +1534,7 @@
             // 取引先ごとに同時に読み込む
             const results = await Promise.all(CLIENTS.map(async c => {
                 try {
-                    const url = `${GAS_URL}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}`;
+                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}`;
                     const data = await (await fetch(url)).json();
                     if (!data.ok) throw new Error(data.error || '不明なエラー');
                     return { c, months: data.months };
