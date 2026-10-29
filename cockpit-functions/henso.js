@@ -33,6 +33,8 @@ const SPREADSHEET_ID = "1oEaoz0u-heDw1UxWR6G5MDwDDj7Qd8CXixOV-1KVH98";
 const RETURN_RANGE = "'返送管理シート'!A3:Z"; // 1行目=フォームURL、2行目=見出し
 const INPUT_RANGE = "'入力シート'!B2:L"; // B=No、L=画像URL
 const TOKEN_HOURS = 12;
+// 吉田様とのChatworkルーム（DHLラベル・EMS書類を探す場所）
+const RETURN_ROOM_ID = "400289258";
 
 // 受領ステータス（シートの既存の書き方「到着済（着払／開封済）」に合わせる）
 const RECEIPT_VALUES = [
@@ -347,8 +349,31 @@ exports.henso = onRequest(
       if (action === "lookup" && req.method === "GET") {
         const no = normNo(req.query.no);
         if (!no) return res.status(400).json({ error: "返送管理No.を入れてください" });
-        const rows = await findRows([no], fresh);
-        return res.json({ no, items: rows[no] || [] });
+        // シートの行・この番号の未完了タスク・ラベル類をまとめて返す
+        const [rows, myTasks] = await Promise.all([
+          findRows([no], fresh),
+          cwMyTasks(tokenOf()),
+        ]);
+        const tasks = myTasks
+          .map((t) => {
+            const body = cleanBody(t.body);
+            return {
+              taskId: t.task_id,
+              roomId: t.room && t.room.room_id,
+              roomName: (t.room && t.room.name) || "",
+              assignedBy: (t.assigned_by_account && t.assigned_by_account.name) || "",
+              limitTime: t.limit_time || 0,
+              body,
+              nos: extractNos(body),
+              kind: kindOf(body),
+            };
+          })
+          .filter((t) => t.nos.includes(no));
+        const roomId = (tasks[0] && tasks[0].roomId) || RETURN_ROOM_ID;
+        const files = await cwRoomFiles(tokenOf(), roomId, fresh)
+          .then((f) => filesByNo(f)[no] || [])
+          .catch(() => []);
+        return res.json({ no, items: rows[no] || [], tasks, files, roomId });
       }
 
       if (action === "status" && req.method === "POST") {
