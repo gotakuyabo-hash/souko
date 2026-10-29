@@ -298,6 +298,7 @@ exports.henso = onRequest(
           return {
             account,
             taskId: t.task_id,
+            messageId: String(t.message_id || "0"),
             roomId: t.room && t.room.room_id,
             roomName: (t.room && t.room.name) || "",
             assignedBy: (t.assigned_by_account && t.assigned_by_account.name) || "",
@@ -329,7 +330,12 @@ exports.henso = onRequest(
             files: (filesMap[x.roomId] && filesMap[x.roomId][n]) || [],
           }));
         });
-        list.sort((a, b) => (a.limitTime || 9e12) - (b.limitTime || 9e12));
+        // 新しく追加されたタスクが上（メッセージIDが大きいほど新しい）
+        list.sort((a, b) => {
+          const x = BigInt(/^\d+$/.test(a.messageId) ? a.messageId : "0");
+          const y = BigInt(/^\d+$/.test(b.messageId) ? b.messageId : "0");
+          return x === y ? b.taskId - a.taskId : (y > x ? 1 : -1);
+        });
         return res.json({ tasks: list, loadedAt: Date.now() });
       }
 
