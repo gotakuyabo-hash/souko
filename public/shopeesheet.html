@@ -141,6 +141,12 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 tr.neg td{background:var(--danger-bg)}
 .neg-v{color:var(--danger);font-weight:700}
 .diff{color:var(--danger);font-weight:700}
+.feesum{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.feesum div{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 16px;min-width:140px}
+.feesum span{display:block;font-size:12px;color:var(--muted)}
+.feesum b{font-size:22px;font-variant-numeric:tabular-nums}
+.feesum .main{border:2px solid var(--wh);background:var(--wh-bg)}
+.feesum .main b{color:var(--wh)}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:var(--wait-bg);color:var(--wait);margin-left:6px;font-weight:700}
 .pend{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .pend:first-child{border-top:none}
@@ -216,6 +222,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <button class="tab on" data-tab="orders" role="tab" type="button">出荷</button>
   <button class="tab" data-tab="inbound" role="tab" type="button">入庫</button>
   <button class="tab" data-tab="stock" role="tab" type="button">在庫</button>
+  <button class="tab" data-tab="fee" role="tab" type="button">保管料</button>
 </nav>
 
 <main>
@@ -225,6 +232,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
       <input id="q" type="search" placeholder="Order ID・商品コード・商品名・配送番号で探す">
       <label class="opt"><input type="checkbox" id="groupSel" checked>同じOrder IDをまとめて選択</label>
       <button class="btn ghost" id="selAll" type="button">表示中をすべて選択</button>
+      <button class="btn" id="pickBtn" type="button">トータルピック</button>
     </div>
     <div class="legend">色の意味：<span class="sw seller"></span>セラー記入<span class="sw wh"></span>倉庫記入</div>
     <div id="list" class="list"></div>
@@ -279,12 +287,25 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
     <details id="unmatched" class="panel" hidden></details>
     <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量。引当後＝在庫 − まだ出荷していない注文の数量。商品コードが一致するものを同じ商品として数えます。コードがないものだけ商品名の完全一致で数えます（在庫シートと同じルール）。</p>
   </section>
+
+  <!-- 保管料 -->
+  <section id="v-fee" class="view" hidden>
+    <div class="toolbar">
+      <label class="opt" style="gap:8px">請求月<select id="feeMonth" style="width:auto"></select></label>
+      <label class="opt" style="gap:8px">単価（税抜）<input id="feeUnit" type="number" min="0" inputmode="numeric" style="width:90px" value="80">円</label>
+      <button id="feeCopy" class="btn" type="button">明細をコピー</button>
+    </div>
+    <div id="feeSum" class="feesum"></div>
+    <div class="panel tablewrap" style="padding:0"><table id="feeTbl"></table></div>
+    <p class="hint">月末の時点で倉庫に残っていて、入荷日から1ヶ月が過ぎている商品を、1点ごとに数えます（例：9/30入荷→10月末は対象、10/1入荷→10月末は対象外）。出荷は古い入荷分から順に引きます（先入れ先出し）。月末までに出荷済みのものは引きます（発送日が空の出荷済みも引きます）。商品コードが同じものを同じ商品として数えます。消費税は10%・切り捨てで計算しています。</p>
+  </section>
 </main>
 
 <div id="bar" class="bar" hidden>
   <span id="selCount"></span>
   <button class="btn" data-bulk="recv" type="button">受領にする</button>
   <button class="btn primary" data-bulk="ship" type="button">出荷登録</button>
+  <button class="btn" data-bulk="pick" type="button">ピックリスト</button>
   <button class="btn" data-bulk="label" type="button">ラベル印刷</button>
   <button class="btn" data-bulk="invoice" type="button">Invoice印刷</button>
   <button class="btn ghost" data-bulk="clear" type="button">選択解除</button>
@@ -438,6 +459,7 @@ function render(){
   if (S.tab === 'orders') renderOrders();
   if (S.tab === 'inbound') renderInbound();
   if (S.tab === 'stock') renderStock();
+  if (S.tab === 'fee') renderFee();
   renderBar();
   fillLists();
 }
@@ -869,6 +891,165 @@ function renderStock(){
     '<ul>' + [...unmatched.entries()].map(([n, q]) => '<li>'+nl(n || '（商品名なし）')+' ×'+q+'</li>').join('') + '</ul>';
 }
 
+/* ===== トータルピックリスト（未出荷の注文を商品ごとに合計） ===== */
+function pickTargets(mode){
+  if (mode === 'sel') return selectedRows().filter(o => !o.shipped);
+  if (mode === 'ready') return D.orders.filter(o => !o.shipped && o.received);
+  return D.orders.filter(o => !o.shipped);
+}
+function pickRows(orders){
+  const codeOf = o => normCode(o.code) || NAME_MAP.get(String(o.item || '').trim()) || '';
+  const stockBy = new Map(stockRows().rows.map(r => [r.code ? 'c:' + r.code : 'n:' + r.name, r]));
+  const m = new Map();
+  orders.forEach(o => {
+    const c = codeOf(o), k = c ? 'c:' + c : 'n:' + String(o.item || '').trim();
+    if (!m.has(k)){ const st = stockBy.get(k); m.set(k, { code:c, name:(st && st.name) || String(o.item || '').trim(), qty:0, ids:new Map(), stock: st ? st.stock : null }); }
+    const x = m.get(k); x.qty += o.qty;
+    const id = o.orderId || ('No.' + (o.no || o.row));
+    x.ids.set(id, (x.ids.get(id) || 0) + o.qty);
+  });
+  return [...m.values()].map(x => ({ ...x, short: x.stock != null && x.stock < x.qty }))
+    .sort((a,b) => (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
+}
+const PICK_LABEL = { all:'未出荷すべて', ready:'受領済み（出荷待ち）のみ', sel:'選択中の注文' };
+function pickTable(rows, forPrint){
+  const ids = r => [...r.ids].map(([id, q]) => esc(id) + (q > 1 ? '×' + q : '')).join('、');
+  return '<table><thead><tr>'+(forPrint?'<th class="ck">✓</th>':'')+'<th>商品コード</th><th>商品名</th><th class="n">数量</th><th class="n">在庫</th><th>注文</th></tr></thead><tbody>' +
+    rows.map(r => '<tr'+(r.short?' class="neg"':'')+'>'+(forPrint?'<td class="ck">□</td>':'')+'<td class="num" style="white-space:nowrap">'+(r.code?esc(r.code):'－')+'</td><td>'+esc(r.name)+(r.short?'<span class="tag">在庫不足</span>':'')+'</td>' +
+      '<td class="n"><b style="font-size:1.15em">'+r.qty+'</b></td><td class="n">'+(r.stock == null ? '－' : r.stock)+'</td><td style="font-size:12px">'+ids(r)+'</td></tr>').join('') + '</tbody></table>';
+}
+function openPick(mode){
+  const nSel = selectedRows().filter(o => !o.shipped).length;
+  if (mode === 'sel' && !nSel){ toast('未出荷の注文が選ばれていません', true); return; }
+  const draw = () => {
+    const f = $('dlgBody').querySelector('form'); if (!f) return;
+    const md = f.elements.mode.value;
+    const orders = pickTargets(md), rows = pickRows(orders);
+    const units = rows.reduce((a,r) => a + r.qty, 0), nOrd = new Set(orders.map(keyOf)).size;
+    f.querySelector('#pickSum').textContent = '注文 ' + nOrd + '件・' + rows.length + '品目・合計 ' + units + '点' + (rows.some(r => r.short) ? '（在庫不足あり）' : '');
+    f.querySelector('#pickPrev').innerHTML = rows.length ? pickTable(rows, false) : '<p class="muted" style="padding:12px">対象の注文がありません。</p>';
+    S.pick = { md, rows, units, nOrd };
+  };
+  const opt = (v, label, dis) => '<label class="opt"><input type="radio" name="mode" value="'+v+'"'+(v===mode?' checked':'')+(dis?' disabled':'')+'>'+label+'</label>';
+  openDlg(
+    '<form style="min-width:min(760px,86vw)"><h2>トータルピックリスト</h2>' +
+    '<div class="toolbar" style="margin:10px 0">' + opt('all', PICK_LABEL.all) + opt('ready', PICK_LABEL.ready) + opt('sel', PICK_LABEL.sel + '（' + nSel + '行）', !nSel) + '</div>' +
+    '<p class="sub" id="pickSum"></p>' +
+    '<div class="tablewrap" id="pickPrev" style="max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>閉じる</button><button type="button" class="btn" id="pickCopy">コピー</button><button class="btn primary" type="submit">印刷</button></div></form>',
+    () => { printPick(); return false; }
+  );
+  const f = $('dlgBody').querySelector('form');
+  f.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', draw));
+  f.querySelector('#pickCopy').onclick = async () => {
+    const p = S.pick; if (!p || !p.rows.length) return;
+    const tsv = [['商品コード','商品名','数量','在庫','注文'].join('\t')]
+      .concat(p.rows.map(r => [r.code, r.name, r.qty, r.stock == null ? '' : r.stock, [...r.ids].map(([id,q]) => id + (q>1?'×'+q:'')).join(' ')].join('\t'))).join('\n');
+    try { await navigator.clipboard.writeText(tsv); toast('ピックリストをコピーしました'); } catch(e){ toast('コピーできませんでした', true); }
+  };
+  draw();
+}
+function printPick(){
+  const p = S.pick; if (!p || !p.rows.length){ toast('印刷する注文がありません', true); return; }
+  const now = new Date();
+  const stamp = now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate()+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  const seller = (SELLERS.find(x => x.id === S.sellerId) || {}).name || (D.title || '');
+  const html = '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>トータルピックリスト</title><style>' +
+    "@page{size:A4;margin:12mm}body{font-family:'BIZ UDPGothic','Hiragino Sans','Yu Gothic',Meiryo,sans-serif;color:#000;font-size:12px;margin:0}" +
+    'h1{font-size:18px;margin:0 0 4px}.meta{margin:0 0 10px;font-size:12px}table{width:100%;border-collapse:collapse}' +
+    'th,td{border:1px solid #444;padding:5px 6px;text-align:left;vertical-align:top}th{background:#eee;font-size:11px}' +
+    'td.n,th.n{text-align:right;white-space:nowrap}.ck{width:22px;text-align:center;font-size:15px}tr{page-break-inside:avoid}' +
+    'tr.neg td{background:#fde2de}.tag{font-size:10px;border:1px solid #b3372e;color:#b3372e;padding:0 4px;margin-left:6px}.num{font-variant-numeric:tabular-nums}' +
+    '</style></head><body><h1>トータルピックリスト</h1>' +
+    '<p class="meta">' + esc(seller) + '　｜　' + esc(PICK_LABEL[p.md]) + '　｜　注文 ' + p.nOrd + '件・' + p.rows.length + '品目・合計 ' + p.units + '点　｜　作成 ' + stamp + '</p>' +
+    pickTable(p.rows, true) + '</body></html>';
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  document.body.appendChild(fr);
+  fr.contentDocument.open(); fr.contentDocument.write(html); fr.contentDocument.close();
+  setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 1000); }, 300);
+}
+$('pickBtn').addEventListener('click', () => { if (D) openPick('all'); });
+
+/* ===== 保管料（月末時点で入荷から1ヶ月を過ぎた在庫 × 単価） ===== */
+const ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+function addMonth1(s){ // 1ヶ月後の同じ日（月末をはみ出すときはその月の末日）
+  const [y,m,d] = s.split('-').map(Number);
+  const last = new Date(y, m + 1, 0).getDate();
+  return ymd(new Date(y, m, Math.min(d, last)));
+}
+function monthEnd(ym){ const [y,m] = ym.split('-').map(Number); return ymd(new Date(y, m, 0)); }
+function feeMonths(){
+  const ds = D.inbound.map(b => b.inDate).filter(Boolean).sort();
+  const now = new Date(); const cur = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  if (!ds.length) return [cur];
+  const out = []; let [y,m] = ds[0].slice(0,7).split('-').map(Number);
+  while (true){ const ym = y+'-'+String(m).padStart(2,'0'); out.push(ym); if (ym >= cur) break; m++; if (m > 12){ m = 1; y++; } }
+  return out.reverse();
+}
+function feeRows(ym){
+  const end = monthEnd(ym);
+  const codeOf = (code, name) => normCode(code) || NAME_MAP.get(String(name || '').trim()) || '';
+  const key = (code, name) => { const c = codeOf(code, name); return c ? 'c:' + c : 'n:' + String(name || '').trim(); };
+  const stockName = new Map(D.stock.map(st => [key(st.code, st.name), st.name]));
+  // 月末までに入荷したロット（古い順）
+  const lots = new Map();
+  D.inbound.filter(b => b.inDate && b.inDate <= end && Number(b.inQty) > 0)
+    .sort((a,b) => a.inDate.localeCompare(b.inDate) || a.row - b.row)
+    .forEach(b => {
+      const k = key(b.code, b.name);
+      if (!lots.has(k)) lots.set(k, []);
+      lots.get(k).push({ k, code:codeOf(b.code, b.name), name:stockName.get(k) || b.name, inDate:b.inDate, left:Number(b.inQty) });
+    });
+  // 月末までに出荷したぶんを、古いロットから引く
+  D.orders.forEach(o => {
+    if (!o.shipped || (o.shipDate && o.shipDate > end)) return;
+    const ls = lots.get(key(o.code, o.item)); if (!ls) return;
+    let q = o.qty;
+    for (const l of ls){ if (q <= 0) break; const t = Math.min(l.left, q); l.left -= t; q -= t; }
+  });
+  const rows = [];
+  lots.forEach(ls => ls.forEach(l => {
+    if (l.left <= 0 || addMonth1(l.inDate) > end) return;
+    const days = Math.round((new Date(end) - new Date(l.inDate)) / 86400000);
+    rows.push({ ...l, days });
+  }));
+  return rows.sort((a,b) => a.inDate.localeCompare(b.inDate) || a.name.localeCompare(b.name, 'ja'));
+}
+function renderFee(){
+  const sel = $('feeMonth');
+  const months = feeMonths();
+  if (!S.feeMonth || !months.includes(S.feeMonth)) S.feeMonth = months[0];
+  sel.innerHTML = months.map(m => '<option value="'+m+'"'+(m===S.feeMonth?' selected':'')+'>'+m.replace('-','年')+'月</option>').join('');
+  const unit = Number($('feeUnit').value) || 0;
+  const rows = feeRows(S.feeMonth);
+  const qty = rows.reduce((a,r) => a + r.left, 0);
+  const sub = qty * unit, tax = Math.floor(sub * 0.1);
+  const yen = n => n.toLocaleString('ja-JP') + '円';
+  const end = monthEnd(S.feeMonth);
+  const future = end > today();
+  $('feeSum').innerHTML =
+    '<div><span>対象（'+fmtMD(end)+'時点'+(future?'・見込み':'')+'）</span><b>'+qty.toLocaleString('ja-JP')+'点</b></div>' +
+    '<div><span>保管料（税抜）</span><b>'+yen(sub)+'</b></div>' +
+    '<div><span>消費税（10%）</span><b>'+yen(tax)+'</b></div>' +
+    '<div class="main"><span>合計（税込）</span><b>'+yen(sub+tax)+'</b></div>';
+  $('feeTbl').innerHTML = rows.length ?
+    '<thead><tr><th>商品コード</th><th>商品名</th><th>入荷日</th><th class="n">経過日数</th><th class="n">残数</th><th class="n">金額（税抜）</th></tr></thead><tbody>' +
+    rows.map(r => '<tr><td class="num" style="white-space:nowrap">'+(r.code?esc(r.code):'<span class="muted">－</span>')+'</td><td>'+esc(r.name)+'</td><td class="num" style="white-space:nowrap">'+esc(r.inDate.replace(/-/g,'/'))+'</td>' +
+      '<td class="n">'+r.days+'日</td><td class="n">'+r.left+'</td><td class="n">'+yen(r.left*unit)+'</td></tr>').join('') + '</tbody>'
+    : '<tbody><tr><td class="muted">この月末の時点で、入荷から1ヶ月を過ぎた在庫はありません。</td></tr></tbody>';
+  S.feeCopy = [['商品コード','商品名','入荷日','経過日数','残数','単価（税抜）','金額（税抜）'].join('\t')]
+    .concat(rows.map(r => [r.code, r.name, r.inDate.replace(/-/g,'/'), r.days, r.left, unit, r.left*unit].join('\t')))
+    .concat(['', ['','','','','合計 '+qty+'点','税抜',sub].join('\t'), ['','','','','','消費税',tax].join('\t'), ['','','','','','税込',sub+tax].join('\t')])
+    .join('\n');
+}
+$('feeMonth').addEventListener('change', e => { S.feeMonth = e.target.value; renderFee(); });
+$('feeUnit').addEventListener('input', () => renderFee());
+$('feeCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(S.feeCopy || ''); toast('明細をコピーしました。エクセルやスプレッドシートに貼り付けられます'); }
+  catch(e){ toast('コピーできませんでした', true); }
+});
+
 /* ===== イベント ===== */
 document.addEventListener('click', e => {
   const t = e.target.closest('button, input[type=checkbox]');
@@ -904,6 +1085,7 @@ document.addEventListener('click', e => {
     if (!rows.length) return;
     if (t.dataset.bulk === 'recv') setReceived(rows.filter(o => !o.received), true).catch(() => {});
     if (t.dataset.bulk === 'ship') openShip(rows);
+    if (t.dataset.bulk === 'pick') openPick('sel');
     if (t.dataset.bulk === 'label' || t.dataset.bulk === 'invoice') printLabels(rows, t.dataset.bulk).catch(err => toast(String(err.message || err), true));
     return;
   }
