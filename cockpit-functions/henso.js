@@ -11,8 +11,8 @@
  * 使い方
  *  コックピットの index.js と同じフォルダに置き、index.js の最後に次の1行を追加：
  *    exports.henso = require("./henso").henso;
- *  追加のインストールや新しいSecretの登録は不要
- *  （コックピットと同じ CW_TOKEN_STAFF と APP_SECRET（合言葉）を使います）
+ *  追加のインストールは不要。Chatworkトークンはコックピットと同じ CW_TOKEN_STAFF / CW_TOKEN_MATSUSHITA を使用
+ *  合言葉だけ専用のSecret（HENSO_PASSPHRASE）を登録する
  */
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
@@ -21,7 +21,13 @@ const crypto = require("crypto");
 
 // コックピットで登録済みのSecretをそのまま使う
 const CHATWORK_TOKEN = defineSecret("CW_TOKEN_STAFF"); // ラクロジスタッフのChatwork
-const HENSO_PASSPHRASE = defineSecret("APP_SECRET");   // 合言葉（コックピットと同じ）
+const CHATWORK_TOKEN_MATSUSHITA = defineSecret("CW_TOKEN_MATSUSHITA"); // 以前のタスク（松下さん担当）用
+function tokenOf(account) {
+  return account === "matsushita" ? CHATWORK_TOKEN_MATSUSHITA.value() : CHATWORK_TOKEN.value();
+}
+// このアプリ専用の合言葉（コックピットの合言葉とは別）
+//   firebase functions:secrets:set HENSO_PASSPHRASE  → 「logex」を入力
+const HENSO_PASSPHRASE = defineSecret("HENSO_PASSPHRASE");
 
 const SPREADSHEET_ID = "1oEaoz0u-heDw1UxWR6G5MDwDDj7Qd8CXixOV-1KVH98";
 const RETURN_RANGE = "'返送管理シート'!A3:Z"; // 1行目=フォームURL、2行目=見出し
@@ -185,7 +191,51 @@ function samePass(a, b) {
   return crypto.timingSafeEqual(h(a), h(b));
 }
 
+/* ---------- 作業内容の判定（タスク本文から） ---------- */
+function kindOf(body) {
+  if (/破棄/.test(body)) return { key: "haiki", label: "破棄" };
+  if (/DHL/i.test(body)) return { key: "dhl", label: "DHL集荷" };
+  if (/EMS/i.test(body)) return { key: "ems", label: "EMS集荷" };
+  if (/在庫/.test(body)) return { key: "zaiko", label: "在庫に戻す" };
+  return { key: "", label: "" };
+}
+
 /* ---------- Chatwork ---------- */
+// ルームのファイル一覧から「返送管理シートNo.○○」の付いたファイル（DHLラベル・EMS書類）を探す
+const fileCache = {};
+async function cwRoomFiles(token, roomId, fresh) {
+  const c = fileCache[roomId];
+  if (!fresh && c && Date.now() - c.t < 2 * 60 * 1000) return c.v;
+  const r = await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/files`, {
+    headers: { "x-chatworktoken": token },
+  });
+  let v = [];
+  if (r.ok && r.status !== 204) v = await r.json();
+  fileCache[roomId] = { t: Date.now(), v };
+  return v;
+}
+function filesByNo(files) {
+  const map = {};
+  files.forEach((f) => {
+    const m = toHalf(f.filename).match(/返送管理(?:シート)?\s*No\.?\s*(\d+)/i);
+    if (!m) return;
+    const no = String(parseInt(m[1], 10));
+    (map[no] = map[no] || []).push({ fileId: f.file_id, filename: f.filename, uploaded: f.upload_time });
+  });
+  Object.values(map).forEach((list) => list.sort((a, b) => b.uploaded - a.uploaded));
+  return map;
+}
+async function cwFileUrl(token, roomId, fileId) {
+  const r = await fetch(
+    `https://api.chatwork.com/v2/rooms/${roomId}/files/${fileId}?create_download_url=1`,
+    { headers: { "x-chatworktoken": token } }
+  );
+  if (!r.ok) throw new Error("ファイルを開けませんでした（" + r.status + "）");
+  const d = await r.json();
+  if (!d.download_url) throw new Error("ファイルのURLが取得できませんでした");
+  return d.download_url;
+}
+
 async function cwMyTasks(token) {
   const r = await fetch("https://api.chatwork.com/v2/my/tasks?status=open", {
     headers: { "x-chatworktoken": token },
@@ -215,7 +265,7 @@ async function cwSetStatus(token, roomId, taskId, status) {
 
 /* ---------- 入口 ---------- */
 exports.henso = onRequest(
-  { region: "asia-northeast1", secrets: [CHATWORK_TOKEN, HENSO_PASSPHRASE] },
+  { region: "asia-northeast1", secrets: [CHATWORK_TOKEN, CHATWORK_TOKEN_MATSUSHITA, HENSO_PASSPHRASE] },
   async (req, res) => {
     res.set("Cache-Control", "no-store");
     const action = req.path.split("/").filter(Boolean).pop();
@@ -234,28 +284,62 @@ exports.henso = onRequest(
         return res.status(401).json({ error: "ログインしてください" });
       }
 
-      const cwToken = CHATWORK_TOKEN.value();
       const fresh = req.query.fresh === "1";
 
       if (action === "tasks" && req.method === "GET") {
-        const tasks = await cwMyTasks(cwToken);
-        const list = tasks.map((t) => {
+        // ラクロジスタッフのタスク＋（以前の）松下さんの返送タスク
+        const [staffTasks, mTasks] = await Promise.all([
+          cwMyTasks(tokenOf("staff")),
+          cwMyTasks(tokenOf("matsushita")).catch(() => []),
+        ]);
+        const toItem = (account) => (t) => {
           const body = cleanBody(t.body);
+          const nos = extractNos(body);
           return {
+            account,
             taskId: t.task_id,
             roomId: t.room && t.room.room_id,
             roomName: (t.room && t.room.name) || "",
             assignedBy: (t.assigned_by_account && t.assigned_by_account.name) || "",
             limitTime: t.limit_time || 0,
             body,
-            nos: extractNos(body),
-            isReturn: /返送|返品|破棄/.test(body),
+            nos,
+            kind: kindOf(body),
+            isReturn: nos.length > 0 || /返送|返品|破棄/.test(body),
           };
-        });
+        };
+        const list = staffTasks.map(toItem("staff"))
+          .concat(mTasks.map(toItem("matsushita")).filter((x) => x.isReturn));
+
         const allNos = [...new Set(list.flatMap((x) => x.nos))];
         const rows = allNos.length ? await findRows(allNos, fresh) : {};
-        list.forEach((x) => (x.rows = x.nos.map((n) => ({ no: n, items: rows[n] || [] }))));
+
+        // 返送タスクのあるルームのファイル（DHLラベル・EMS書類）
+        const roomIds = [...new Set(list.filter((x) => x.nos.length).map((x) => x.roomId))];
+        const filesMap = {};
+        await Promise.all(roomIds.map(async (rid) => {
+          const files = await cwRoomFiles(tokenOf("staff"), rid, fresh).catch(() => []);
+          filesMap[rid] = filesByNo(files);
+        }));
+
+        list.forEach((x) => {
+          x.rows = x.nos.map((n) => ({
+            no: n,
+            items: rows[n] || [],
+            files: (filesMap[x.roomId] && filesMap[x.roomId][n]) || [],
+          }));
+        });
+        list.sort((a, b) => (a.limitTime || 9e12) - (b.limitTime || 9e12));
         return res.json({ tasks: list, loadedAt: Date.now() });
+      }
+
+      if (action === "file" && req.method === "GET") {
+        const { roomId, fileId } = req.query;
+        if (!/^\d+$/.test(String(roomId)) || !/^\d+$/.test(String(fileId))) {
+          return res.status(400).json({ error: "ファイルの指定が正しくありません" });
+        }
+        const url = await cwFileUrl(tokenOf("staff"), roomId, fileId);
+        return res.json({ url });
       }
 
       if (action === "lookup" && req.method === "GET") {
@@ -266,14 +350,14 @@ exports.henso = onRequest(
       }
 
       if (action === "status" && req.method === "POST") {
-        const { roomId, taskId, status } = req.body || {};
+        const { roomId, taskId, status, account } = req.body || {};
         if (!/^\d+$/.test(String(roomId)) || !/^\d+$/.test(String(taskId))) {
           return res.status(400).json({ error: "タスクの指定が正しくありません" });
         }
         if (status !== "done" && status !== "open") {
           return res.status(400).json({ error: "statusは done か open です" });
         }
-        await cwSetStatus(cwToken, roomId, taskId, status);
+        await cwSetStatus(tokenOf(account), roomId, taskId, status);
         return res.json({ ok: true, status });
       }
 
