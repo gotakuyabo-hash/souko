@@ -149,6 +149,16 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 .one-task{padding:4px 0 0}
 .one-task + .one-task{border-top:1px dashed var(--line)}
 .empty-note{margin:8px 16px 16px;font-size:14px;color:var(--muted)}
+
+/* タブ */
+.tabs{max-width:1100px;margin:0 auto;padding:0 16px;display:flex;gap:4px}
+.tab{flex:1;padding:12px 8px;border:0;border-bottom:3px solid transparent;background:none;font-weight:700;font-size:16px;color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.finder input.text{font-size:20px;letter-spacing:0}
+.hit-note{font-size:14px;color:var(--muted);margin:0 0 10px}
+.cust{font-size:18px;font-weight:700;margin-top:2px}
+.badge-task{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--warn);color:#fff}
+.no-task{font-size:13px;color:var(--muted);padding:0 16px 14px;margin:0}
 </style>
 </head>
 <body>
@@ -170,17 +180,36 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
       <span class="grow"></span>
       <button class="btn" id="logoutBtn">ログアウト</button>
     </div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tabRecv" aria-selected="true">荷物を受領する</button>
+      <button class="tab" role="tab" id="tabDone" aria-selected="false">タスクを完了する</button>
+    </div>
   </header>
+
   <main>
-    <form class="finder" id="finder">
-      <label for="no">返送管理No.</label>
-      <div class="finder-row">
-        <input id="no" inputmode="numeric" autocomplete="off" placeholder="例：173">
-        <button type="submit" id="findBtn">検索</button>
+    <!-- 受領 -->
+    <section id="recvView">
+      <form class="finder" id="recvForm">
+        <label for="recvQ">名前・品名・注文番号</label>
+        <div class="finder-row">
+          <input id="recvQ" class="text" autocomplete="off" placeholder="例：山崎宏一">
+          <button type="submit" id="recvBtn">検索</button>
+        </div>
+      </form>
+      <div id="recvResult"></div>
+    </section>
+
+    <!-- タスク完了 -->
+    <section id="doneView" hidden>
+      <div class="finder">
+        <label for="doneQ">受領済みの荷物から探す</label>
+        <div class="finder-row">
+          <input id="doneQ" class="text" autocomplete="off" placeholder="返送No.・名前・品名で絞り込み">
+          <button type="button" id="doneReload">更新</button>
+        </div>
       </div>
-      <div class="recent" id="recent"></div>
-    </form>
-    <div id="result"></div>
+      <div id="doneResult"></div>
+    </section>
   </main>
 </div>
 
@@ -191,11 +220,14 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 const API = "https://asia-northeast1-souko-2de57.cloudfunctions.net/henso";
 let token = "";
 try { token = localStorage.getItem("henso_token") || ""; } catch (e) {}
-let current = null;          // いま表示している検索結果
-const doneSet = new Set();   // このページで完了にしたタスク
+
+let recv = null;            // 受領タブの検索結果 { matchedBy, items }
+let received = null;        // タスク完了タブの受領済み一覧
+const doneSet = new Set();  // このページで完了にしたタスク
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const norm = (s) => String(s || "").normalize("NFKC").toLowerCase().replace(/[\s\-‐－]/g, "");
 
 function toast(msg, actionLabel, onAction) {
   document.querySelectorAll(".toast").forEach((x) => x.remove());
@@ -229,7 +261,7 @@ async function api(path, opt = {}) {
 }
 
 function showLogin() { $("loginView").hidden = false; $("appView").hidden = true; $("pass").focus(); }
-function showApp() { $("loginView").hidden = true; $("appView").hidden = false; renderRecent(); $("no").focus(); }
+function showApp() { $("loginView").hidden = true; $("appView").hidden = false; switchTab("recv"); }
 function logout() { token = ""; try { localStorage.removeItem("henso_token"); } catch (e) {} showLogin(); }
 $("logoutBtn").addEventListener("click", logout);
 
@@ -245,40 +277,20 @@ $("loginForm").addEventListener("submit", async (e) => {
   } catch (err) { $("loginErr").textContent = err.message; }
 });
 
-/* ---------- 最近さがしたNo. ---------- */
-function getRecent() { try { return JSON.parse(localStorage.getItem("henso_recent") || "[]"); } catch (e) { return []; } }
-function addRecent(no) {
-  const list = [no, ...getRecent().filter((x) => x !== no)].slice(0, 6);
-  try { localStorage.setItem("henso_recent", JSON.stringify(list)); } catch (e) {}
-  renderRecent();
+/* ---------- タブ ---------- */
+function switchTab(name) {
+  const isRecv = name === "recv";
+  $("tabRecv").setAttribute("aria-selected", isRecv);
+  $("tabDone").setAttribute("aria-selected", !isRecv);
+  $("recvView").hidden = !isRecv;
+  $("doneView").hidden = isRecv;
+  if (isRecv) $("recvQ").focus();
+  else loadReceived();
 }
-function renderRecent() {
-  const list = getRecent();
-  $("recent").innerHTML = list.length
-    ? "最近：" + list.map((n) => `<button type="button" data-recent="${esc(n)}">${esc(n)}</button>`).join("")
-    : "";
-}
+$("tabRecv").addEventListener("click", () => switchTab("recv"));
+$("tabDone").addEventListener("click", () => switchTab("done"));
 
-/* ---------- 検索 ---------- */
-async function find(no) {
-  no = String(no || "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/\D/g, "");
-  if (!no) { $("no").focus(); return; }
-  $("no").value = no;
-  $("findBtn").disabled = true; $("findBtn").textContent = "検索中…";
-  $("result").innerHTML = "";
-  try {
-    current = await api("/lookup?no=" + encodeURIComponent(no) + "&fresh=1");
-    addRecent(current.no);
-    render();
-  } catch (err) {
-    $("result").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
-  } finally {
-    $("findBtn").disabled = false; $("findBtn").textContent = "検索";
-  }
-}
-$("finder").addEventListener("submit", (e) => { e.preventDefault(); find($("no").value); });
-
-/* ---------- 表示 ---------- */
+/* ---------- 共通の表示部品 ---------- */
 function chipClass(s) {
   if (/DHL/i.test(s)) return "dhl";
   if (/EMS/i.test(s)) return "ems";
@@ -287,51 +299,109 @@ function chipClass(s) {
   return "";
 }
 
+function photoHtml(it) {
+  return it.image
+    ? `<button class="photo" data-zoom="${esc(it.image)}" aria-label="画像を拡大"><img src="${esc(it.image)}" alt="" loading="lazy"></button>`
+    : `<div class="photo"><span>画像なし</span></div>`;
+}
+
+function infoHtml(it) {
+  return `<div>
+    <div class="no-line">
+      <span class="no"><small>返送No.</small>${esc(it.no)}</span>
+      ${it.status ? `<span class="chip ${chipClass(it.status)}">${esc(it.status)}</span>` : ""}
+    </div>
+    ${it.name ? `<div class="cust">${esc(it.name)}</div>` : ""}
+    <p class="title">${esc(it.title || "（商品名なし）")}</p>
+    <div class="meta">
+      <span>数量 <b>${esc(it.qty || "-")}</b></span>
+      <span>${esc(it.store)}</span>
+      <span>配送No.${esc(it.haisoNo || "-")}</span>
+      ${it.orderNo ? `<span>${esc(it.orderNo)}</span>` : ""}
+    </div>
+  </div>`;
+}
+
+/* ---------- 受領タブ ---------- */
 const RECEIPT = [
   { kind: "元払", values: ["到着済（元払／未開封）", "到着済（元払／開封済）"] },
   { kind: "着払", values: ["到着済（着払／未開封）", "到着済（着払／開封済）"] },
 ];
-function receiptHtml(it, no) {
+function receiptHtml(it) {
   const rows = RECEIPT.map((g) => `<span class="kind">${g.kind}</span>` +
-    g.values.map((v) => `<button class="rc" data-receipt="${esc(v)}" data-row="${it.rowNumber}" data-no="${esc(no)}"
+    g.values.map((v) => `<button class="rc" data-receipt="${esc(v)}" data-row="${it.rowNumber}" data-no="${esc(it.no)}"
       aria-pressed="${it.status === v}">${/未開封/.test(v) ? "未開封" : "開封済"}</button>`).join("")).join("");
-  return `<div class="receipt"><div class="receipt-label">荷物を受け取ったら選んでください</div><div class="receipt-grid">${rows}</div></div>`;
+  return `<div class="receipt"><div class="receipt-label">受け取った荷物の状態を選んでください</div><div class="receipt-grid">${rows}</div></div>`;
 }
 
-function filesHtml(files, roomId) {
-  if (!files || !files.length) return "";
-  return `<div class="files">${files.map((f) =>
-    `<button data-file="${f.fileId}" data-room="${roomId}">${/\.pdf$/i.test(f.filename) ? "EMS書類" : "DHLラベル"}を開く</button>`).join("")}</div>`;
+const FIELD_LABEL = { name: "名前", title: "品名", orderNo: "注文番号" };
+
+async function searchRecv() {
+  const q = $("recvQ").value.trim();
+  if (!q) { $("recvQ").focus(); return; }
+  $("recvBtn").disabled = true; $("recvBtn").textContent = "検索中…";
+  $("recvResult").innerHTML = "";
+  try {
+    recv = await api("/search?fresh=1&q=" + encodeURIComponent(q));
+    renderRecv();
+  } catch (err) {
+    $("recvResult").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
+  } finally {
+    $("recvBtn").disabled = false; $("recvBtn").textContent = "検索";
+  }
+}
+$("recvForm").addEventListener("submit", (e) => { e.preventDefault(); searchRecv(); });
+
+function renderRecv() {
+  if (!recv) { $("recvResult").innerHTML = ""; return; }
+  if (!recv.items.length) {
+    $("recvResult").innerHTML = `<div class="notice">名前・品名・注文番号のどれでも見つかりませんでした。字を短くして（名字だけ、品名の一部など）もう一度お試しください。</div>`;
+    return;
+  }
+  const note = recv.matchedBy === "name"
+    ? `名前で ${recv.items.length} 件見つかりました`
+    : `名前では見つからなかったため、${FIELD_LABEL[recv.matchedBy]}で ${recv.items.length} 件見つかりました`;
+  $("recvResult").innerHTML = `<p class="hit-note">${note}</p><div class="list">${
+    recv.items.map((it) => `<article class="task"><div class="item">${photoHtml(it)}${infoHtml(it)}${receiptHtml(it)}</div></article>`).join("")
+  }</div>`;
 }
 
-function itemHtml(it, no, files, roomId) {
-  const img = it.image
-    ? `<button class="photo" data-zoom="${esc(it.image)}" aria-label="画像を拡大"><img src="${esc(it.image)}" alt="" loading="lazy"></button>`
-    : `<div class="photo"><span>画像なし</span></div>`;
-  const label = it.label
-    ? (/^https?:\/\//.test(it.label)
-        ? `<div class="label"><a href="${esc(it.label)}" target="_blank" rel="noopener">DHLラベル（Amazon）を開く</a></div>`
-        : `<div class="label">${esc(it.label)}</div>`)
-    : "";
-  return `<div class="item">
-    ${img}
-    <div>
-      <div class="no-line">
-        <span class="no"><small>返送No.</small>${esc(no)}</span>
-        ${it.status ? `<span class="chip ${chipClass(it.status)}">${esc(it.status)}</span>` : ""}
-      </div>
-      <p class="title">${esc(it.title || "（商品名なし）")}</p>
-      <div class="meta">
-        <span>数量 <b>${esc(it.qty || "-")}</b></span>
-        <span>${esc(it.store)}</span>
-        <span>配送No.${esc(it.haisoNo || "-")}</span>
-        ${it.asin ? `<span>${esc(it.asin)}</span>` : ""}
-      </div>
-      ${label}
-    </div>
-    ${filesHtml(files, roomId)}
-    ${receiptHtml(it, no)}
-  </div>`;
+async function sendReceipt(no, rowNumber, value, undo) {
+  const d = await api("/receipt", { method: "POST", body: JSON.stringify({ no, rowNumber, value, undo: !!undo }) });
+  if (recv) recv.items.filter((it) => it.rowNumber === rowNumber).forEach((it) => (it.status = value));
+  received = null; // 受領済み一覧は次に開いたとき読み直す
+  renderRecv();
+  return d.prev;
+}
+
+/* ---------- タスク完了タブ ---------- */
+async function loadReceived(force) {
+  if (received && !force) { renderDone(); return; }
+  $("doneReload").disabled = true; $("doneReload").textContent = "読込中…";
+  $("doneResult").innerHTML = `<div class="notice">受領済みの荷物を読み込んでいます…</div>`;
+  try {
+    const d = await api("/received?fresh=1");
+    received = d.items;
+    renderDone();
+  } catch (err) {
+    $("doneResult").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
+  } finally {
+    $("doneReload").disabled = false; $("doneReload").textContent = "更新";
+  }
+}
+$("doneReload").addEventListener("click", () => loadReceived(true));
+$("doneQ").addEventListener("input", renderDone);
+
+function filesHtml(it) {
+  if (!it.files || !it.files.length) return "";
+  return `<div class="files">${it.files.map((f) =>
+    `<button data-file="${f.fileId}" data-room="${it.roomId}">${/\.pdf$/i.test(f.filename) ? "EMS書類" : "DHLラベル"}を開く</button>`).join("")}</div>`;
+}
+function amazonLabelHtml(it) {
+  if (!it.label) return "";
+  return /^https?:\/\//.test(it.label)
+    ? `<div class="label" style="grid-column:1/-1"><a href="${esc(it.label)}" target="_blank" rel="noopener">DHLラベル（Amazon）を開く</a></div>`
+    : `<div class="label" style="grid-column:1/-1">${esc(it.label)}</div>`;
 }
 
 function dueHtml(t) {
@@ -352,53 +422,48 @@ function taskHtml(t) {
     <div class="body-wrap" style="padding-top:10px"><div class="body">${esc(t.body)}</div></div>
     <div class="actions">
       ${done
-        ? `<div class="done-msg"><span>完了しました</span><button data-undo="${t.taskId}">元に戻す</button></div>`
-        : `<button class="done-btn" data-done="${t.taskId}">タスクを完了にする</button>`}
+        ? `<div class="done-msg"><span>完了しました</span><button data-undo="${t.taskId}" data-room="${t.roomId}">元に戻す</button></div>`
+        : `<button class="done-btn" data-done="${t.taskId}" data-room="${t.roomId}">タスクを完了にする</button>`}
     </div>
   </div>`;
 }
 
-function render() {
-  if (!current) { $("result").innerHTML = ""; return; }
-  const c = current;
-  const items = c.items.length
-    ? c.items.map((it) => itemHtml(it, c.no, c.files, c.roomId)).join("")
-    : `<div class="item"><div class="missing">返送No.${esc(c.no)} は返送管理シートに見つかりません</div></div>`;
-  const tasks = c.tasks.length
-    ? c.tasks.map(taskHtml).join("")
-    : `<p class="empty-note">この返送No.の未完了タスクはありません（完了済みか、ラクロジスタッフ担当になっていない可能性があります）</p>`;
-  $("result").innerHTML = `<article class="task">
-    ${items}
-    <div class="tasks-box">
-      <p class="section-title">Chatworkのタスク</p>
-      ${tasks}
-    </div>
-  </article>`;
+function renderDone() {
+  if (!received) return;
+  const q = norm($("doneQ").value);
+  const list = q
+    ? received.filter((it) => [it.no, it.name, it.title, it.orderNo].some((v) => norm(v).includes(q)))
+    : received;
+  if (!received.length) {
+    $("doneResult").innerHTML = `<div class="notice">受領済み（ステータスが「到着済」）の荷物はありません。</div>`;
+    return;
+  }
+  if (!list.length) {
+    $("doneResult").innerHTML = `<div class="notice">受領済みの荷物の中に見つかりませんでした。</div>`;
+    return;
+  }
+  const withTask = received.filter((it) => it.tasks.length).length;
+  $("doneResult").innerHTML = `<p class="hit-note">受領済み ${received.length} 件（うちタスクあり ${withTask} 件）</p><div class="list">${
+    list.map((it) => `<article class="task">
+      <div class="item">${photoHtml(it)}${infoHtml(it)}${filesHtml(it)}${amazonLabelHtml(it)}</div>
+      <div class="tasks-box">
+        <p class="section-title">Chatworkのタスク ${it.tasks.length ? `<span class="badge-task">${it.tasks.length}件</span>` : ""}</p>
+        ${it.tasks.length ? it.tasks.map(taskHtml).join("") : `<p class="no-task" style="padding-top:8px">まだタスクは来ていません</p>`}
+      </div>
+    </article>`).join("")
+  }</div>`;
 }
 
-/* ---------- 受領ステータス ---------- */
-async function sendReceipt(no, rowNumber, value, undo) {
-  const d = await api("/receipt", { method: "POST", body: JSON.stringify({ no, rowNumber, value, undo: !!undo }) });
-  if (current) current.items.filter((it) => it.rowNumber === rowNumber).forEach((it) => (it.status = value));
-  render();
-  return d.prev;
-}
-
-/* ---------- タスク完了・元に戻す ---------- */
-async function setStatus(taskId, status) {
-  const t = current && current.tasks.find((x) => x.taskId === taskId);
-  if (!t) return;
-  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status }) });
+async function setStatus(roomId, taskId, status) {
+  await api("/status", { method: "POST", body: JSON.stringify({ roomId, taskId, status }) });
   if (status === "done") doneSet.add(taskId); else doneSet.delete(taskId);
-  render();
+  renderDone();
   toast(status === "done" ? "Chatworkのタスクを完了にしました" : "タスクを未完了に戻しました");
 }
 
+/* ---------- クリック ---------- */
 const confirmTimers = {};
 document.addEventListener("click", async (e) => {
-  const recentBtn = e.target.closest("[data-recent]");
-  if (recentBtn) { find(recentBtn.dataset.recent); return; }
-
   const zoomBtn = e.target.closest("[data-zoom]");
   if (zoomBtn) { $("zoomImg").src = zoomBtn.dataset.zoom; $("zoom").hidden = false; return; }
   if (e.target.closest("#zoom")) { $("zoom").hidden = true; return; }
@@ -450,7 +515,7 @@ document.addEventListener("click", async (e) => {
     }
     clearTimeout(confirmTimers[id]);
     doneBtn.disabled = true; doneBtn.textContent = "送信中…";
-    try { await setStatus(id, "done"); }
+    try { await setStatus(doneBtn.dataset.room, id, "done"); }
     catch (err) { toast(err.message); doneBtn.disabled = false; doneBtn.classList.remove("confirm"); doneBtn.textContent = "タスクを完了にする"; }
     return;
   }
@@ -458,7 +523,7 @@ document.addEventListener("click", async (e) => {
   const undoBtn = e.target.closest("[data-undo]");
   if (undoBtn) {
     undoBtn.disabled = true;
-    try { await setStatus(Number(undoBtn.dataset.undo), "open"); }
+    try { await setStatus(undoBtn.dataset.room, Number(undoBtn.dataset.undo), "open"); }
     catch (err) { toast(err.message); undoBtn.disabled = false; }
   }
 });
