@@ -222,7 +222,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <!-- 出荷 -->
   <section id="v-orders" class="view">
     <div class="toolbar">
-      <input id="q" type="search" placeholder="Order ID・商品名・配送番号で探す">
+      <input id="q" type="search" placeholder="Order ID・商品コード・商品名・配送番号で探す">
       <label class="opt"><input type="checkbox" id="groupSel" checked>同じOrder IDをまとめて選択</label>
       <button class="btn ghost" id="selAll" type="button">表示中をすべて選択</button>
     </div>
@@ -236,11 +236,10 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
       <div class="panel">
         <h2>入庫を登録</h2>
         <form id="inForm">
+          <label>商品コード<input name="code" list="dlCodes" autocomplete="off" placeholder="バーコードを読むか、コードを入力"></label>
+          <p class="hint" id="codeHint" style="margin:-4px 0 10px" hidden></p>
           <label>商品名<input name="name" list="dlNames" required autocomplete="off"></label>
-          <div class="two">
-            <label>商品コード<input name="code" autocomplete="off"></label>
-            <label>賞味期限<input name="expiry" placeholder="2026/06" autocomplete="off"></label>
-          </div>
+          <label>賞味期限<input name="expiry" placeholder="2026/06" autocomplete="off"></label>
           <div class="two">
             <label>入荷予定数<input name="planned" type="number" min="0" inputmode="numeric"></label>
             <label>入庫数量<input name="inQty" type="number" min="0" inputmode="numeric"></label>
@@ -273,12 +272,12 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <!-- 在庫 -->
   <section id="v-stock" class="view" hidden>
     <div class="toolbar">
-      <input id="sq" type="search" placeholder="商品名で探す">
+      <input id="sq" type="search" placeholder="商品名・商品コードで探す">
       <button id="addStock" class="btn" type="button" hidden></button>
     </div>
     <div class="panel tablewrap" style="padding:0"><table id="stockTbl"></table></div>
     <details id="unmatched" class="panel" hidden></details>
-    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量。引当後＝在庫 − まだ出荷していない注文の数量。商品名が完全に一致するものだけを数えます（在庫シートと同じルール）。</p>
+    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量。引当後＝在庫 − まだ出荷していない注文の数量。商品コードが一致するものを同じ商品として数えます。コードがないものだけ商品名の完全一致で数えます（在庫シートと同じルール）。</p>
   </section>
 </main>
 
@@ -292,6 +291,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 </div>
 
 <datalist id="dlNames"></datalist>
+<datalist id="dlCodes"></datalist>
 <datalist id="dlStaff"></datalist>
 <datalist id="dlCarriers"></datalist>
 
@@ -469,7 +469,7 @@ function visibleOrders(){
     if (S.filter === 'pending' && s === 'shipped') return false;
     if (['waiting','ready','shipped'].includes(S.filter) && s !== S.filter) return false;
     if (q){
-      const hay = [o.orderId, o.item, o.tracking, o.note, o.seller, o.no, o.carrier, o.packing ? '厳重梱包' : ''].join(' ').toLowerCase();
+      const hay = [o.orderId, o.code, o.item, o.tracking, o.note, o.seller, o.no, o.carrier, o.packing ? '厳重梱包' : ''].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -512,7 +512,7 @@ function rowHtml(o, cont){
   return '<div class="row'+(cont?' cont':'')+(sel?' is-sel':'')+'" data-row="'+o.row+'">' +
     '<label class="ck"><input type="checkbox" data-act="sel" aria-label="選択"'+(sel?' checked':'')+'></label>' +
     '<div class="no">'+esc(o.no)+'</div>' +
-    '<div class="main"><div class="oid">'+esc(o.orderId)+(multiSeller && o.seller ? '<small>'+esc(o.seller)+'</small>' : '')+'</div><div class="item">'+nl(o.item)+'</div>'+(o.packing ? '<span class="pack">厳重梱包</span>' : '')+'</div>' +
+    '<div class="main"><div class="oid">'+esc(o.orderId)+(multiSeller && o.seller ? '<small>'+esc(o.seller)+'</small>' : '')+'</div><div class="item">'+nl(o.item)+(o.code ? '<div class="muted num" style="font-size:12px">'+esc(o.code)+'</div>' : '')+'</div>'+(o.packing ? '<span class="pack">厳重梱包</span>' : '')+'</div>' +
     '<div class="qty">×'+o.qty+'</div>' +
     '<div class="state"><button type="button" class="chip'+(o.received?' on':'')+'" data-act="recv">'+(o.received?'受領済':'未受領')+'</button>' +
       '<button type="button" class="chip ship'+(o.shipped?' on':'')+'" data-act="ship">'+(o.shipped?'出荷済':'未出荷')+'</button></div>' +
@@ -532,7 +532,46 @@ function renderBar(){
   }
 }
 
+/* ===== 商品コード → 商品名 ===== */
+// 全角の数字・英字を半角にして、空白を取る（バーコードリーダーや手入力のゆれ対策）
+const normCode = s => String(s == null ? '' : s).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s/g, '');
+let CODE_MAP = new Map(); // コード → 商品名（在庫シート＞入庫シートの新しい行の順で優先）
+let NAME_MAP = new Map(); // 商品名 → コード
+function buildCodeMap(){
+  CODE_MAP = new Map(); NAME_MAP = new Map();
+  (D ? D.inbound : []).forEach(b => {
+    const c = normCode(b.code), n = String(b.name || '').trim();
+    if (!c || !n) return;
+    CODE_MAP.set(c, n);
+    NAME_MAP.set(n, c);
+  });
+  // 在庫シート（商品マスタ）の商品コード列にコードがあれば、そちらを優先する（GASが code を返す場合）
+  (D ? D.stock : []).forEach(st => {
+    const c = normCode(st.code), n = String(st.name || '').trim();
+    if (!c || !n) return;
+    CODE_MAP.set(c, n);
+    NAME_MAP.set(n, c);
+  });
+  $('dlCodes').innerHTML = [...CODE_MAP].map(([c, n]) => '<option value="'+esc(c)+'" label="'+esc(n)+'">').join('');
+}
+function codeHint(msg, ok){
+  const h = $('codeHint');
+  h.hidden = !msg; h.textContent = msg || '';
+  h.style.color = ok ? 'var(--wh)' : (msg ? 'var(--wait)' : '');
+}
+function lookupCode(){
+  const f = $('inForm');
+  const c = normCode(f.elements.code.value);
+  if (f.elements.code.value !== c) f.elements.code.value = c;
+  if (!c){ codeHint(''); return false; }
+  const n = CODE_MAP.get(c);
+  if (n){ f.elements.name.value = n; codeHint('登録済みの商品です：' + n, true); return true; }
+  codeHint('はじめてのコードです。商品名を入力してください（登録すると次回から自動で出ます）', false);
+  return false;
+}
+
 function fillLists(){
+  buildCodeMap();
   const names = new Set([...D.inbound.map(b => b.name), ...D.stock.map(s => s.name)].filter(Boolean));
   $('dlNames').innerHTML = [...names].map(n => '<option value="'+esc(n)+'">').join('');
   const staff = new Set(D.inbound.map(b => b.staff).filter(Boolean));
@@ -779,18 +818,25 @@ function openReceiveIn(b){
 
 /* ===== 在庫 ===== */
 function stockRows(){
+  // 商品コードが一致するものを同じ商品として数える（コードがないものだけ商品名で一致）
+  const codeOf = (code, name) => normCode(code) || NAME_MAP.get(String(name || '').trim()) || '';
+  const keyOf2 = (code, name) => { const c = codeOf(code, name); return c ? 'c:' + c : 'n:' + String(name || '').trim(); };
   const map = new Map();
-  const get = n => { if (!map.has(n)) map.set(n, { name:n, inQty:0, pend:0, out:0, resv:0, inSheet:false }); return map.get(n); };
-  D.stock.forEach(s => get(s.name).inSheet = true);
+  const get = (code, name) => {
+    const k = keyOf2(code, name);
+    if (!map.has(k)) map.set(k, { name:String(name || '').trim(), code:codeOf(code, name), inQty:0, pend:0, out:0, resv:0, inSheet:false });
+    return map.get(k);
+  };
+  D.stock.forEach(st => { const x = get(st.code, st.name); x.inSheet = true; x.name = String(st.name || '').trim(); }); // 在庫シートの商品名で表示
   D.inbound.forEach(b => {
-    const x = get(b.name);
+    const x = get(b.code, b.name);
     if (b.inQty !== '') x.inQty += Number(b.inQty) || 0;
     else if (!b.inDate) x.pend += Number(b.planned) || 0;
   });
   const unmatched = new Map();
   D.orders.forEach(o => {
-    const k = o.item.trim();
-    if (!map.has(k)){ unmatched.set(k, (unmatched.get(k)||0) + o.qty); return; }
+    const k = keyOf2(o.code, o.item);
+    if (!map.has(k)){ const n = (o.code ? o.code + '　' : '') + o.item.trim(); unmatched.set(n, (unmatched.get(n)||0) + o.qty); return; }
     const x = map.get(k);
     if (o.shipped) x.out += o.qty; else x.resv += o.qty;
   });
@@ -801,15 +847,16 @@ function stockRows(){
 function renderStock(){
   const { rows, unmatched } = stockRows();
   const q = S.sq.trim().toLowerCase();
-  const list = rows.filter(r => !q || r.name.toLowerCase().includes(q)).sort((a,b) => a.avail - b.avail || a.name.localeCompare(b.name, 'ja'));
+  const qc = normCode(q);
+  const list = rows.filter(r => !q || r.name.toLowerCase().includes(q) || (qc && r.code.toLowerCase().includes(qc))).sort((a,b) => a.avail - b.avail || a.name.localeCompare(b.name, 'ja'));
   $('stockTbl').innerHTML = list.length ?
-    '<thead><tr><th>商品名</th><th class="n">入庫</th><th class="n">出庫</th><th class="n">在庫</th><th class="n">未出荷の注文</th><th class="n">引当後</th><th class="n">入荷待ち</th></tr></thead><tbody>' +
-    list.map(r => '<tr'+(r.avail < 0 ? ' class="neg"' : '')+'><td>'+esc(r.name)+(r.inSheet?'':'<span class="tag">在庫シート未登録</span>')+'</td>' +
+    '<thead><tr><th>商品コード</th><th>商品名</th><th class="n">入庫</th><th class="n">出庫</th><th class="n">在庫</th><th class="n">未出荷の注文</th><th class="n">引当後</th><th class="n">入荷待ち</th></tr></thead><tbody>' +
+    list.map(r => '<tr'+(r.avail < 0 ? ' class="neg"' : '')+'><td class="num" style="white-space:nowrap">'+(r.code ? esc(r.code) : '<span class="muted">－</span>')+'</td><td>'+esc(r.name)+(r.inSheet?'':'<span class="tag">在庫シート未登録</span>')+'</td>' +
       '<td class="n">'+r.inQty+'</td><td class="n">'+r.out+'</td><td class="n'+(r.stock<0?' neg-v':'')+'"><b>'+r.stock+'</b></td>' +
       '<td class="n">'+(r.resv||'')+'</td><td class="n'+(r.avail<0?' neg-v':'')+'">'+r.avail+'</td><td class="n">'+(r.pend||'')+'</td></tr>').join('') + '</tbody>'
     : '<tbody><tr><td class="muted">商品がありません。入庫を登録すると、ここに在庫が出ます。</td></tr></tbody>';
 
-  const missing = rows.filter(r => !r.inSheet).map(r => r.name);
+  const missing = rows.filter(r => !r.inSheet).map(r => ({ name:r.name, code:r.code })); // 商品コードも一緒に在庫シートへ
   const btn = $('addStock');
   btn.hidden = !(missing.length && D.hasStock);
   btn.textContent = '在庫シートに未登録の商品を追加（' + missing.length + '件）';
@@ -818,7 +865,7 @@ function renderStock(){
   const um = $('unmatched');
   um.hidden = !unmatched.size;
   um.innerHTML = '<summary>在庫と結びついていない注文の商品名（'+unmatched.size+'件）</summary>' +
-    '<p class="hint">入庫シートと商品名が完全に一致していないため、在庫から引かれていません。1つのセルに複数商品を書いた注文もここに出ます。</p>' +
+    '<p class="hint">商品コードが登録されておらず、商品名も入庫シートと完全に一致していないため、在庫から引かれていません。1つのセルに複数商品を書いた注文もここに出ます。</p>' +
     '<ul>' + [...unmatched.entries()].map(([n, q]) => '<li>'+nl(n || '（商品名なし）')+' ×'+q+'</li>').join('') + '</ul>';
 }
 
@@ -884,12 +931,27 @@ $('sq').addEventListener('input', e => { S.sq = e.target.value; renderStock(); }
 $('groupSel').addEventListener('change', e => { S.groupSel = e.target.checked; });
 $('inMonth').addEventListener('change', e => { S.inMonth = e.target.value; renderInbound(); });
 
+$('inForm').elements.code.addEventListener('input', () => lookupCode());
+// バーコードリーダーは最後にEnterを送るので、登録はせずに次の入力欄へ進める
+$('inForm').elements.code.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  e.preventDefault();
+  const f = $('inForm');
+  (lookupCode() ? f.elements.planned : f.elements.name).focus();
+});
+// 商品名を先に選んだときは、コードが空なら入れておく
+$('inForm').elements.name.addEventListener('change', e => {
+  const f = $('inForm');
+  const c = NAME_MAP.get(e.target.value.trim());
+  if (c && !f.elements.code.value.trim()){ f.elements.code.value = c; codeHint('登録済みの商品です：' + e.target.value.trim(), true); }
+});
+
 $('inForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
   const v = k => f.elements[k].value;
   const entry = {
-    name:v('name').trim(), code:v('code').trim(), planned:v('planned'), expiry:v('expiry').trim(),
+    name:v('name').trim(), code:normCode(v('code')), planned:v('planned'), expiry:v('expiry').trim(),
     inDate:v('inDate'), inQty:v('inQty'), staff:v('staff').trim(), note:v('note'),
   };
   if (entry.inDate && entry.inQty === ''){ toast('入荷日を入れたときは入庫数量も入れてください', true); return; }
@@ -898,6 +960,7 @@ $('inForm').addEventListener('submit', async e => {
   try {
     const res = await call('addInbound', entry);
     ['name','code','planned','expiry','inQty','note'].forEach(k => f.elements[k].value = '');
+    codeHint(''); f.elements.code.focus();
     applyResult(res);
     toast(entry.inDate ? '入庫を登録しました' : '入荷待ちとして登録しました');
   } catch(err){}
