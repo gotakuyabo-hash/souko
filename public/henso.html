@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>返送タスク</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --surface:#FFFFFF; --ink:#1C2430; --muted:#5B6675; --line:#D5DBE2;
+  --accent:#1F5FBF; --accent-ink:#FFFFFF; --done:#2E7D4F; --warn:#B4531B; --soft:#F6F8FA;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#12161C; --surface:#1B2129; --ink:#E7ECF2; --muted:#9AA6B5; --line:#2D3642;
+    --accent:#6FA3F0; --accent-ink:#0E1620; --done:#5CC08A; --warn:#E39561; --soft:#222A34;
+    color-scheme:dark;
+  }
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"BIZ UDPGothic","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;
+  font-size:16px; line-height:1.6;
+}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* ログイン */
+.login{min-height:100vh;display:grid;place-items:center;padding:24px}
+.login form{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px 24px}
+.login h1{font-size:22px;margin:0 0 4px}
+.login p{margin:0 0 20px;color:var(--muted);font-size:14px}
+.login input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);font-size:17px}
+.login button{width:100%;margin-top:14px;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:17px}
+.login .err{color:var(--warn);font-size:14px;margin-top:10px;min-height:1.4em}
+
+/* ヘッダー */
+header{
+  position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
+  background:var(--surface);border-bottom:1px solid var(--line);
+}
+.bar{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bar h1{font-size:19px;margin:0;white-space:nowrap}
+.count{font-size:14px;color:var(--muted)}
+.bar .grow{flex:1}
+.search{display:flex;gap:6px}
+.search input{width:110px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.btn{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-weight:700;font-size:14px;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.updated{width:100%;font-size:12px;color:var(--muted)}
+
+main{max-width:1100px;margin:0 auto;padding:16px 16px 48px}
+.notice{padding:14px 16px;border-radius:10px;background:var(--surface);border:1px solid var(--line);margin-bottom:14px}
+.notice.err{border-color:var(--warn);color:var(--warn)}
+.list{display:grid;gap:14px}
+@media (min-width:900px){.list{grid-template-columns:1fr 1fr}}
+
+/* タスクカード */
+.task{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.task.is-done{opacity:.55}
+.task-head{display:flex;align-items:baseline;gap:8px;padding:12px 16px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
+.task-head .due.over{color:var(--warn);font-weight:700}
+
+.item{display:grid;grid-template-columns:112px 1fr;gap:14px;padding:14px 16px;border-bottom:1px dashed var(--line)}
+.item:last-of-type{border-bottom:0}
+.photo{width:112px;height:112px;border-radius:10px;background:var(--soft);border:1px solid var(--line);padding:0;overflow:hidden;display:grid;place-items:center}
+.photo img{width:100%;height:100%;object-fit:contain;background:#fff}
+.photo span{font-size:12px;color:var(--muted);padding:6px;text-align:center}
+.no-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.no{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:.01em}
+.no small{font-size:14px;font-weight:700;color:var(--muted);margin-right:2px}
+.chip{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--soft);border:1px solid var(--line)}
+.chip.dhl{background:#FFE27A;border-color:#E8C33A;color:#5A3E00}
+.chip.ems{background:#D7E6FF;border-color:#A8C4F2;color:#123B7A}
+.chip.ok{background:#FBE3D3;border-color:#EDB892;color:#7A3410}
+.chip.arrived{background:#D9F0E2;border-color:#9FD3B4;color:#1C5A37}
+.title{margin:6px 0 4px;font-size:15px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.meta{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 14px}
+.meta b{color:var(--ink)}
+.label{margin-top:8px;font-size:14px}
+.label a{color:var(--accent);font-weight:700}
+.missing{grid-column:1/-1;color:var(--warn);font-size:14px}
+.receipt{grid-column:1/-1}
+.receipt-label{font-size:13px;color:var(--muted);margin-bottom:6px}
+.receipt-grid{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center}
+.receipt-grid .kind{font-size:14px;font-weight:700;padding-right:4px}
+.rc{padding:10px 6px;border:1px solid var(--line);border-radius:9px;background:var(--soft);font-size:14px;font-weight:700}
+.rc[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.rc:disabled{opacity:.6;cursor:wait}
+
+.body{margin:0 16px;padding:10px 12px;background:var(--soft);border-radius:10px;font-size:14px;white-space:pre-wrap;word-break:break-word;max-height:8.5em;overflow:auto}
+.body-wrap{padding-bottom:4px}
+.link-no{display:flex;gap:6px;margin:10px 16px 0}
+.link-no input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+
+.actions{padding:14px 16px 16px;margin-top:auto}
+.done-btn{width:100%;padding:15px;border:0;border-radius:12px;background:var(--done);color:#fff;font-weight:700;font-size:18px}
+.done-btn.confirm{background:var(--warn)}
+.done-btn:disabled{opacity:.6;cursor:wait}
+.done-msg{display:flex;justify-content:space-between;align-items:center;font-weight:700;color:var(--done)}
+.done-msg button{background:none;border:0;color:var(--accent);font-weight:700;text-decoration:underline;padding:6px}
+
+details.others{margin-top:22px}
+details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding:6px 0}
+
+/* 画像拡大 */
+.zoom{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.82);display:grid;place-items:center;padding:20px}
+.zoom img{max-width:100%;max-height:100%;background:#fff;border-radius:10px}
+
+/* No.検索結果 */
+.lookup{margin-bottom:14px}
+.lookup .task{border-color:var(--accent)}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-size:14px;z-index:30;max-width:92vw;display:flex;gap:12px;align-items:center}
+.toast button{background:none;border:0;color:var(--bg);font-weight:700;text-decoration:underline;padding:4px;white-space:nowrap}
+@media (prefers-reduced-motion:no-preference){.task{transition:opacity .3s}}
+</style>
+</head>
+<body>
+
+<section class="login" id="loginView" hidden>
+  <form id="loginForm">
+    <h1>返送タスク</h1>
+    <p>合言葉を入れてください</p>
+    <input type="password" id="pass" autocomplete="current-password" required>
+    <button type="submit">はじめる</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</section>
+
+<div id="appView" hidden>
+  <header>
+    <div class="bar">
+      <h1>返送タスク</h1>
+      <span class="count" id="count"></span>
+      <span class="grow"></span>
+      <form class="search" id="searchForm">
+        <input id="searchNo" inputmode="numeric" placeholder="返送No.">
+        <button class="btn" type="submit">探す</button>
+      </form>
+      <button class="btn primary" id="reload">更新</button>
+      <span class="updated" id="updated"></span>
+    </div>
+  </header>
+  <main>
+    <div class="lookup" id="lookup"></div>
+    <div id="message"></div>
+    <div class="list" id="list"></div>
+    <details class="others" id="othersBox" hidden>
+      <summary id="othersSum"></summary>
+      <div class="list" id="others" style="margin-top:12px"></div>
+    </details>
+  </main>
+</div>
+
+<div class="zoom" id="zoom" hidden><img alt="商品画像（拡大）" id="zoomImg"></div>
+
+<script>
+const API = "/api/henso";
+let token = "";
+try { token = localStorage.getItem("henso_token") || ""; } catch (e) {}
+let tasks = [];
+let lookupData = null; // ヘッダー検索の結果
+const doneSet = new Set();
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+function toast(msg, actionLabel, onAction) {
+  document.querySelectorAll(".toast").forEach((x) => x.remove());
+  const t = document.createElement("div");
+  t.className = "toast";
+  const span = document.createElement("span");
+  span.textContent = msg;
+  t.appendChild(span);
+  if (actionLabel) {
+    const b = document.createElement("button");
+    b.textContent = actionLabel;
+    b.onclick = () => { t.remove(); onAction(); };
+    t.appendChild(b);
+  }
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), actionLabel ? 6000 : 2600);
+}
+
+async function api(path, opt = {}) {
+  const res = await fetch(API + path, {
+    ...opt,
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== "/login") { logout(); throw new Error("ログインが切れました。合言葉を入れ直してください。"); }
+  if (!res.ok) throw new Error(data.error || "エラー（" + res.status + "）");
+  return data;
+}
+
+function showLogin() { $("loginView").hidden = false; $("appView").hidden = true; $("pass").focus(); }
+function showApp() { $("loginView").hidden = true; $("appView").hidden = false; }
+function logout() { token = ""; try { localStorage.removeItem("henso_token"); } catch (e) {} showLogin(); }
+
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  try {
+    const d = await api("/login", { method: "POST", body: JSON.stringify({ pass: $("pass").value }) });
+    token = d.token;
+    try { localStorage.setItem("henso_token", token); } catch (e) {}
+    $("pass").value = "";
+    showApp(); load();
+  } catch (err) { $("loginErr").textContent = err.message; }
+});
+
+/* ---------- 表示 ---------- */
+function chipClass(s) {
+  if (/DHL/i.test(s)) return "dhl";
+  if (/EMS/i.test(s)) return "ems";
+  if (/承認/.test(s)) return "ok";
+  if (/到着/.test(s)) return "arrived";
+  return "";
+}
+
+const RECEIPT = [
+  { kind: "元払", values: ["到着済（元払／未開封）", "到着済（元払／開封済）"] },
+  { kind: "着払", values: ["到着済（着払／未開封）", "到着済（着払／開封済）"] },
+];
+function receiptHtml(it, no) {
+  const rows = RECEIPT.map((g) => `<span class="kind">${g.kind}</span>` +
+    g.values.map((v) => `<button class="rc" data-receipt="${esc(v)}" data-row="${it.rowNumber}" data-no="${esc(no)}"
+      aria-pressed="${it.status === v}">${/未開封/.test(v) ? "未開封" : "開封済"}</button>`).join("")).join("");
+  return `<div class="receipt"><div class="receipt-label">荷物を受け取ったら選んでください</div><div class="receipt-grid">${rows}</div></div>`;
+}
+
+function itemHtml(it, no) {
+  const img = it.image
+    ? `<button class="photo" data-zoom="${esc(it.image)}" aria-label="画像を拡大"><img src="${esc(it.image)}" alt="" loading="lazy"></button>`
+    : `<div class="photo"><span>画像なし</span></div>`;
+  const label = it.label
+    ? (/^https?:\/\//.test(it.label)
+        ? `<div class="label"><a href="${esc(it.label)}" target="_blank" rel="noopener">DHLラベルを開く</a></div>`
+        : `<div class="label">${esc(it.label)}</div>`)
+    : "";
+  return `<div class="item">
+    ${img}
+    <div>
+      <div class="no-line">
+        <span class="no"><small>返送No.</small>${esc(no)}</span>
+        ${it.status ? `<span class="chip ${chipClass(it.status)}">${esc(it.status)}</span>` : ""}
+      </div>
+      <p class="title">${esc(it.title || "（商品名なし）")}</p>
+      <div class="meta">
+        <span>数量 <b>${esc(it.qty || "-")}</b></span>
+        <span>${esc(it.store)}</span>
+        <span>配送No.${esc(it.haisoNo || "-")}</span>
+        ${it.asin ? `<span>${esc(it.asin)}</span>` : ""}
+      </div>
+      ${label}
+    </div>
+    ${receiptHtml(it, no)}
+  </div>`;
+}
+
+function rowsHtml(rows) {
+  if (!rows.length) return "";
+  return rows.map((r) =>
+    r.items.length
+      ? r.items.map((it) => itemHtml(it, r.no)).join("")
+      : `<div class="item"><div class="missing">返送No.${esc(r.no)} は返送管理シートに見つかりません</div></div>`
+  ).join("");
+}
+
+function dueHtml(t) {
+  if (!t.limitTime) return "";
+  const d = new Date(t.limitTime * 1000);
+  const over = d.getTime() < Date.now() - 24 * 3600 * 1000;
+  return `<span class="due ${over ? "over" : ""}">期限 ${d.getMonth() + 1}/${d.getDate()}</span>`;
+}
+
+function taskHtml(t) {
+  const done = doneSet.has(t.taskId);
+  const linkBox = t.nos.length ? "" :
+    `<form class="link-no" data-link="${t.taskId}">
+       <input inputmode="numeric" placeholder="返送No.を入れて表示" aria-label="返送No.">
+       <button class="btn" type="submit">表示</button>
+     </form>`;
+  return `<article class="task ${done ? "is-done" : ""}" id="t${t.taskId}">
+    <div class="task-head">
+      <span>${esc(t.roomName)}</span>
+      ${t.assignedBy ? `<span>依頼：${esc(t.assignedBy)}</span>` : ""}
+      ${dueHtml(t)}
+    </div>
+    ${rowsHtml(t.rows || [])}
+    <div class="body-wrap"><div class="body">${esc(t.body)}</div></div>
+    ${linkBox}
+    <div class="actions">
+      ${done
+        ? `<div class="done-msg"><span>完了しました</span><button data-undo="${t.taskId}">元に戻す</button></div>`
+        : `<button class="done-btn" data-done="${t.taskId}">完了にする</button>`}
+    </div>
+  </article>`;
+}
+
+function render() {
+  const main = tasks.filter((t) => t.isReturn || t.nos.length);
+  const others = tasks.filter((t) => !(t.isReturn || t.nos.length));
+  const left = main.filter((t) => !doneSet.has(t.taskId)).length;
+  $("count").textContent = `残り ${left} 件`;
+  $("list").innerHTML = main.length ? main.map(taskHtml).join("")
+    : `<div class="notice">返送のタスクはありません。新しいタスクが来たら「更新」を押してください。</div>`;
+  $("othersBox").hidden = !others.length;
+  $("othersSum").textContent = `返送以外のタスク（${others.length}件）`;
+  $("others").innerHTML = others.map(taskHtml).join("");
+}
+
+async function load(fresh) {
+  $("message").innerHTML = "";
+  $("reload").disabled = true;
+  $("reload").textContent = "読込中…";
+  try {
+    const d = await api("/tasks" + (fresh ? "?fresh=1" : ""));
+    tasks = d.tasks;
+    doneSet.clear();
+    render();
+    const t = new Date(d.loadedAt);
+    $("updated").textContent = `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")} に読み込み`;
+  } catch (err) {
+    $("message").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
+  } finally {
+    $("reload").disabled = false;
+    $("reload").textContent = "更新";
+  }
+}
+$("reload").addEventListener("click", () => load(true));
+
+/* ---------- 完了・元に戻す ---------- */
+const confirmTimers = {};
+async function setStatus(taskId, status) {
+  const t = tasks.find((x) => x.taskId === taskId);
+  if (!t) return;
+  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status }) });
+  if (status === "done") doneSet.add(taskId); else doneSet.delete(taskId);
+  render();
+  toast(status === "done" ? "Chatworkのタスクを完了にしました" : "タスクを未完了に戻しました");
+}
+
+document.addEventListener("click", async (e) => {
+  const zoomBtn = e.target.closest("[data-zoom]");
+  if (zoomBtn) { $("zoomImg").src = zoomBtn.dataset.zoom; $("zoom").hidden = false; return; }
+  if (e.target.closest("#zoom")) { $("zoom").hidden = true; return; }
+
+  const doneBtn = e.target.closest("[data-done]");
+  if (doneBtn) {
+    const id = Number(doneBtn.dataset.done);
+    // 誤タップ防止：2回押しで完了
+    if (!doneBtn.classList.contains("confirm")) {
+      doneBtn.classList.add("confirm");
+      doneBtn.textContent = "もう一度押すと完了";
+      clearTimeout(confirmTimers[id]);
+      confirmTimers[id] = setTimeout(() => {
+        doneBtn.classList.remove("confirm");
+        doneBtn.textContent = "完了にする";
+      }, 3000);
+      return;
+    }
+    clearTimeout(confirmTimers[id]);
+    doneBtn.disabled = true; doneBtn.textContent = "送信中…";
+    try { await setStatus(id, "done"); }
+    catch (err) { toast(err.message); doneBtn.disabled = false; doneBtn.classList.remove("confirm"); doneBtn.textContent = "完了にする"; }
+    return;
+  }
+
+  const rc = e.target.closest("[data-receipt]");
+  if (rc) {
+    if (rc.getAttribute("aria-pressed") === "true") return;
+    const value = rc.dataset.receipt, row = Number(rc.dataset.row), no = rc.dataset.no;
+    rc.closest(".receipt-grid").querySelectorAll(".rc").forEach((b) => (b.disabled = true));
+    try {
+      const prev = await sendReceipt(no, row, value);
+      toast(`返送No.${no}：${value}`, "元に戻す", async () => {
+        try { await sendReceipt(no, row, prev, true); toast("元のステータスに戻しました"); }
+        catch (err) { toast(err.message); }
+      });
+    } catch (err) {
+      toast(err.message);
+      rc.closest(".receipt-grid").querySelectorAll(".rc").forEach((b) => (b.disabled = false));
+    }
+    return;
+  }
+
+  const undoBtn = e.target.closest("[data-undo]");
+  if (undoBtn) {
+    undoBtn.disabled = true;
+    try { await setStatus(Number(undoBtn.dataset.undo), "open"); }
+    catch (err) { toast(err.message); undoBtn.disabled = false; }
+  }
+});
+
+/* No.が読み取れなかったタスクに手で返送No.をひも付けて表示 */
+document.addEventListener("submit", async (e) => {
+  const f = e.target.closest("[data-link]");
+  if (!f) return;
+  e.preventDefault();
+  const no = f.querySelector("input").value.trim();
+  if (!no) return;
+  try {
+    const d = await api("/lookup?no=" + encodeURIComponent(no));
+    const t = tasks.find((x) => x.taskId === Number(f.dataset.link));
+    t.nos = [d.no];
+    t.rows = [{ no: d.no, items: d.items }];
+    t.isReturn = true;
+    render();
+  } catch (err) { toast(err.message); }
+});
+
+/* ヘッダーのNo.検索（タスクに関係なくシートを見る） */
+$("searchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const no = $("searchNo").value.trim();
+  if (!no) { $("lookup").innerHTML = ""; return; }
+  try {
+    lookupData = await api("/lookup?no=" + encodeURIComponent(no) + "&fresh=1");
+    renderLookup();
+  } catch (err) { toast(err.message); }
+});
+
+function renderLookup() {
+  if (!lookupData) { $("lookup").innerHTML = ""; return; }
+  $("lookup").innerHTML = `<article class="task">
+    <div class="task-head"><span>シート検索の結果</span></div>
+    ${rowsHtml([{ no: lookupData.no, items: lookupData.items }])}
+    <div class="actions"><button class="btn" id="closeLookup">閉じる</button></div>
+  </article>`;
+  $("closeLookup").onclick = () => { lookupData = null; renderLookup(); $("searchNo").value = ""; };
+}
+
+/* ---------- 受領ステータス ---------- */
+function applyStatus(rowNumber, value) {
+  const all = tasks.flatMap((t) => (t.rows || []).flatMap((r) => r.items))
+    .concat(lookupData ? lookupData.items : []);
+  all.filter((it) => it.rowNumber === rowNumber).forEach((it) => (it.status = value));
+  render(); renderLookup();
+}
+async function sendReceipt(no, rowNumber, value, undo) {
+  const d = await api("/receipt", { method: "POST", body: JSON.stringify({ no, rowNumber, value, undo: !!undo }) });
+  applyStatus(rowNumber, value);
+  return d.prev;
+}
+
+/* 起動 */
+if (token) { showApp(); load(); } else { showLogin(); }
+</script>
+</body>
+</html>
