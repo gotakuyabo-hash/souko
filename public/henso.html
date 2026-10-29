@@ -72,6 +72,14 @@ main{max-width:1100px;margin:0 auto;padding:16px 16px 48px}
 .task.is-done{opacity:.55}
 .task-head{display:flex;align-items:baseline;gap:8px;padding:12px 16px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
 .task-head .due.over{color:var(--warn);font-weight:700}
+.kind{font-size:15px;font-weight:700;padding:4px 12px;border-radius:8px;border:1px solid var(--line);background:var(--soft);color:var(--ink)}
+.kind.haiki{background:#F9D9D6;border-color:#E3A29B;color:#7A1D14}
+.kind.dhl{background:#FFE27A;border-color:#E8C33A;color:#5A3E00}
+.kind.ems{background:#D7E6FF;border-color:#A8C4F2;color:#123B7A}
+.kind.zaiko{background:#D9F0E2;border-color:#9FD3B4;color:#1C5A37}
+.who{font-weight:700;color:var(--warn)}
+.files{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
+.files button{padding:9px 12px;border:1px solid var(--accent);border-radius:9px;background:var(--surface);color:var(--accent);font-weight:700;font-size:14px}
 
 .item{display:grid;grid-template-columns:112px 1fr;gap:14px;padding:14px 16px;border-bottom:1px dashed var(--line)}
 .item:last-of-type{border-bottom:0}
@@ -242,7 +250,13 @@ function receiptHtml(it, no) {
   return `<div class="receipt"><div class="receipt-label">荷物を受け取ったら選んでください</div><div class="receipt-grid">${rows}</div></div>`;
 }
 
-function itemHtml(it, no) {
+function filesHtml(files, roomId) {
+  if (!files || !files.length) return "";
+  return `<div class="files">${files.map((f) =>
+    `<button data-file="${f.fileId}" data-room="${roomId}">${/\.pdf$/i.test(f.filename) ? "EMS書類" : "DHLラベル"}を開く</button>`).join("")}</div>`;
+}
+
+function itemHtml(it, no, files, roomId) {
   const img = it.image
     ? `<button class="photo" data-zoom="${esc(it.image)}" aria-label="画像を拡大"><img src="${esc(it.image)}" alt="" loading="lazy"></button>`
     : `<div class="photo"><span>画像なし</span></div>`;
@@ -267,15 +281,16 @@ function itemHtml(it, no) {
       </div>
       ${label}
     </div>
+    ${filesHtml(files, roomId)}
     ${receiptHtml(it, no)}
   </div>`;
 }
 
-function rowsHtml(rows) {
+function rowsHtml(rows, roomId) {
   if (!rows.length) return "";
   return rows.map((r) =>
     r.items.length
-      ? r.items.map((it) => itemHtml(it, r.no)).join("")
+      ? r.items.map((it) => itemHtml(it, r.no, r.files, roomId)).join("")
       : `<div class="item"><div class="missing">返送No.${esc(r.no)} は返送管理シートに見つかりません</div></div>`
   ).join("");
 }
@@ -296,11 +311,13 @@ function taskHtml(t) {
      </form>`;
   return `<article class="task ${done ? "is-done" : ""}" id="t${t.taskId}">
     <div class="task-head">
+      ${t.kind && t.kind.label ? `<span class="kind ${t.kind.key}">${esc(t.kind.label)}</span>` : ""}
       <span>${esc(t.roomName)}</span>
+      ${t.account === "matsushita" ? `<span class="who">松下さん担当</span>` : ""}
       ${t.assignedBy ? `<span>依頼：${esc(t.assignedBy)}</span>` : ""}
       ${dueHtml(t)}
     </div>
-    ${rowsHtml(t.rows || [])}
+    ${rowsHtml(t.rows || [], t.roomId)}
     <div class="body-wrap"><div class="body">${esc(t.body)}</div></div>
     ${linkBox}
     <div class="actions">
@@ -348,7 +365,7 @@ const confirmTimers = {};
 async function setStatus(taskId, status) {
   const t = tasks.find((x) => x.taskId === taskId);
   if (!t) return;
-  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status }) });
+  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status, account: t.account }) });
   if (status === "done") doneSet.add(taskId); else doneSet.delete(taskId);
   render();
   toast(status === "done" ? "Chatworkのタスクを完了にしました" : "タスクを未完了に戻しました");
@@ -377,6 +394,19 @@ document.addEventListener("click", async (e) => {
     doneBtn.disabled = true; doneBtn.textContent = "送信中…";
     try { await setStatus(id, "done"); }
     catch (err) { toast(err.message); doneBtn.disabled = false; doneBtn.classList.remove("confirm"); doneBtn.textContent = "完了にする"; }
+    return;
+  }
+
+  const fileBtn = e.target.closest("[data-file]");
+  if (fileBtn) {
+    // スマホでポップアップが止められないよう、先に新しいタブを開いておく
+    const w = window.open("", "_blank");
+    fileBtn.disabled = true;
+    try {
+      const d = await api(`/file?roomId=${fileBtn.dataset.room}&fileId=${fileBtn.dataset.file}`);
+      if (w) w.location.href = d.url; else location.href = d.url;
+    } catch (err) { if (w) w.close(); toast(err.message); }
+    finally { fileBtn.disabled = false; }
     return;
   }
 
@@ -417,7 +447,7 @@ document.addEventListener("submit", async (e) => {
     const d = await api("/lookup?no=" + encodeURIComponent(no));
     const t = tasks.find((x) => x.taskId === Number(f.dataset.link));
     t.nos = [d.no];
-    t.rows = [{ no: d.no, items: d.items }];
+    t.rows = [{ no: d.no, items: d.items, files: [] }];
     t.isReturn = true;
     render();
   } catch (err) { toast(err.message); }
