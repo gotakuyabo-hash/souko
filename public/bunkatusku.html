@@ -125,6 +125,7 @@
             <div class="flex bg-indigo-900/60 p-1 rounded-xl">
                 <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
+                <button onclick="switchTab('tracking')" id="tabBtnTracking" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">追跡番号の追記</button>
                 <button onclick="switchTab('monthly')" id="tabBtnMonthly" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">月別出荷件数</button>
             </div>
         </div>
@@ -272,6 +273,48 @@
             </div>
         </div>
 
+        <div id="tabContentTracking" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-barcode text-teal-600 mr-2"></i>追跡番号の追記</h2>
+                        <p class="text-xs text-slate-500 mt-1">出庫シートで追跡番号（G列）が空欄の行を、発送日ごとに表示します（直近60日）。</p>
+                    </div>
+                    <button onclick="loadPending()" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                </div>
+                <p id="pendingStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead id="pendingHead" class="bg-slate-100 text-slate-600 text-xs border-b"></thead>
+                        <tbody id="pendingBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+                <div class="bg-slate-50 border rounded-xl p-4 space-y-3">
+                    <div class="grid md:grid-cols-3 gap-3 text-sm">
+                        <label class="space-y-1 md:col-span-2">
+                            <span class="text-xs font-semibold text-slate-600">追跡番号（送り状番号）</span>
+                            <input type="text" id="fillTracking" class="w-full border rounded-lg px-3 py-2 font-mono bg-white" placeholder="例：454312846120">
+                        </label>
+                        <label class="space-y-1">
+                            <span class="text-xs font-semibold text-slate-600">配送会社（空欄の行だけ入れます）</span>
+                            <select id="fillCarrier" class="w-full border rounded-lg px-3 py-2 bg-white">
+                                <option value="">（変更しない）</option>
+                                <option>佐川急便</option>
+                                <option>西濃運輸</option>
+                                <option>ヤマト運輸</option>
+                                <option>日本郵便</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="flex justify-between items-center flex-wrap gap-2">
+                        <p id="fillSummary" class="text-xs text-slate-600">上の表で発送日を選んでください。</p>
+                        <button id="fillBtn" onclick="submitFillTracking()" class="bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium" disabled><i class="fa-solid fa-pen-to-square mr-1"></i>選んだ発送日に追記</button>
+                    </div>
+                    <div id="fillResult" class="hidden text-sm rounded-lg px-3 py-2"></div>
+                </div>
+            </div>
+        </div>
+
         <div id="tabContentMonthly" class="hidden space-y-6">
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center flex-wrap gap-2">
@@ -403,10 +446,27 @@
                 <h3 class="font-bold text-lg"><i class="fa-solid fa-file-import text-teal-600 mr-2"></i>出庫シートに書き込み</h3>
                 <button onclick="closeWriteModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <label class="block space-y-1 text-sm">
-                <span class="text-xs font-semibold text-slate-600">発送日（全取引先共通）</span>
-                <input type="date" id="writeShipDate" class="w-full border rounded-lg px-3 py-2">
-            </label>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+                <label class="space-y-1">
+                    <span class="text-xs font-semibold text-slate-600">発送日</span>
+                    <input type="date" id="writeShipDate" class="w-full border rounded-lg px-3 py-2">
+                </label>
+                <label class="space-y-1">
+                    <span class="text-xs font-semibold text-slate-600">配送会社</span>
+                    <select id="writeCarrier" class="w-full border rounded-lg px-3 py-2 bg-white">
+                        <option value="">（空欄）</option>
+                        <option>佐川急便</option>
+                        <option>西濃運輸</option>
+                        <option>ヤマト運輸</option>
+                        <option>日本郵便</option>
+                    </select>
+                </label>
+                <label class="space-y-1 col-span-2">
+                    <span class="text-xs font-semibold text-slate-600">追跡番号（送り状番号）</span>
+                    <input type="text" id="writeTracking" class="w-full border rounded-lg px-3 py-2 font-mono" placeholder="例：454312846120（空欄でもOK）">
+                    <span class="text-[11px] text-slate-500">同じ箱で送るので、両社の全行に同じ番号が入ります（G列）。</span>
+                </label>
+            </div>
             <div id="writeGroups" class="space-y-3"></div>
             <p id="writeWarning" class="hidden text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
             <p class="text-xs text-slate-500">※出庫シートにすでにある受注番号は、自動でスキップします（二重計上防止）。</p>
@@ -569,12 +629,13 @@
         function switchTab(tabName) {
             const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
             const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            [['orders','Orders'],['master','Master'],['monthly','Monthly']].forEach(([key, id]) => {
+            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly']].forEach(([key, id]) => {
                 document.getElementById('tabBtn' + id).className = tabName === key ? on : off;
                 document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== key);
             });
             if (tabName === 'master') renderMasterTable();
             if (tabName === 'monthly') loadMonthly();
+            if (tabName === 'tracking') loadPending();
         }
 
         function updateMasterCountBadge() {
@@ -1437,12 +1498,6 @@
                         <span class="${c.color} font-bold text-xs px-2 py-1 rounded">${esc(c.name)}</span>
                         <span class="text-sm"><b>${countOrders(groups[c.key])}件</b>（${groups[c.key].length}行）</span>
                     </div>
-                    <div class="grid grid-cols-2 gap-2 text-sm">
-                        <select class="w-carrier border rounded-lg px-2 py-1.5 bg-white">
-                            ${['', '佐川急便', '西濃運輸', 'ヤマト運輸', '日本郵便'].map(v => `<option value="${v}" ${v === c.carrier ? 'selected' : ''}>${v || '（配送会社 空欄）'}</option>`).join('')}
-                        </select>
-                        <input type="text" class="w-tracking border rounded-lg px-2 py-1.5" placeholder="送り状番号（空欄OK）">
-                    </div>
                     <p class="w-result hidden text-xs rounded-lg px-2 py-1.5"></p>
                 </div>`).join('') || '<p class="text-sm text-slate-500">書き込める行がありません。</p>';
 
@@ -1455,6 +1510,7 @@
             }
 
             if (!document.getElementById('writeShipDate').value) document.getElementById('writeShipDate').value = todayStr();
+            try { const last = localStorage.getItem('bunkatsu_lastCarrier'); if (last !== null) document.getElementById('writeCarrier').value = last; } catch (_) {}
             const res = document.getElementById('writeResult');
             res.classList.add('hidden'); res.innerHTML = '';
             const btn = document.getElementById('writeSubmitBtn');
@@ -1473,6 +1529,11 @@
             const shipDate = document.getElementById('writeShipDate').value;
             if (!shipDate && !confirm('発送日が空です。このまま書き込むと月別件数に数えられません。よろしいですか？')) return;
 
+            const carrier = document.getElementById('writeCarrier').value;
+            const tracking = document.getElementById('writeTracking').value.trim();
+            if (!tracking && !confirm('追跡番号が空欄です。このまま書き込みますか？\n（あとから「追跡番号の追記」タブでまとめて入れられます）')) return;
+            try { localStorage.setItem('bunkatsu_lastCarrier', carrier); } catch (_) {}
+
             const { groups } = groupRowsByClient();
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
@@ -1487,8 +1548,8 @@
                         token: GAS_TOKEN,
                         client: key,
                         shipDate,
-                        carrier: box.querySelector('.w-carrier').value,
-                        tracking: box.querySelector('.w-tracking').value.trim(),
+                        carrier,
+                        tracking,
                         rows: groups[key].map(r => ({ orderSn: r.orderSn, jpName: r.jpName, qty: r.baseQty * r.multiplier }))
                     };
                     // text/plain で送るとGAS側でCORSエラーになりにくい
@@ -1535,11 +1596,15 @@
             const results = await Promise.all(CLIENTS.map(async c => {
                 try {
                     const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}`;
-                    const data = await (await fetch(url)).json();
+                    const resp = await fetch(url);
+                    const text = await resp.text();
+                    let data;
+                    try { data = JSON.parse(text); }
+                    catch (_) { throw new Error(text.includes('<html') || text.includes('<!DOCTYPE') ? 'GASの公開設定が「全員」になっていない可能性があります' : 'GASの返事が読み取れません'); }
                     if (!data.ok) throw new Error(data.error || '不明なエラー');
                     return { c, months: data.months };
                 } catch (err) {
-                    return { c, error: err.message };
+                    return { c, error: err.message === 'Failed to fetch' ? 'GASに接続できません（URLか公開設定を確認）' : err.message };
                 }
             }));
 
@@ -1562,12 +1627,126 @@
                     ${results.map(r => cell(r, ym)).join('')}
                     <td class="px-4 py-2.5 text-right text-slate-600 font-semibold">${total.toLocaleString()}</td>
                 </tr>`;
-            }).join('') : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center text-slate-400">データがありません</td></tr>`;
+            }).join('') : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center ${results.some(r => r.error) ? 'text-rose-500' : 'text-slate-400'}">${results.some(r => r.error) ? '読み込みに失敗しました（上の赤字のメッセージを確認してください）' : '発送日が入っているデータがありません'}</td></tr>`;
 
             const errs = results.filter(r => r.error);
             status.innerHTML = errs.length
                 ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
                 : `${new Date().toLocaleString('ja-JP')} 時点（件数＝注文数）`;
+        }
+
+        // ===== 追跡番号の追記 =====
+        let pendingData = []; // [{ c, groups:[{date,orders,rows}] , error }]
+
+        // GASの返事を読む（ログイン画面などが返ってきたときもわかるように）
+        async function readGas(resp) {
+            const text = await resp.text();
+            try { return JSON.parse(text); }
+            catch (_) { throw new Error(text.includes('<html') || text.includes('<!DOCTYPE') ? 'GASの公開設定が「全員」になっていない可能性があります' : 'GASの返事が読み取れません'); }
+        }
+
+        function fmtDate(ymd) {
+            const [y, m, d] = ymd.split('-').map(Number);
+            const w = '日月火水木金土'[new Date(y, m - 1, d).getDay()];
+            return `${m}/${d}（${w}）`;
+        }
+
+        async function loadPending() {
+            const status = document.getElementById('pendingStatus');
+            if (!gasReady()) { status.innerText = 'GASのURLが未設定です。'; return; }
+            status.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>出庫シートを読み込み中...';
+            document.getElementById('fillResult').classList.add('hidden');
+
+            pendingData = await Promise.all(CLIENTS.map(async c => {
+                try {
+                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=pending`;
+                    const data = await readGas(await fetch(url));
+                    if (!data.ok) throw new Error(data.error || '不明なエラー');
+                    if (!data.groups) throw new Error('GASが古いままです（新しいコードで再デプロイしてください）');
+                    return { c, groups: data.groups };
+                } catch (err) {
+                    return { c, groups: [], error: err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message };
+                }
+            }));
+
+            const dates = [...new Set(pendingData.flatMap(r => r.groups.map(g => g.date)))].sort().reverse();
+            document.getElementById('pendingHead').innerHTML = `<tr>
+                <th class="px-3 py-3 w-8"></th>
+                <th class="px-4 py-3">発送日</th>
+                ${pendingData.map(r => `<th class="px-4 py-3 text-right">${esc(r.c.name)}</th>`).join('')}
+            </tr>`;
+            document.getElementById('pendingBody').innerHTML = dates.length ? dates.map((d, i) => `
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="if(event.target.tagName!=='INPUT'){const cb=this.querySelector('input');cb.checked=!cb.checked;updateFillSummary();}">
+                    <td class="px-3 py-2.5"><input type="checkbox" class="pending-date" value="${d}" onchange="updateFillSummary()" ${i === 0 && dates.length === 1 ? 'checked' : ''}></td>
+                    <td class="px-4 py-2.5 font-medium">${fmtDate(d)}</td>
+                    ${pendingData.map(r => {
+                        const g = r.groups.find(x => x.date === d);
+                        return `<td class="px-4 py-2.5 text-right">${g ? `<b class="text-teal-700">${g.orders}件</b> <span class="text-xs text-slate-400">${g.rows}行</span>` : '<span class="text-slate-300">−</span>'}</td>`;
+                    }).join('')}
+                </tr>`).join('')
+                : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center text-slate-400">追跡番号が空欄の行はありません</td></tr>`;
+
+            const errs = pendingData.filter(r => r.error);
+            status.innerHTML = errs.length
+                ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
+                : `${new Date().toLocaleString('ja-JP')} 時点`;
+            updateFillSummary();
+        }
+
+        function selectedPendingDates() {
+            return [...document.querySelectorAll('.pending-date:checked')].map(cb => cb.value);
+        }
+
+        function updateFillSummary() {
+            const dates = selectedPendingDates();
+            const el = document.getElementById('fillSummary');
+            document.getElementById('fillBtn').disabled = !dates.length;
+            if (!dates.length) { el.innerText = '上の表で発送日を選んでください。'; return; }
+            const parts = pendingData.map(r => {
+                const n = r.groups.filter(g => dates.includes(g.date)).reduce((s, g) => s + g.orders, 0);
+                return n ? `${r.c.name} ${n}件` : '';
+            }).filter(Boolean);
+            el.innerHTML = `${dates.map(fmtDate).join('・')} の <b>${parts.join('、')}</b> に追記します。`;
+        }
+
+        async function submitFillTracking() {
+            const dates = selectedPendingDates();
+            const tracking = document.getElementById('fillTracking').value.trim();
+            const carrier = document.getElementById('fillCarrier').value;
+            if (!dates.length) return;
+            if (!tracking) { alert('追跡番号を入力してください'); return; }
+            if (dates.length > 1 && !confirm(`${dates.length}日分に同じ追跡番号「${tracking}」を入れます。よろしいですか？`)) return;
+
+            const btn = document.getElementById('fillBtn');
+            const res = document.getElementById('fillResult');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>追記中...';
+
+            const targets = pendingData.filter(r => r.groups.some(g => dates.includes(g.date)));
+            const lines = [];
+            let failed = false;
+            for (const r of targets) {
+                try {
+                    const resp = await fetch(r.c.gasUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ token: GAS_TOKEN, action: 'fillTracking', client: r.c.key, dates, tracking, carrier })
+                    });
+                    const data = await readGas(resp);
+                    if (!data.ok) throw new Error(data.error || '不明なエラー');
+                    lines.push(`<i class="fa-solid fa-circle-check mr-1"></i>${esc(r.c.name)}：${data.updatedOrders}件（${data.updated}行）に追記しました`);
+                } catch (err) {
+                    failed = true;
+                    lines.push(`<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(r.c.name)}：失敗しました（${esc(err.message)}）`);
+                }
+            }
+            res.className = `text-sm rounded-lg px-3 py-2 ${failed ? 'bg-rose-50 border border-rose-200 text-rose-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-800'}`;
+            res.innerHTML = lines.join('<br>');
+            btn.innerHTML = '<i class="fa-solid fa-pen-to-square mr-1"></i>選んだ発送日に追記';
+            if (!failed) document.getElementById('fillTracking').value = '';
+            const keep = res.innerHTML, keepClass = res.className;
+            await loadPending(); // 残りを表示し直す
+            res.className = keepClass; res.innerHTML = keep; res.classList.remove('hidden');
         }
 
         function resetApp() {
