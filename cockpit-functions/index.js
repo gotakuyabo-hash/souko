@@ -1382,3 +1382,6 @@ async function getFirebaseToken(p) {
 
 // 返送タスクアプリ（henso.html）用
 exports.henso = require("./henso").henso;
+
+// 分割くん（bunkatuedaban.html）のパッキングリスト → Chatwork送信用
+exports.sendPackingListToChatwork = require("./sendPackingList").sendPackingListToChatwork;
