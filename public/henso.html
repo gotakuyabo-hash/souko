@@ -134,6 +134,21 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-size:14px;z-index:30;max-width:92vw;display:flex;gap:12px;align-items:center}
 .toast button{background:none;border:0;color:var(--bg);font-weight:700;text-decoration:underline;padding:4px;white-space:nowrap}
 @media (prefers-reduced-motion:no-preference){.task{transition:opacity .3s}}
+
+/* 検索 */
+.finder{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 16px;margin-bottom:16px}
+.finder label{display:block;font-weight:700;margin-bottom:8px}
+.finder-row{display:flex;gap:8px}
+.finder input{flex:1;min-width:0;padding:12px 14px;border:2px solid var(--line);border-radius:12px;background:var(--soft);font-size:28px;font-weight:700;letter-spacing:.04em}
+.finder input:focus{border-color:var(--accent);outline:none}
+.finder button{padding:0 22px;border:0;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:18px}
+.recent{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;font-size:13px;color:var(--muted);align-items:center}
+.recent button{padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--soft);font-weight:700;font-size:14px}
+.section-title{font-size:14px;font-weight:700;color:var(--muted);padding:12px 16px 0;margin:0}
+.tasks-box{border-top:1px solid var(--line);margin-top:4px}
+.one-task{padding:4px 0 0}
+.one-task + .one-task{border-top:1px dashed var(--line)}
+.empty-note{margin:8px 16px 16px;font-size:14px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -152,24 +167,20 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
   <header>
     <div class="bar">
       <h1>返送タスク</h1>
-      <span class="count" id="count"></span>
       <span class="grow"></span>
-      <form class="search" id="searchForm">
-        <input id="searchNo" inputmode="numeric" placeholder="返送No.">
-        <button class="btn" type="submit">探す</button>
-      </form>
-      <button class="btn primary" id="reload">更新</button>
-      <span class="updated" id="updated"></span>
+      <button class="btn" id="logoutBtn">ログアウト</button>
     </div>
   </header>
   <main>
-    <div class="lookup" id="lookup"></div>
-    <div id="message"></div>
-    <div class="list" id="list"></div>
-    <details class="others" id="othersBox" hidden>
-      <summary id="othersSum"></summary>
-      <div class="list" id="others" style="margin-top:12px"></div>
-    </details>
+    <form class="finder" id="finder">
+      <label for="no">返送管理No.</label>
+      <div class="finder-row">
+        <input id="no" inputmode="numeric" autocomplete="off" placeholder="例：173">
+        <button type="submit" id="findBtn">検索</button>
+      </div>
+      <div class="recent" id="recent"></div>
+    </form>
+    <div id="result"></div>
   </main>
 </div>
 
@@ -180,9 +191,8 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 const API = "https://asia-northeast1-souko-2de57.cloudfunctions.net/henso";
 let token = "";
 try { token = localStorage.getItem("henso_token") || ""; } catch (e) {}
-let tasks = [];
-let lookupData = null; // ヘッダー検索の結果
-const doneSet = new Set();
+let current = null;          // いま表示している検索結果
+const doneSet = new Set();   // このページで完了にしたタスク
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -219,8 +229,9 @@ async function api(path, opt = {}) {
 }
 
 function showLogin() { $("loginView").hidden = false; $("appView").hidden = true; $("pass").focus(); }
-function showApp() { $("loginView").hidden = true; $("appView").hidden = false; }
+function showApp() { $("loginView").hidden = true; $("appView").hidden = false; renderRecent(); $("no").focus(); }
 function logout() { token = ""; try { localStorage.removeItem("henso_token"); } catch (e) {} showLogin(); }
+$("logoutBtn").addEventListener("click", logout);
 
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -230,9 +241,42 @@ $("loginForm").addEventListener("submit", async (e) => {
     token = d.token;
     try { localStorage.setItem("henso_token", token); } catch (e) {}
     $("pass").value = "";
-    showApp(); load();
+    showApp();
   } catch (err) { $("loginErr").textContent = err.message; }
 });
+
+/* ---------- 最近さがしたNo. ---------- */
+function getRecent() { try { return JSON.parse(localStorage.getItem("henso_recent") || "[]"); } catch (e) { return []; } }
+function addRecent(no) {
+  const list = [no, ...getRecent().filter((x) => x !== no)].slice(0, 6);
+  try { localStorage.setItem("henso_recent", JSON.stringify(list)); } catch (e) {}
+  renderRecent();
+}
+function renderRecent() {
+  const list = getRecent();
+  $("recent").innerHTML = list.length
+    ? "最近：" + list.map((n) => `<button type="button" data-recent="${esc(n)}">${esc(n)}</button>`).join("")
+    : "";
+}
+
+/* ---------- 検索 ---------- */
+async function find(no) {
+  no = String(no || "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/\D/g, "");
+  if (!no) { $("no").focus(); return; }
+  $("no").value = no;
+  $("findBtn").disabled = true; $("findBtn").textContent = "検索中…";
+  $("result").innerHTML = "";
+  try {
+    current = await api("/lookup?no=" + encodeURIComponent(no) + "&fresh=1");
+    addRecent(current.no);
+    render();
+  } catch (err) {
+    $("result").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
+  } finally {
+    $("findBtn").disabled = false; $("findBtn").textContent = "検索";
+  }
+}
+$("finder").addEventListener("submit", (e) => { e.preventDefault(); find($("no").value); });
 
 /* ---------- 表示 ---------- */
 function chipClass(s) {
@@ -266,7 +310,7 @@ function itemHtml(it, no, files, roomId) {
     : `<div class="photo"><span>画像なし</span></div>`;
   const label = it.label
     ? (/^https?:\/\//.test(it.label)
-        ? `<div class="label"><a href="${esc(it.label)}" target="_blank" rel="noopener">DHLラベルを開く</a></div>`
+        ? `<div class="label"><a href="${esc(it.label)}" target="_blank" rel="noopener">DHLラベル（Amazon）を開く</a></div>`
         : `<div class="label">${esc(it.label)}</div>`)
     : "";
   return `<div class="item">
@@ -290,15 +334,6 @@ function itemHtml(it, no, files, roomId) {
   </div>`;
 }
 
-function rowsHtml(rows, roomId) {
-  if (!rows.length) return "";
-  return rows.map((r) =>
-    r.items.length
-      ? r.items.map((it) => itemHtml(it, r.no, r.files, roomId)).join("")
-      : `<div class="item"><div class="missing">返送No.${esc(r.no)} は返送管理シートに見つかりません</div></div>`
-  ).join("");
-}
-
 function dueHtml(t) {
   if (!t.limitTime) return "";
   const d = new Date(t.limitTime * 1000);
@@ -308,98 +343,65 @@ function dueHtml(t) {
 
 function taskHtml(t) {
   const done = doneSet.has(t.taskId);
-  const linkBox = t.nos.length ? "" :
-    `<form class="link-no" data-link="${t.taskId}">
-       <input inputmode="numeric" placeholder="返送No.を入れて表示" aria-label="返送No.">
-       <button class="btn" type="submit">表示</button>
-     </form>`;
-  return `<article class="task ${done ? "is-done" : ""}" id="t${t.taskId}">
+  return `<div class="one-task ${done ? "is-done" : ""}">
     <div class="task-head">
       ${t.kind && t.kind.label ? `<span class="kind ${t.kind.key}">${esc(t.kind.label)}</span>` : ""}
-      <span>${esc(t.roomName)}</span>
-      ${t.account === "matsushita" ? `<span class="who">松下さん担当</span>` : ""}
       ${t.assignedBy ? `<span>依頼：${esc(t.assignedBy)}</span>` : ""}
       ${dueHtml(t)}
     </div>
-    ${rowsHtml(t.rows || [], t.roomId)}
-    <div class="body-wrap"><div class="body">${esc(t.body)}</div></div>
-    ${linkBox}
+    <div class="body-wrap" style="padding-top:10px"><div class="body">${esc(t.body)}</div></div>
     <div class="actions">
       ${done
         ? `<div class="done-msg"><span>完了しました</span><button data-undo="${t.taskId}">元に戻す</button></div>`
-        : `<button class="done-btn" data-done="${t.taskId}">完了にする</button>`}
+        : `<button class="done-btn" data-done="${t.taskId}">タスクを完了にする</button>`}
+    </div>
+  </div>`;
+}
+
+function render() {
+  if (!current) { $("result").innerHTML = ""; return; }
+  const c = current;
+  const items = c.items.length
+    ? c.items.map((it) => itemHtml(it, c.no, c.files, c.roomId)).join("")
+    : `<div class="item"><div class="missing">返送No.${esc(c.no)} は返送管理シートに見つかりません</div></div>`;
+  const tasks = c.tasks.length
+    ? c.tasks.map(taskHtml).join("")
+    : `<p class="empty-note">この返送No.の未完了タスクはありません（完了済みか、ラクロジスタッフ担当になっていない可能性があります）</p>`;
+  $("result").innerHTML = `<article class="task">
+    ${items}
+    <div class="tasks-box">
+      <p class="section-title">Chatworkのタスク</p>
+      ${tasks}
     </div>
   </article>`;
 }
 
-function render() {
-  const main = tasks.filter((t) => t.isReturn || t.nos.length);
-  const others = tasks.filter((t) => !(t.isReturn || t.nos.length));
-  const left = main.filter((t) => !doneSet.has(t.taskId)).length;
-  $("count").textContent = `残り ${left} 件`;
-  $("list").innerHTML = main.length ? main.map(taskHtml).join("")
-    : `<div class="notice">返送のタスクはありません。新しいタスクが来たら「更新」を押してください。</div>`;
-  $("othersBox").hidden = !others.length;
-  $("othersSum").textContent = `返送以外のタスク（${others.length}件）`;
-  $("others").innerHTML = others.map(taskHtml).join("");
+/* ---------- 受領ステータス ---------- */
+async function sendReceipt(no, rowNumber, value, undo) {
+  const d = await api("/receipt", { method: "POST", body: JSON.stringify({ no, rowNumber, value, undo: !!undo }) });
+  if (current) current.items.filter((it) => it.rowNumber === rowNumber).forEach((it) => (it.status = value));
+  render();
+  return d.prev;
 }
 
-async function load(fresh) {
-  $("message").innerHTML = "";
-  $("reload").disabled = true;
-  $("reload").textContent = "読込中…";
-  try {
-    const d = await api("/tasks" + (fresh ? "?fresh=1" : ""));
-    tasks = d.tasks;
-    doneSet.clear();
-    render();
-    const t = new Date(d.loadedAt);
-    $("updated").textContent = `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")} に読み込み`;
-  } catch (err) {
-    $("message").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
-  } finally {
-    $("reload").disabled = false;
-    $("reload").textContent = "更新";
-  }
-}
-$("reload").addEventListener("click", () => load(true));
-
-/* ---------- 完了・元に戻す ---------- */
-const confirmTimers = {};
+/* ---------- タスク完了・元に戻す ---------- */
 async function setStatus(taskId, status) {
-  const t = tasks.find((x) => x.taskId === taskId);
+  const t = current && current.tasks.find((x) => x.taskId === taskId);
   if (!t) return;
-  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status, account: t.account }) });
+  await api("/status", { method: "POST", body: JSON.stringify({ roomId: t.roomId, taskId, status }) });
   if (status === "done") doneSet.add(taskId); else doneSet.delete(taskId);
   render();
   toast(status === "done" ? "Chatworkのタスクを完了にしました" : "タスクを未完了に戻しました");
 }
 
+const confirmTimers = {};
 document.addEventListener("click", async (e) => {
+  const recentBtn = e.target.closest("[data-recent]");
+  if (recentBtn) { find(recentBtn.dataset.recent); return; }
+
   const zoomBtn = e.target.closest("[data-zoom]");
   if (zoomBtn) { $("zoomImg").src = zoomBtn.dataset.zoom; $("zoom").hidden = false; return; }
   if (e.target.closest("#zoom")) { $("zoom").hidden = true; return; }
-
-  const doneBtn = e.target.closest("[data-done]");
-  if (doneBtn) {
-    const id = Number(doneBtn.dataset.done);
-    // 誤タップ防止：2回押しで完了
-    if (!doneBtn.classList.contains("confirm")) {
-      doneBtn.classList.add("confirm");
-      doneBtn.textContent = "もう一度押すと完了";
-      clearTimeout(confirmTimers[id]);
-      confirmTimers[id] = setTimeout(() => {
-        doneBtn.classList.remove("confirm");
-        doneBtn.textContent = "完了にする";
-      }, 3000);
-      return;
-    }
-    clearTimeout(confirmTimers[id]);
-    doneBtn.disabled = true; doneBtn.textContent = "送信中…";
-    try { await setStatus(id, "done"); }
-    catch (err) { toast(err.message); doneBtn.disabled = false; doneBtn.classList.remove("confirm"); doneBtn.textContent = "完了にする"; }
-    return;
-  }
 
   const fileBtn = e.target.closest("[data-file]");
   if (fileBtn) {
@@ -432,6 +434,27 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  const doneBtn = e.target.closest("[data-done]");
+  if (doneBtn) {
+    const id = Number(doneBtn.dataset.done);
+    // 誤タップ防止：2回押しで完了
+    if (!doneBtn.classList.contains("confirm")) {
+      doneBtn.classList.add("confirm");
+      doneBtn.textContent = "もう一度押すと完了";
+      clearTimeout(confirmTimers[id]);
+      confirmTimers[id] = setTimeout(() => {
+        doneBtn.classList.remove("confirm");
+        doneBtn.textContent = "タスクを完了にする";
+      }, 3000);
+      return;
+    }
+    clearTimeout(confirmTimers[id]);
+    doneBtn.disabled = true; doneBtn.textContent = "送信中…";
+    try { await setStatus(id, "done"); }
+    catch (err) { toast(err.message); doneBtn.disabled = false; doneBtn.classList.remove("confirm"); doneBtn.textContent = "タスクを完了にする"; }
+    return;
+  }
+
   const undoBtn = e.target.closest("[data-undo]");
   if (undoBtn) {
     undoBtn.disabled = true;
@@ -440,59 +463,8 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-/* No.が読み取れなかったタスクに手で返送No.をひも付けて表示 */
-document.addEventListener("submit", async (e) => {
-  const f = e.target.closest("[data-link]");
-  if (!f) return;
-  e.preventDefault();
-  const no = f.querySelector("input").value.trim();
-  if (!no) return;
-  try {
-    const d = await api("/lookup?no=" + encodeURIComponent(no));
-    const t = tasks.find((x) => x.taskId === Number(f.dataset.link));
-    t.nos = [d.no];
-    t.rows = [{ no: d.no, items: d.items, files: [] }];
-    t.isReturn = true;
-    render();
-  } catch (err) { toast(err.message); }
-});
-
-/* ヘッダーのNo.検索（タスクに関係なくシートを見る） */
-$("searchForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const no = $("searchNo").value.trim();
-  if (!no) { $("lookup").innerHTML = ""; return; }
-  try {
-    lookupData = await api("/lookup?no=" + encodeURIComponent(no) + "&fresh=1");
-    renderLookup();
-  } catch (err) { toast(err.message); }
-});
-
-function renderLookup() {
-  if (!lookupData) { $("lookup").innerHTML = ""; return; }
-  $("lookup").innerHTML = `<article class="task">
-    <div class="task-head"><span>シート検索の結果</span></div>
-    ${rowsHtml([{ no: lookupData.no, items: lookupData.items }])}
-    <div class="actions"><button class="btn" id="closeLookup">閉じる</button></div>
-  </article>`;
-  $("closeLookup").onclick = () => { lookupData = null; renderLookup(); $("searchNo").value = ""; };
-}
-
-/* ---------- 受領ステータス ---------- */
-function applyStatus(rowNumber, value) {
-  const all = tasks.flatMap((t) => (t.rows || []).flatMap((r) => r.items))
-    .concat(lookupData ? lookupData.items : []);
-  all.filter((it) => it.rowNumber === rowNumber).forEach((it) => (it.status = value));
-  render(); renderLookup();
-}
-async function sendReceipt(no, rowNumber, value, undo) {
-  const d = await api("/receipt", { method: "POST", body: JSON.stringify({ no, rowNumber, value, undo: !!undo }) });
-  applyStatus(rowNumber, value);
-  return d.prev;
-}
-
 /* 起動 */
-if (token) { showApp(); load(); } else { showLogin(); }
+if (token) { showApp(); } else { showLogin(); }
 </script>
 </body>
 </html>
