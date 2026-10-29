@@ -26,7 +26,7 @@
  *   cw_sent_marks/{ルームID}             … コックピットから送った文の目印（二重に記録しないため）
  */
 
-const { onRequest } = require("firebase-functions/v2/https");
+const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -1383,5 +1383,57 @@ async function getFirebaseToken(p) {
 // 返送タスクアプリ（henso.html）用
 exports.henso = require("./henso").henso;
 
-// 分割くん（bunkatuedaban.html）のパッキングリスト → Chatwork送信用
-exports.sendPackingListToChatwork = require("./sendPackingList").sendPackingListToChatwork;
+
+// ==============================
+// 分割くん（bunkatuedaban.html）：元のパッキングリストをChatworkへ送る
+// ラクロジスタッフのアカウントから、決まったグループへ武田さん宛で投稿
+// ==============================
+const PACKING_LIST_ROOM_ID = "442684516";
+const PACKING_LIST_TO_LINE = "[To:7964085]武田さん";
+const PACKING_LIST_MAX_BYTES = 5 * 1024 * 1024; // Chatworkの上限 5MB
+const PACKING_LIST_EXT = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  csv: "text/csv"
+};
+
+exports.sendPackingListToChatwork = onCall(
+  { region: REGION, secrets: [CW_TOKEN_STAFF], memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const { fileName, fileBase64, message } = request.data || {};
+
+    if (typeof fileName !== "string" || typeof fileBase64 !== "string") {
+      throw new HttpsError("invalid-argument", "ファイルが届いていません");
+    }
+    const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_").slice(0, 200);
+    const ext = (safeName.split(".").pop() || "").toLowerCase();
+    if (!PACKING_LIST_EXT[ext]) {
+      throw new HttpsError("invalid-argument", "Excel（xlsx/xls）かCSVだけ送れます");
+    }
+    const buf = Buffer.from(fileBase64, "base64");
+    if (buf.length === 0) throw new HttpsError("invalid-argument", "ファイルが空です");
+    if (buf.length > PACKING_LIST_MAX_BYTES) {
+      throw new HttpsError("invalid-argument", "5MBを超えているため送れません");
+    }
+    const body = typeof message === "string" ? message.slice(0, 1000) : "";
+    const text = body ? `${PACKING_LIST_TO_LINE}\n${body}` : PACKING_LIST_TO_LINE;
+
+    const form = new FormData();
+    form.append("file", new Blob([buf], { type: PACKING_LIST_EXT[ext] }), safeName);
+    form.append("message", text);
+
+    const res = await fetch(`https://api.chatwork.com/v2/rooms/${PACKING_LIST_ROOM_ID}/files`, {
+      method: "POST",
+      headers: { "X-ChatWorkToken": CW_TOKEN_STAFF.value() },
+      body: form
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error("Chatwork upload failed", res.status, detail);
+      throw new HttpsError("internal", `Chatworkへの送信に失敗しました（${res.status}）`);
+    }
+    const json = await res.json().catch(() => ({}));
+    return { ok: true, fileId: json.file_id || null };
+  }
+);
