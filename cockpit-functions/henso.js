@@ -265,7 +265,7 @@ async function cwSetStatus(token, roomId, taskId, status) {
 
 /* ---------- 入口 ---------- */
 exports.henso = onRequest(
-  { region: "asia-northeast1", secrets: [CHATWORK_TOKEN, CHATWORK_TOKEN_MATSUSHITA, HENSO_PASSPHRASE] },
+  { region: "asia-northeast1", cors: true, secrets: [CHATWORK_TOKEN, CHATWORK_TOKEN_MATSUSHITA, HENSO_PASSPHRASE] },
   async (req, res) => {
     res.set("Cache-Control", "no-store");
     const action = req.path.split("/").filter(Boolean).pop();
