@@ -18,6 +18,7 @@ const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const { GoogleAuth } = require("google-auth-library");
 const crypto = require("crypto");
+const admin = require("firebase-admin"); // initializeApp は index.js 側で済んでいる
 
 // コックピットで登録済みのSecretをそのまま使う
 const CHATWORK_TOKEN = defineSecret("CW_TOKEN_STAFF"); // ラクロジスタッフのChatwork
@@ -123,6 +124,7 @@ function rowToItem(r, i) {
     haisoNo: normNo(g(1)),
     status: g(2),
     store: g(3),
+    name: g(6),
     orderNo: g(8),
     asin: g(9),
     title: g(10),
@@ -135,27 +137,80 @@ function rowToItem(r, i) {
   };
 }
 
-async function findRows(nos, fresh) {
+// 画像URLが空の行は、配送No.で入力シートの画像を補う
+async function fillImages(items) {
+  const missing = items.filter((x) => !x.image && x.haisoNo);
+  if (!missing.length) return;
+  const input = await readRange(INPUT_RANGE, 10 * 60 * 1000, false);
+  const map = {};
+  input.forEach((r) => {
+    const no = normNo(r[0]);
+    const url = r[10] ? String(r[10]).trim() : "";
+    if (no && url && !map[no]) map[no] = url;
+  });
+  missing.forEach((x) => (x.image = map[x.haisoNo] || ""));
+}
+
+async function allItems(fresh) {
   const rows = await readRange(RETURN_RANGE, 60 * 1000, fresh);
-  const items = rows.map(rowToItem).filter((x) => x.no);
+  return rows.map(rowToItem).filter((x) => x.no);
+}
+
+async function findRows(nos, fresh) {
+  const items = await allItems(fresh);
   const result = {};
   nos.forEach((n) => (result[n] = items.filter((x) => x.no === n)));
-
-  // 画像URLが空の行は入力シートから補う
-  const missing = Object.values(result)
-    .flat()
-    .filter((x) => !x.image && x.haisoNo);
-  if (missing.length) {
-    const input = await readRange(INPUT_RANGE, 10 * 60 * 1000, false);
-    const map = {};
-    input.forEach((r) => {
-      const no = normNo(r[0]);
-      const url = r[10] ? String(r[10]).trim() : "";
-      if (no && url && !map[no]) map[no] = url;
-    });
-    missing.forEach((x) => (x.image = map[x.haisoNo] || ""));
-  }
+  await fillImages(Object.values(result).flat());
   return result;
+}
+
+// 検索用に文字をそろえる（全角半角・大文字小文字・スペース・ハイフンの違いを無視）
+function normText(s) {
+  return toHalf(String(s || ""))
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\u3000\-‐－]/g, "");
+}
+const byNoDesc = (a, b) => Number(b.no) - Number(a.no);
+
+// 受領の記録（Firestore：henso_received/{返送No.}）
+// シートのステータスが「DHL」「完了」などに変わっても、タスクを完了するまで一覧に残すため
+const RECEIVED_COL = "henso_received";
+async function loadReceivedMarks() {
+  const snap = await admin.firestore().collection(RECEIVED_COL).get();
+  const set = new Set();
+  snap.forEach((d) => set.add(d.id));
+  return set;
+}
+async function markReceived(nos, status) {
+  if (!nos.length) return;
+  const db = admin.firestore();
+  for (let i = 0; i < nos.length; i += 400) {
+    const batch = db.batch();
+    nos.slice(i, i + 400).forEach((no) =>
+      batch.set(db.collection(RECEIVED_COL).doc(no), { no, status: status || "", at: Date.now() }, { merge: true })
+    );
+    await batch.commit();
+  }
+}
+async function unmarkReceived(no) {
+  await admin.firestore().collection(RECEIVED_COL).doc(no).delete();
+}
+
+// Chatworkタスクを画面用の形にする
+function taskView(t) {
+  const body = cleanBody(t.body);
+  return {
+    taskId: t.task_id,
+    messageId: String(t.message_id || "0"),
+    roomId: t.room && t.room.room_id,
+    roomName: (t.room && t.room.name) || "",
+    assignedBy: (t.assigned_by_account && t.assigned_by_account.name) || "",
+    limitTime: t.limit_time || 0,
+    body,
+    nos: extractNos(body),
+    kind: kindOf(body),
+  };
 }
 
 // 返送管理シートのC列（ステータス）を書き換える
@@ -346,6 +401,55 @@ exports.henso = onRequest(
         return res.json({ url });
       }
 
+      // 受領：名前 → 品名 → 注文番号 の順に探す
+      if (action === "search" && req.method === "GET") {
+        const q = normText(req.query.q);
+        if (!q) return res.status(400).json({ error: "名前・品名・注文番号のどれかを入れてください" });
+        const items = await allItems(fresh);
+        for (const field of ["name", "title", "orderNo"]) {
+          const hits = items.filter((x) => normText(x[field]).includes(q)).sort(byNoDesc).slice(0, 30);
+          if (hits.length) {
+            await fillImages(hits);
+            return res.json({ matchedBy: field, items: hits });
+          }
+        }
+        return res.json({ matchedBy: "", items: [] });
+      }
+
+      // タスク完了：受領済みの荷物と、その未完了タスク
+      //   ・ステータスが「到着済」のもの
+      //   ・一度受領したもの（Firestoreに記録あり）で、まだ未完了タスクが残っているもの
+      if (action === "received" && req.method === "GET") {
+        const [items, myTasks, marks] = await Promise.all([
+          allItems(fresh),
+          cwMyTasks(tokenOf()),
+          loadReceivedMarks(),
+        ]);
+        const tasks = myTasks.map(taskView);
+        items.forEach((x) => (x.tasks = tasks.filter((t) => t.nos.includes(x.no))));
+
+        // 「到着済」なのに記録がないもの（アプリ導入前の分など）は記録しておく
+        const arrived = items.filter((x) => /到着/.test(x.status));
+        const newMarks = arrived.filter((x) => !marks.has(x.no));
+        await markReceived(newMarks.map((x) => x.no), "");
+        newMarks.forEach((x) => marks.add(x.no));
+
+        const received = items.filter(
+          (x) => /到着/.test(x.status) || (marks.has(x.no) && x.tasks.length > 0)
+        );
+        await fillImages(received);
+        const files = await cwRoomFiles(tokenOf(), RETURN_ROOM_ID, fresh)
+          .then(filesByNo)
+          .catch(() => ({}));
+        received.forEach((x) => {
+          x.files = files[x.no] || [];
+          x.roomId = (x.tasks[0] && x.tasks[0].roomId) || RETURN_ROOM_ID;
+        });
+        // タスクが来ているものを上に、その中は新しい順
+        received.sort((a, b) => (b.tasks.length > 0) - (a.tasks.length > 0) || byNoDesc(a, b));
+        return res.json({ items: received, loadedAt: Date.now() });
+      }
+
       if (action === "lookup" && req.method === "GET") {
         const no = normNo(req.query.no);
         if (!no) return res.status(400).json({ error: "返送管理No.を入れてください" });
@@ -397,6 +501,9 @@ exports.henso = onRequest(
         }
         if (v.length > 100) return res.status(400).json({ error: "値が長すぎます" });
         const prev = await writeStatus(no, rowNumber, v);
+        // 受領の記録（「元に戻す」で到着済以外に戻したときは記録も消す）
+        if (/到着/.test(v)) await markReceived([normNo(no)], v);
+        else await unmarkReceived(normNo(no));
         return res.json({ ok: true, prev, value: v });
       }
 
