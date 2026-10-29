@@ -12,6 +12,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -28,6 +29,10 @@
 
         window.db = db;
         window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
+
+        // Chatwork送信用（Cloud Functions：東京リージョン）
+        const functions = getFunctions(app, "asia-northeast1");
+        window.sendPackingListFn = httpsCallable(functions, "sendPackingListToChatwork", { timeout: 120000 });
         
         window.initFirestoreMaster();
     </script>
@@ -172,6 +177,7 @@
                         <button onclick="openInspectionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-print mr-1"></i>検品書(100×150)印刷</button>
                         <button onclick="openTotalPickingModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-clipboard-list mr-1"></i>トータルピック</button>
                         <button onclick="downloadExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-excel mr-1"></i>Excel保存</button>
+                        <button onclick="sendPackingListsToChatwork()" id="chatworkSendBtn" class="bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paper-plane mr-1"></i>Chatworkに送る</button>
                     </div>
                 </div>
 
@@ -740,7 +746,7 @@
                         const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
                         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
                         if (rows.length) {
-                            allFilesRawData.push({ name: file.name, size: file.size, rows });
+                            allFilesRawData.push({ name: file.name, size: file.size, rows, file, sent: false });
                             const li = document.createElement('li');
                             li.innerHTML = `<i class="fa-solid fa-file-excel text-emerald-600 mr-1"></i>${escapeHtml(file.name)} (${rows.length - 1}行)`;
                             listEl.appendChild(li);
@@ -1186,6 +1192,71 @@
             let wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "処理結果");
             XLSX.writeFile(wb, `受注データ_処理結果_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }
+
+        // ===== 元のパッキングリストをChatworkへ送る =====
+        const CHATWORK_MAX_BYTES = 5 * 1024 * 1024; // Chatworkの上限 5MB
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const r = new FileReader();
+                r.onload = () => resolve(String(r.result).split(',')[1]);
+                r.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+                r.readAsDataURL(file);
+            });
+        }
+
+        async function sendPackingListsToChatwork() {
+            if (!window.sendPackingListFn) { alert('送信機能の準備ができていません。ページを再読み込みしてください。'); return; }
+            const targets = allFilesRawData.filter(d => d.file);
+            if (targets.length === 0) { alert('送れるパッキングリストがありません。先にファイルを取り込んでください。'); return; }
+
+            const tooBig = targets.filter(d => d.file.size > CHATWORK_MAX_BYTES);
+            if (tooBig.length) {
+                alert(`5MBを超えているため送れないファイルがあります：\n${tooBig.map(d => d.name).join('\n')}`);
+                return;
+            }
+
+            const already = targets.filter(d => d.sent);
+            let msg = `次の${targets.length}件をChatworkに送ります。\n\n${targets.map(d => '・' + d.name).join('\n')}`;
+            if (already.length) msg += `\n\n※うち${already.length}件は送信済みです。もう一度送られます。`;
+            if (!confirm(msg)) return;
+
+            const btn = document.getElementById('chatworkSendBtn');
+            const btnHtml = btn.innerHTML;
+            btn.disabled = true;
+
+            const now = new Date();
+            const dateLabel = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            const failed = [];
+            let ok = 0;
+
+            for (let i = 0; i < targets.length; i++) {
+                const d = targets[i];
+                btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>送信中 ${i + 1}/${targets.length}`;
+                try {
+                    const fileBase64 = await fileToBase64(d.file);
+                    await window.sendPackingListFn({
+                        fileName: d.name,
+                        fileBase64,
+                        message: `パッキングリストを共有します（${dateLabel}）\n${d.name}（${Math.max(d.rows.length - 1, 0)}行）`
+                    });
+                    d.sent = true;
+                    ok++;
+                } catch (err) {
+                    console.error(err);
+                    failed.push(`${d.name}：${err.message || '送信エラー'}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = btnHtml;
+
+            if (failed.length === 0) {
+                alert(`${ok}件をChatworkに送りました。`);
+            } else {
+                alert(`${ok}件を送りました。次のファイルは送れませんでした：\n\n${failed.join('\n')}`);
+            }
         }
 
         function resetApp() {
