@@ -176,7 +176,8 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 <div class="zoom" id="zoom" hidden><img alt="商品画像（拡大）" id="zoomImg"></div>
 
 <script>
-const API = "/api/henso";
+// Functionsを直接呼ぶ（firebase.jsonのrewrites設定は不要）
+const API = "https://asia-northeast1-souko-2de57.cloudfunctions.net/henso";
 let token = "";
 try { token = localStorage.getItem("henso_token") || ""; } catch (e) {}
 let tasks = [];
@@ -210,7 +211,10 @@ async function api(path, opt = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && path !== "/login") { logout(); throw new Error("ログインが切れました。合言葉を入れ直してください。"); }
-  if (!res.ok) throw new Error(data.error || "エラー（" + res.status + "）");
+  if (!res.ok) {
+    if (res.status === 404 && !data.error) throw new Error("サーバー（henso）が見つかりません。Functionsのデプロイが終わっているか確認してください（404）");
+    throw new Error(data.error || "エラー（" + res.status + "）");
+  }
   return data;
 }
 
