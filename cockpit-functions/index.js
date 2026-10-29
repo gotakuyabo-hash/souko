@@ -1379,3 +1379,6 @@ async function getFirebaseToken(p) {
   const token = await admin.auth().createCustomToken("cockpit_" + dev, { cockpit: true, gen });
   return { token, gen };
 }
+
+// 返送タスクアプリ（henso.html）用
+exports.henso = require("./henso").henso;
