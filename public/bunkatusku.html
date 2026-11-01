@@ -320,7 +320,7 @@
                 <div class="flex justify-between items-center flex-wrap gap-2">
                     <div>
                         <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-teal-600 mr-2"></i>月別出荷件数（出庫シートから集計）</h2>
-                        <p class="text-xs text-slate-500 mt-1">出荷件数 ＝ 発送日が入っている行の受注番号の数（同じ受注番号は1件）。発送日が空の行は数えません。</p>
+                        <p class="text-xs text-slate-500 mt-1">出荷件数 ＝ 発送日が入っている行の受注番号の数（同じ受注番号は1件）。発送日が空の行は数えません。<br>Shopee ＝ 受注番号がShopeeの形式（数字6桁＋英数字8桁）のもの。それ以外は「その他」に入ります。</p>
                     </div>
                     <button onclick="loadMonthly()" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
                 </div>
@@ -1474,12 +1474,16 @@
             return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         }
 
-        // 取引先ごとに行をまとめる（マスタ未登録・取引先未設定の行は書き込まない）
+        // 取引先ごとに行をまとめる
+        // ※マスタ未登録・取引先未設定の行を1つでも含む注文は、注文ごと書き込まない（一部だけ書き込まれるのを防ぐ）
         function groupRowsByClient() {
             const groups = {};
             const skipped = [];
+            const isBad = r => !r.matched || !clientOf(r.client);
+            const badOrders = new Set(processedDataRows.filter(isBad).map(r => String(r.orderSn).trim()).filter(Boolean));
             processedDataRows.forEach(r => {
-                if (!r.matched || !clientOf(r.client)) { skipped.push(r); return; }
+                const sn = String(r.orderSn).trim();
+                if (isBad(r) || (sn && badOrders.has(sn))) { skipped.push(r); return; }
                 (groups[r.client] = groups[r.client] || []).push(r);
             });
             return { groups, skipped };
@@ -1503,7 +1507,7 @@
 
             const warn = document.getElementById('writeWarning');
             if (skipped.length) {
-                warn.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>マスタ未登録・取引先未設定の ${skipped.length} 行（${countOrders(skipped)}件）は書き込みません。<br>先にマスタを登録・設定すると一緒に書き込めます。`;
+                warn.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>マスタ未登録・取引先未設定を含む注文の ${skipped.length} 行（${countOrders(skipped)}件）は書き込みません。<br>先にマスタを登録・設定すると一緒に書き込めます。`;
                 warn.classList.remove('hidden');
             } else {
                 warn.classList.add('hidden');
@@ -1609,30 +1613,42 @@
             }));
 
             const allMonths = [...new Set(results.flatMap(r => (r.months || []).map(m => m.month)))].sort().reverse();
-            const cell = (r, ym) => {
-                if (r.error) return '<td class="px-4 py-2.5 text-right text-rose-500">エラー</td>';
-                const m = r.months.find(x => x.month === ym);
-                return `<td class="px-4 py-2.5 text-right text-base font-bold text-teal-700">${m ? m.orders.toLocaleString() : '<span class="text-slate-300 font-normal">0</span>'}</td>`;
+            const hasErr = results.some(r => r.error);
+            const noSplit = results.some(r => !r.error && (r.months || []).some(m => typeof m.shopee !== 'number'));
+            const pick = (r, ym) => (r.months || []).find(x => x.month === ym);
+            const fmt = v => typeof v === 'number' ? v.toLocaleString() : '−';
+            const td = (v, cls = '') => `<td class="px-3 py-2.5 text-right ${cls}">${v}</td>`;
+            const trio = (shopee, other, total, edge) =>
+                td(fmt(shopee), `${edge} text-orange-700`) + td(fmt(other), 'text-slate-700') + td(fmt(total), 'text-base font-bold text-teal-700');
+            const clientCells = (r, ym) => {
+                if (r.error) return `<td colspan="3" class="px-3 py-2.5 text-center text-rose-500 border-l">エラー</td>`;
+                const m = pick(r, ym);
+                if (!m) return trio(0, 0, 0, 'border-l');
+                return trio(m.shopee, m.other, m.orders, 'border-l');
             };
+            const sum = (ym, key) => results.reduce((s, r) => s + ((pick(r, ym) || {})[key] || 0), 0);
 
+            const sub = `<th class="px-3 py-2 text-right border-l">Shopee</th><th class="px-3 py-2 text-right">その他</th><th class="px-3 py-2 text-right">計</th>`;
             head.innerHTML = `<tr>
-                <th class="px-4 py-3">発送月</th>
-                ${results.map(r => `<th class="px-4 py-3 text-right">${esc(r.c.name)}</th>`).join('')}
-                <th class="px-4 py-3 text-right">合計</th>
-            </tr>`;
-            body.innerHTML = allMonths.length ? allMonths.map(ym => {
-                const total = results.reduce((s, r) => s + ((r.months || []).find(x => x.month === ym)?.orders || 0), 0);
-                return `<tr class="hover:bg-slate-50">
-                    <td class="px-4 py-2.5 font-medium">${esc(ym)}</td>
-                    ${results.map(r => cell(r, ym)).join('')}
-                    <td class="px-4 py-2.5 text-right text-slate-600 font-semibold">${total.toLocaleString()}</td>
-                </tr>`;
-            }).join('') : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center ${results.some(r => r.error) ? 'text-rose-500' : 'text-slate-400'}">${results.some(r => r.error) ? '読み込みに失敗しました（上の赤字のメッセージを確認してください）' : '発送日が入っているデータがありません'}</td></tr>`;
+                <th rowspan="2" class="px-4 py-3 align-bottom">発送月</th>
+                ${results.map(r => `<th colspan="3" class="px-3 pt-3 text-center border-l">${esc(r.c.name)}</th>`).join('')}
+                <th colspan="3" class="px-3 pt-3 text-center border-l">合計</th>
+            </tr>
+            <tr>${results.map(() => sub).join('')}${sub}</tr>`;
+
+            body.innerHTML = allMonths.length ? allMonths.map(ym => `<tr class="hover:bg-slate-50">
+                    <td class="px-4 py-2.5 font-medium whitespace-nowrap">${esc(ym)}</td>
+                    ${results.map(r => clientCells(r, ym)).join('')}
+                    ${hasErr ? `<td colspan="3" class="px-3 py-2.5 text-center text-slate-400 border-l">−</td>`
+                             : trio(noSplit ? null : sum(ym, 'shopee'), noSplit ? null : sum(ym, 'other'), sum(ym, 'orders'), 'border-l')}
+                </tr>`).join('') : `<tr><td colspan="${CLIENTS.length * 3 + 4}" class="px-4 py-6 text-center ${hasErr ? 'text-rose-500' : 'text-slate-400'}">${hasErr ? '読み込みに失敗しました（上の赤字のメッセージを確認してください）' : '発送日が入っているデータがありません'}</td></tr>`;
 
             const errs = results.filter(r => r.error);
             status.innerHTML = errs.length
                 ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
-                : `${new Date().toLocaleString('ja-JP')} 時点（件数＝注文数）`;
+                : noSplit
+                    ? `<span class="text-amber-700">GASが古いため、Shopee／その他の内訳が出ません（新しいGASコードで再デプロイしてください）</span>`
+                    : `${new Date().toLocaleString('ja-JP')} 時点（件数＝注文数）`;
         }
 
         // ===== 追跡番号の追記 =====
