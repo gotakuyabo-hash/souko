@@ -21,6 +21,9 @@
  *   cw_server/option_overrides   … オプション加入状況の手動修正
  *   cw_server/sync_{アカウント}    … 同期の進み具合
  *
+ * ▼ ルームごとの「状況の整理」メモ
+ *   cw_room_notes/{ルームID} … AIで整理して担当者が保存した状況。AI返信を作るときに一緒に渡す
+ *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
  *   ai_brushup_feedback/cw_{メッセージID} … AI添削ログに「Chatwork直接」として追加（source: "chatwork_direct"）
  *   cw_sent_marks/{ルームID}             … コックピットから送った文の目印（二重に記録しないため）
@@ -155,6 +158,10 @@ async function handleRequest(p) {
       result = await saveAiConfig(p);
     } else if (action === "suggest_ai_rules") {
       result = await suggestAiRules(p);
+    } else if (action === "get_room_note") {
+      result = await getRoomNote(p.room_id);
+    } else if (action === "save_room_note") {
+      result = await saveRoomNote(p);
     } else {
       const token = getChatworkToken(p.account);
       if (action === "get_unread_bundle") {
@@ -179,6 +186,8 @@ async function handleRequest(p) {
         result = await markReadBatch(token, p.room_ids);
       } else if (action === "get_rooms") {
         result = { rooms: slimRooms(await cw(token, "get", "/rooms")) };
+      } else if (action === "summarize_room") {
+        result = await summarizeRoom(token, p);
       } else if (action === "get_room_data") {
         result = await getChatworkRoomData(token, p.room_id);
       } else if (action === "get_room_file") {
@@ -614,11 +623,17 @@ async function generateAiReply(params) {
   const cfg = await getAiConfig();
   const internal = isInternalRoom(params.room_id, cfg);
   const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
+  const note = params.room_id ? (await getRoomNote(params.room_id)).summary : "";
+  const noteBlock = note
+    ? "【このルームの状況（担当者が整理したもの）】\n" + note.trim() + "\n\n"
+      + "この状況をふまえ、内容と食い違わない文章にしてください。状況の文をそのまま書き写したり、相手が聞いていないことまで持ち出したりはしないでください。\n\n"
+    : "";
 
   // 役割と文章ルールは system（土台）、今回の指示と会話は user に分けて渡す
   //   → ルールをそのまま書き写したような文章になりにくい
   const system = "あなたは物流倉庫のカスタマーサポート担当です。取引先とのチャットで送るメッセージを作成します。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
     + rules
+    + noteBlock
     + "出力は送信するメッセージ本文のみとし、記号（*や#）は使わないでください。";
 
   let prompt;
@@ -636,6 +651,76 @@ async function generateAiReply(params) {
     prompt += "【これまでのメッセージ】\n" + contextText;
   }
   return { ai_reply: await callAI(prompt, { system }) };
+}
+
+// ==============================
+// ルームごとの「状況の整理」メモ（cw_room_notes/{ルームID}）
+// ==============================
+const ROOM_NOTE_MAX = 3000;
+const roomNoteRef = rid => db.collection("cw_room_notes").doc(safeRid(rid));
+
+async function getRoomNote(roomId) {
+  const rid = String(roomId || "").replace(/[^0-9]/g, "");
+  if (!rid) return { summary: "", updatedAt: 0, updatedBy: "" };
+  const key = "room_note_" + rid;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  let out = { summary: "", updatedAt: 0, updatedBy: "" };
+  try {
+    const snap = await roomNoteRef(rid).get();
+    if (snap.exists) {
+      const d = snap.data();
+      out = { summary: String(d.summary || ""), updatedAt: d.updatedAt || 0, updatedBy: d.updatedBy || "" };
+    }
+  } catch (e) {
+    console.error("状況メモの読み込みに失敗: " + e.message);
+  }
+  cachePut(key, out, 60);
+  return out;
+}
+
+async function saveRoomNote(p) {
+  const rid = safeRid(p.room_id);
+  const summary = String(p.summary || "").trim();
+  if (summary.length > ROOM_NOTE_MAX) throw new Error("状況メモが長すぎます（" + ROOM_NOTE_MAX + "文字まで）");
+  const data = {
+    summary, roomName: String(p.room_name || "").slice(0, 100),
+    updatedBy: String(p.by || "").slice(0, 40), updatedAt: nowSec()
+  };
+  await roomNoteRef(rid).set(data);
+  cacheRemove("room_note_" + rid);
+  return { summary: data.summary, updatedAt: data.updatedAt, updatedBy: data.updatedBy };
+}
+
+// ルームの最近のやり取り（最大40件）と、いまのメモから「状況の整理」をAIで作る（保存はしない）
+async function summarizeRoom(token, p) {
+  const rid = safeRid(p.room_id);
+  const msgs = await cw(token, "get", "/rooms/" + rid + "/messages?force=1");
+  const list = (Array.isArray(msgs) ? msgs : []).slice(-40);
+  if (!list.length) throw new Error("このルームにはメッセージがありません");
+  const myIds = (await getMyIds()).map(String);
+  const fmt = t => new Date((t || 0) * 1000).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const lines = list.map(m => {
+    const id = String(m.account && m.account.account_id);
+    const who = ((m.account && m.account.name) || "") + (myIds.indexOf(id) !== -1 ? "【自社】" : "");
+    return "[" + fmt(m.send_time) + "] " + who + "：" + stripTags(m.body).slice(0, 800);
+  }).join("\n");
+  const current = (await getRoomNote(rid)).summary;
+
+  const prompt = "以下は、物流倉庫（自社）と相手とのChatworkルーム「" + String(p.room_name || "ルーム") + "」のやり取りです。\n"
+    + "次にこのルームで返信する担当者が、すぐ状況をつかめるように整理してください。\n\n"
+    + "【整理の決まり】\n"
+    + "・次の見出しで、それぞれ「・」で始まる短い箇条書きにする（該当がなければ「・特になし」）\n"
+    + "　【相手について】【進行中の件】【約束・期限】【こちらの対応待ち】【注意点】\n"
+    + "・やり取りに書かれている事実だけを書き、推測はしない。日付は分かる範囲で入れる\n"
+    + "・終わった件は書かない。いまのメモにあって、やり取りで終わったと分かる件は消す\n"
+    + "・いまのメモにあって、やり取りから確認できない件はそのまま残す\n"
+    + "・全体で" + 600 + "文字くらいまでにまとめる。記号（*や#）は使わない\n\n"
+    + "【いまのメモ】\n" + (current || "なし") + "\n\n"
+    + "【やり取り（古い順）】\n" + lines
+    + "\n\n整理した内容だけを出力してください。";
+  const summary = await callAI(prompt);
+  return { summary: summary.slice(0, ROOM_NOTE_MAX) };
 }
 
 // ==============================
