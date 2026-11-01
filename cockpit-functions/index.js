@@ -6,7 +6,7 @@
  *
  * ▼ 秘密の値（firebase functions:secrets:set で登録）
  *   APP_SECRET          … 画面で入力する合言葉（GASと同じものにすると、スタッフは入力し直し不要）
- *   GEMINI_API_KEY      … Gemini APIキー
+ *   OPENAI_API_KEY      … OpenAI（ChatGPT）APIキー
  *   CW_TOKEN_STAFF      … ラクロジスタッフアカウントのChatwork APIトークン
  *   CW_TOKEN_MATSUSHITA … 松下アカウントのChatwork APIトークン
  *
@@ -38,10 +38,10 @@ const db = admin.firestore();
 
 const REGION = "asia-northeast1";
 const APP_SECRET = defineSecret("APP_SECRET");
-const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const CW_TOKEN_STAFF = defineSecret("CW_TOKEN_STAFF");
 const CW_TOKEN_MATSUSHITA = defineSecret("CW_TOKEN_MATSUSHITA");
-const ALL_SECRETS = [APP_SECRET, GEMINI_API_KEY, CW_TOKEN_STAFF, CW_TOKEN_MATSUSHITA];
+const ALL_SECRETS = [APP_SECRET, OPENAI_API_KEY, CW_TOKEN_STAFF, CW_TOKEN_MATSUSHITA];
 
 // 画面の「アカウント選択」の値 → トークン
 const ACCOUNTS = {
@@ -49,7 +49,7 @@ const ACCOUNTS = {
   matsushita: CW_TOKEN_MATSUSHITA
 };
 
-const GEMINI_MODEL = "gemini-3.7-flash";
+const OPENAI_MODEL = "gpt-6-luna";   // 文章がいまいちなら "gpt-6-sol" に変えると高性能（料金は上がる）
 
 // ==============================
 // 小さな道具
@@ -562,51 +562,48 @@ async function saveAiConfig(p) {
 }
 
 // ==============================
-// Gemini
+// OpenAI（ChatGPT）
+//   opt.system … AIの役割・文章ルール（土台になる指示）
+//   opt.json   … JSONで返してほしいとき true
 // ==============================
-async function callGemini(prompt, opt = {}) {
-  const apiKey = GEMINI_API_KEY.value();
-  if (!apiKey) throw new Error("GEMINI_API_KEY が登録されていません");
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
-  const reqBody = { contents: [{ parts: [{ text: prompt }] }] };
-  if (opt.json) reqBody.generationConfig = { responseMimeType: "application/json" };
+async function callAI(prompt, opt = {}) {
+  const apiKey = OPENAI_API_KEY.value();
+  if (!apiKey) throw new Error("OPENAI_API_KEY が登録されていません");
+  const messages = [];
+  if (opt.system) messages.push({ role: "system", content: opt.system });
+  messages.push({ role: "user", content: prompt });
+  const reqBody = { model: OPENAI_MODEL, messages };
+  if (opt.json) reqBody.response_format = { type: "json_object" };
 
-  // 混雑時（429/500/503）や空の結果のときは、少し待って最大2回までやり直す
+  // 混雑時（429/500/502/503）や空の結果のときは、少し待って最大2回までやり直す
   let lastReason = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await sleep(1500 * attempt);
-    const res = await fetch(url, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
       body: JSON.stringify(reqBody)
     });
     const text = await res.text();
-    if (res.status === 429 || res.status === 500 || res.status === 503) {
+    if (res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503) {
       lastReason = "AIが混み合っています (" + res.status + ")";
       continue;
     }
-    if (res.status !== 200) throw new Error("Gemini API エラー (" + res.status + "): " + text);
+    if (res.status !== 200) throw new Error("OpenAI API エラー (" + res.status + "): " + text);
 
     const data = JSON.parse(text);
-    const cand = data.candidates && data.candidates[0];
-    const parts = cand && cand.content && cand.content.parts;
-    let out = "";
-    if (parts) {
-      // 「考え中」の部分（thought）は除いて、本文だけをつなげる
-      out = parts.filter(pt => !pt.thought).map(pt => pt.text || "").join("").trim();
-    }
+    const msg = data.choices && data.choices[0] && data.choices[0].message;
+    const out = msg && typeof msg.content === "string" ? msg.content.trim() : "";
     if (out) return out;
 
-    const blockReason = data.promptFeedback && data.promptFeedback.blockReason;
-    lastReason = blockReason ? "入力がブロックされました (" + blockReason + ")"
-      : "結果が空でした (" + ((cand && cand.finishReason) || "理由不明") + ")";
-    if (blockReason) break;
+    if (msg && msg.refusal) { lastReason = "AIが作成を断りました (" + msg.refusal + ")"; break; }
+    lastReason = "結果が空でした (" + ((data.choices && data.choices[0] && data.choices[0].finish_reason) || "理由不明") + ")";
   }
   throw new Error("AIの文章を作成できませんでした：" + lastReason);
 }
 
 // 文章の基本（画面の⚙️では変えられない固定部分）
-//   ルールを増やしすぎると、軽いモデル（flash）は文章が硬く・雑になりやすいので、最小限にしている
+//   ルールを増やしすぎると、軽いモデルは文章が硬く・雑になりやすいので、最小限にしている
 const AI_BASE_NOTE = "【指示】は担当者の走り書きのメモです。そのまま写さず、意味をくみ取って、取引先に送る丁寧なビジネス敬語の文章に整えてください。\n\n";
 
 // 返信案・新規発信の文章を作成
@@ -618,25 +615,27 @@ async function generateAiReply(params) {
   const internal = isInternalRoom(params.room_id, cfg);
   const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
 
+  // 役割と文章ルールは system（土台）、今回の指示と会話は user に分けて渡す
+  //   → ルールをそのまま書き写したような文章になりにくい
+  const system = "あなたは物流倉庫のカスタマーサポート担当です。取引先とのチャットで送るメッセージを作成します。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
+    + rules
+    + "出力は送信するメッセージ本文のみとし、記号（*や#）は使わないでください。";
+
   let prompt;
   if (params.mode === "compose") {
     if (!customPrompt) throw new Error("伝えたい内容を入力してください");
-    prompt = "あなたは物流倉庫のカスタマーサポート担当です。以下の【指示】の内容を、こちらから相手へ送るチャットメッセージにしてください。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
+    prompt = "以下の【指示】の内容を、こちらから相手へ送るチャットメッセージにしてください。\n\n"
       + "【指示】\n" + customPrompt + "\n\n"
       + AI_BASE_NOTE
-      + rules
-      + "【参考：このルームの最近のやり取り】\n" + (contextText || "なし")
-      + "\n\n送信するメッセージ本文のみを、記号（*や#）を使わずに出力してください。";
+      + "【参考：このルームの最近のやり取り】\n" + (contextText || "なし");
   } else {
-    prompt = "あなたは物流倉庫のカスタマーサポート担当です。以下のチャットで、相手の最後のメッセージに対する返信文を作成してください。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n";
+    prompt = "以下のチャットで、相手の最後のメッセージに対する返信文を作成してください。\n\n";
     if (customPrompt) {
       prompt += "【指示（返信で伝える内容）】\n" + customPrompt + "\n\n" + AI_BASE_NOTE;
     }
-    prompt += rules
-      + "【これまでのメッセージ】\n" + contextText
-      + "\n\n返信文のみを、記号（*や#）を使わずに出力してください。";
+    prompt += "【これまでのメッセージ】\n" + contextText;
   }
-  return { ai_reply: await callGemini(prompt) };
+  return { ai_reply: await callAI(prompt, { system }) };
 }
 
 // ==============================
@@ -754,7 +753,7 @@ async function suggestAiRules(p) {
     + "【いまのルール：社内】\n" + cfg.internal + "\n\n"
     + "【直された例】\n" + lines;
 
-  const text = await callGemini(prompt, { json: true });
+  const text = await callAI(prompt, { json: true });
   let data;
   try {
     data = JSON.parse(String(text).replace(/^```(?:json)?\s*|\s*```$/g, ""));
