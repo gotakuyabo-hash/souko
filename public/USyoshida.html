@@ -48,6 +48,16 @@ main{max-width:1180px;margin:0 auto;padding:20px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;width:max-content}
 .seg button{border:0;border-radius:0;padding:8px 18px;background:transparent}
 .seg button.on{background:var(--primary);color:var(--primary-ink);font-weight:700}
+/* コックピットからの依頼 */
+#cwReq{margin-bottom:16px;border-left:8px solid var(--primary)}
+.cwreq-head{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.cwreq-item{border-top:1px solid var(--line);padding:12px 0 4px;display:grid;gap:6px}
+.cwreq-item:first-of-type{border-top:0}
+.cwreq-nos{display:flex;flex-wrap:wrap;gap:6px}
+.cwreq-no{border:1px solid var(--primary);color:var(--primary);border-radius:4px;padding:1px 8px;font-weight:700;font-variant-numeric:tabular-nums}
+.cwreq-text{font-size:13px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.cwreq-memo{font-size:13px;background:var(--tape-soft);border-radius:4px;padding:2px 8px;width:max-content;max-width:100%}
+.cwreq-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface);resize:vertical;font-variant-numeric:tabular-nums}
 .search-row{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .search-row .muted{margin-right:auto}
@@ -198,6 +208,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
       <button data-tab="inq" role="tab">問い合わせ中</button>
     </nav>
     <div id="tabWork">
+    <div id="cwReq" class="panel" hidden></div>
     <div class="panel search">
       <div class="seg" role="tablist" aria-label="探す番号">
         <button data-mode="tracking" class="on" role="tab" aria-selected="true">倉庫追跡番号</button>
@@ -400,11 +411,12 @@ auth.onAuthStateChanged(async u => {
   $('#btnSettings').hidden = !u;
   $('#btnLogout').hidden = !u;
   $('#userName').textContent = u ? (u.displayName || u.email) : '';
-  if (!u) { $('#actionBar').hidden = true; return; }
+  if (!u) { $('#actionBar').hidden = true; stopCwReq(); return; }
   await loadConfig();
 });
 
 async function loadConfig(){
+  startCwReq();
   try{
     const snap = await clientRef().get();
     state.config = snap.exists ? snap.data() : null;
@@ -416,6 +428,77 @@ async function loadConfig(){
   try{ const j = await gas('info'); $('#sheetTitle').textContent = j.sheetTitle; }
   catch(e){ toast(e.message, 6000); }
 }
+
+/* ===== コックピットからの依頼（Chatworkコックピットの「📦 USアプリに出荷依頼」で届く） =====
+   deliveryClients/{クライアント}/cockpitRequests … status: open（未完了）/ done（完了） */
+const CWREQ = { unsub:null, clientId:null, list:[] };
+function stopCwReq(){
+  if (CWREQ.unsub) { try{ CWREQ.unsub(); }catch(e){} }
+  CWREQ.unsub = null; CWREQ.clientId = null; CWREQ.list = [];
+  $('#cwReq').hidden = true;
+}
+function startCwReq(){
+  if (CWREQ.unsub && CWREQ.clientId === state.clientId) return;
+  stopCwReq();
+  CWREQ.clientId = state.clientId;
+  CWREQ.unsub = clientRef().collection('cockpitRequests').where('status','==','open').onSnapshot(qs => {
+    const list = [];
+    qs.forEach(d => list.push(Object.assign({ id:d.id }, d.data())));
+    list.sort((a,b) => (a.createdAtSec||0) - (b.createdAtSec||0));   // 古い順
+    CWREQ.list = list;
+    renderCwReq();
+  }, err => {
+    console.error(err);
+    const box = $('#cwReq');
+    box.hidden = false;
+    box.innerHTML = '<div class="muted small">コックピットからの依頼を読み込めませんでした（Firestoreのルールで cockpitRequests の読み書きを許可してください）：'+esc(err.message)+'</div>';
+  });
+}
+function cwReqTime(sec){
+  if (!sec) return '';
+  const d = new Date(sec*1000), now = new Date();
+  const hm = d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+  return d.toDateString() === now.toDateString() ? '今日 '+hm : (d.getMonth()+1)+'/'+d.getDate()+' '+hm;
+}
+function renderCwReq(){
+  const box = $('#cwReq');
+  if (!CWREQ.list.length) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = '<div class="cwreq-head"><b>📥 コックピットからの依頼（'+CWREQ.list.length+'件）</b><span class="muted small">古い順</span></div>'
+    + CWREQ.list.map(r => '<div class="cwreq-item">'
+      + '<div class="cwreq-nos">'+(r.nos||[]).map(n => '<span class="cwreq-no">No.'+esc(n)+'</span>').join('')+'</div>'
+      + '<div class="small"><b>'+esc(r.roomName||'')+'</b> <span class="muted">'+esc(cwReqTime(r.createdAtSec))+(r.by ? '・'+esc(r.by) : '')+'</span></div>'
+      + (r.memo ? '<div class="cwreq-memo">📝 '+esc(r.memo)+'</div>' : '')
+      + (r.text ? '<div class="cwreq-text">'+esc(r.text)+'</div>' : '')
+      + '<div class="cwreq-btns">'
+      +   '<button type="button" class="ghost" onclick="doneCwReq(\''+esc(r.id)+'\', this)">✓ 完了</button>'
+      +   '<button type="button" class="primary" onclick="searchCwReq(\''+esc(r.id)+'\')">🔍 このNo.で検索</button>'
+      + '</div></div>').join('');
+}
+window.searchCwReq = function(id){
+  const r = CWREQ.list.find(x => x.id === id);
+  if (!r) return;
+  const segNo = document.querySelector('.seg button[data-mode="no"]');
+  if (segNo && state.mode !== 'no') segNo.click();
+  $('#q').value = (r.nos||[]).join(' ');
+  updateCount();
+  doSearch(true).then(() => { const el = $('#summary'); if (el) el.scrollIntoView({ behavior:'smooth', block:'start' }); });
+};
+window.doneCwReq = async function(id, btn){
+  const r = CWREQ.list.find(x => x.id === id);
+  if (!r || !confirm('No.'+(r.nos||[]).join('、')+' の依頼を完了にしますか？')) return;
+  btn.disabled = true;
+  try{
+    await clientRef().collection('cockpitRequests').doc(id).set({
+      status:'done', doneAt: firebase.firestore.FieldValue.serverTimestamp(),
+      doneBy: state.user ? (state.user.displayName || state.user.email || '') : ''
+    }, { merge:true });
+    toast('完了にしました');
+  }catch(e){
+    btn.disabled = false;
+    toast('完了にできませんでした：'+e.message, 6000);
+  }
+};
 
 /* ===== 連携GAS ===== */
 const ERR = {
