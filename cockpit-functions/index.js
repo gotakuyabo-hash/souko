@@ -166,6 +166,10 @@ async function handleRequest(p) {
       result = await getRoomNote(p.room_id);
     } else if (action === "save_room_note") {
       result = await saveRoomNote(p);
+    } else if (action === "get_questions") {
+      result = await getQuestions();
+    } else if (action === "close_question") {
+      result = await closeQuestion(p.account, p.room_id, p.no);
     } else {
       const token = getChatworkToken(p.account);
       if (action === "get_unread_bundle") {
@@ -200,10 +204,13 @@ async function handleRequest(p) {
         result = await sendChatworkMessage(token, p.room_id, p.body);
         await markSentFromCockpit(p.room_id, p.body);
         if (p.done) {
+          await clearAnsweredQuestion(p.account, p.room_id);
           // 送信と同時に「既読」＋「後で対応から外す」
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
           result.later = await setLater(p.account, [p.room_id], false);
         }
+      } else if (action === "ask_question") {
+        result = await askQuestion(token, p);
       } else if (action === "sync_now") {
         result = await syncNow(p.account, token);
       } else if (action === "get_me") {
@@ -221,10 +228,12 @@ async function handleRequest(p) {
         await refreshRoomMsgDoc(p.account, token, p.room_id);
       } else if (action === "mark_read") {
         result = await markChatworkRead(token, p.room_id, p.last_chat_id);
+        await clearAnsweredQuestion(p.account, p.room_id);
       } else if (action === "upload_file") {
         result = await uploadChatworkFile(token, p.room_id, p.file_data, p.file_name, p.mime_type, p.message);
         if (p.message) await markSentFromCockpit(p.room_id, p.message);
         if (p.done) {
+          await clearAnsweredQuestion(p.account, p.room_id);
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
           result.later = await setLater(p.account, [p.room_id], false);
         }
@@ -496,11 +505,13 @@ function aiDefaults() {
     common: DEFAULT_RULES_COMMON,
     external: DEFAULT_RULES_EXTERNAL,
     internal: DEFAULT_RULES_INTERNAL,
-    internalRoomIds: DEFAULT_INTERNAL_ROOM_IDS
+    internalRoomIds: DEFAULT_INTERNAL_ROOM_IDS,
+    questionRoomId: "",   // 空なら社内ルームIDの1つ目
+    questionToId: ""
   };
 }
 
-const AI_CONFIG_FIELDS = ["common", "external", "internal", "internalRoomIds"];
+const AI_CONFIG_FIELDS = ["common", "external", "internal", "internalRoomIds", "questionRoomId", "questionToId"];
 const AI_CONFIG_REF = () => db.collection("cw_config").doc("ai_prompt");
 
 // Firestoreに保存されている内容（1分キャッシュ）
@@ -542,7 +553,8 @@ async function getAiConfigForEdit() {
   return {
     saved: {
       common: raw.common || "", external: raw.external || "",
-      internal: raw.internal || "", internalRoomIds: raw.internalRoomIds || ""
+      internal: raw.internal || "", internalRoomIds: raw.internalRoomIds || "",
+      questionRoomId: raw.questionRoomId || "", questionToId: raw.questionToId || ""
     },
     defaults: aiDefaults(),
     updatedBy: raw.updatedBy || "",
@@ -559,6 +571,8 @@ async function saveAiConfig(p) {
     data[k] = v;
   });
   data.internalRoomIds = data.internalRoomIds.split(/[,、\s]+/).filter(x => /^\d+$/.test(x)).join(",");
+  data.questionRoomId = data.questionRoomId.replace(/[^0-9]/g, "");
+  data.questionToId = data.questionToId.replace(/[^0-9]/g, "");
   data.updatedBy = String(p.by || "").slice(0, 40);
   data.updatedAt = nowSec();
 
@@ -632,6 +646,7 @@ async function generateAiReply(params) {
   const internal = isInternalRoom(params.room_id, cfg);
   const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
   const note = params.room_id ? (await getRoomNote(params.room_id)).summary : "";
+  const qa = await qaForPrompt(params.room_id);
   const noteBlock = note
     ? "【このルームの状況（担当者が整理したもの）】\n" + note.trim() + "\n\n"
       + "この状況をふまえ、内容と食い違わない文章にしてください。状況の文をそのまま書き写したり、相手が聞いていないことまで持ち出したりはしないでください。\n\n"
@@ -642,6 +657,8 @@ async function generateAiReply(params) {
   const system = "あなたは物流倉庫のカスタマーサポート担当です。取引先とのチャットで送るメッセージを作成します。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
     + rules
     + noteBlock
+    + (qa ? "【参考：過去に渡辺さん（責任者）が答えたQ&A】\n" + qa + "\n"
+      + "今回の内容に関係するQ&Aがあれば、その答えに沿って書いてください。関係しないQ&Aは使わないでください。\n\n" : "")
     + "出力は送信するメッセージ本文のみとし、記号（*や#）は使わないでください。";
 
   let prompt;
@@ -1333,6 +1350,7 @@ async function buildLearn() {
   try {
     const cfg = await getAiConfig(600);   // 同期では10分キャッシュ（読み込み回数を抑える）
     learn.internal = String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x));
+    learn.questionRoomId = questionRoomOf(cfg);
   } catch (e) {}
   return learn;
 }
@@ -1404,6 +1422,11 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     const got = await fetchMessages(token, rid);
     if (got.msgs === null) return; // 取得失敗は次回に持ち越し
     const msgs = got.msgs;
+
+    // 渡辺さんへの質問ルームなら、届いた回答を質問リストに反映
+    if (learn && learn.questionRoomId === rid) {
+      try { await detectAnswers(rid, msgs); } catch (e) { console.error("回答の読み取りに失敗: " + e.message); }
+    }
 
     // Chatworkで直接送った返信をAI添削ログへ（社内ルームは除く。前回確認した時より後の返信だけ。
     //   コックピットから送った文は、送信時の目印と一致するので除く）
@@ -1493,6 +1516,213 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
 
+}
+
+// ==============================
+// 渡辺さんへの質問リスト
+//   ① カードの「👤 渡辺さんに聞く」→ 質問ルーム（社内ルーム）に投稿し、cw_questions/Q{番号} に保存。ルームは「後で対応」へ
+//   ② 渡辺さんがChatworkで「返信（↩）」するか、本文に「Q-番号」を入れて答える → 同期のときに読み取って「回答済み」に
+//      → ルームを「後で対応」から外し、要対応に戻す（カードに回答が表示される）
+//   ③ 回答済みのQ&Aは cw_server/qa_recent（最新40件）にもためて、AI返信作成の参考に渡す
+//   カードの表示用に、ルームの最新の質問を cw_rooms/{アカウント}_{ルームID} の question にも入れる
+// ==============================
+const QA_KEEP = 40;
+
+function questionRoomOf(cfg) {
+  const q = String(cfg.questionRoomId || "").replace(/[^0-9]/g, "");
+  if (q) return q;
+  return String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x))[0] || "";
+}
+
+async function nextQuestionNo() {
+  const ref = db.collection("cw_server").doc("question_seq");
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const n = (snap.exists ? Number(snap.get("n")) || 0 : 0) + 1;
+    tx.set(ref, { n, updatedAt: nowSec() });
+    return n;
+  });
+}
+
+async function askQuestion(token, p) {
+  const rid = safeRid(p.room_id);
+  const cfg = await getAiConfig();
+  const qRoom = questionRoomOf(cfg);
+  if (!qRoom) throw new Error("質問を送る社内ルームが設定されていません（⚙️で設定できます）");
+  const roomName = String(p.room_name || "").slice(0, 80);
+  const context = String(p.context || "").slice(0, 3000);
+  const by = String(p.by || "").slice(0, 40);
+  let question = String(p.note || "").trim().slice(0, 1000);
+
+  if (!question) {
+    if (!context) throw new Error("聞きたいことを入力してください");
+    question = (await callAI(
+      "以下は、物流倉庫（自社）とお客様のチャットです。スタッフが返信する前に、責任者の渡辺さんに確認したいことを、"
+      + "渡辺さんへの質問として1〜2文でまとめてください。社内向けなので挨拶や敬語の飾りは不要です。"
+      + "チャットに書かれていないことは足さないでください。質問文だけを出力してください。\n\n"
+      + "【ルーム】" + roomName + "\n【チャット（古い順。【自社】は自社の発言）】\n" + context,
+      { timeoutMs: 40000 }
+    )).slice(0, 500);
+  }
+
+  const no = await nextQuestionNo();
+  const label = "Q-" + no;
+  // お客様の最後の発言（カードの文から【自社】以外の最後の1件）
+  const lines = context.split(/\n{2,}/).filter(s => s.trim());
+  const lastCust = lines.slice().reverse().find(s => s.indexOf("【自社】") !== 0) || "";
+  const toLine = cfg.questionToId ? "[To:" + String(cfg.questionToId).replace(/[^0-9]/g, "") + "]\n" : "";
+  const body = toLine
+    + "[info][title]❓ " + label + "　" + roomName + "[/title]"
+    + (lastCust ? "【お客様】" + lastCust.slice(0, 300) + "\n\n" : "")
+    + "【聞きたいこと】" + question
+    + (by ? "\n（質問：" + by + "）" : "")
+    + "[/info]"
+    + "このメッセージに「返信」するか、「" + label + "」と書いて答えてください";
+
+  const posted = await cw(token, "post", "/rooms/" + qRoom + "/messages", { body, self_unread: "0" });
+  const now = nowSec();
+  const data = {
+    no, label, status: "open", account: p.account, roomId: rid, roomName,
+    question, customerText: lastCust.slice(0, 500), askedBy: by, askedAt: now,
+    questionRoomId: qRoom, cwMessageId: String((posted && posted.message_id) || ""),
+    answer: "", answeredBy: "", answeredAt: 0
+  };
+  await db.collection("cw_questions").doc("Q" + no).set(data);
+  await db.collection("cw_rooms").doc(p.account + "_" + rid).set({ question: roomQuestion(data) }, { merge: true });
+  const later = await setLater(p.account, [rid], true);
+  return { no, label, question, later };
+}
+
+// カード表示用（cw_rooms に入れる分）
+function roomQuestion(q) {
+  return {
+    no: q.no, label: q.label, status: q.status, question: String(q.question || "").slice(0, 300),
+    answer: String(q.answer || "").slice(0, 1000), answeredBy: q.answeredBy || "", askedBy: q.askedBy || "",
+    askedAt: q.askedAt || 0, answeredAt: q.answeredAt || 0
+  };
+}
+
+// 質問ルームのメッセージから回答を探す
+async function detectAnswers(qRoomId, msgs) {
+  const snap = await db.collection("cw_questions").where("status", "==", "open").get();
+  if (snap.empty) return;
+  const open = [];
+  snap.forEach(d => { const q = d.data(); if (q.questionRoomId === qRoomId) open.push({ id: d.id, q }); });
+  if (!open.length) return;
+
+  for (const { id, q } of open) {
+    const hit = msgs.find(m => {
+      const mid = String(m.message_id);
+      const body = String(m.body || "");
+      if (mid === q.cwMessageId || (m.send_time || 0) < (q.askedAt || 0)) return false;
+      if (body.indexOf("[info][title]❓") !== -1) return false;   // ほかの質問の投稿
+      if (q.cwMessageId && body.indexOf("-" + q.cwMessageId + "]") !== -1 && /\[rp aid=\d+ to=\d+-\d+\]/.test(body)) return true;
+      return new RegExp("Q-?" + q.no + "(?![0-9])", "i").test(body);
+    });
+    if (!hit) continue;
+    const answer = stripTags(String(hit.body).replace(/\[rp aid=\d+ to=\d+-\d+\][^\n]*\n?/, ""))
+      .replace(new RegExp("^\\s*Q-?" + q.no + "(?![0-9])[\\s:：、。]*", "i"), "").trim().slice(0, 2000);
+    const done = Object.assign({}, q, {
+      status: "answered", answer: answer || "（本文なし）",
+      answeredBy: (hit.account && hit.account.name) || "", answeredAt: hit.send_time || nowSec(),
+      answerMessageId: String(hit.message_id)
+    });
+    // 二重に処理しないよう、まだ open の時だけ更新
+    const ok = await db.runTransaction(async tx => {
+      const ref = db.collection("cw_questions").doc(id);
+      const cur = await tx.get(ref);
+      if (!cur.exists || cur.get("status") !== "open") return false;
+      tx.set(ref, done);
+      return true;
+    });
+    if (!ok) continue;
+    await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: roomQuestion(done) }, { merge: true });
+    try { await setLater(q.account, [q.roomId], false); } catch (e) {}
+    // 要対応に戻す（「未対応に戻す」と同じ）
+    await db.collection("cw_handled").doc(q.account + "_" + q.roomId).set({
+      account: q.account, roomId: q.roomId, handledAt: 0, reopen: true, by: "渡辺さん回答", auto: false,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    await db.collection("cw_handled_log").add({
+      account: q.account, roomId: q.roomId, roomName: q.roomName || "", action: "reopen", by: "渡辺さん回答 " + q.label,
+      at: admin.firestore.FieldValue.serverTimestamp()
+    });
+    // Q&Aの蓄積（AI返信の参考用）
+    const ref = db.collection("cw_server").doc("qa_recent");
+    await db.runTransaction(async tx => {
+      const s2 = await tx.get(ref);
+      let list = [];
+      try { list = JSON.parse((s2.exists && s2.get("json")) || "[]") || []; } catch (e) {}
+      list = [{ no: q.no, roomId: q.roomId, roomName: q.roomName || "", q: String(q.question).slice(0, 300), a: done.answer.slice(0, 600), at: done.answeredAt }]
+        .concat(list.filter(x => x.no !== q.no)).slice(0, QA_KEEP);
+      tx.set(ref, { json: JSON.stringify(list), updatedAt: nowSec() });
+    });
+    cacheRemove("qa_recent");
+  }
+}
+
+// 対応済み・送信して完了の時：回答済みの質問はカードから外す（質問リストには残る）
+async function clearAnsweredQuestion(account, roomId) {
+  try {
+    const rid = String(roomId || "").replace(/[^0-9]/g, "");
+    if (!rid || !ACCOUNTS[account]) return;
+    const ref = db.collection("cw_rooms").doc(account + "_" + rid);
+    const snap = await ref.get();
+    const q = snap.exists ? snap.get("question") : null;
+    if (q && q.status === "answered") await ref.set({ question: null }, { merge: true });
+  } catch (e) {
+    console.error("質問の表示を外せませんでした: " + e.message);
+  }
+}
+
+// 質問リスト画面用
+async function getQuestions() {
+  const snap = await db.collection("cw_questions").where("status", "==", "open").get();
+  const open = [];
+  snap.forEach(d => {
+    const q = d.data();
+    open.push({ no: q.no, label: q.label, account: q.account, roomId: q.roomId, roomName: q.roomName, question: q.question, customerText: q.customerText, askedBy: q.askedBy, askedAt: q.askedAt });
+  });
+  open.sort((a, b) => a.askedAt - b.askedAt);
+  return { open, answered: await loadQaRecent() };
+}
+
+// 質問の取り下げ（未回答の質問をやめる時）
+async function closeQuestion(account, roomId, no) {
+  const n = Number(no) || 0;
+  if (!n) throw new Error("質問の番号がありません");
+  const ref = db.collection("cw_questions").doc("Q" + n);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("質問が見つかりません");
+  const q = snap.data();
+  if (q.status === "open") await ref.set({ status: "cancelled", cancelledAt: nowSec() }, { merge: true });
+  await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: null }, { merge: true });
+  return { ok: true };
+}
+
+async function loadQaRecent() {
+  const hit = cacheGet("qa_recent");
+  if (hit) return hit;
+  const list = await loadJsonDoc("qa_recent", []);
+  const out = Array.isArray(list) ? list : [];
+  cachePut("qa_recent", out, 60);
+  return out;
+}
+
+// AI返信に渡すQ&A（同じルームのものを先に、全体で最大15件）
+async function qaForPrompt(roomId) {
+  try {
+    const rid = String(roomId || "").replace(/[^0-9]/g, "");
+    const list = await loadQaRecent();
+    if (!list.length) return "";
+    const same = list.filter(x => String(x.roomId) === rid);
+    const other = list.filter(x => String(x.roomId) !== rid);
+    return same.concat(other).slice(0, 15).map(x =>
+      "Q（" + (String(x.roomId) === rid ? "このルーム" : "別のルーム") + "）：" + x.q + "\nA：" + x.a
+    ).join("\n\n");
+  } catch (e) {
+    return "";
+  }
 }
 
 // ==============================
