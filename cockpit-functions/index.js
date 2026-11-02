@@ -24,6 +24,10 @@
  * ▼ ルームごとの「状況の整理」メモ
  *   cw_room_notes/{ルームID} … AIで整理して担当者が保存した状況。AI返信を作るときに一緒に渡す
  *
+ * ▼ USアプリ（配送管理アプリ USyoshida.html）への出荷依頼
+ *   deliveryClients/{US_CLIENT_ID}/cockpitRequests/{ID} … コックピットから送ったNo.の依頼。USアプリに一覧で出る
+ *   US_CLIENT_ID は functions/.env で変更可（初期値 150）
+ *
  * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
  *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
  *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
@@ -166,6 +170,8 @@ async function handleRequest(p) {
       result = await getRoomNote(p.room_id);
     } else if (action === "save_room_note") {
       result = await saveRoomNote(p);
+    } else if (action === "us_request") {
+      result = await createUsRequest(p);
     } else if (action === "get_questions") {
       result = await getQuestions();
     } else if (action === "close_question") {
@@ -1516,6 +1522,35 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
 
+}
+
+// ==============================
+// USアプリ（配送管理アプリ）への出荷依頼
+//   チャットのNo.をUSアプリの「コックピットからの依頼」に届ける。USアプリでタップするとそのNo.で検索できる
+//   同じルーム・同じNo.の組み合わせで未完了の依頼があれば、新しく作らない
+// ==============================
+async function createUsRequest(p) {
+  const clientId = String(process.env.US_CLIENT_ID || "150").replace(/[^0-9a-zA-Z_-]/g, "") || "150";
+  const nos = Array.from(new Set((Array.isArray(p.nos) ? p.nos : String(p.nos || "").split(/[\s,、，]+/))
+    .map(x => String(x).replace(/[^0-9]/g, "")).filter(x => x.length >= 1 && x.length <= 7).map(x => String(Number(x)))))
+    .filter(x => x !== "0");
+  if (!nos.length) throw new Error("No.を入力してください");
+  if (nos.length > 100) throw new Error("一度に送れるNo.は100件までです");
+  const rid = String(p.room_id || "").replace(/[^0-9]/g, "");
+  const sorted = nos.slice().sort((a, b) => Number(a) - Number(b));
+  const id = crypto.createHash("sha1").update(rid + ":" + sorted.join(","), "utf8").digest("hex").slice(0, 20);
+  const ref = db.collection("deliveryClients").doc(clientId).collection("cockpitRequests").doc(id);
+  const snap = await ref.get();
+  if (snap.exists && snap.get("status") === "open") return { existed: true, nos: sorted, id };
+  await ref.set({
+    nos: sorted, status: "open",
+    roomId: rid, roomName: String(p.room_name || "").slice(0, 100),
+    text: String(p.text || "").slice(0, 1000), memo: String(p.memo || "").slice(0, 500),
+    account: String(p.account || ""), by: String(p.by || "").slice(0, 40),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(), createdAtSec: nowSec(),
+    doneAt: null, doneBy: ""
+  });
+  return { existed: false, nos: sorted, id };
 }
 
 // ==============================
