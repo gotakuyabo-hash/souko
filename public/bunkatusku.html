@@ -1090,11 +1090,35 @@
             return q > 0 ? q : 1;
         }
 
+        // SKUがない商品用：「商品名＋バリエーション名」からマスタのキーを作る
+        // 例）NAME:SHINSE Protein 300g｜Chocolate
+        function makeNameKey(text) {
+            if (!text) return "";
+            const pick = re => { const m = text.match(re); return m ? m[1].trim() : ""; };
+            let name = pick(/(?:Product\s*Name|商品名稱|商品名)\s*[:：]\s*([^;；]+)/i);
+            let vari = pick(/(?:Variation\s*Name|商品選項名稱|規格名稱|バリエーション名?)\s*[:：]\s*([^;；]+)/i);
+            if (!name) {
+                // 項目名がない形式：価格・数量・SKUなどの項目を除いた残りを商品名として使う
+                name = text.replace(/^\s*\[\d+\]\s*/, '')
+                    .split(/[;；]/)
+                    .filter(part => !/(Price|價格|価格|Quantity|數量|数量|SKU|貨號)\s*[:：]/i.test(part))
+                    .join(' ');
+            }
+            name = name.replace(/^\s*\[\d+\]\s*/, '');
+            let key = (name + (vari ? '｜' + vari : '')).replace(/\s+/g, ' ').trim();
+            if (!key) return "";
+            // Firestoreのドキュメント名に「/」は使えないので全角に置き換え
+            key = 'NAME:' + key.replace(/\//g, '／');
+            return key.length > 300 ? key.slice(0, 300) : key;
+        }
+
         function processItemText(trackingNum, orderSn, productInfo) {
             const sku = extractSku(productInfo);
             const qty = extractQty(productInfo);
+            // SKUがあればSKU、なければ商品名キーでマスタを探す
+            const lookupKey = sku || makeNameKey(productInfo);
 
-            let matched = sku ? multiplierMaster.find(r => r.key.toLowerCase() === sku.toLowerCase()) : null;
+            let matched = lookupKey ? multiplierMaster.find(r => r.key.toLowerCase() === lookupKey.toLowerCase()) : null;
 
             let results = [];
             if (matched && matched.items && matched.items.length > 0) {
@@ -1103,6 +1127,7 @@
                         trackingNum,
                         orderSn,
                         sku,
+                        lookupKey,
                         item: productInfo,
                         jpName: it.jpName,
                         shelf: it.shelf || '',
@@ -1119,6 +1144,7 @@
                     trackingNum,
                     orderSn,
                     sku,
+                    lookupKey,
                     item: productInfo,
                     jpName: productInfo,
                     shelf: '',
@@ -1181,7 +1207,8 @@
                         <span class="font-mono text-xs">${esc(row.sku)}</span>
                         <i class="fa-regular fa-copy text-[10px]"></i>
                     </button>
-                ` : '<span class="text-rose-600 font-bold text-xs">SKUなし</span>';
+                ` : `<span class="text-amber-700 font-bold text-xs whitespace-nowrap">SKUなし</span>
+                     <div class="text-[10px] text-slate-500 mt-0.5">商品名で照合</div>`;
                 const statusHtml = row.matched ? '' : `<span class="bg-rose-600 text-white font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap">未登録</span>`;
 
                 tr.innerHTML = `
@@ -1192,7 +1219,7 @@
                     <td class="px-4 py-2 space-y-1">
                         <div class="flex items-center space-x-2">
                             ${statusHtml}
-                            ${row.matched ? clientBadge(row.client) : ''}
+                            ${row.matched ? clientBadge(row.client) : `<select onchange="processedDataRows[${i}].client=this.value" class="border border-amber-400 bg-amber-50 rounded px-1 py-1 text-[11px]" title="登録時の取引先">${clientOptions(row.client)}</select>`}
                             <input type="text" value="${esc(row.shelf)}" placeholder="棚番" onchange="processedDataRows[${i}].shelf=this.value.trim()" class="border rounded px-2 py-1 w-16 text-[11px] text-center font-bold text-indigo-700 bg-indigo-50" title="棚番">
                             <input type="text" value="${esc(row.jpName)}" onchange="processedDataRows[${i}].jpName=this.value" class="border rounded px-2 py-1 w-full text-xs font-bold bg-white">
                         </div>
@@ -1234,7 +1261,8 @@
 
         async function registerRowFromPreview(i) {
             const r = processedDataRows[i];
-            if (!r.sku) { alert('SKUがないため登録できません'); return; }
+            const regKey = r.sku || r.lookupKey;
+            if (!regKey) { alert('SKUも商品名も読み取れないため登録できません'); return; }
             if (!r.jpName.trim()) { alert('商品名を入力してください'); return; }
 
             // 未登録で元情報（英語名）のままなら確認
@@ -1243,13 +1271,16 @@
             }
             if (!r.shelf && !confirm('棚番が未入力です。このまま登録してよろしいですか？')) return;
 
-            const m = multiplierMaster.find(x => x.key.toLowerCase() === r.sku.toLowerCase());
+            const m = multiplierMaster.find(x => x.key.toLowerCase() === regKey.toLowerCase());
+            const client = m?.client || r.client || '';
+            if (!clientOf(client) && !confirm('取引先が未選択です（出庫シートに書き込めません）。\nこのまま登録してよろしいですか？')) return;
+            if (!r.sku && !confirm(`SKUがないため、商品名で登録します。\n\n${regKey}\n\n※出品者が商品名を変えると、次回は再び「未登録」になります。`)) return;
             const items = m ? m.items.map(it => ({ ...it })) : [];
             applyRowToItems(items, r);
-            const key = m ? m.key : r.sku;
+            const key = m ? m.key : regKey;
 
             try {
-                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { key, items, client: m?.client || '' });
+                await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { key, items, client });
                 await window.initFirestoreMaster();
                 processAllData();
                 alert('Firestoreのマスタに登録しました');
@@ -1261,7 +1292,7 @@
 
         // 5. 一括更新は「マスタ登録済みSKU」のみ対象（未登録の英語名は登録しない）
         async function registerAllToMaster() {
-            const targets = processedDataRows.filter(r => r.matched && r.sku);
+            const targets = processedDataRows.filter(r => r.matched);
             const unmatched = countUnmatched();
             if (!targets.length) {
                 alert('更新対象（マスタ登録済みSKU）の行がありません。\n未登録の商品は、各行の「登録」ボタンから登録してください。');
