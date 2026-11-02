@@ -62,6 +62,9 @@
         .tri-check { background: #fffbeb; color: #b45309; }
         .tri-line { margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: #334155; }
         .tri-line:empty { display: none; }
+        .q-box { margin-top: 10px; border-radius: 12px; padding: 8px 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .q-open { background: #f5f3ff; color: #5b21b6; }
+        .q-answered { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
         #layoutBtn { display: none; }
         @media (any-pointer: fine) { #layoutBtn { display: block; } }
         html.pc #layoutBtn, html.layout-manual #layoutBtn { display: block; }
@@ -110,6 +113,7 @@
             </select>
             <span id="loadStatus" class="shrink-0 text-xs font-bold bg-indigo-500 px-2.5 py-1 rounded-full">読込中</span>
             <button id="layoutBtn" onclick="toggleLayout()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="表示の切替">🖥️</button>
+            <button onclick="openQuestions()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="渡辺さんへの質問リスト">❓</button>
             <button onclick="openAiRules()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="AI文章ルール">⚙️</button>
             <button onclick="refreshCurrentView(true)" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="更新">🔄</button>
         </div>
@@ -226,6 +230,15 @@
                 <div class="flex items-center justify-between"><label class="field-label">社内ルームのID（カンマ区切り）</label><button onclick="fillAiDefault('internalRoomIds')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
                 <input type="text" id="aiRule_internalRoomIds" class="inp text-sm" placeholder="例：380072256,123456789" inputmode="numeric">
                 <div class="text-xs text-slate-500 mt-1">ルームIDは、ChatworkのURLの「rid」のあとの数字です</div>
+            </div>
+            <div>
+                <label class="field-label">渡辺さんへの質問を送るルームのID</label>
+                <input type="text" id="aiRule_questionRoomId" class="inp text-sm" placeholder="空欄なら、社内ルームIDの1つ目" inputmode="numeric">
+            </div>
+            <div>
+                <label class="field-label">質問の宛先（渡辺さんのChatworkアカウントID・任意）</label>
+                <input type="text" id="aiRule_questionToId" class="inp text-sm" placeholder="入れると [To:] 付きで送ります" inputmode="numeric">
+                <div class="text-xs text-slate-500 mt-1">アカウントIDは、渡辺さんのプロフィール画面で確認できます</div>
             </div>
             <div class="text-xs text-slate-500">空欄の項目は、GASに書いてある初期値が使われます。保存すると1分以内に反映されます。</div>
             <button id="aiRulesSaveBtn" onclick="saveAiRules(this)" class="btn btn-main w-full">💾 保存する</button>
@@ -1213,7 +1226,7 @@
             const rid = safeId(roomId);
             window.roomNameMap[rid] = roomName;
             const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
-            const triHtml = tri ? `<div class="tri-line">${tri.html || ''}</div>` : '';
+            const triHtml = (tri ? `<div class="tri-line">${tri.html || ''}</div>` : '') + questionBoxHtml(rid);
             const wrap = (inner, extraCls, cardKey) =>
                 `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}">${head}${triHtml}${inner}</div>`;
 
@@ -1286,6 +1299,9 @@
             document.getElementById('sheetActionsBody').innerHTML =
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
+                (roomQuestionOf(rid) && roomQuestionOf(rid).status === 'open'
+                    ? sheetBtn('👤', `渡辺さんへの質問を取り下げる（${esc(roomQuestionOf(rid).label || '')}）`, `cancelQuestion(${Number(roomQuestionOf(rid).no) || 0})`)
+                    : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
                 sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
@@ -2391,6 +2407,103 @@
             return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
         }
 
+        // ===== 渡辺さんへの質問リスト =====
+        //   カードの ⋯ →「👤 渡辺さんに聞く」で社内ルームに質問を送り、ルームは「後で対応」へ
+        //   渡辺さんがChatworkで返信すると、同期のときに読み取って要対応に戻る（カードに回答が出る）
+        function roomQuestionOf(rid) {
+            const d = roomsMeta[safeId(rid)];
+            return d && d.question && d.question.status ? d.question : null;
+        }
+        function questionBoxHtml(rid) {
+            const q = roomQuestionOf(rid);
+            if (!q) return '';
+            if (q.status === 'answered') {
+                return `<div class="q-box q-answered"><b>👤 ${esc(q.answeredBy || '渡辺さん')}の回答（${esc(q.label || '')}）</b>\n${esc(q.answer || '')}<div class="text-xs opacity-75 mt-1">質問：${esc(q.question || '')}</div></div>`;
+            }
+            return `<div class="q-box q-open"><b>👤 渡辺さんに質問中（${esc(q.label || '')}・${esc(waitLabel(q.askedAt || 0).replace('待ち', '前'))}）</b>\n${esc(q.question || '')}</div>`;
+        }
+
+        window.openAskForm = function(key) {
+            const m = window.messageStore[key] || {};
+            document.getElementById('sheetActionsTitle').textContent = '👤 渡辺さんに聞く';
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="p-5 space-y-3">
+                    <div class="text-sm font-bold text-slate-700">${esc(m.roomName || '')}</div>
+                    <div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 clamp-s">${esc(String(m.body || '').slice(0, 400))}</div>
+                    <div><label class="field-label">聞きたいこと（空欄なら、AIがチャットからまとめます）</label>
+                        <textarea id="ask_note" rows="4" class="inp" placeholder="例：この商品の補填は全額でいいですか？"></textarea></div>
+                    <div class="text-xs text-slate-500">社内ルームに質問を送り、このルームは「後で対応」に移ります。渡辺さんがChatworkで返信すると、回答つきで要対応に戻ります。</div>
+                    <button onclick="sendQuestion('${key}', this)" class="btn btn-main w-full">👤 渡辺さんに送る</button>
+                </div>`;
+            openSheet('sheetActions');
+        };
+
+        window.sendQuestion = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const note = document.getElementById('ask_note').value.trim();
+            btn.disabled = true;
+            btn.textContent = note ? '送信中…' : 'AIがまとめて送信中…';
+            try {
+                const d = await callApi("ask_question", {
+                    room_id: m.roomId, room_name: m.roomName || '', context: m.context || m.body || '', note: note, by: getStaffName()
+                });
+                closeAllModals();
+                showToast(`${d.label} を渡辺さんに送りました`);
+                if (currentMode === 'burst') removeCard(m.roomId);
+                else if (currentMode === 'later') renderLaterRooms(true);
+            } catch (e) {
+                alert('送信に失敗しました：' + e.message);
+                btn.disabled = false;
+                btn.textContent = '👤 渡辺さんに送る';
+            }
+        };
+
+        window.cancelQuestion = async function(no) {
+            if (!no || !confirm('この質問を取り下げますか？\n（社内ルームに送ったメッセージは残ります）')) return;
+            try {
+                await callApi("close_question", { no: no });
+                closeAllModals();
+                showToast('質問を取り下げました');
+            } catch (e) {
+                alert('取り下げに失敗しました：' + e.message);
+            }
+        };
+
+        // ❓ 質問リスト（未回答と、最近の回答済みQ&A）
+        window.openQuestions = async function() {
+            document.getElementById('sheetActionsTitle').textContent = '❓ 渡辺さんへの質問リスト';
+            const body = document.getElementById('sheetActionsBody');
+            body.innerHTML = '<div class="p-5 text-sm text-slate-500">読み込み中…</div>';
+            openSheet('sheetActions');
+            try {
+                const d = await callApi("get_questions");
+                const open = d.open || [], done = d.answered || [];
+                const fmt = sec => sec ? new Date(sec * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                const openHtml = open.length ? open.map(q => `
+                    <div class="p-4 border-b border-slate-100">
+                        <div class="flex items-center gap-2"><span class="tri-tag q-open">${esc(q.label)}</span><span class="text-sm font-bold truncate flex-1 min-w-0">${esc(q.roomName)}</span><span class="text-xs text-slate-400 shrink-0">${esc(waitLabel(q.askedAt))}</span></div>
+                        <div class="text-sm mt-1.5 msg-body">${esc(q.question)}</div>
+                        <div class="text-xs text-slate-400 mt-1">${esc(q.askedBy || '')}${q.account !== getAccount() ? '（別アカウント）' : ''}</div>
+                        <div class="flex gap-2 mt-2">
+                            ${q.account === getAccount() ? `<button onclick="closeAllModals(); switchMode('normal'); openRoomFromList('${safeId(q.roomId)}')" class="btn btn-sub flex-1" style="height:38px">📁 ルームを開く</button>` : ''}
+                            <button onclick="cancelQuestion(${Number(q.no) || 0})" class="btn btn-sub flex-1" style="height:38px">取り下げ</button>
+                        </div>
+                    </div>`).join('') : '<div class="p-4 text-sm text-slate-500">未回答の質問はありません</div>';
+                const doneHtml = done.length ? done.map(x => `
+                    <div class="p-4 border-b border-slate-100">
+                        <div class="flex items-center gap-2"><span class="tri-tag tri-none">Q-${esc(x.no)}</span><span class="text-sm font-bold truncate flex-1 min-w-0">${esc(x.roomName)}</span><span class="text-xs text-slate-400 shrink-0">${esc(fmt(x.at))}</span></div>
+                        <div class="text-sm mt-1.5 msg-body"><b>Q</b> ${esc(x.q)}</div>
+                        <div class="text-sm mt-1 msg-body text-emerald-800"><b>A</b> ${esc(x.a)}</div>
+                    </div>`).join('') : '<div class="p-4 text-sm text-slate-500">まだ回答済みのQ&Aはありません</div>';
+                body.innerHTML = `
+                    <div class="px-4 pt-3 text-sm font-bold text-slate-700">未回答 ${open.length}件</div>${openHtml}
+                    <div class="px-4 pt-4 text-sm font-bold text-slate-700">回答済みQ&A（最新${done.length}件）</div>${doneHtml}
+                    <div class="p-4 text-xs text-slate-500">回答済みのQ&Aは、AIで返信文を作るときに参考として渡されます。</div>`;
+            } catch (e) {
+                body.innerHTML = `<div class="p-5 text-sm text-red-500">読み込みに失敗しました：${esc(e.message)}</div>`;
+            }
+        };
+
         // ===== 要対応の仕分け（サーバーの同期のときにAIが判定 → cw_rooms の triage） =====
         //   none=返信不要 / easy=すぐ返せる / check=要確認。判定したメッセージが最新の時だけ使う
         const TRIAGE_LABELS = { none: '✓ 返信不要', easy: '💬 すぐ返せる', check: '🔍 要確認' };
@@ -2852,7 +2965,7 @@
         };
 
         // ===== AI文章ルール（Firestore の cw_config/ai_prompt。読み書きはGAS経由） =====
-        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds'];
+        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds', 'questionRoomId', 'questionToId'];
         let aiRuleDefaults = null;
 
         window.openAiRules = async function() {
