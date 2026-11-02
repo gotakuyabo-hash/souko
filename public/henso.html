@@ -159,6 +159,20 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 .cust{font-size:18px;font-weight:700;margin-top:2px}
 .badge-task{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--warn);color:#fff}
 .no-task{font-size:13px;color:var(--muted);padding:0 16px 14px;margin:0}
+
+/* 設定 */
+.settings{border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:22px 20px;width:min(520px,92vw)}
+.settings::backdrop{background:rgba(0,0,0,.45)}
+.settings h2{font-size:19px;margin:0 0 14px}
+.settings label{display:block;font-weight:700;margin-bottom:6px}
+.settings input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);font-size:15px}
+.settings .now{font-size:14px;color:var(--muted);margin:0 0 14px;word-break:break-all}
+.settings .now b{color:var(--ink)}
+.settings .hint{font-size:13px;color:var(--muted);margin:8px 0 0;word-break:break-all}
+.settings .msg{font-size:14px;margin:10px 0 0;min-height:1.4em}
+.settings .msg.err{color:var(--warn)}
+.settings .msg.ok{color:var(--done)}
+.settings .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 </style>
 </head>
 <body>
@@ -178,6 +192,7 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
     <div class="bar">
       <h1>返送タスク</h1>
       <span class="grow"></span>
+      <button class="btn" id="settingsBtn">⚙ 設定</button>
       <button class="btn" id="logoutBtn">ログアウト</button>
     </div>
     <div class="tabs" role="tablist">
@@ -212,6 +227,22 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
     </section>
   </main>
 </div>
+
+<dialog class="settings" id="dlgSettings">
+  <form id="settingsForm" method="dialog">
+    <h2>設定</h2>
+    <p class="now" id="sNow">読み込み中…</p>
+    <label for="sSheet">配送管理シートのURL（シートを新しくしたらここを差し替え）</label>
+    <input id="sSheet" autocomplete="off" placeholder="https://docs.google.com/spreadsheets/d/…">
+    <p class="hint">配送管理アプリ（お客様ID 150）と共通の設定です。どちらで差し替えても両方に反映されます。</p>
+    <p class="hint" id="sHint"></p>
+    <p class="msg" id="sMsg"></p>
+    <div class="row">
+      <button type="button" class="btn" id="sClose">閉じる</button>
+      <button type="submit" class="btn primary" id="sSave">保存</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="zoom" id="zoom" hidden><img alt="商品画像（拡大）" id="zoomImg"></div>
 
@@ -275,6 +306,45 @@ $("loginForm").addEventListener("submit", async (e) => {
     $("pass").value = "";
     showApp();
   } catch (err) { $("loginErr").textContent = err.message; }
+});
+
+/* ---------- 設定 ---------- */
+function settingsMsg(text, ok) {
+  $("sMsg").textContent = text || "";
+  $("sMsg").className = "msg" + (text ? (ok ? " ok" : " err") : "");
+}
+async function openSettings() {
+  settingsMsg("");
+  $("sNow").textContent = "読み込み中…";
+  $("sHint").textContent = "";
+  $("dlgSettings").showModal();
+  try {
+    const c = await api("/config");
+    $("sSheet").value = "https://docs.google.com/spreadsheets/d/" + c.sheetId + "/edit";
+    $("sNow").innerHTML = "いま使っているシート：<b>" + esc(c.sheetTitle || "（開けません）") + "</b>";
+    if (c.serviceAccount) $("sHint").textContent = "新しいシートは、共有に「" + c.serviceAccount + "」を編集者で追加してから保存してください。";
+    if (c.problem) settingsMsg(c.problem, false);
+  } catch (err) { $("sNow").textContent = ""; settingsMsg(err.message, false); }
+}
+$("settingsBtn").addEventListener("click", openSettings);
+$("sClose").addEventListener("click", () => $("dlgSettings").close());
+$("settingsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = $("sSheet").value.trim();
+  if (!url) { settingsMsg("シートのURLを貼り付けてください", false); return; }
+  $("sSave").disabled = true; $("sSave").textContent = "確認中…";
+  settingsMsg("");
+  try {
+    const c = await api("/config", { method: "POST", body: JSON.stringify({ sheetUrl: url }) });
+    $("sNow").innerHTML = "いま使っているシート：<b>" + esc(c.sheetTitle) + "</b>";
+    settingsMsg("保存しました。このシートで読み書きします", true);
+    recv = null; received = null;
+    renderRecv();
+    $("doneResult").innerHTML = "";
+    if (!$("doneView").hidden) loadReceived(true);
+    toast("シートを切り替えました");
+  } catch (err) { settingsMsg(err.message, false); }
+  finally { $("sSave").disabled = false; $("sSave").textContent = "保存"; }
 });
 
 /* ---------- タブ ---------- */
