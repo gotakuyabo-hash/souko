@@ -24,6 +24,10 @@
  * ▼ ルームごとの「状況の整理」メモ
  *   cw_room_notes/{ルームID} … AIで整理して担当者が保存した状況。AI返信を作るときに一緒に渡す
  *
+ * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
+ *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
+ *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
+ *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
  *   ai_brushup_feedback/cw_{メッセージID} … AI添削ログに「Chatwork直接」として追加（source: "chatwork_direct"）
  *   cw_sent_marks/{ルームID}             … コックピットから送った文の目印（二重に記録しないため）
@@ -574,6 +578,8 @@ async function saveAiConfig(p) {
 // OpenAI（ChatGPT）
 //   opt.system … AIの役割・文章ルール（土台になる指示）
 //   opt.json   … JSONで返してほしいとき true
+//   opt.timeoutMs … 1回あたりの待ち時間の上限（同期の中で使う時に指定）
+//   opt.tries     … やり直しを含めた回数（初期値3）
 // ==============================
 async function callAI(prompt, opt = {}) {
   const apiKey = OPENAI_API_KEY.value();
@@ -586,12 +592,14 @@ async function callAI(prompt, opt = {}) {
 
   // 混雑時（429/500/502/503）や空の結果のときは、少し待って最大2回までやり直す
   let lastReason = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const tries = opt.tries || 3;
+  for (let attempt = 0; attempt < tries; attempt++) {
     if (attempt > 0) await sleep(1500 * attempt);
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
-      body: JSON.stringify(reqBody)
+      body: JSON.stringify(reqBody),
+      signal: opt.timeoutMs ? AbortSignal.timeout(opt.timeoutMs) : undefined
     });
     const text = await res.text();
     if (res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503) {
@@ -1371,6 +1379,7 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   const writes = [];
   const need = [];
   const newState = {};
+  const triageTargets = [];
 
   rooms.forEach(r => {
     const rid = String(r.room_id);
@@ -1378,7 +1387,9 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     const lu = r.last_update_time || 0;
     const un = Number(r.unread_num || 0);
     newState[rid] = { u: lu, n: un, m: st.m || 0 };
-    const stale = lu > (st.m || 0) && (lu >= recent || un > 0);
+    if (st.tm) newState[rid].tm = st.tm;
+    // 仕分けを入れる前から同期済みのルームも、1回だけ取り直して仕分ける（tm がまだないルーム）
+    const stale = (lu > (st.m || 0) || !st.tm) && (lu >= recent || un > 0);
     if (stale) need.push(r);
     if (st.u !== lu || st.n !== un || !state[rid]) {
       writes.push(wPatch("cw_rooms", acc + "_" + rid, { account: acc, roomId: rid, name: r.name || "", unread: un, lastUpdate: lu }));
@@ -1412,25 +1423,56 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     }
 
     const meta = { msgUpdate: r.last_update_time || 0, lastMsgId: "", lastMsgTime: 0, lastMine: false, custTimes: [] };
+    // 社内ルーム（渡辺さんとのルームなど）では、渡辺さんなど STAFF_ACCOUNT_IDS の人の発言は「相手からの連絡」として扱う
+    //   （自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
+    const mineIds = (learn && learn.internal.indexOf(rid) !== -1) ? ownerIds : myIds;
     if (msgs.length) {
       const last = msgs[msgs.length - 1];
       let lastMineIdx = -1;
-      // 社内ルーム（渡辺さんとのルームなど）では、渡辺さんなど STAFF_ACCOUNT_IDS の人の発言は「相手からの連絡」として扱う
-      //   （自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
-      const mineIds = (learn && learn.internal.indexOf(rid) !== -1) ? ownerIds : myIds;
       msgs.forEach((m, idx) => { if (mineIds.indexOf(String(m.account && m.account.account_id)) !== -1) lastMineIdx = idx; });
       meta.lastMsgId = String(last.message_id);
       meta.lastMsgTime = last.send_time || 0;
       meta.lastMine = lastMineIdx === msgs.length - 1;
       meta.custTimes = msgs.slice(lastMineIdx + 1).map(m => m.send_time || 0).slice(0, 20);
     }
-    writes.push(wPatch("cw_rooms", acc + "_" + rid, meta));
-    writes.push(wSet(msgCol, acc + "_" + rid, {
+    const msgDoc = {
       account: acc, roomId: rid, lastMsgId: meta.lastMsgId, msgUpdate: meta.msgUpdate,
       messages: slimMsgsForDoc(msgs)
-    }));
+    };
+    // 仕分け：最後がお客様の発言で、まだ判定していないメッセージなら判定する
+    const st = state[rid] || {};
+    if (msgs.length && !meta.lastMine) {
+      if (String(st.tm || "") === meta.lastMsgId) {
+        newState[rid].tm = st.tm;   // 判定済み（前回の結果がFirestoreに残っている）
+      } else {
+        triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meta, msgDoc, prevM: st.m || 0 });
+      }
+    } else {
+      meta.triage = "";
+      meta.triageFor = "";
+      newState[rid].tm = meta.lastMsgId || "empty";   // 判定不要（最後が自社・メッセージなし）
+    }
+    writes.push(wPatch("cw_rooms", acc + "_" + rid, meta));
+    writes.push(wPatch(msgCol, acc + "_" + rid, msgDoc));   // 上書きではなく追記（判定済みの用件メモを消さないため）
     newState[rid].m = r.last_update_time || 0;
   });
+
+  // 仕分け（AI）。失敗したルームは「未取得」に戻して、次の同期でもう一度判定する
+  if (triageTargets.length) {
+    const results = await triageRooms(triageTargets);
+    triageTargets.forEach(t => {
+      const res = results[t.rid];
+      if (res) {
+        t.meta.triage = res.cat;
+        t.meta.triageFor = t.meta.lastMsgId;
+        t.msgDoc.triagePoint = res.point;
+        t.msgDoc.triageFor = t.meta.lastMsgId;
+        newState[t.rid].tm = t.meta.lastMsgId;
+      } else {
+        newState[t.rid].m = t.prevM;
+      }
+    });
+  }
 
   // 退出・削除されたルームはFirestoreからも消す
   Object.keys(state).forEach(rid => {
@@ -1451,6 +1493,66 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
 
+}
+
+// ==============================
+// 要対応の仕分け（同期のときに、新しく届いたお客様の連絡をAIが3つに分ける）
+//   none  … 返信不要（お礼・了解だけなど）→ まとめて対応済みにできる
+//   easy  … 調べなくても返せる
+//   check … 返信の前に確認が必要
+//   迷ったときは check にする（返信が必要な連絡を「返信不要」にしないため）
+// ==============================
+const TRIAGE_PER_CALL = 15;          // 1回のAI呼び出しで判定するルーム数
+const TRIAGE_CATS = ["none", "easy", "check"];
+
+async function triageRooms(targets) {
+  const out = {};
+  const chunks = [];
+  for (let i = 0; i < targets.length; i += TRIAGE_PER_CALL) chunks.push(targets.slice(i, i + TRIAGE_PER_CALL));
+  await Promise.all(chunks.map(async list => {
+    try {
+      Object.assign(out, await triageChunk(list));
+    } catch (e) {
+      console.error("仕分けに失敗（次の同期でやり直します）: " + e.message);
+    }
+  }));
+  return out;
+}
+
+async function triageChunk(list) {
+  const fmt = t => new Date((t || 0) * 1000).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const blocks = list.map(t => {
+    const lines = t.msgs.slice(-6).map(m => {
+      const mine = t.mineIds.indexOf(String(m.account && m.account.account_id)) !== -1;
+      return "[" + fmt(m.send_time) + "] " + (mine ? "【自社】" : "") + ((m.account && m.account.name) || "") + "：" + stripTags(m.body).slice(0, 400);
+    }).join("\n");
+    return "■ルームID:" + t.rid + "（" + t.name.slice(0, 40) + "）\n" + lines;
+  }).join("\n\n");
+
+  const system = "あなたは物流倉庫（発送代行）のカスタマーサポートで、届いたチャットを仕分ける担当です。"
+    + "各ルームの最後の、自社ではない相手の発言に対して、こちらが何をすべきかを判定します。\n\n"
+    + "【分類】\n"
+    + "none：返信しなくてよい。お礼・了解・承知・挨拶だけ、こちらの連絡への「確認しました」だけ、スタンプだけなど。"
+    + "質問・依頼・報告・相談・期限のある連絡が少しでも含まれていれば none にしない\n"
+    + "easy：倉庫や社内で調べなくても返信できる。受け取りのお礼、日程や依頼の承諾、決まっている手順の案内など\n"
+    + "check：返信の前に確認や判断が必要。在庫・入荷・出荷状況・追跡番号・料金・請求・破損・誤出荷・現物の確認、社内での相談が必要なもの\n"
+    + "迷ったときは check にする。\n\n"
+    + "【point】相手が求めていることを40文字以内で。check のときは、確認すべきことを入れる（例：「入荷予定日の確認。在庫数を確認して回答」）。none のときは空でよい。\n\n"
+    + "【出力】次のJSONだけを返す\n"
+    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"point\": \"...\"}]}";
+
+  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system, json: true, timeoutMs: 45000, tries: 2 });
+  let data;
+  try { data = JSON.parse(String(text).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch (e) { throw new Error("仕分け結果を読み取れませんでした"); }
+  const ids = new Set(list.map(t => t.rid));
+  const res = {};
+  (Array.isArray(data.rooms) ? data.rooms : []).forEach(x => {
+    const id = String((x && x.id) || "").replace(/[^0-9]/g, "");
+    const cat = String((x && x.cat) || "").trim();
+    if (!ids.has(id) || TRIAGE_CATS.indexOf(cat) === -1) return;
+    res[id] = { cat, point: String(x.point || "").replace(/\s+/g, " ").trim().slice(0, 60) };
+  });
+  return res;
 }
 
 // ==============================
