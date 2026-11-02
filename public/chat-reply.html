@@ -1302,6 +1302,7 @@
                 (roomQuestionOf(rid) && roomQuestionOf(rid).status === 'open'
                     ? sheetBtn('👤', `渡辺さんへの質問を取り下げる（${esc(roomQuestionOf(rid).label || '')}）`, `cancelQuestion(${Number(roomQuestionOf(rid).no) || 0})`)
                     : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
+                sheetBtn('📦', 'USアプリに出荷依頼（No.を送る）', `openUsRequest('${key}')`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
                 sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
@@ -2406,6 +2407,52 @@
             }
             return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
         }
+
+        // ===== USアプリ（配送管理アプリ）への出荷依頼 =====
+        //   チャットから5〜6桁のNo.を拾い、確認・修正してからUSアプリの「コックピットからの依頼」に届ける
+        function extractNos(text) {
+            const plain = String(text || '').replace(/\[[^\]]*\]/g, ' ');   // [To:…] や [task …] の中の数字は拾わない
+            const out = [];
+            (plain.match(/(?<!\d)\d{5,6}(?!\d)/g) || []).forEach(n => { const k = String(Number(n)); if (out.indexOf(k) < 0) out.push(k); });
+            return out;
+        }
+        window.openUsRequest = function(key) {
+            const m = window.messageStore[key] || {};
+            const src = m.rawBody || m.body || '';
+            const nos = extractNos(src);
+            document.getElementById('sheetActionsTitle').textContent = '📦 USアプリに出荷依頼';
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="p-5 space-y-3">
+                    <div class="text-sm font-bold text-slate-700">${esc(m.roomName || '')}</div>
+                    <div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 clamp-s">${esc(String(m.body || '').slice(0, 400))}</div>
+                    <div><label class="field-label">No.（スペース・改行区切りで複数OK）</label>
+                        <textarea id="usr_nos" rows="3" class="inp font-mono" inputmode="numeric" placeholder="例：10266 10267">${esc(nos.join(' '))}</textarea>
+                        <div class="text-xs text-slate-500 mt-1">${nos.length ? `チャットから ${nos.length} 件見つけました。違っていたら直してください。` : 'チャットからNo.が見つかりませんでした。入力してください。'}</div></div>
+                    <div><label class="field-label">倉庫へのメモ（任意）</label>
+                        <input id="usr_memo" class="inp" placeholder="例：本日中に出荷"></div>
+                    <button onclick="sendUsRequest('${key}', this)" class="btn btn-main w-full">📦 USアプリに送る</button>
+                </div>`;
+            openSheet('sheetActions');
+        };
+        window.sendUsRequest = async function(key, btn) {
+            const m = window.messageStore[key] || {};
+            const nos = document.getElementById('usr_nos').value.split(/[\s,、，]+/).map(x => x.replace(/[^0-9]/g, '')).filter(Boolean);
+            if (!nos.length) { showToast('No.を入力してください'); return; }
+            btn.disabled = true;
+            btn.textContent = '送信中…';
+            try {
+                const d = await callApi("us_request", {
+                    nos: nos, room_id: m.roomId, room_name: m.roomName || '',
+                    text: String(m.body || '').slice(0, 1000), memo: document.getElementById('usr_memo').value.trim(), by: getStaffName()
+                });
+                closeAllModals();
+                showToast(d.existed ? 'このNo.はすでにUSアプリに届いています' : `USアプリに ${d.nos.length} 件のNo.を送りました`);
+            } catch (e) {
+                alert('送信に失敗しました：' + e.message);
+                btn.disabled = false;
+                btn.textContent = '📦 USアプリに送る';
+            }
+        };
 
         // ===== 渡辺さんへの質問リスト =====
         //   カードの ⋯ →「👤 渡辺さんに聞く」で社内ルームに質問を送り、ルームは「後で対応」へ
