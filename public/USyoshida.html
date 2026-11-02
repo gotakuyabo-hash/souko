@@ -1608,12 +1608,84 @@ $('#btnLinkWrite').onclick = async () => {
       }])).catch(e => console.warn(e));
     }
     linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号・出荷日）');
+    // 出荷日が変わる注文もあるので、新しい出荷日と元の出荷日の両方を数え直す
+    const days = new Set();
+    targets.forEach(p => {
+      days.add(p.c.date || todayStr());
+      const od = normDate(p.r && p.r.shippedAt); if (od) days.add(od);
+    });
+    await pushShukkaCounts([...days]);
     logList('問い合わせ中のため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='inq').map(p=>'No.'+p.no));
     logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
     toast(done+'件をシートに反映しました');
   }catch(e){ linkLog('❌ '+e.message); toast(e.message, 6000); }
   finally{ btn.disabled = false; }
 };
+
+/* --- 日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す ---
+   出荷日ごとに「このお客様の出荷日が入っている注文（No.）の数」を数えて、
+   shukka_records/{日付} の _meta.auto.{お客様ID} に保存する。
+   チェックリストでこのお客様IDを選んだサービスには「手入力＋自動」の合計が入る。 */
+function shukkaHashId(str){ let h = 5381; for (const ch of str) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0; return 'n_' + h.toString(36); }
+function shukkaServices(d){
+  const items = Array.isArray(d && d.items) ? d.items.filter(x => x && x.id && typeof x.name === 'string') : null;
+  const names = Array.isArray(d && d.services) ? d.services.filter(x => typeof x === 'string' && x.trim()) : null;
+  if (items && (!names || items.map(x=>x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id:x.id, name:x.name, auto:x.auto||'' }));
+  if (!names || !names.length) return items ? items.map(x => ({ id:x.id, name:x.name, auto:x.auto||'' })) : [];
+  const used = new Set();
+  return names.map(name => {
+    const hit = items && items.find(x => x.name === name && !used.has(x.id));
+    const id = hit ? hit.id : shukkaHashId(name);
+    used.add(id); return { id, name, auto: hit ? (hit.auto||'') : '' };
+  });
+}
+function shukkaNum(v){ if (v === '' || v == null) return ''; const n = parseInt(v, 10); return isNaN(n) ? '' : n; }
+function shukkaRebuild(d, services, auto){
+  const meta = d._meta || {};
+  const top = {}, counts = {}, names = {}, man = {};
+  services.forEach(s => {
+    let v;
+    if (meta.manual && Object.prototype.hasOwnProperty.call(meta.manual, s.id)) v = meta.manual[s.id];
+    else if (meta.counts) v = meta.counts[s.id]; // 旧形式：保存済みの件数はすべて手入力
+    else v = d[s.name];
+    const mv = shukkaNum(v);
+    const a = s.auto && auto[s.auto] != null ? (parseInt(auto[s.auto], 10) || 0) : 0;
+    names[s.id] = s.name; man[s.id] = mv;
+    if (mv === '' && !a) { top[s.name] = ''; return; }
+    counts[s.id] = (mv === '' ? 0 : mv) + a; top[s.name] = counts[s.id];
+  });
+  return Object.assign(top, { _meta: { counts, manual: man, auto, names, updatedAt: new Date().toISOString(), updatedBy: 'USyoshida' } });
+}
+async function pushShukkaCounts(dates){
+  dates = dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  if (!dates.length) return;
+  const cid = String(state.clientId);
+  try{
+    // チェックリストの選択肢に出すため、このお客様を登録しておく
+    await db.collection('settings').doc('shukka_auto_sources').set({ [cid]: { name: $('#sheetTitle').textContent.trim(), updatedAt: new Date().toISOString() } }, { merge:true });
+    const svSnap = await db.collection('settings').doc('shukka_services').get();
+    const services = shukkaServices(svSnap.exists ? svSnap.data() : null);
+    const mapped = services.find(x => x.auto === cid);
+    const done = [];
+    for (const date of dates) {
+      const n = (await ordersCol().where('shippedAt','==',date).get()).size;
+      const ref = db.collection('shukka_records').doc(date);
+      await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const d = snap.exists ? snap.data() : {};
+        const auto = Object.assign({}, (d._meta && d._meta.auto) || {}, { [cid]: n });
+        if (mapped) tx.set(ref, shukkaRebuild(d, services, auto));
+        else tx.set(ref, { _meta: { auto: { [cid]: n } } }, { merge:true }); // まだどのサービスにも割り当てていない
+      });
+      done.push(md(date)+' '+n+'件');
+    }
+    linkLog('📊 チェックリストの出荷件数（注文数）：'+done.join('、')
+      + (mapped ? '（「'+mapped.name+'」に足しています）' : '\n　※チェックリストの「サービスを編集」で、足す先のサービスを選ぶと件数に反映されます'));
+  }catch(e){
+    console.warn(e);
+    linkLog('⚠️ チェックリストの出荷件数を更新できませんでした：'+e.message);
+  }
+}
 
 /* --- 出荷通知CSV（受注CSV＋発行済みCSV → ステータス120） --- */
 function cleanOrderNoNormalized(str){
