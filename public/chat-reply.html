@@ -52,6 +52,16 @@
         html.pc .room-row:hover, html.pc .sheet-row:hover { background: #f8fafc; }
         html.pc .tab-btn:hover { color: #6366f1; }
         /* 表示切替ボタンは、PC表示の時・マウスが使える端末・手動で切り替えた時に出す（スマホでは出さない） */
+        /* 要対応の仕分け */
+        .tri-chip { height: 46px; border-radius: 12px; font-size: 12px; font-weight: 700; background: #f1f5f9; color: #475569; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.25; cursor: pointer; }
+        .tri-chip b { font-size: 16px; }
+        .tri-chip.on { background: #4f46e5; color: #fff; }
+        .tri-tag { display: inline-flex; align-items: center; flex-shrink: 0; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; white-space: nowrap; }
+        .tri-none { background: #ecfdf5; color: #047857; }
+        .tri-easy { background: #eef2ff; color: #4338ca; }
+        .tri-check { background: #fffbeb; color: #b45309; }
+        .tri-line { margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: #334155; }
+        .tri-line:empty { display: none; }
         #layoutBtn { display: none; }
         @media (any-pointer: fine) { #layoutBtn { display: block; } }
         html.pc #layoutBtn, html.layout-manual #layoutBtn { display: block; }
@@ -669,7 +679,10 @@
             document.getElementById('selectionBar').style.display = n > 0 ? 'block' : 'none';
         }
         window.toggleSelectAll = function(master) {
-            document.querySelectorAll(`#${activeListId()} .room-checkbox`).forEach(cb => cb.checked = master.checked);
+            document.querySelectorAll(`#${activeListId()} .room-checkbox`).forEach(cb => {
+                const card = cb.closest('.burst-card');
+                cb.checked = master.checked && !(card && card.style.display === 'none');   // 仕分けで隠れているカードは選ばない
+            });
             updateSelectionBar();
         };
         window.batchMarkAsRead = async function() {
@@ -1195,12 +1208,14 @@
         }
 
         // entry = { messages:[最大5件] } / { error } / null(読込中)
-        function burstCardHtml(roomId, roomName, badge, badgeCls, entry, unreadNum) {
+        // tri = 仕分け { cat: 'none'|'easy'|'check'|'', html: 表示する1行 }（要対応タブのFirestore同期モードだけ）
+        function burstCardHtml(roomId, roomName, badge, badgeCls, entry, unreadNum, tri) {
             const rid = safeId(roomId);
             window.roomNameMap[rid] = roomName;
             const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
+            const triHtml = tri ? `<div class="tri-line">${tri.html || ''}</div>` : '';
             const wrap = (inner, extraCls, cardKey) =>
-                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}">${head}${inner}</div>`;
+                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}">${head}${triHtml}${inner}</div>`;
 
             if (!entry) return wrap('<div class="mt-3 text-sm text-slate-400">読込中…</div>');
             if (entry.error) return wrap(`<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`);
@@ -1251,6 +1266,7 @@
             if (currentMode === 'burst') {
                 setTodoStatus(left);
                 if (left === 0) document.getElementById(id).innerHTML = emptyBox('🎉 要対応のチャットはありません');
+                else updateTriageBar();
             } else if (currentMode === 'later') {
                 setStatus(`後で ${left}`, 'bg-amber-500');
                 if (left === 0) document.getElementById(id).innerHTML = emptyBox('☕ 「後で対応」のルームはありません');
@@ -2306,7 +2322,8 @@
                 const d = snap.data();
                 const meta = roomsMeta[rid];
                 if (meta && String(meta.lastMsgId || '') !== String(d.lastMsgId || '')) return null;
-                return Array.isArray(d.messages) ? d.messages : null;
+                if (!Array.isArray(d.messages)) return null;
+                return { messages: d.messages, point: String(d.triagePoint || ''), pointFor: String(d.triageFor || '') };
             } catch (e) {
                 return null;
             }
@@ -2365,21 +2382,109 @@
             } else {
                 needBodies.add(it.rid);
             }
-            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count);
+            // 仕分けは済んでいるのに用件メモがまだ手元にない時は、1回だけ読み直す
+            const cat = triageCat(it.rid);
+            if (cat && c && !c.error && c.forMsgId === String(it.d.lastMsgId || '') && c.pointFor !== String(it.d.triageFor || '') && !c.pointTried) {
+                c.pointTried = true;
+                needBodies.add(it.rid);
+            }
+            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
         }
+
+        // ===== 要対応の仕分け（サーバーの同期のときにAIが判定 → cw_rooms の triage） =====
+        //   none=返信不要 / easy=すぐ返せる / check=要確認。判定したメッセージが最新の時だけ使う
+        const TRIAGE_LABELS = { none: '✓ 返信不要', easy: '💬 すぐ返せる', check: '🔍 要確認' };
+        let triageFilter = 'all';
+        function triageCat(rid) {
+            const d = roomsMeta[rid];
+            if (!d || !d.triage || !TRIAGE_LABELS[d.triage]) return '';
+            return String(d.triageFor || '') === String(d.lastMsgId || '') ? d.triage : '';
+        }
+        function triageLineHtml(rid) {
+            const cat = triageCat(rid);
+            if (!cat) return '';
+            const c = msgCache[rid];
+            const point = (c && c.pointFor && c.pointFor === String((roomsMeta[rid] || {}).triageFor || '')) ? c.point : '';
+            return `<span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
+        }
+        // 書きかけの返信を消さないように、仕分けの1行だけ差し替える
+        function updateTriageLine(rid) {
+            const el = document.querySelector(`#burstModeContainer .burst-card[data-room-id="${safeId(rid)}"]`);
+            if (!el) return;
+            const line = el.querySelector('.tri-line');
+            if (line) line.innerHTML = triageLineHtml(rid);
+            el.setAttribute('data-tri', triageCat(rid));
+            updateTriageBar();
+        }
+        function updateTriageBar() {
+            const bar = document.getElementById('triageBar');
+            if (!bar) return;
+            const cards = Array.from(document.querySelectorAll('#burstModeContainer .burst-card'));
+            const n = { all: cards.length, check: 0, easy: 0, none: 0 };
+            cards.forEach(c => { const t = c.getAttribute('data-tri'); if (n[t] !== undefined) n[t]++; });
+            if (!n.check && !n.easy && !n.none) { bar.innerHTML = ''; bar.style.display = 'none'; triageFilter = 'all'; applyTriageFilter(); return; }
+            bar.style.display = '';
+            if (triageFilter !== 'all' && !n[triageFilter]) triageFilter = 'all';   // 0件になった分類は「すべて」に戻す
+            const chip = (f, label) => `<button onclick="setTriageFilter('${f}')" class="tri-chip ${triageFilter === f ? 'on' : ''}"><b>${n[f]}</b>${label}</button>`;
+            bar.innerHTML = `
+                <div class="grid grid-cols-4 gap-2">
+                    ${chip('all', 'すべて')}${chip('check', '🔍 要確認')}${chip('easy', '💬 すぐ返せる')}${chip('none', '✓ 返信不要')}
+                </div>
+                ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
+            applyTriageFilter();
+        }
+        function applyTriageFilter() {
+            document.querySelectorAll('#burstModeContainer .burst-card').forEach(c => {
+                c.style.display = (triageFilter === 'all' || c.getAttribute('data-tri') === triageFilter) ? '' : 'none';
+            });
+        }
+        window.setTriageFilter = function(f) {
+            triageFilter = f;
+            // 隠れるカードに選択が残らないように、選択はいったん外す
+            document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('selectAllCheckbox').checked = false;
+            updateSelectionBar();
+            updateTriageBar();
+            window.scrollTo(0, 0);
+        };
+        // 返信不要のルームをまとめて対応済みに（Chatwork側も既読に）
+        window.markNoReplyAll = async function(btn) {
+            const cards = Array.from(document.querySelectorAll('#burstModeContainer .burst-card[data-tri="none"]'));
+            if (!cards.length) return;
+            const ids = cards.map(c => c.getAttribute('data-room-id'));
+            const names = cards.slice(0, 10).map(c => '・' + (c.getAttribute('data-room-name') || '')).join('\n') + (cards.length > 10 ? `\n…ほか ${cards.length - 10} 件` : '');
+            if (!confirm(`返信不要の ${ids.length} 件を対応済みにしますか？\n\n${names}`)) return;
+            btn.disabled = true;
+            btn.textContent = '処理中…';
+            try {
+                await setHandled(ids, { reopen: false });
+                callApi("mark_read_batch", { room_ids: ids }).catch(() => {});   // Chatwork側も既読に
+                markReadInCache(ids);
+                ids.forEach(id => removeCard(id));
+                if (triageFilter === 'none') setTriageFilter('all');
+                showToast(`${ids.length} 件を対応済みにしました`);
+            } catch (e) {
+                alert("対応済みの保存に失敗しました: " + e.message);
+                btn.disabled = false;
+                updateTriageBar();
+            }
+        };
 
         function renderTodoFs() {
             const container = document.getElementById('burstModeContainer');
             allRoomsCache = metaToRooms();
             const auto = [];
-            const items = computeTodoMeta(auto).filter(it => !isLater(it.rid));   // 「後で対応」に入れたルームは出さない
+            const sorted = computeTodoMeta(auto).filter(it => !isLater(it.rid));   // 「後で対応」に入れたルームは出さない
+            // 返信不要と判定されたものは下にまとめる（ほかは待たせている時間が長い順のまま）
+            const items = sorted.filter(it => triageCat(it.rid) !== 'none').concat(sorted.filter(it => triageCat(it.rid) === 'none'));
             autoHandleRooms(auto);
             setTodoStatus(items.length);
             setLastUpdatedFs();
             if (items.length === 0) {
                 container.innerHTML = emptyBox('🎉 要対応のチャットはありません');
             } else {
-                container.innerHTML = items.map(todoCardHtml).join('');
+                container.innerHTML = `<div id="triageBar" class="bg-white rounded-2xl shadow-sm p-3" style="display:none;"></div>` + items.map(todoCardHtml).join('');
+                updateTriageBar();
                 if (needBodies.size) queueBodies();
             }
             saveMsgCache(items.map(it => it.rid));
@@ -2401,7 +2506,7 @@
                 const fromFs = await Promise.all(ids.map(rid => getMsgsFromFs(rid)));
                 const gasIds = [];
                 ids.forEach((rid, i) => {
-                    if (fromFs[i]) msgCache[rid] = { forMsgId: forIds[rid], messages: fromFs[i].slice(-5) };
+                    if (fromFs[i]) msgCache[rid] = { forMsgId: forIds[rid], messages: fromFs[i].messages.slice(-5), point: fromFs[i].point, pointFor: fromFs[i].pointFor };
                     else gasIds.push(rid);
                 });
                 // ② 足りない分だけGASから
@@ -2414,6 +2519,7 @@
                 });
                 saveMsgCache();
                 fillCards(ids);
+                ids.forEach(updateTriageLine);
             } catch (e) {
                 showToast('メッセージの読み込みに失敗しました。🔄で再読み込みできます');
             } finally {
