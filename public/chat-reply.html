@@ -136,6 +136,7 @@
         <div id="burstModeContainer" class="space-y-3"></div>
         <div id="laterModeContainer" class="space-y-3" style="display:none;"></div>
 
+        <div id="shipModeContainer" style="display:none;"></div>
         <div id="normalModeContainer" style="display:none;">
             <!-- ルーム一覧 -->
             <div id="roomListView">
@@ -167,10 +168,11 @@
 
     <!-- 下部タブ -->
     <nav class="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom, 0px);">
-        <div class="app-w mx-auto grid grid-cols-3">
+        <div class="app-w mx-auto grid grid-cols-4">
             <button id="tabBurst" class="tab-btn active" onclick="switchMode('burst')"><span class="ico">🚨</span>要対応</button>
             <button id="tabLater" class="tab-btn" onclick="switchMode('later')"><span class="ico">⏳</span><span>後で (<span id="laterCountBadge">0</span>)</span></button>
             <button id="tabNormal" class="tab-btn" onclick="switchMode('normal')"><span class="ico">📁</span>ルーム</button>
+            <button id="tabShip" class="tab-btn" onclick="switchMode('ship')"><span class="ico">🚚</span>送り状</button>
         </div>
     </nav>
 
@@ -661,6 +663,7 @@
         function refreshCurrentView(force) {
             document.getElementById('selectAllCheckbox').checked = false;
             updateSelectionBar();
+            if (currentMode === 'ship') return;
             if (currentMode === 'burst') fetchAllUnreadRooms(force);
             else if (currentMode === 'later') renderLaterRooms(force);
             else if (currentRoomId) openRoom(currentRoomId, { fresh: !!force });
@@ -670,8 +673,8 @@
         function switchMode(mode) {
             currentMode = mode;
             document.getElementById('selectAllCheckbox').checked = false;
-            ['tabBurst', 'tabLater', 'tabNormal'].forEach(id => document.getElementById(id).classList.remove('active'));
-            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
+            ['tabBurst', 'tabLater', 'tabNormal', 'tabShip'].forEach(id => document.getElementById(id).classList.remove('active'));
+            ['burstModeContainer', 'laterModeContainer', 'normalModeContainer', 'shipModeContainer'].forEach(id => document.getElementById(id).style.display = 'none');
             document.getElementById('listToolbar').style.display = (mode === 'burst' || mode === 'later') ? 'flex' : 'none';
 
             if (mode === 'burst') {
@@ -682,6 +685,10 @@
                 document.getElementById('tabLater').classList.add('active');
                 document.getElementById('laterModeContainer').style.display = '';   // 空にして、CSS（PCでは2列のグリッド）に任せる
                 renderLaterRooms(false);
+            } else if (mode === 'ship') {
+                document.getElementById('tabShip').classList.add('active');
+                document.getElementById('shipModeContainer').style.display = 'block';
+                initShipView();
             } else {
                 document.getElementById('tabNormal').classList.add('active');
                 document.getElementById('normalModeContainer').style.display = 'block';
@@ -2417,6 +2424,201 @@
             return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
         }
 
+        // ===== 🚚 送り状（発行済みCSVの取り込みと検索） =====
+        //   ヤマトB2・佐川e飛伝の「発行済みCSV」をドラッグ → 追跡番号・出荷日・お届け先名・注文番号・品名を記録
+        //   Robot-inに取り込むのと同じファイルでOK。同じファイルを何回入れても重複しない（追跡番号ごとに上書き）
+        const TRACK_URLS = {
+            yamato: n => `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number01=${encodeURIComponent(n)}`,
+            sagawa: n => `https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo=${encodeURIComponent(n)}`
+        };
+        let shipParsed = [];
+
+        function fmtTrk(t) { const s = String(t || ''); return s.length === 12 ? `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8)}` : s; }
+        function shipDateStr(d) { const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})$/); return m ? `${Number(m[1])}/${Number(m[2])}` : ''; }
+
+        // CSVを読む（UTF-8でなければShift_JIS）
+        function readCsvText(file) {
+            return new Promise((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onerror = () => reject(new Error('ファイルを読み込めませんでした：' + file.name));
+                fr.onload = e => {
+                    let s;
+                    try { s = new TextDecoder('utf-8', { fatal: true }).decode(e.target.result); }
+                    catch (_) { s = new TextDecoder('shift_jis').decode(e.target.result); }
+                    resolve(s.replace(/^\uFEFF/, ''));
+                };
+                fr.readAsArrayBuffer(file);
+            });
+        }
+        function parseCsv(text) {
+            const rows = []; let row = [], cell = '', q = false;
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (q) {
+                    if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+                    else cell += c;
+                } else if (c === '"') q = true;
+                else if (c === ',') { row.push(cell); cell = ''; }
+                else if (c === '\n' || c === '\r') {
+                    if (c === '\r' && text[i + 1] === '\n') i++;
+                    row.push(cell); rows.push(row); row = []; cell = '';
+                } else cell += c;
+            }
+            if (cell || row.length) { row.push(cell); rows.push(row); }
+            return rows;
+        }
+        function normShipDate(s) {
+            const t = String(s || '').trim();
+            let m = t.match(/(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/); if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+            m = t.match(/^(\d{4})(\d{2})(\d{2})$/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+            return '';
+        }
+        // 1ファイル → 送り状の行
+        //   見出しあり（佐川e飛伝など）：見出しの名前で列を探す
+        //   見出しなし（ヤマトB2の発行済み）：A列=お客様管理番号、D列=伝票番号、E列=出荷予定日、P列=お届け先名、AA〜AF列=品名
+        function shipRowsFromCsv(rows, fileName) {
+            const out = [];
+            const head = (rows[0] || []).map(h => String(h || '').trim());
+            const hasHead = head.some(h => /伝票番号|送り状|出荷日|お届け先/.test(h));
+            const clean = v => String(v == null ? '' : v).trim();
+            if (hasHead) {
+                const find = re => head.findIndex(h => re.test(h));
+                const sagawa = head.some(h => /お問い?合せ送り状|お問合せ送り状/.test(h)) || /佐川|e飛伝|sagawa/i.test(fileName);
+                const cTrk = find(/伝票番号|お問い?合せ送り状|送り状(No|番号|NO)/);
+                const cDate = find(/出荷(予定)?日/);
+                const cName = head.findIndex(h => /^お届け先名(称)?[1１]?$/.test(h) || /^お届け先名称[1１]/.test(h));
+                const cOrder = find(/お客様管理番号/);
+                const cTexts = head.map((h, i) => /品名|記事/.test(h) ? i : -1).filter(i => i >= 0);
+                if (cTrk < 0) return { rows: [], error: `${fileName}：追跡番号の列が見つかりません` };
+                rows.slice(1).forEach(r => {
+                    const trk = clean(r[cTrk]).replace(/[^0-9]/g, '');
+                    if (trk.length < 10) return;
+                    out.push({ carrier: sagawa ? 'sagawa' : 'yamato', tracking: trk, date: cDate >= 0 ? normShipDate(r[cDate]) : '',
+                        name: cName >= 0 ? clean(r[cName]) : '', orderNo: cOrder >= 0 ? clean(r[cOrder]) : '',
+                        texts: cTexts.map(i => clean(r[i])).filter(Boolean), file: fileName });
+                });
+            } else {
+                rows.forEach(r => {
+                    const trk = clean(r[3]).replace(/[^0-9]/g, '');
+                    if (!/^\d{10,12}$/.test(trk)) return;
+                    out.push({ carrier: 'yamato', tracking: trk, date: normShipDate(r[4]), name: clean(r[15]), orderNo: clean(r[0]),
+                        texts: [26, 27, 28, 29, 30, 31].map(i => clean(r[i])).filter(Boolean), file: fileName });
+                });
+            }
+            return { rows: out };
+        }
+
+        function shipViewHtml() {
+            return `
+                <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+                    <div class="font-bold text-base">🔍 送り状を探す</div>
+                    <div class="flex gap-2">
+                        <input id="shipQ" type="search" class="inp flex-1 min-w-0" placeholder="追跡番号・注文番号・No.・お届け先名" onkeydown="if(event.key==='Enter') searchShipments()">
+                        <button onclick="searchShipments()" class="btn btn-main shrink-0">探す</button>
+                    </div>
+                    <div id="shipResults"></div>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3 mt-3">
+                    <div class="font-bold text-base">📥 発行済みCSVを取り込む</div>
+                    <label id="shipDrop" class="block border-2 border-slate-200 rounded-xl p-6 text-center text-sm text-slate-500 cursor-pointer" style="border-style:dashed">
+                        ヤマトB2・佐川e飛伝の発行済みCSVを、ここにドラッグ<br>（タップしてファイルを選ぶこともできます。複数まとめてOK）
+                        <input id="shipFile" type="file" accept=".csv,text/csv" multiple style="display:none" onchange="loadShipFiles(this.files)">
+                    </label>
+                    <div id="shipPreview"></div>
+                    <div class="text-xs text-slate-500">Robot-inに取り込むのと同じファイルで大丈夫です。同じファイルを何回入れても、追跡番号ごとに上書きされるだけで重複しません。住所・電話番号は保存しません。</div>
+                </div>`;
+        }
+        function initShipView() {
+            const box = document.getElementById('shipModeContainer');
+            if (box.dataset.ready) return;
+            box.dataset.ready = '1';
+            box.innerHTML = shipViewHtml();
+            const drop = document.getElementById('shipDrop');
+            ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = '#4f46e5'; drop.style.background = '#eef2ff'; }));
+            ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; drop.style.background = ''; }));
+            drop.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) loadShipFiles(e.dataTransfer.files); });
+        }
+
+        window.loadShipFiles = async function(files) {
+            const box = document.getElementById('shipPreview');
+            box.innerHTML = '<div class="text-sm text-slate-500">読み込み中…</div>';
+            const errors = [];
+            const all = {};
+            for (const f of Array.from(files || [])) {
+                try {
+                    const r = shipRowsFromCsv(parseCsv(await readCsvText(f)), f.name);
+                    if (r.error) errors.push(r.error);
+                    else if (!r.rows.length) errors.push(`${f.name}：送り状の行が見つかりませんでした`);
+                    r.rows.forEach(x => { all[x.carrier + '_' + x.tracking] = x; });
+                } catch (e) { errors.push(e.message); }
+            }
+            shipParsed = Object.values(all);
+            const fileInput = document.getElementById('shipFile');
+            if (fileInput) fileInput.value = '';
+            const cnt = { yamato: 0, sagawa: 0 };
+            shipParsed.forEach(x => cnt[x.carrier]++);
+            const dates = shipParsed.map(x => x.date).filter(Boolean).sort();
+            const sample = shipParsed.slice(0, 8).map(x => `
+                <tr class="border-t border-slate-100"><td class="py-1 pr-2">${x.carrier === 'yamato' ? 'ヤマト' : '佐川'}</td><td class="py-1 pr-2 font-mono">${esc(fmtTrk(x.tracking))}</td>
+                <td class="py-1 pr-2">${esc(shipDateStr(x.date))}</td><td class="py-1 pr-2">${esc(x.name)}</td><td class="py-1 font-mono">${esc(x.orderNo)}</td></tr>`).join('');
+            box.innerHTML = (errors.length ? `<div class="text-sm text-red-600 bg-red-50 rounded-xl p-3 mb-2">${errors.map(esc).join('<br>')}</div>` : '')
+                + (shipParsed.length ? `
+                    <div class="text-sm font-bold">${shipParsed.length}件（ヤマト ${cnt.yamato}・佐川 ${cnt.sagawa}）${dates.length ? `　${esc(shipDateStr(dates[0]))}〜${esc(shipDateStr(dates[dates.length - 1]))}` : ''}</div>
+                    <div class="text-xs text-slate-500 mt-1">最初の数件です。お届け先名・注文番号が正しい列から入っているか確認してください。</div>
+                    <div class="overflow-auto mt-2"><table class="text-xs w-full" style="white-space:nowrap">
+                        <tr class="text-slate-500"><td class="pr-2">配送</td><td class="pr-2">追跡番号</td><td class="pr-2">出荷日</td><td class="pr-2">お届け先</td><td>注文番号</td></tr>${sample}</table></div>
+                    <button id="shipSaveBtn" onclick="saveShipFiles(this)" class="btn btn-main w-full mt-3">💾 ${shipParsed.length}件を記録する</button>` : '');
+        };
+
+        window.saveShipFiles = async function(btn) {
+            if (!shipParsed.length) return;
+            btn.disabled = true;
+            let saved = 0, skipped = 0;
+            try {
+                for (let i = 0; i < shipParsed.length; i += 400) {
+                    btn.textContent = `記録中… ${Math.min(i + 400, shipParsed.length)} / ${shipParsed.length}`;
+                    const d = await callApi("save_shipments", { rows: shipParsed.slice(i, i + 400) });
+                    saved += d.saved || 0; skipped += d.skipped || 0;
+                }
+                document.getElementById('shipPreview').innerHTML = `<div class="text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl p-3">✓ ${saved}件を記録しました${skipped ? `（${skipped}件は追跡番号の形が違うため飛ばしました）` : ''}</div>`;
+                shipParsed = [];
+                showToast(`${saved}件を記録しました`);
+            } catch (e) {
+                alert(`記録の途中で止まりました（${saved}件までは記録済み）：${e.message}\nもう一度同じファイルを入れれば続きから記録できます`);
+                btn.disabled = false;
+                btn.textContent = '💾 もう一度記録する';
+            }
+        };
+
+        // 送り状の検索結果
+        function shipResultHtml(list) {
+            if (!list.length) return '<div class="text-sm text-slate-500">見つかりませんでした（発行済みCSVがまだ取り込まれていないかもしれません）</div>';
+            return list.map(x => `
+                <div class="border border-slate-200 rounded-xl p-3 mt-2">
+                    <div class="flex items-center gap-2"><span class="font-bold text-sm">🚚 ${esc(x.carrierName || '')}</span><span class="font-mono font-bold">${esc(fmtTrk(x.tracking))}</span></div>
+                    <div class="text-xs text-slate-600 mt-1">${x.date ? `${esc(shipDateStr(x.date))} 出荷` : '出荷日なし'}${x.name ? `／${esc(x.name)} 様` : ''}${x.orderNo ? `／注文 ${esc(x.orderNo)}` : ''}</div>
+                    ${x.items ? `<div class="text-xs text-slate-400 mt-1 clamp-s">${esc(x.items)}</div>` : ''}
+                    <div class="grid grid-cols-2 gap-2 mt-2">
+                        <button onclick="copyNum('${esc(x.tracking)}')" class="btn btn-sub" style="height:38px">📋 追跡番号コピー</button>
+                        ${TRACK_URLS[x.carrier] ? `<button onclick="window.open('${esc(TRACK_URLS[x.carrier](x.tracking))}', '_blank', 'noopener')" class="btn btn-sub" style="height:38px">↗️ 追跡ページ</button>` : ''}
+                    </div>
+                </div>`).join('');
+        }
+        async function findShipmentsInto(q, el) {
+            el.innerHTML = '<div class="text-sm text-slate-500">送り状を探しています…</div>';
+            try {
+                const d = await callApi("find_shipments", { q: q });
+                el.innerHTML = shipResultHtml(d.shipments || []);
+            } catch (e) {
+                el.innerHTML = `<div class="text-sm text-red-500">探せませんでした：${esc(e.message)}</div>`;
+            }
+        }
+        window.searchShipments = function() {
+            const q = document.getElementById('shipQ').value.trim();
+            if (!q) { showToast('番号か名前を入力してください'); return; }
+            findShipmentsInto(q, document.getElementById('shipResults'));
+        };
+
         // ===== 番号からほかのサイトを開く（Robot-in・追跡・Amazon など） =====
         //   メッセージの中の番号を見つけてボタンにする。サイトの一覧は⚙️の「番号から開くサイト」
         const QUICK_LINKS_KEY = "cw_quick_links_v1";
@@ -2452,6 +2654,7 @@
             const links = quickLinks().filter(l => !num || l.kind === 'すべて' || l.kind === type);
             document.getElementById('sheetActionsTitle').textContent = num ? `🔗 ${num}（${type}）` : '🔗 ほかのサイトを開く';
             document.getElementById('sheetActionsBody').innerHTML =
+                (num ? `<div id="linkShipResult" class="px-4 pt-3 pb-2"></div>` : '') +
                 (num ? sheetBtn('📋', '番号だけコピー', `copyNum('${esc(num)}'); closeAllModals();`) : '') +
                 (links.length ? links.map((l, i) => {
                     const direct = num && l.url.indexOf('{番号}') !== -1;
@@ -2459,6 +2662,7 @@
                     return sheetBtn('↗️', `${esc(l.name)}${note}`, `openQuickLink(${i}, '${esc(num)}', '${esc(type)}')`);
                 }).join('') : `<div class="p-5 text-sm text-slate-500">⚙️の「番号から開くサイト」にサイトを登録してください</div>`);
             openSheet('sheetActions');
+            if (num) findShipmentsInto(num, document.getElementById('linkShipResult'));
         };
         function copyNum(num) {
             const done = () => showToast(`${num} をコピーしました`);
