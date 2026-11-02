@@ -53,6 +53,7 @@
         html.pc .tab-btn:hover { color: #6366f1; }
         /* 表示切替ボタンは、PC表示の時・マウスが使える端末・手動で切り替えた時に出す（スマホでは出さない） */
         /* 要対応の仕分け */
+        .num-chip { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: 9999px; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; font-size: 13px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
         .tri-chip { height: 46px; border-radius: 12px; font-size: 12px; font-weight: 700; background: #f1f5f9; color: #475569; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.25; cursor: pointer; }
         .tri-chip b { font-size: 16px; }
         .tri-chip.on { background: #4f46e5; color: #fff; }
@@ -230,6 +231,11 @@
                 <div class="flex items-center justify-between"><label class="field-label">社内ルームのID（カンマ区切り）</label><button onclick="fillAiDefault('internalRoomIds')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
                 <input type="text" id="aiRule_internalRoomIds" class="inp text-sm" placeholder="例：380072256,123456789" inputmode="numeric">
                 <div class="text-xs text-slate-500 mt-1">ルームIDは、ChatworkのURLの「rid」のあとの数字です</div>
+            </div>
+            <div>
+                <div class="flex items-center justify-between"><label class="field-label">🔗 番号から開くサイト</label><button onclick="fillAiDefault('quickLinks')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">初期値を入れる</button></div>
+                <textarea id="aiRule_quickLinks" rows="8" class="inp text-sm font-mono"></textarea>
+                <div class="text-xs text-slate-500 mt-1">1行に「名前|URL|種類」。URLに {番号} を入れると、その番号で検索したページが開きます。{番号} がないサイトは、番号をコピーしてからページを開きます（貼り付けて検索）。種類は 追跡／Amazon／Shopee／注文／すべて のどれか。</div>
             </div>
             <div>
                 <label class="field-label">渡辺さんへの質問を送るルームのID</label>
@@ -424,6 +430,7 @@
         async function loadMineCfg() {
             try {
                 const d = await callApi("get_me");
+                if (typeof d.quick_links === 'string') { quickLinksText = d.quick_links; try { localStorage.setItem(QUICK_LINKS_KEY, d.quick_links); } catch (e) {} }
                 if (!d.owner_ids) return;
                 const next = { owner: d.owner_ids.map(String), internal: (d.internal_room_ids || []).map(String) };
                 if (JSON.stringify(next) === JSON.stringify(mineCfg)) return;
@@ -831,6 +838,7 @@
                     <div id="body_${key}" class="chat-msg-body-text msg-body mt-1.5 ${isLong ? clampCls : ''} ${opts.small ? 'text-slate-600' : ''}" ${body ? '' : 'style="display:none"'}>${esc(body)}</div>
                     ${isLong ? `<button onclick="expandBody('${key}', this)" class="text-indigo-600 text-sm font-bold py-1 cursor-pointer">続きを読む</button>` : ''}
                     ${attachmentsHtml(st.roomId, st.files)}
+                    ${numChipsHtml(st.displayBody)}
                 </div>`;
         }
         window.expandBody = function(key, btn) {
@@ -1303,6 +1311,7 @@
                     ? sheetBtn('👤', `渡辺さんへの質問を取り下げる（${esc(roomQuestionOf(rid).label || '')}）`, `cancelQuestion(${Number(roomQuestionOf(rid).no) || 0})`)
                     : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
                 sheetBtn('📦', 'USアプリに出荷依頼（No.を送る）', `openUsRequest('${key}')`) +
+                sheetBtn('🔗', 'ほかのサイトを開く（Robot-in など）', `openLinkSheet('', '')`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
                 sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
@@ -2408,6 +2417,66 @@
             return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
         }
 
+        // ===== 番号からほかのサイトを開く（Robot-in・追跡・Amazon など） =====
+        //   メッセージの中の番号を見つけてボタンにする。サイトの一覧は⚙️の「番号から開くサイト」
+        const QUICK_LINKS_KEY = "cw_quick_links_v1";
+        const DEFAULT_QUICK_LINKS = "ヤマト追跡|https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number01={番号}|追跡\n佐川追跡|https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo={番号}|追跡\n日本郵便追跡|https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={番号}&locale=ja|追跡\nAmazon注文|https://sellercentral.amazon.co.jp/orders-v3/order/{番号}|Amazon\nRobot-in（ri20）|https://ri20.robot-in.com/paas/admin/|すべて\nRobot-in（ri14）|https://ri14.robot-in.com/paas/admin/|すべて\n越境代行（magitech）|https://crossborder-auto.magitech-tool-lab.com/orders/daiko/|すべて\nサイバーロジ WMS|https://wms.cyber-logi.com/login.html|すべて\nzaico|https://web.zaico.co.jp/|すべて\nヤマト ビジネスメンバーズ|https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet|追跡\n佐川 e-サービス|https://www.e-service.sagawa-exp.co.jp/|追跡\n";   // サーバーから届くまでの初期値（⚙️と同じ）
+        let quickLinksText = (() => { try { return localStorage.getItem(QUICK_LINKS_KEY) || DEFAULT_QUICK_LINKS; } catch (e) { return DEFAULT_QUICK_LINKS; } })();
+        function quickLinks() {
+            return String(quickLinksText || '').split(/\n/).map(l => l.trim()).filter(l => l && l.indexOf('|') > 0).map(l => {
+                const [name, url, kind] = l.split('|').map(x => (x || '').trim());
+                return { name, url, kind: kind || 'すべて' };
+            }).filter(x => x.name && /^https:\/\//.test(x.url));
+        }
+        // 番号の種類：Amazon / 追跡 / Shopee / 注文
+        function detectNums(text) {
+            let t = String(text || '').replace(/\[[^\]]*\]/g, ' ');
+            const out = [], seen = new Set();
+            const add = (n, type) => { if (!seen.has(n)) { seen.add(n); out.push({ n, type }); } };
+            t = t.replace(/(?<![\d-])\d{3}-\d{7}-\d{7}(?![\d-])/g, m => { add(m, 'Amazon'); return ' '; });
+            t = t.replace(/(?<![\d-])\d{6}-\d{8}-\d{10}(?![\d-])/g, m => { add(m, '注文'); return ' '; });           // 楽天
+            t = t.replace(/(?<![A-Za-z0-9])m\d{11}(?![A-Za-z0-9])/g, m => { add(m, '注文'); return ' '; });          // メルカリ
+            t = t.replace(/(?<![A-Za-z0-9])[A-Z]{2}\d{9}JP(?![A-Za-z0-9])/g, m => { add(m, '追跡'); return ' '; });  // 国際郵便
+            t = t.replace(/(?<![A-Za-z0-9])\d{6}[0-9A-Z]{8}(?![A-Za-z0-9])/g, m => { if (/[A-Z]/.test(m)) { add(m, 'Shopee'); return ' '; } return m; });
+            t.replace(/(?<![\d-])(\d{4}-\d{4}-\d{4}|\d{12})(?![\d-])/g, m => { add(m.replace(/-/g, ''), '追跡'); return ' '; });
+            return out.slice(0, 6);
+        }
+        function numChipsHtml(text) {
+            if (!quickLinks().length) return '';
+            const nums = detectNums(text);
+            if (!nums.length) return '';
+            return `<div class="flex flex-wrap gap-2 mt-2">` + nums.map(x =>
+                `<button onclick="openLinkSheet('${esc(x.n)}', '${esc(x.type)}')" class="num-chip">🔗 ${esc(x.n)}</button>`).join('') + `</div>`;
+        }
+        window.openLinkSheet = function(num, type) {
+            const links = quickLinks().filter(l => !num || l.kind === 'すべて' || l.kind === type);
+            document.getElementById('sheetActionsTitle').textContent = num ? `🔗 ${num}（${type}）` : '🔗 ほかのサイトを開く';
+            document.getElementById('sheetActionsBody').innerHTML =
+                (num ? sheetBtn('📋', '番号だけコピー', `copyNum('${esc(num)}'); closeAllModals();`) : '') +
+                (links.length ? links.map((l, i) => {
+                    const direct = num && l.url.indexOf('{番号}') !== -1;
+                    const note = !num ? '' : direct ? '' : '<span class="text-xs text-slate-400 ml-1">（番号をコピーして開く）</span>';
+                    return sheetBtn('↗️', `${esc(l.name)}${note}`, `openQuickLink(${i}, '${esc(num)}', '${esc(type)}')`);
+                }).join('') : `<div class="p-5 text-sm text-slate-500">⚙️の「番号から開くサイト」にサイトを登録してください</div>`);
+            openSheet('sheetActions');
+        };
+        function copyNum(num) {
+            const done = () => showToast(`${num} をコピーしました`);
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(num).then(done).catch(() => prompt('コピーしてください', num));
+            else prompt('コピーしてください', num);
+        }
+        window.openQuickLink = function(i, num, type) {
+            const l = quickLinks().filter(x => !num || x.kind === 'すべて' || x.kind === type)[i];
+            if (!l) return;
+            const direct = num && l.url.indexOf('{番号}') !== -1;
+            const url = direct ? l.url.split('{番号}').join(encodeURIComponent(num)) : l.url.replace(/\{番号\}/g, '');
+            if (num && !direct && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(num).then(() => showToast(`${num} をコピーしました。開いたページで貼り付けて検索してください`)).catch(() => {});
+            }
+            window.open(url, '_blank', 'noopener');
+            closeAllModals();
+        };
+
         // ===== USアプリ（配送管理アプリ）への出荷依頼 =====
         //   チャットから5〜6桁のNo.を拾い、確認・修正してからUSアプリの「コックピットからの依頼」に届ける
         function extractNos(text) {
@@ -3012,7 +3081,7 @@
         };
 
         // ===== AI文章ルール（Firestore の cw_config/ai_prompt。読み書きはGAS経由） =====
-        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds', 'questionRoomId', 'questionToId'];
+        const AI_RULE_FIELDS = ['common', 'external', 'internal', 'internalRoomIds', 'questionRoomId', 'questionToId', 'quickLinks'];
         let aiRuleDefaults = null;
 
         window.openAiRules = async function() {
