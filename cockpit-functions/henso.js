@@ -30,7 +30,7 @@ function tokenOf() {
 //   firebase functions:secrets:set HENSO_PASSPHRASE  → 「logex」を入力
 const HENSO_PASSPHRASE = defineSecret("HENSO_PASSPHRASE");
 
-const SPREADSHEET_ID = "1oEaoz0u-heDw1UxWR6G5MDwDDj7Qd8CXixOV-1KVH98";
+const SPREADSHEET_ID = "1o_BGcdN5SwnbLeomJ1qch-NSN2YcQk8MT1N2aMWexL0";
 const RETURN_RANGE = "'返送管理シート'!A3:Z"; // 1行目=フォームURL、2行目=見出し
 const INPUT_RANGE = "'入力シート'!B2:L"; // B=No、L=画像URL
 const TOKEN_HOURS = 12;
