@@ -224,7 +224,8 @@ async function handleRequest(p) {
         result = {
           me_id: await getMeId(p.account, token),
           owner_ids: await getOwnerIds(),   // ラクロジスタッフ・松下のアカウント
-          internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x))
+          internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x)),
+          quick_links: String(cfg.quickLinks || "")
         };
       } else if (action === "edit_message") {
         result = await editChatworkMessage(token, p.room_id, p.message_id, p.body);
@@ -496,6 +497,10 @@ async function uploadChatworkFile(token, roomId, fileData, fileName, mimeType, m
 // ==============================
 const DEFAULT_INTERNAL_ROOM_IDS = "380072256"; // 渡辺大輔
 
+// 番号からほかのサイトを開くリンク（1行に「名前|URL|種類」。URLの {番号} は番号に置き換わる。{番号} がなければ番号をコピーして開く）
+//   種類：追跡 / Amazon / Shopee / 注文 / すべて
+const DEFAULT_QUICK_LINKS = "ヤマト追跡|https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number01={番号}|追跡\n佐川追跡|https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo={番号}|追跡\n日本郵便追跡|https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={番号}&locale=ja|追跡\nAmazon注文|https://sellercentral.amazon.co.jp/orders-v3/order/{番号}|Amazon\nRobot-in（ri20）|https://ri20.robot-in.com/paas/admin/|すべて\nRobot-in（ri14）|https://ri14.robot-in.com/paas/admin/|すべて\n越境代行（magitech）|https://crossborder-auto.magitech-tool-lab.com/orders/daiko/|すべて\nサイバーロジ WMS|https://wms.cyber-logi.com/login.html|すべて\nzaico|https://web.zaico.co.jp/|すべて\nヤマト ビジネスメンバーズ|https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet|追跡\n佐川 e-サービス|https://www.e-service.sagawa-exp.co.jp/|追跡\n";
+
 const DEFAULT_RULES_COMMON =
   "【追加ルール】\n"
   + "・指示やチャットにない事実（日付・数量・理由・約束など）は書かない\n";
@@ -513,11 +518,12 @@ function aiDefaults() {
     internal: DEFAULT_RULES_INTERNAL,
     internalRoomIds: DEFAULT_INTERNAL_ROOM_IDS,
     questionRoomId: "",   // 空なら社内ルームIDの1つ目
-    questionToId: ""
+    questionToId: "",
+    quickLinks: DEFAULT_QUICK_LINKS
   };
 }
 
-const AI_CONFIG_FIELDS = ["common", "external", "internal", "internalRoomIds", "questionRoomId", "questionToId"];
+const AI_CONFIG_FIELDS = ["common", "external", "internal", "internalRoomIds", "questionRoomId", "questionToId", "quickLinks"];
 const AI_CONFIG_REF = () => db.collection("cw_config").doc("ai_prompt");
 
 // Firestoreに保存されている内容（1分キャッシュ）
@@ -560,7 +566,8 @@ async function getAiConfigForEdit() {
     saved: {
       common: raw.common || "", external: raw.external || "",
       internal: raw.internal || "", internalRoomIds: raw.internalRoomIds || "",
-      questionRoomId: raw.questionRoomId || "", questionToId: raw.questionToId || ""
+      questionRoomId: raw.questionRoomId || "", questionToId: raw.questionToId || "",
+      quickLinks: raw.quickLinks || ""
     },
     defaults: aiDefaults(),
     updatedBy: raw.updatedBy || "",
