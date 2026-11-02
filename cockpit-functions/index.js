@@ -24,6 +24,9 @@
  * ▼ ルームごとの「状況の整理」メモ
  *   cw_room_notes/{ルームID} … AIで整理して担当者が保存した状況。AI返信を作るときに一緒に渡す
  *
+ * ▼ 送り状の記録
+ *   shipments/{yamato|sagawa}_{追跡番号} … 発行済みCSVから取り込んだ送り状（住所・電話番号は保存しない）
+ *
  * ▼ USアプリ（配送管理アプリ USyoshida.html）への出荷依頼
  *   deliveryClients/{US_CLIENT_ID}/cockpitRequests/{ID} … コックピットから送ったNo.の依頼。USアプリに一覧で出る
  *   US_CLIENT_ID は functions/.env で変更可（初期値 150）
@@ -170,6 +173,10 @@ async function handleRequest(p) {
       result = await getRoomNote(p.room_id);
     } else if (action === "save_room_note") {
       result = await saveRoomNote(p);
+    } else if (action === "save_shipments") {
+      result = await saveShipments(p);
+    } else if (action === "find_shipments") {
+      result = await findShipments(p.q);
     } else if (action === "us_request") {
       result = await createUsRequest(p);
     } else if (action === "get_questions") {
@@ -1529,6 +1536,87 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
 
+}
+
+// ==============================
+// 送り状の記録（shipments）
+//   コックピットの「🚚 送り状」タブに、ヤマトB2・佐川e飛伝の発行済みCSVをドラッグして取り込む
+//   shipments/{yamato|sagawa}_{追跡番号}：追跡番号・配送会社・出荷日・お届け先名・注文番号・品名、検索用の keys
+//   住所・電話番号は保存しない
+// ==============================
+const SHIP_CARRIERS = { yamato: "ヤマト運輸", sagawa: "佐川急便" };
+
+// 検索用にそろえる（全角→半角・大文字・空白とハイフンを除く）
+function shipNorm(s) {
+  return String(s || "")
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[\s\u3000\-‐－−ー―]/g, "")
+    .toUpperCase();
+}
+function shipNormName(s) {
+  return String(s || "").replace(/[\s\u3000]/g, "").replace(/(様|殿|御中)$/, "");
+}
+
+function shipKeys(r) {
+  const keys = new Set();
+  const add = k => { k = String(k || ""); if (k.length >= 4 && k.length <= 60) keys.add(k); };
+  add(shipNorm(r.tracking));
+  add(shipNorm(r.orderNo));
+  add(shipNormName(r.name));
+  (r.texts || []).forEach(t => {
+    const s = String(t || "");
+    // (No.10266,10267) の No.
+    const m = s.match(/No\.?\s*([\d,，、\s]+)/i);
+    if (m) m[1].split(/[,，、\s]+/).filter(Boolean).forEach(n => add(String(Number(n))));
+    // 注文番号らしい英数字（5文字以上）
+    (s.match(/[A-Za-z0-9Ａ-Ｚａ-ｚ０-９][A-Za-z0-9Ａ-Ｚａ-ｚ０-９\-‐－_]{4,}/g) || []).forEach(x => add(shipNorm(x)));
+  });
+  return Array.from(keys).slice(0, 30);
+}
+
+async function saveShipments(p) {
+  const rows = Array.isArray(p.rows) ? p.rows : [];
+  if (!rows.length) throw new Error("取り込む行がありません");
+  if (rows.length > 500) throw new Error("1回に送れるのは500行までです");
+  const writes = [];
+  rows.forEach(r => {
+    const carrier = SHIP_CARRIERS[r.carrier] ? r.carrier : "";
+    const tracking = String(r.tracking || "").replace(/[^0-9]/g, "");
+    if (!carrier || tracking.length < 10 || tracking.length > 14) return;
+    const texts = (Array.isArray(r.texts) ? r.texts : []).map(t => String(t || "").trim()).filter(Boolean).slice(0, 8);
+    const data = {
+      carrier, carrierName: SHIP_CARRIERS[carrier], tracking,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")) ? r.date : "",
+      name: String(r.name || "").trim().slice(0, 60),
+      orderNo: String(r.orderNo || "").trim().slice(0, 60),
+      items: texts.join(" / ").slice(0, 300),
+      file: String(r.file || "").slice(0, 100),
+      importedAt: nowSec()
+    };
+    data.keys = shipKeys({ tracking, orderNo: data.orderNo, name: data.name, texts });
+    writes.push(wPatch("shipments", carrier + "_" + tracking, data));
+  });
+  await commitWrites(writes);
+  return { saved: writes.length, skipped: rows.length - writes.length };
+}
+
+async function findShipments(q) {
+  const raw = String(q || "").trim();
+  if (!raw) throw new Error("番号か名前を入力してください");
+  const cands = Array.from(new Set([shipNorm(raw), shipNormName(raw)])).filter(k => k.length >= 4);
+  // 5〜6桁の No. は先頭の0を外した形でも探す
+  if (/^\d{5,6}$/.test(shipNorm(raw))) cands.push(String(Number(shipNorm(raw))));
+  if (!cands.length) throw new Error("4文字以上で入力してください");
+  const found = {};
+  for (const k of Array.from(new Set(cands)).slice(0, 3)) {
+    const snap = await db.collection("shipments").where("keys", "array-contains", k).limit(30).get();
+    snap.forEach(d => {
+      const x = d.data();
+      found[d.id] = { carrier: x.carrier, carrierName: x.carrierName, tracking: x.tracking, date: x.date, name: x.name, orderNo: x.orderNo, items: x.items };
+    });
+  }
+  const list = Object.values(found).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 30);
+  return { shipments: list };
 }
 
 // ==============================
