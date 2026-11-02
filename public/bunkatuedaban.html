@@ -30,6 +30,113 @@
         window.db = db;
         window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
 
+/* =========================================================
+   日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
+   - setCounts：その日の件数をそのまま入れる（アプリ側で数え直せるとき）
+   - addOrders：その日に出荷した注文番号を貯めて、重複を除いた数を入れる
+   保存先：shukka_records/{日付} の _meta.auto.{データID}
+           （チェックリストで足す先を選んだサービスは「手入力＋自動」の合計になる）
+   ========================================================= */
+const shukkaAuto = (() => {
+  const FS_URL = 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+  let F = null;
+  const fs = async () => F || (F = await import(FS_URL)); // ページと同じFirestoreを使う
+  const getDb = () => db;
+  const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  const num = v => { if (v === '' || v == null) return ''; const n = parseInt(v, 10); return isNaN(n) ? '' : n; };
+  const hashId = str => { let h = 5381; for (const ch of str) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0; return 'n_' + h.toString(36); };
+  function services(d) {
+    const items = Array.isArray(d && d.items) ? d.items.filter(x => x && x.id && typeof x.name === 'string') : null;
+    const names = Array.isArray(d && d.services) ? d.services.filter(x => typeof x === 'string' && x.trim()) : null;
+    if (items && (!names || items.map(x => x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id: x.id, name: x.name, auto: x.auto || '' }));
+    if (!names || !names.length) return items ? items.map(x => ({ id: x.id, name: x.name, auto: x.auto || '' })) : [];
+    const used = new Set();
+    return names.map(name => {
+      const hit = items && items.find(x => x.name === name && !used.has(x.id));
+      const id = hit ? hit.id : hashId(name);
+      used.add(id); return { id, name, auto: hit ? (hit.auto || '') : '' };
+    });
+  }
+  function autoMap(d, svs) {
+    const ids = new Set(svs.map(x => x.id)), m = {};
+    if (d && d.autoMap && typeof d.autoMap === 'object') { Object.keys(d.autoMap).forEach(c => { if (ids.has(d.autoMap[c])) m[c] = d.autoMap[c]; }); return m; }
+    svs.forEach(x => { if (x.auto) m[x.auto] = x.id; }); // 旧形式
+    return m;
+  }
+  function rebuild(d, svs, map, auto) {
+    const meta = d._meta || {};
+    const top = {}, counts = {}, names = {}, man = {};
+    svs.forEach(s => {
+      let v;
+      if (meta.manual && Object.prototype.hasOwnProperty.call(meta.manual, s.id)) v = meta.manual[s.id];
+      else if (meta.counts) v = meta.counts[s.id]; // 旧形式：保存済みの件数はすべて手入力
+      else v = d[s.name];
+      const mv = num(v);
+      const a = Object.keys(auto).reduce((t, c) => t + (map[c] === s.id ? (parseInt(auto[c], 10) || 0) : 0), 0);
+      names[s.id] = s.name; man[s.id] = mv;
+      if (mv === '' && !a) { top[s.name] = ''; return; }
+      counts[s.id] = (mv === '' ? 0 : mv) + a; top[s.name] = counts[s.id];
+    });
+    return Object.assign(top, { _meta: { counts, manual: man, auto, names, updatedAt: new Date().toISOString(), updatedBy: 'auto:' + location.pathname.split('/').pop() } });
+  }
+  // entries: [{ date:'YYYY-MM-DD', src:'データID', name:'表示名', n:件数 }]
+  // 戻り値: [{ date, n, to:'足しているサービス名' または '' }]
+  async function setCounts(entries) {
+    entries = entries.filter(e => e && isDate(e.date) && e.src);
+    if (!entries.length) return [];
+    const { doc, getDoc, setDoc, runTransaction } = await fs();
+    const db = getDb();
+    const reg = {};
+    entries.forEach(e => { reg[e.src] = { name: e.name || e.src, updatedAt: new Date().toISOString() }; });
+    await setDoc(doc(db, 'settings', 'shukka_auto_sources'), reg, { merge: true });
+    const sv = await getDoc(doc(db, 'settings', 'shukka_services'));
+    const svData = sv.exists() ? sv.data() : null;
+    const svs = services(svData), map = autoMap(svData, svs);
+    const byDate = {};
+    entries.forEach(e => { (byDate[e.date] = byDate[e.date] || {})[e.src] = Math.max(0, parseInt(e.n, 10) || 0); });
+    const out = [];
+    for (const date of Object.keys(byDate).sort()) {
+      const ref = doc(db, 'shukka_records', date);
+      await runTransaction(db, async tx => {
+        const snap = await tx.get(ref);
+        const d = snap.exists() ? snap.data() : {};
+        const auto = Object.assign({}, (d._meta && d._meta.auto) || {}, byDate[date]);
+        if (svs.length && Object.keys(auto).some(c => map[c])) tx.set(ref, rebuild(d, svs, map, auto));
+        else tx.set(ref, { _meta: { auto: byDate[date] } }, { merge: true }); // まだ足す先が決まっていない
+      });
+      Object.keys(byDate[date]).forEach(src => {
+        const s = svs.find(x => x.id === map[src]);
+        out.push({ date, src, n: byDate[date][src], to: s ? s.name : '' });
+      });
+    }
+    return out;
+  }
+  // その日に出荷した注文番号を貯める（同じ番号は1件）。何度呼んでも二重には数えない
+  async function addOrders(src, name, date, ids) {
+    ids = [...new Set((ids || []).map(x => String(x || '').trim()).filter(Boolean))];
+    if (!isDate(date) || !src || !ids.length) return [];
+    const { doc, getDoc, setDoc, arrayUnion } = await fs();
+    const db = getDb();
+    const ref = doc(db, 'shukka_auto_ids', src + '__' + date);
+    for (let i = 0; i < ids.length; i += 500) {
+      await setDoc(ref, { src, date, ids: arrayUnion(...ids.slice(i, i + 500)), updatedAt: new Date().toISOString() }, { merge: true });
+    }
+    const snap = await getDoc(ref);
+    const n = ((snap.exists() && snap.data().ids) || []).length;
+    return setCounts([{ date, src, name, n }]);
+  }
+  const md = d => { const m = String(d).match(/^\d{4}-(\d{2})-(\d{2})$/); return m ? Number(m[1]) + '/' + Number(m[2]) : d; };
+  // 結果を1行の文にする（画面に出す用）
+  function describe(res) {
+    if (!res || !res.length) return '';
+    const unmapped = res.some(r => !r.to);
+    return 'チェックリストの出荷件数：' + res.map(r => md(r.date) + ' ' + r.n + '件' + (r.to ? '（「' + r.to + '」に加算）' : '')).join('、')
+      + (unmapped ? '\n※チェックリストの「サービスを編集」→「自動で足す出荷件数」で、足す先のサービスを選ぶと合計に入ります' : '');
+  }
+  return { setCounts, addOrders, describe, isDate };
+})();
+        window.shukkaAuto = shukkaAuto;
+
         // Chatwork送信用（Cloud Functions：東京リージョン）
         const functions = getFunctions(app, "asia-northeast1");
         window.sendPackingListFn = httpsCallable(functions, "sendPackingListToChatwork", { timeout: 120000 });
@@ -1109,6 +1216,19 @@
 
         function printInspection() {
             runPrint('printing-inspection', '@page { size: 100mm 150mm; margin: 0; }');
+            registerShukkaMedi();
+        }
+
+        // 検品書を印刷した注文（Order SN）を、今日の出荷としてチェックリストの出荷件数に足す
+        // （同じ注文は何回印刷しても1件）
+        async function registerShukkaMedi() {
+            if (!window.shukkaAuto || !processedDataRows.length) return;
+            const d = new Date();
+            const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            try {
+                const res = await window.shukkaAuto.addOrders('medicarry', '分割くん Medicarry', date, processedDataRows.map(r => r.orderSn));
+                console.info(window.shukkaAuto.describe(res));
+            } catch (e) { console.warn('チェックリストの出荷件数を更新できませんでした', e); }
         }
 
         function openTotalPickingModal() {
