@@ -153,6 +153,10 @@ button,input,textarea{font:inherit;color:inherit}
 .count-in{width:120px;font-size:22px;font-weight:800;text-align:right;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
 .unit{font-size:13px;color:var(--muted)}
 .srow.is-edit .title-in{flex:1;min-width:0}
+.edit-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.edit-main .title-in{width:100%}
+.auto-sel{font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:inherit;max-width:100%}
+.auto-note{display:block;font-size:12px;font-weight:700;color:var(--primary);margin-top:3px}
 .addrow{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line);background:var(--surface-2)}
 .panel-foot{display:flex;gap:8px;margin:12px 0}
 .panel-foot .btn{flex:1}
@@ -299,7 +303,7 @@ button,input,textarea{font:inherit;color:inherit}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
    設定
@@ -742,7 +746,7 @@ $('clResetBtn').onclick = () => confirmDialog('この日の項目を初期設定
 /* =========================================================
    出荷件数
    ========================================================= */
-const SK = { date: null, state: null, services: [], records: new Map(), recordsLoaded: false, edit: false, unsub: null, pendingRemote: null, pendingServices: null };
+const SK = { date: null, state: null, services: [], sources: {}, records: new Map(), recordsLoaded: false, edit: false, unsub: null, pendingRemote: null, pendingServices: null };
 function skStateJSON() {
   if (!SK.state) return null;
   const counts = {};
@@ -751,32 +755,46 @@ function skStateJSON() {
 }
 // 保存形式：従来どおり「サービス名: 件数」を残しつつ（他の画面・旧版との互換）、
 // _meta にサービスID基準の件数と名前を保存する（名前を変えても過去の記録とつながる）
+// 自動加算：配送管理アプリ（USyoshida.html）が _meta.auto に「お客様ID: 注文数」を入れる。
+//   _meta.manual = 手入力の件数、_meta.counts／サービス名の欄 = 手入力＋自動 の合計
 SK.saver = new Saver('shukka', skStateJSON, async st => {
-  const top = {}, counts = {}, names = {};
-  SK.services.forEach(s => {
-    const v = st.counts[s.id];
-    names[s.id] = s.name;
-    if (typeof v === 'number') { counts[s.id] = v; top[s.name] = v; } else top[s.name] = '';
+  const ref = doc(db, 'shukka_records', st.date);
+  await runTransaction(db, async tx => {
+    const cur = await tx.get(ref);
+    const auto = (cur.exists() && cur.data()?._meta?.auto) || {}; // 自動の件数は保存直前の最新を使う
+    tx.set(ref, buildRecord(st.counts, auto));
   });
-  await setDoc(doc(db, 'shukka_records', st.date), { ...top, _meta: { counts, names, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID } });
 });
+function autoOf(s, auto) { return s.auto && auto && auto[s.auto] != null ? toNum(auto[s.auto]) : 0; }
+function buildRecord(manual, auto) {
+  const top = {}, counts = {}, names = {}, man = {};
+  SK.services.forEach(s => {
+    const m = manual[s.id], a = autoOf(s, auto);
+    const mv = (typeof m === 'number' && !isNaN(m)) ? m : '';
+    names[s.id] = s.name; man[s.id] = mv;
+    if (mv === '' && !a) { top[s.name] = ''; return; }
+    const t = (mv === '' ? 0 : mv) + a;
+    counts[s.id] = t; top[s.name] = t;
+  });
+  return { ...top, _meta: { counts, manual: man, auto: { ...auto }, names, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID } };
+}
 
 function reconcileServices(d) {
   const items = Array.isArray(d?.items) ? d.items.filter(x => x && x.id && typeof x.name === 'string') : null;
   const names = Array.isArray(d?.services) ? d.services.filter(x => typeof x === 'string' && x.trim()) : null;
-  if (items && (!names || items.map(x => x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id: x.id, name: x.name }));
+  if (items && (!names || items.map(x => x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id: x.id, name: x.name, auto: x.auto || '' }));
   const src = names && names.length ? names : (items ? items.map(x => x.name) : DEFAULT_SERVICES);
   const used = new Set();
   return src.map(name => {
     const hit = items?.find(x => x.name === name && !used.has(x.id));
     const id = hit ? hit.id : hashId(name);
-    used.add(id); return { id, name };
+    used.add(id); return { id, name, auto: hit?.auto || '' };
   });
 }
 async function saveServices() {
   try {
     await setDoc(doc(db, 'settings', 'shukka_services'), {
-      services: SK.services.map(s => s.name), items: SK.services.map(s => ({ id: s.id, name: s.name })),
+      services: SK.services.map(s => s.name), items: SK.services.map(s => ({ id: s.id, name: s.name, auto: s.auto || '' })),
       updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
     });
   } catch (e) { console.error(e); toast('サービスの設定を保存できませんでした。通信状況を確認してください', 'error'); }
@@ -817,6 +835,30 @@ function recordBreakdown(data) {
   }
   return out;
 }
+// 手入力の件数（自動の分を除く）
+function recordToManual(data) {
+  const out = recordToCounts(data);
+  const man = data?._meta?.manual;
+  if (man) for (const [id, v] of Object.entries(man)) out[id] = (v === '' || v == null) ? '' : toNum(v);
+  return out;
+}
+// 自動で足すデータの一覧（配送管理アプリが settings/shukka_auto_sources に登録する）
+function watchAutoSources() {
+  onSnapshot(doc(db, 'settings', 'shukka_auto_sources'), snap => {
+    SK.sources = snap.exists() ? snap.data() : {};
+    if (SK.edit && !isTyping('tab-shukka')) renderShukka(); else renderAutoBadges();
+  }, err => console.warn('auto sources', err));
+}
+function sourceLabel(cid) { const x = SK.sources?.[cid]; return '配送管理 ' + (x?.name ? `${x.name}（${cid}）` : cid); }
+function renderAutoBadges() {
+  if (!SK.state || SK.edit) return;
+  SK.services.forEach(s => {
+    const el = document.getElementById('skAuto-' + s.id); if (!el) return;
+    const a = autoOf(s, SK.state.auto), m = SK.state.counts[s.id];
+    const mv = typeof m === 'number' && !isNaN(m) ? m : 0;
+    el.textContent = `＋自動 ${fmt(a)}件（${sourceLabel(s.auto)}）→ 合計 ${fmt(mv + a)}件`;
+  });
+}
 const recordTotal = data => recordBreakdown(data).reduce((a, x) => a + x.n, 0);
 
 function skLoad(date) {
@@ -832,8 +874,12 @@ function skLoad(date) {
     SK.records = new Map(snap.docs.map(d => [d.id, d.data()]));
     SK.recordsLoaded = true;
     const data = SK.records.get(date);
-    const st = { date, counts: recordToCounts(data) };
+    const st = { date, counts: recordToManual(data), auto: { ...(data?._meta?.auto || {}) } };
     if (!SK.state) { SK.state = st; SK.saver.reset(skStateJSON()); renderShukka(); return; }
+    // 自動の件数は入力中でもすぐ反映する（手入力の欄には触らない）
+    const autoChanged = JSON.stringify(SK.state.auto || {}) !== JSON.stringify(st.auto);
+    SK.state.auto = st.auto;
+    if (autoChanged) renderAutoBadges();
     renderTotals();
     if (snap.metadata.hasPendingWrites || data?._meta?.updatedBy === CLIENT_ID) return;
     const prev = SK.state; SK.state = st; const json = skStateJSON(); SK.state = prev;
@@ -850,17 +896,17 @@ function skApply(st, remote) {
   SK.state = st; SK.saver.reset(skStateJSON()); renderShukka();
   if (remote) setStatus('shukka', 'remote');
 }
-function skTouched() { SK.pendingRemote = null; SK.saver.touch(); renderTotals(); }
+function skTouched() { SK.pendingRemote = null; SK.saver.touch(); renderTotals(); renderAutoBadges(); }
 function skForceSaveDay() {
   if (!SK.state) return;
-  const hasAny = Object.values(SK.state.counts).some(v => typeof v === 'number') || SK.records.has(SK.date);
+  const hasAny = Object.values(SK.state.counts).some(v => typeof v === 'number') || SK.records.has(SK.date) || Object.keys(SK.state.auto || {}).length > 0;
   if (!hasAny) return;
   SK.saver.savedJSON = null; SK.saver.flush({ pushUndo: false });
 }
 
 function liveDayTotal() {
   if (!SK.state) return 0;
-  return SK.services.reduce((a, s) => { const v = SK.state.counts[s.id]; return a + (typeof v === 'number' && !isNaN(v) ? v : 0); }, 0);
+  return SK.services.reduce((a, s) => { const v = SK.state.counts[s.id]; return a + (typeof v === 'number' && !isNaN(v) ? v : 0) + autoOf(s, SK.state.auto); }, 0);
 }
 function renderTotals() {
   const day = liveDayTotal();
@@ -899,7 +945,14 @@ function renderShukka() {
     if (SK.edit) {
       const name = h('input', { type: 'text', class: 'title-in', value: s.name, 'aria-label': 'サービス名' });
       name.addEventListener('change', e => skRename(i, e.target));
-      list.append(h('div', { class: 'srow is-edit' }, name,
+      const sel = h('select', { class: 'auto-sel', 'aria-label': `${s.name}に自動で足すデータ` });
+      sel.append(h('option', { value: '' }, '自動加算なし（手入力のみ）'));
+      const cids = Object.keys(SK.sources || {});
+      if (s.auto && !cids.includes(s.auto)) cids.push(s.auto);
+      cids.forEach(cid => sel.append(h('option', { value: cid }, '＋ ' + sourceLabel(cid) + ' の出荷注文数')));
+      sel.value = s.auto || '';
+      sel.addEventListener('change', () => skSetAuto(i, sel.value));
+      list.append(h('div', { class: 'srow is-edit' }, h('div', { class: 'edit-main' }, name, sel),
         h('div', { class: 'eitem-ctrl' },
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': '上へ', disabled: i === 0, onclick: () => skMove(i, -1) }, '▲'),
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': '下へ', disabled: i === SK.services.length - 1, onclick: () => skMove(i, 1) }, '▼'),
@@ -914,7 +967,8 @@ function renderShukka() {
         skTouched();
       });
       inp.addEventListener('focus', e => e.target.select());
-      list.append(h('label', { class: 'srow' }, h('span', { class: 'sname' }, s.name), inp, h('span', { class: 'unit' }, '件')));
+      const badge = s.auto ? h('span', { class: 'auto-note', id: 'skAuto-' + s.id }) : null;
+      list.append(h('label', { class: 'srow' }, h('span', { class: 'sname' }, s.name, badge), inp, h('span', { class: 'unit' }, '件')));
     }
   });
   if (!SK.services.length) list.append(h('p', { class: 'empty' }, 'サービスがありません。「サービスを編集」から追加してください。'));
@@ -924,6 +978,15 @@ function renderShukka() {
     list.append(h('div', { class: 'addrow' }, addIn, h('button', { type: 'button', class: 'btn btn-primary', onclick: () => skAdd(addIn) }, '追加')));
   }
   renderTotals();
+  renderAutoBadges();
+}
+
+async function skSetAuto(i, cid) {
+  SK.services.forEach((s, j) => { if (cid && j !== i && s.auto === cid) s.auto = ''; }); // 同じデータは1つのサービスにだけ足す
+  SK.services[i].auto = cid;
+  renderShukka();
+  await saveServices(); skForceSaveDay();
+  toast(cid ? `「${SK.services[i].name}」に自動の件数を足します` : '自動の加算をやめました');
 }
 
 async function skRename(i, el) {
@@ -940,7 +1003,7 @@ async function skAdd(input) {
   const err = validateName(name, -1);
   if (err) { toast(err, 'error'); return; }
   const id = 's_' + Math.random().toString(36).slice(2, 10);
-  SK.services.push({ id, name });
+  SK.services.push({ id, name, auto: '' });
   if (SK.state) SK.state.counts[id] = '';
   await saveServices();
   renderShukka();
@@ -1079,7 +1142,7 @@ $('undoBtn').onclick = () => {
   const prev = saver.undo.pop(); if (!prev) return;
   const st = JSON.parse(prev);
   if (activeTab === 'checklist') { CL.state = st; renderChecklist(); }
-  else { SK.state = { date: st.date, counts: st.counts }; renderShukka(); }
+  else { SK.state = { date: st.date, counts: st.counts, auto: SK.state?.auto || {} }; renderShukka(); }
   saver.flush({ pushUndo: false });
   toast('1つ前の状態に戻しました');
 };
@@ -1331,6 +1394,7 @@ document.addEventListener('visibilitychange', () => {
   watchStaff();
   watchShip();
   await watchServices();
+  watchAutoSources();
   let tab = 'checklist';
   try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
   switchTab(tab);
