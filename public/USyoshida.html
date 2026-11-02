@@ -1276,6 +1276,20 @@ async function ordersByOrderIds(ids){
   return map;
 }
 
+// 注文番号 → このアプリで最後に作った送り状の記録（業者・種類）
+async function labelRecsByOrderIds(ids){
+  const map = {};
+  for (const part of chunk([...new Set(ids.filter(Boolean))], 30)) {
+    const snap = await ordersCol().where('orderId','in',part).get();
+    snap.forEach(d => {
+      const v = d.data(); if (!v.labelCarrier) return;
+      const t = v.labelCreatedAt && v.labelCreatedAt.toMillis ? v.labelCreatedAt.toMillis() : 0;
+      if (!map[v.orderId] || t > map[v.orderId]._t) map[v.orderId] = { labelCarrier:v.labelCarrier, labelType:v.labelType||'', _t:t };
+    });
+  }
+  return map;
+}
+
 /* ===== 問い合わせ中 ===== */
 // 問い合わせ中の読み込み。読んだ記録は No.→内容 で返す（読めなかったときは null）
 async function loadInquiryFlags(nos){
@@ -1385,13 +1399,45 @@ function carrierRows(){
   const out = [];
   (files.yamato || []).forEach(r => {
     if (!r || !/^\d{8,}$/.test(String(r[3]||'').trim())) return;
-    out.push({ carrier:'ヤマト運輸', tracking:String(r[3]).trim(), orderNo:String(r[0]||'').trim(), nos:parseNos(r[29]), date:normDate(r[4]) });
+    out.push({ carrier:'ヤマト運輸', type:String(r[1]||'').trim(), tracking:String(r[3]).trim(), orderNo:String(r[0]||'').trim(), nos:parseNos(r[29]), date:normDate(r[4]) });
   });
   (files.sagawa || []).slice(1).forEach(r => {
     if (!r || !String(r[0]||'').trim()) return;
-    out.push({ carrier:'佐川急便', tracking:String(r[0]).trim(), orderNo:String(r[40]||'').trim(), nos:parseNos(r[39]), date:normDate(r[2]) });
+    out.push({ carrier:'佐川急便', type:'', tracking:String(r[0]).trim(), orderNo:String(r[40]||'').trim(), nos:parseNos(r[39]), date:normDate(r[2]) });
   });
+  out.forEach((c, i) => c.idx = i);
   return out;
+}
+
+// 同じ注文に送り状が複数あるときは、新しく作成したほうを使う
+// 1) このアプリで最後に作った送り状（業者・送り状種類）の記録があれば、それと同じ種類のものを使う
+//    （ネコポス→宅急便に作り直したとき、番号の大小では判断できないため）
+// 2) 同じ種類どうしなら、出荷日が新しいもの → 同じ日なら伝票番号が大きいもの
+// 3) 同じ日・同じ種類で伝票番号が連番のものは複数口とみなし、その1口目を使う
+// 種類が違う送り状が同じ日にあり、記録もないときは判断できないので「要確認」にする
+function trkBase(t){ const d = String(t||'').replace(/\D/g,''); return d.length > 1 ? Number(d.slice(0,-1)) : 0; } // 末尾はチェック用の数字
+const sameKind = (a, b) => a.carrier===b.carrier && (a.type||'')===(b.type||'');
+function recMatch(c, rec){
+  if (!rec || !rec.labelCarrier) return false;
+  const car = rec.labelCarrier==='yamato' ? 'ヤマト運輸' : '佐川急便';
+  return c.carrier===car && (car!=='ヤマト運輸' || !rec.labelType || (c.type||'')===rec.labelType);
+}
+function pickNewest(list, rec){
+  const seen = new Set();
+  list = list.filter(c => { const k = c.carrier+c.tracking; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (list.length === 1) return { pick:list[0], old:[], multi:false, unsure:false };
+  const m = list.filter(c => recMatch(c, rec));
+  const byRec = m.length > 0 && m.length < list.length;
+  const pool = byRec ? m : list;
+  const s = pool.slice().sort((a,b) => (a.date||'').localeCompare(b.date||'')
+    || (sameKind(a,b) ? trkBase(a.tracking) - trkBase(b.tracking) : a.idx - b.idx));
+  let i = s.length - 1;
+  while (i > 0 && sameKind(s[i-1], s[i]) && (s[i-1].date||'')===(s[i].date||'')
+         && trkBase(s[i].tracking) - trkBase(s[i-1].tracking) === 1) i--;
+  const pick = s[i], run = s.slice(i);
+  const old = list.filter(c => !run.includes(c));
+  const unsure = !byRec && old.some(c => !sameKind(c, pick) && (c.date||'')===(pick.date||''));
+  return { pick, old, multi: run.length > 1, unsure };
 }
 
 $('#btnLink').onclick = async () => {
@@ -1406,9 +1452,12 @@ $('#btnLink').onclick = async () => {
     const byNo = {}, unlinked = [];
     crows.forEach(c => {
       if (!c.nos.length) { unlinked.push(c.carrier+' '+c.tracking+'（'+(c.orderNo||'注文番号なし')+'）'); return; }
-      c.nos.forEach(no => { if (!byNo[no]) byNo[no] = c; }); // 複数口は1口目の番号
+      c.nos.forEach(no => (byNo[no] = byNo[no] || []).push(c));
     });
     const nos = Object.keys(byNo).map(Number).sort((a,b)=>a-b);
+    const recs = (await loadInquiryFlags(nos)) || {};
+    const pickNo = {};
+    nos.forEach(no => { pickNo[no] = pickNewest(byNo[no], recs[no]); byNo[no] = pickNo[no].pick; });
     const cur = {};
     if (nos.length) {
       for (const part of chunk(nos, 200)) {
@@ -1416,15 +1465,16 @@ $('#btnLink').onclick = async () => {
         j.rows.forEach(r => cur[r.no] = r);
       }
     }
-    await loadInquiryFlags(nos);
 
     const plan = nos.map(no => {
-      const c = byNo[no], r = cur[no];
-      if (!r) return { no, c, status:'nf' };
-      if (state.inq[no]) return { no, c, r, status:'inq' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
+      const c = byNo[no], r = cur[no], old = pickNo[no].old, multi = pickNo[no].multi;
+      if (!r) return { no, c, old, multi, status:'nf' };
+      if (state.inq[no]) return { no, c, r, old, multi, status:'inq' };
+      if (pickNo[no].unsure) return { no, c, r, old, multi, status:'unsure' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
       const ex = normTracking(r.tracking);
-      if (ex && ex !== normTracking(c.tracking)) return { no, c, r, status:'conflict' };
-      return { no, c, r, status: ex ? 'same' : 'ok' };
+      // シートに古い送り状の番号が入っているだけなら、新しい番号で上書きする
+      if (ex && ex !== normTracking(c.tracking) && !old.some(o => normTracking(o.tracking)===ex)) return { no, c, r, old, multi, status:'conflict' };
+      return { no, c, r, old, multi, status: ex===normTracking(c.tracking) ? 'same' : (ex ? 'replace' : 'ok') };
     });
     linkPlan = { plan, unlinked };
     renderLinkPlan();
@@ -1434,16 +1484,20 @@ $('#btnLink').onclick = async () => {
 
 function renderLinkPlan(){
   const { plan, unlinked } = linkPlan;
-  const w = plan.filter(p => p.status==='ok' || p.status==='same');
+  const w = plan.filter(p => p.status==='ok' || p.status==='same' || p.status==='replace');
   const label = p => {
     if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
     if (p.status==='inq') return '<span class="st-ng">問い合わせ中のため書き込みません</span>';
     if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
+    if (p.status==='unsure') return '<span class="st-ng">送り状が複数あり、どれが新しいか判断できません（アプリで作った記録がありません）。シートに手で入れてください</span>';
+    if (p.status==='replace') return '<span class="st-ok">古い追跡番号（'+esc(p.r.tracking)+'）を新しい番号に書き換えます</span>';
     return '<span class="st-ok">'+(p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます')+'</span>';
   };
   $('#linkResult').innerHTML = '<p><b>書き込み対象 '+w.length+'件</b><span class="muted"> ／ 書き込まない '+(plan.length-w.length)+'件 ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
     + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
-      + plan.map(p => '<tr><td>'+p.no+'</td><td>'+esc(p.c.carrier)+'</td><td>'+esc(p.c.tracking)+'</td><td>'+esc(md(p.c.date || todayStr()))+'</td><td>'+label(p)+'</td></tr>').join('')
+      + plan.map(p => '<tr><td>'+p.no+'</td><td>'+esc(p.c.carrier)+'</td><td>'+esc(p.c.tracking)
+        + (p.multi ? '<br><span class="muted small">複数口（1口目）</span>' : '')
+        + (p.old && p.old.length ? '<br><span class="muted small">使わない古い送り状：'+esc(p.old.map(o=>o.tracking).join('、'))+'</span>' : '')+'</td><td>'+esc(md(p.c.date || todayStr()))+'</td><td>'+label(p)+'</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (unlinked.length ? '<p class="st-ng small" style="margin-top:8px">No.も受注番号も見つからなかった送り状：'+esc(unlinked.join('、'))+'</p>' : '');
   $('#linkActions').hidden = false;
@@ -1452,7 +1506,7 @@ function renderLinkPlan(){
 
 $('#btnLinkWrite').onclick = async () => {
   if (!linkPlan) return;
-  const targets = linkPlan.plan.filter(p => p.status==='ok' || p.status==='same');
+  const targets = linkPlan.plan.filter(p => p.status==='ok' || p.status==='same' || p.status==='replace');
   if (!targets.length) return;
   if (!confirm(targets.length+'件をシートに反映します。よろしいですか？')) return;
   const btn = $('#btnLinkWrite'); btn.disabled = true;
@@ -1483,15 +1537,24 @@ function cleanOrderNoNormalized(str){
   if (!str) return '';
   return String(str).replace(/^No:?[\.\s]*/i,'').replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0)-0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g,'').trim().toLowerCase();
 }
-function buildCarrierMap(rows){
-  const map = new Map(); let multi = 0;
+function buildCarrierMap(rows, recByOid){
+  recByOid = recByOid || {};
+  const lists = new Map();
   rows.forEach(c => {
     const key = cleanOrderNoNormalized(c.orderNo);
     if (!key || !c.tracking) return;
-    if (map.has(key)) { const e = map.get(key); if (e.count===1) multi++; e.count++; return; }
-    map.set(key, { tracking:c.tracking, rawOrderNo:c.orderNo, count:1, used:false });
+    if (!lists.has(key)) lists.set(key, []);
+    lists.get(key).push(c);
   });
-  return { map, multi };
+  const map = new Map(); let multi = 0; const reissued = [], unsure = [];
+  lists.forEach((list, key) => {
+    const r = pickNewest(list, recByOid[list[0].orderNo]);
+    if (r.unsure) { unsure.push(list[0].orderNo+'：'+list.map(c=>c.tracking).join('、')); return; }
+    if (r.multi) multi++;
+    if (r.old.length) reissued.push(r.pick.orderNo+'：'+r.pick.tracking+'を使用（古い '+r.old.map(o=>o.tracking).join('、')+'）');
+    map.set(key, { carrier:r.pick.carrier, tracking:r.pick.tracking, rawOrderNo:r.pick.orderNo, used:false });
+  });
+  return { map, multi, reissued, unsure };
 }
 const sjisCache = new Map();
 function isSjisSafe(ch){
@@ -1508,8 +1571,14 @@ $('#btnNotifyCsv').onclick = async () => {
   if (!crows.length) { toast('ヤマトか佐川の発行済みCSVを読み込んでください'); return; }
   linkLog('──────── 出荷通知CSVの作成 ────────', true);
 
-  const yamato = buildCarrierMap(crows.filter(c=>c.carrier==='ヤマト運輸'));
-  const sagawa = buildCarrierMap(crows.filter(c=>c.carrier==='佐川急便'));
+  // 送り状が複数ある注文だけ、アプリで最後に作った送り状の記録を読む
+  const cnt = {};
+  crows.forEach(c => { const k = cleanOrderNoNormalized(c.orderNo); if (k) cnt[k] = (cnt[k]||0) + 1; });
+  const multiOids = [...new Set(crows.filter(c => cnt[cleanOrderNoNormalized(c.orderNo)] > 1).map(c => c.orderNo))];
+  let recByOid = {};
+  try { recByOid = await labelRecsByOrderIds(multiOids); }
+  catch(e){ linkLog('⚠️ 送り状の作成記録を読み込めませんでした：'+e.message); }
+  const cmap = buildCarrierMap(crows, recByOid);
 
   // 問い合わせ中の注文の受注番号
   let inqOids = new Set();
@@ -1532,8 +1601,7 @@ $('#btnNotifyCsv').onclick = async () => {
     const key = cleanOrderNoNormalized(src[5]);
     if (!key) continue;
     let carrier = null, entry = null;
-    if (yamato.map.has(key)) { carrier='ヤマト運輸'; entry=yamato.map.get(key); }
-    else if (sagawa.map.has(key)) { carrier='佐川急便'; entry=sagawa.map.get(key); }
+    if (cmap.map.has(key)) { entry = cmap.map.get(key); carrier = entry.carrier; }
     if (!entry) { unmatched.push(String(src[5]).trim()); continue; }
     entry.used = true;
     if (inqOids.has(key)) { skippedInq.push(String(src[5]).trim()); continue; }
@@ -1546,12 +1614,13 @@ $('#btnNotifyCsv').onclick = async () => {
 
   const n = out.length - 1;
   linkLog('🎉 ステータス120（出荷通知の対象）：'+n+'件（ヤマト '+yc+'件 ／ 佐川 '+sc+'件）');
-  if (yamato.multi) linkLog('- ヤマト複数口の注文：'+yamato.multi+'件（1口目の伝票番号で紐づけ）');
-  if (sagawa.multi) linkLog('- 佐川複数口の注文：'+sagawa.multi+'件');
+  if (cmap.multi) linkLog('- 複数口の注文：'+cmap.multi+'件（1口目の伝票番号で紐づけ）');
+  logList('ℹ️ 送り状が作り直されていた注文（新しいほうを使用）', cmap.reissued);
+  logList('⚠️ 送り状が複数あり、どれが新しいか判断できないため外した注文（手で確認してください）', cmap.unsure);
   logList('⚠️ 問い合わせ中のため外した注文', skippedInq);
   logList('⚠️ 受注CSVにあるが、追跡番号が見つからなかった注文', unmatched);
-  logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号', [...yamato.map.values()].filter(e=>!e.used).map(e=>e.rawOrderNo));
-  logList('⚠️ 佐川CSVにあるが、受注CSVに見当たらない注文番号', [...sagawa.map.values()].filter(e=>!e.used).map(e=>e.rawOrderNo));
+  logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号', [...cmap.map.values()].filter(e=>!e.used && e.carrier==='ヤマト運輸').map(e=>e.rawOrderNo));
+  logList('⚠️ 佐川CSVにあるが、受注CSVに見当たらない注文番号', [...cmap.map.values()].filter(e=>!e.used && e.carrier==='佐川急便').map(e=>e.rawOrderNo));
 
   if (!n) { linkLog('\n❌ 紐づけできた注文が0件のため、CSVは出力していません。'); toast('紐づけできた注文が0件でした。読み込んだCSVの組み合わせを確認してください', 6000); return; }
 
