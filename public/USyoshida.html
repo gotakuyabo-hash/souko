@@ -924,6 +924,49 @@ function splitB(s, limits){
   limits.forEach(max => { const p = cutB(rest, max); parts.push(p); rest = rest.slice(p.length); });
   return { parts, overflow: rest.length };
 }
+// ヤマトB2の住所の文字数：都道府県 全角4＋市区郡町村 全角12＋町・番地 全角16、建物名 全角16
+// （半角は0.5文字で数える）。町・番地が16文字を超えた分は建物名の欄に回す。
+const PREF_RE = /^(東京都|北海道|(?:京都|大阪)府|[^\s\d]{2,3}県)/;
+function splitYamatoAddr(addr, zip7){
+  let s = String(addr||'').replace(/\s+/g,' ').trim();
+  const z = L.zipInfo[zip7] || null;
+  let pref = '', city = '';
+  const pm = s.match(PREF_RE);
+  if (pm) { pref = pm[1]; s = s.slice(pref.length).trim(); }
+  else if (z && z.pref) { pref = z.pref; }               // 都道府県が抜けている住所は郵便番号から補う
+  if (z && z.city && s.startsWith(z.city)) city = z.city; // 郵便番号の市区町村名で正確に切る
+  else { const cm = s.match(/^(.{1,4}?市.{1,4}?区|.{1,5}?郡.{1,5}?[町村]|.{1,6}?[市区町村])/); city = cm ? cm[1] : ''; }
+  let rest = s.slice(city.length).trim();
+  // 全角の英数字・ハイフンは半角に（半角は0.5文字なので入る量が増える）
+  rest = rest.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+             .replace(/(\d)[－‐−―ー](?=\d)/g, '$1-').replace(/　/g, ' ');
+  // それでも長いときは「1丁目23番地45号」→「1-23-45」に縮める
+  if (blen(rest) > 64 || (blen(rest) > 32 && !/ /.test(rest))) {
+    rest = rest.replace(/(\d+)丁目/g, '$1-').replace(/(\d+)番地の?/g, '$1-').replace(/(\d+)番(?!地)/g, '$1-')
+               .replace(/(\d+)号(?!室)/g, '$1').replace(/-+/g, '-').replace(/-(?=\s|$)/g, '');
+  }
+  let town = rest, bld = '';
+  if (blen(rest) > 32) {
+    // まずスペースの位置で分ける（町・番地／建物名がきれいに分かれやすい）
+    const sp = [...rest.matchAll(/ /g)].map(m=>m.index).reverse().find(i => blen(rest.slice(0,i)) <= 32);
+    if (sp !== undefined) { town = rest.slice(0, sp); bld = rest.slice(sp+1); }
+    else if ((m => m && blen(m[1]) <= 32 && blen(rest.slice(m[1].length)) <= 32)(rest.match(/^(.*?\d+(?:-\d+)*)(?=[^\d-])/))) {
+      // スペースが無ければ、番地の数字が終わったところで分ける
+      town = rest.match(/^(.*?\d+(?:-\d+)*)(?=[^\d-])/)[1]; bld = rest.slice(town.length);
+    }
+    else {
+      // それも無理なら16文字で切る。数字の途中で切れないように少し戻す
+      let cut = cutB(rest, 32).length;
+      while (cut > 0 && /[0-9０-９]/.test(rest[cut]) && /[0-9０-９]/.test(rest[cut-1])) cut--;
+      if (cut === 0) cut = cutB(rest, 32).length;
+      town = rest.slice(0, cut); bld = rest.slice(cut);
+    }
+  }
+  const errors = [];
+  if (blen(city) > 24) errors.push('市区郡町村が12文字を超えています');
+  if (blen(bld) > 32) errors.push('住所が長すぎます（町・番地16文字＋建物名16文字に入りきりません）');
+  return { line1: pref + city + town, line2: bld, moved: !!bld, errors };
+}
 function toZen(s){
   return String(s||'').replace(/[!-~]/g, c => c==='-' ? '－' : String.fromCharCode(c.charCodeAt(0)+0xFEE0)).replace(/ /g,'　');
 }
@@ -941,11 +984,11 @@ async function openLabels(){
   L.overrides = {}; L.types = {}; L.include = {}; L.splits = new Set();
   if (!L.shipDate) L.shipDate = todayStr();
   $('#shipDate').value = L.shipDate;
-  // 英語住所の郵便番号だけ、先にまとめて調べる
-  const need = [...state.selected].map(no=>state.rows[no]).filter(r => r && r.address && !hasJa(r.address))
+  // 郵便番号の住所をまとめて調べる（英語住所の変換と、ヤマトの住所分割に使う）
+  const need = [...state.selected].map(no=>state.rows[no]).filter(r => r && r.address)
     .map(r => digits(r.zip)).filter(z => z.length===7 && !(z in L.zipInfo));
   if (need.length) {
-    toast('英語住所の郵便番号を調べています…');
+    toast('郵便番号の住所を調べています…');
     try { const j = await gas('zip', { zips:[...new Set(need)] }); Object.assign(L.zipInfo, j.zips); }
     catch(e){ toast(e.message, 6000); }
   }
@@ -1005,6 +1048,7 @@ function makeLabel(rows, key, splitFrom){
   const carrier = L.overrides[key] || (L.mode==='auto' ? auto : L.mode);
   if (!noTag(rows, carrier==='yamato' ? 50 : 32).all) warns.push('同梱のNo.が品名に入りきりません（紐づけ後に確認してください）');
 
+  let ya = null;
   const t = rows.map(r=>r.deliveryTime).find(Boolean) || '';
   const tm = t ? TIME_MAP[normTime(t)] : null;
   if (t && !tm) errors.push('時間指定の表記が分かりません（'+t+'）');
@@ -1014,7 +1058,9 @@ function makeLabel(rows, key, splitFrom){
   if (rows.some(r=>state.inq[r.no])) warns.push('問い合わせ中の注文を含みます');
 
   if (carrier==='yamato') {
-    if (splitB(addr,[64,32]).overflow) errors.push('住所が長すぎます');
+    ya = splitYamatoAddr(addr, zip7);
+    errors.push(...ya.errors);
+    if (ya.moved && !ya.errors.length) warns.push('住所の後半を建物名の欄に回しました');
     if (blen(name)>32) warns.push('お届け先名を16文字で切ります');
     if (!cfg.yamatoBillCode) errors.push('ヤマトの請求先顧客コードが未登録です');
   } else {
@@ -1024,7 +1070,7 @@ function makeLabel(rows, key, splitFrom){
   if (!cfg.senderTel || !cfg.senderZip || !cfg.senderAddr) errors.push('ご依頼主の住所・電話が未登録です');
 
   return {
-    key, rows, splitFrom, zip7, tel, name, addr, carrier, okinawa, tm, dd, errors, warns,
+    key, rows, splitFrom, zip7, tel, name, addr, ya, carrier, okinawa, tm, dd, errors, warns,
     type: L.types[key] || '0',
     include: !errors.length && L.include[key] !== false,
   };
@@ -1055,7 +1101,7 @@ function renderLabels(){
       + (l.rows.length>1 ? '<span class="badge">同梱 '+l.rows.length+'件</span>' : '')
       + (l.okinawa ? '<span class="badge">沖縄</span>' : '')
       + (spec.trim() ? '<span class="badge warn">指定 '+esc(spec)+'</span>' : '') + '</div>'
-      + '<div>'+esc(l.name)+'　〒'+esc(l.zip7)+'</div><div class="addr">'+esc(l.addr)+'</div>'
+      + '<div>'+esc(l.name)+'　〒'+esc(l.zip7)+'</div><div class="addr">'+(l.ya ? esc(l.ya.line1)+(l.ya.line2 ? '<br>建物名欄：'+esc(l.ya.line2) : '') : esc(l.addr))+'</div>'
       + (msgs ? '<div class="msgs">'+msgs+'</div>' : '') + '</div>'
       + '<div class="lab-opts">'+opts+'</div></div>';
   }).join('');
@@ -1076,7 +1122,7 @@ $('#labList').addEventListener('click', e => {
 });
 
 function yamatoRow(l, cfg){
-  const v = {}, r0 = l.rows[0], a = splitB(l.addr,[64,32]).parts;
+  const v = {}, r0 = l.rows[0], a = [l.ya.line1, l.ya.line2];
   const shop = [...new Set(l.rows.map(r=>r.shop).filter(Boolean))][0] || '';
   v['お客様管理番号'] = cutB(r0.orderId, 50);
   v['送り状種類'] = l.type;
