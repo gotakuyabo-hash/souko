@@ -7,6 +7,8 @@
  *  - 画像URLが空の行は、配送シートNo.で「入力シート」の画像URLを探す
  *  - アプリの完了ボタンで、Chatworkのタスクを完了（または元に戻す）
  *  - 荷物を受領したときの状態（元払/着払 × 未開封/開封済）を返送管理シートのC列に書き込む
+ *  - 読み書きするシートは、配送管理アプリ（USyoshida.html）と同じ設定を使う
+ *    （Firestore の deliveryClients/150 の sheetId）。どちらのアプリで差し替えても両方に反映される
  *
  * 使い方
  *  コックピットの index.js と同じフォルダに置き、index.js の最後に次の1行を追加：
@@ -30,7 +32,10 @@ function tokenOf() {
 //   firebase functions:secrets:set HENSO_PASSPHRASE  → 「logex」を入力
 const HENSO_PASSPHRASE = defineSecret("HENSO_PASSPHRASE");
 
-const SPREADSHEET_ID = "1o_BGcdN5SwnbLeomJ1qch-NSN2YcQk8MT1N2aMWexL0";
+// シートは配送管理アプリと共通の設定（deliveryClients/150）を使う。設定が無いときだけ、この初期値を使う
+const CLIENT_ID = "150"; // 吉田様のお客様ID（配送管理アプリの「お客様ID」と同じ）
+const DEFAULT_SPREADSHEET_ID = "1o_BGcdN5SwnbLeomJ1qch-NSN2YcQk8MT1N2aMWexL0";
+const REQUIRED_TABS = ["返送管理シート", "入力シート"];
 const RETURN_RANGE = "'返送管理シート'!A3:Z"; // 1行目=フォームURL、2行目=見出し
 const INPUT_RANGE = "'入力シート'!B2:L"; // B=No、L=画像URL
 const TOKEN_HOURS = 12;
@@ -47,7 +52,56 @@ const RECEIPT_VALUES = [
 
 /* ---------- スプレッドシート読み取り（キャッシュ付き） ---------- */
 const gAuth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
-const SHEETS_URL = "https://sheets.googleapis.com/v4/spreadsheets/" + SPREADSHEET_ID + "/values/";
+const SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets/";
+
+/* ---------- シートの設定（Firestore） ---------- */
+const CONFIG_REF = () => admin.firestore().collection("deliveryClients").doc(CLIENT_ID);
+let cfgMem = null; // { id, t }
+async function sheetId() {
+  if (cfgMem && Date.now() - cfgMem.t < 60 * 1000) return cfgMem.id;
+  let id = DEFAULT_SPREADSHEET_ID;
+  try {
+    const snap = await CONFIG_REF().get();
+    const d = snap.exists ? snap.data() : null;
+    if (d && d.sheetId) id = d.sheetId;
+  } catch (e) { console.error("deliveryClients/" + CLIENT_ID + " を読めません: " + e.message); }
+  if (cfgMem && cfgMem.id !== id) clearSheetCache();
+  cfgMem = { id, t: Date.now() };
+  return id;
+}
+async function valuesUrl() {
+  return SHEETS_BASE + (await sheetId()) + "/values/";
+}
+async function serviceAccountEmail() {
+  try { const c = await gAuth.getCredentials(); return (c && c.client_email) || ""; } catch (e) { return ""; }
+}
+function parseSheetId(s) {
+  const v = String(s || "").trim();
+  const m = v.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  return /^[a-zA-Z0-9_-]{20,}$/.test(v) ? v : "";
+}
+// シートが開けるか・必要なタブと見出しがそろっているかを確かめる
+async function inspectSheet(id) {
+  const headers = { Authorization: "Bearer " + (await accessToken()) };
+  const r = await fetch(SHEETS_BASE + id + "?fields=properties.title,sheets.properties.title", { headers });
+  if (r.status === 403) {
+    const sa = await serviceAccountEmail();
+    throw new Error("このシートを開く権限がありません。シートの共有に" + (sa ? "「" + sa + "」" : "サーバー用アカウント") + "を「編集者」で追加してください");
+  }
+  if (r.status === 404) throw new Error("シートが見つかりません。URLを確認してください");
+  if (!r.ok) throw new Error("シートを確認できませんでした（" + r.status + "）");
+  const d = await r.json();
+  const tabs = (d.sheets || []).map((x) => x.properties.title);
+  const missing = REQUIRED_TABS.filter((t) => !tabs.includes(t));
+  if (missing.length) throw new Error("「" + missing.join("」「") + "」のタブが見つかりません");
+  const h = await fetch(SHEETS_BASE + id + "/values/" + encodeURIComponent("'返送管理シート'!A2:C2"), { headers });
+  const hv = h.ok ? ((await h.json()).values || [[]])[0] : [];
+  if (!/ステータス/.test(String(hv[2] || ""))) {
+    throw new Error("返送管理シートのC列（2行目）が「ステータス」になっていません。列の並びを確認してください");
+  }
+  return { title: (d.properties && d.properties.title) || "" };
+}
 
 async function accessToken() {
   const client = await gAuth.getClient();
@@ -55,7 +109,7 @@ async function accessToken() {
   return (t && t.token) || t;
 }
 async function sheetGet(range) {
-  const r = await fetch(SHEETS_URL + encodeURIComponent(range), {
+  const r = await fetch((await valuesUrl()) + encodeURIComponent(range), {
     headers: { Authorization: "Bearer " + (await accessToken()) },
   });
   if (!r.ok) throw new Error("シートの読み込みに失敗しました（" + r.status + "）" + (await r.text()));
@@ -63,7 +117,7 @@ async function sheetGet(range) {
   return d.values || [];
 }
 async function sheetPut(range, values) {
-  const r = await fetch(SHEETS_URL + encodeURIComponent(range) + "?valueInputOption=RAW", {
+  const r = await fetch((await valuesUrl()) + encodeURIComponent(range) + "?valueInputOption=RAW", {
     method: "PUT",
     headers: { Authorization: "Bearer " + (await accessToken()), "Content-Type": "application/json" },
     body: JSON.stringify({ values }),
@@ -72,6 +126,7 @@ async function sheetPut(range, values) {
 }
 
 const cache = {};
+function clearSheetCache() { Object.keys(cache).forEach((k) => delete cache[k]); }
 async function readRange(range, ttlMs, fresh) {
   const c = cache[range];
   if (!fresh && c && Date.now() - c.t < ttlMs) return c.v;
@@ -505,6 +560,29 @@ exports.henso = onRequest(
         if (/到着/.test(v)) await markReceived([normNo(no)], v);
         else await unmarkReceived(normNo(no));
         return res.json({ ok: true, prev, value: v });
+      }
+
+      // 設定：読み書きするシート
+      if (action === "config" && req.method === "GET") {
+        const id = await sheetId();
+        const out = { sheetId: id, sheetTitle: "", serviceAccount: await serviceAccountEmail(), problem: "" };
+        try { out.sheetTitle = (await inspectSheet(id)).title; }
+        catch (e) { out.problem = e.message; }
+        return res.json(out);
+      }
+      if (action === "config" && req.method === "POST") {
+        const id = parseSheetId(req.body && req.body.sheetUrl);
+        if (!id) return res.status(400).json({ error: "シートのURLを正しく貼り付けてください" });
+        const { title } = await inspectSheet(id);
+        // 配送管理アプリと同じドキュメントの sheetId だけを書き換える（ほかの設定はそのまま）
+        await CONFIG_REF().set({
+          sheetId: id,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedBy: "返送アプリ",
+        }, { merge: true });
+        clearSheetCache();
+        cfgMem = { id, t: Date.now() };
+        return res.json({ sheetId: id, sheetTitle: title });
       }
 
       return res.status(404).json({ error: "不明な操作です" });
