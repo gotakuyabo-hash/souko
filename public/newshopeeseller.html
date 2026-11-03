@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<title>新規お申込み</title>
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --ink:#1C2631; --sub:#5E6B78; --line:#D3DAE1;
+  --blue:#1E5A84; --blue-soft:#E3EEF6; --stamp:#C2412D; --warn:#A86A00;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
+  font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.top{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;
+  display:flex;align-items:center;justify-content:space-between;padding:12px 16px}
+.top h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.04em}
+.top button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+  border-radius:6px;padding:4px 12px;font-size:13px}
+
+.wrap{max-width:720px;margin:0 auto;padding:12px 12px 40px}
+.filters{display:grid;gap:10px;margin-bottom:12px}
+.seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;border:0;background:transparent;padding:8px 0;font-weight:600;color:var(--sub)}
+.seg button.on{background:var(--blue);color:#fff}
+input[type=search],.field input{width:100%;padding:9px 12px;border:1px solid var(--line);
+  border-radius:8px;background:var(--surface)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 12px;font-size:13px;color:var(--sub)}
+.chip.on{border-color:var(--blue);background:var(--blue-soft);color:var(--blue);font-weight:600}
+.count{font-size:13px;color:var(--sub);margin:0 2px 6px}
+
+.item{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:12px 14px;margin-bottom:8px}
+.item-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.nm{font-weight:700;font-size:16px}
+.no{font-variant-numeric:tabular-nums;font-weight:700;color:var(--blue);white-space:nowrap}
+.no.none{color:var(--warn);font-weight:600;font-size:13px}
+.item-sub{font-size:12.5px;color:var(--sub);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+.dots{display:flex;gap:5px;margin-top:8px}
+.dot{width:11px;height:11px;border-radius:50%;border:1.5px dashed #A9B4BF}
+.dot.done{border:0;background:var(--stamp)}
+.dot.note{border:1.5px solid var(--warn)}
+.empty{text-align:center;color:var(--sub);padding:40px 0}
+
+/* 詳細 */
+#detail{position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:10}
+.dhead{position:sticky;top:0;z-index:2;background:var(--ink);color:#fff;padding:10px 12px;display:flex;align-items:center;gap:10px}
+.dhead button{background:transparent;border:0;color:#fff;font-size:14px;padding:4px 6px}
+.dhead .t{font-weight:700;font-size:16px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dhead .src{font-size:12px;border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:1px 10px}
+.sec{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.sec h2{font-size:14px;margin:0 0 10px;color:var(--sub);font-weight:700}
+.info{display:grid;grid-template-columns:7.5em 1fr;gap:4px 10px;font-size:14px;margin:0}
+.info dt{color:var(--sub)}
+.info dd{margin:0;word-break:break-all}
+.question{margin-top:10px;padding:10px;background:#FFF7E6;border-radius:8px;font-size:13.5px;white-space:pre-wrap}
+
+.field{margin-bottom:10px}
+.field label{display:block;font-size:13px;color:var(--sub);margin-bottom:3px}
+.field .row{display:flex;gap:6px}
+.field .row input{flex:1}
+.mini{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:0 12px;font-size:13px;white-space:nowrap}
+.hint{font-size:12px;color:var(--warn);margin-top:2px}
+.pw{font-family:"SFMono-Regular",Menlo,Consolas,monospace;letter-spacing:.06em}
+
+/* 判子 */
+.steps{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.step{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;
+  background:var(--surface);padding:8px 10px;text-align:left}
+.stamp{flex:none;width:38px;height:38px;border-radius:50%;border:2px dashed #B5C0CA;
+  display:grid;place-items:center;font-weight:700;font-size:15px;color:transparent}
+.step.done .stamp{border:2.5px solid var(--stamp);color:var(--stamp);transform:rotate(-12deg);
+  font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+.step.skip .stamp{border:2px solid #9AA6B2;color:#7A8794;font-size:11px;transform:rotate(-12deg)}
+.step.note .stamp{border:2px solid var(--warn)}
+.step .lb{font-size:13px;line-height:1.35}
+.step .val{display:block;font-size:11.5px;color:var(--warn)}
+@media (prefers-reduced-motion:no-preference){
+  .step.just .stamp{animation:press .28s ease-out}
+  @keyframes press{0%{transform:scale(1.5) rotate(-12deg);opacity:0}100%{transform:scale(1) rotate(-12deg);opacity:1}}
+}
+
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tab{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:4px 12px;font-size:13px}
+.tab.on{background:var(--blue);border-color:var(--blue);color:#fff}
+pre.out{margin:0;white-space:pre-wrap;word-break:break-all;background:#F6F8FA;border:1px solid var(--line);
+  border-radius:8px;padding:12px;font-size:13px;line-height:1.55;max-height:320px;overflow:auto;font-family:inherit}
+.copy{margin-top:8px;width:100%;padding:10px;border:0;border-radius:8px;background:var(--blue-soft);color:var(--blue);font-weight:700}
+
+.savebar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 30%);padding:16px 12px 14px}
+.save{display:block;width:100%;max-width:696px;margin:0 auto;padding:13px;border:0;border-radius:10px;
+  background:var(--blue);color:#fff;font-weight:700;font-size:16px}
+.save:disabled{opacity:.55}
+
+#toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);color:#fff;
+  padding:9px 16px;border-radius:8px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90vw}
+#toast.show{opacity:1}
+#toast.err{background:#9B2C1E}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>新規お申込み</h1>
+  <button id="reload" type="button">再読み込み</button>
+</header>
+
+<div class="wrap">
+  <div class="filters">
+    <div class="seg" role="tablist">
+      <button type="button" data-mode="open" class="on">対応中</button>
+      <button type="button" data-mode="all">すべて</button>
+    </div>
+    <input id="q" type="search" placeholder="名前・メール・管理番号で検索">
+    <div id="srcChips" class="chips"></div>
+  </div>
+  <p id="count" class="count"></p>
+  <main id="list"><p class="empty">読み込み中…</p></main>
+</div>
+
+<section id="detail" hidden></section>
+<div id="toast"></div>
+
+<script>
+var DB = null, mode = 'open', srcFilter = '', query = '', cur = null, tab = 'welcome';
+var DONE_RE = /^(○|〇|済|契約済|締結済|-|－)/;
+var SKIP_RE = /^(不要|なし)/;
+var COUNTRY = {'シンガポール':'SGP','台湾':'TWN','マレーシア':'MYS','ベトナム':'VNM','フィリピン':'PHL','タイ':'THA','ブラジル':'BRA'};
+
+function $(s){ return document.querySelector(s); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function stateOf(v){ v = String(v || '').trim();
+  if (!v) return 'todo'; if (SKIP_RE.test(v)) return 'skip'; if (DONE_RE.test(v)) return 'done'; return 'note'; }
+function srcOf(k){ return DB.sources.filter(function(s){ return s.key === k; })[0]; }
+function noOf(a){ return a.fields.account || a.fields.rowNo || ''; }
+function tsNum(s){ var m = String(s || '').match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+):(\d+)/);
+  return m ? new Date(+m[1], m[2]-1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0; }
+function isOpen(a){
+  // 利用開始以外に、空欄かメモ書き（保留など）が残っていれば「対応中」
+  return srcOf(a.source).steps.some(function(s){
+    if (s.key === 'start') return false;
+    var k = stateOf(a.steps[s.key]);
+    return k === 'todo' || k === 'note';
+  });
+}
+function toast(msg, err){ var t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(t._t); t._t = setTimeout(function(){ t.className = ''; }, 2600); }
+
+// ===== 読み込み =====
+function load(){
+  $('#list').innerHTML = '<p class="empty">読み込み中…</p>';
+  google.script.run
+    .withSuccessHandler(function(d){ DB = d; renderChips(); renderList(); })
+    .withFailureHandler(function(e){ $('#list').innerHTML = '<p class="empty">読み込めませんでした。' + esc(e.message) + '</p>'; })
+    .getData();
+}
+
+function renderChips(){
+  var h = '<button type="button" class="chip' + (srcFilter ? '' : ' on') + '" data-src="">すべてのフォーム</button>';
+  DB.sources.forEach(function(s){
+    h += '<button type="button" class="chip' + (srcFilter === s.key ? ' on' : '') + '" data-src="' + s.key + '">' + esc(s.label) + '</button>';
+  });
+  $('#srcChips').innerHTML = h;
+}
+
+function renderList(){
+  var q = query.toLowerCase();
+  var rows = DB.apps.map(function(a, i){ return {a:a, i:i}; }).filter(function(x){
+    var a = x.a;
+    if (srcFilter && a.source !== srcFilter) return false;
+    if (mode === 'open' && !isOpen(a)) return false;
+    if (q){
+      var hay = [a.fields.name, a.fields.email, noOf(a), a.fields.shop, a.fields.toolNo].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  }).sort(function(x, y){ return tsNum(y.a.fields.timestamp) - tsNum(x.a.fields.timestamp); });
+
+  $('#count').textContent = rows.length + '件';
+  if (!rows.length){
+    $('#list').innerHTML = '<p class="empty">' + (mode === 'open' ? '対応中のお申込みはありません。「すべて」で過去分を表示できます。' : '該当するお申込みはありません。') + '</p>';
+    return;
+  }
+  $('#list').innerHTML = rows.map(function(x){
+    var a = x.a, s = srcOf(a.source), no = noOf(a);
+    var dots = s.steps.map(function(st){ var k = stateOf(a.steps[st.key]);
+      return '<span class="dot ' + (k === 'done' || k === 'skip' ? 'done' : k === 'note' ? 'note' : '') + '" title="' + esc(st.label) + '"></span>'; }).join('');
+    return '<button type="button" class="item" data-i="' + x.i + '">' +
+      '<div class="item-top"><span class="nm">' + esc(a.fields.name) + ' 様</span>' +
+      (no ? '<span class="no">' + esc(no) + '</span>' : '<span class="no none">番号未設定</span>') + '</div>' +
+      '<div class="item-sub"><span>' + esc(s.label) + '</span><span>' + esc(String(a.fields.timestamp || '').split(' ')[0]) + '</span>' +
+      (a.fields.countries ? '<span>' + esc(a.fields.countries) + '</span>' : '') + '</div>' +
+      '<div class="dots">' + dots + '</div></button>';
+  }).join('');
+}
+
+// ===== 詳細 =====
+function genPw(){
+  var U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnpqrstuvwxyz', D = '23456789', ALL = U + L + D;
+  var r = new Uint32Array(8); crypto.getRandomValues(r);
+  var p = [U[r[0] % U.length], L[r[1] % L.length], D[r[2] % D.length]];
+  for (var i = 3; i < 8; i++) p.push(ALL[r[i] % ALL.length]);
+  for (var j = p.length - 1; j > 0; j--){ var k = r[j] % (j + 1); var t = p[j]; p[j] = p[k]; p[k] = t; }
+  return p.join('');
+}
+
+function openDetail(i){
+  var a = DB.apps[i], s = srcOf(a.source);
+  var notRegistered = stateOf(a.steps.system) === 'todo';
+  var no = noOf(a);
+  cur = {
+    i: i, a: a, s: s, toId: '', just: '',
+    suggested: { no: !no && notRegistered, pw: !a.fields.pw && notRegistered },
+    form: {
+      no: no || (notRegistered ? DB.nextNo[s.key] : ''),
+      loginId: a.fields.loginId || (notRegistered ? a.fields.email : ''),
+      pw: a.fields.pw || (notRegistered ? genPw() : ''),
+      toolNo: a.fields.toolNo || ''
+    },
+    steps: JSON.parse(JSON.stringify(a.steps))
+  };
+  renderDetail();
+  $('#detail').hidden = false;
+  $('#detail').scrollTop = 0;
+}
+
+function countries(){
+  var raw = String(cur.a.fields.countries || '');
+  var out = [];
+  raw.split(/[,、，\s／\/]+/).forEach(function(t){
+    t = t.trim(); if (!t) return;
+    var c = COUNTRY[t] || (/^[A-Za-z]{3}$/.test(t) ? t.toUpperCase() : '');
+    if (c && out.indexOf(c) < 0) out.push(c);
+  });
+  return out;
+}
+
+function fill(tpl){
+  var f = cur.form;
+  var map = { toId: cur.toId || '　', name: cur.a.fields.name || '', no: f.no || '（管理番号）',
+    prefix: cur.s.prefix, loginId: f.loginId || '（ID）', pw: f.pw || '（パスワード）' };
+  return tpl.replace(/\{\{(\w+)\}\}/g, function(_, k){ return map[k] != null ? map[k] : ''; });
+}
+
+function texts(){
+  var f = cur.form;
+  return {
+    welcome: fill(DB.templates.welcome),
+    overview: fill(DB.templates.overview),
+    codes: countries().map(function(c){ return (f.no || '（管理番号）') + '_' + c; }).join('\n') || '（出品国が未入力です）',
+    subject: fill(DB.templates.subject),
+    login: 'ログインURL：https://crossborder-auto.magitech-tool-lab.com/daikoUserLogin/\nID：' + (f.loginId || '') + '\nPass：' + (f.pw || '')
+  };
+}
+var TAB_LABEL = { welcome:'ご案内文', overview:'概要欄', codes:'国別コード', subject:'グループ名', login:'ログイン情報' };
+
+function renderDetail(){
+  var a = cur.a, s = cur.s, f = cur.form, F = a.fields;
+  var info = [['ショップ名', F.shop], ['ショップID', F.shopId], ['企業名', F.company], ['メール', F.email],
+    ['電話番号', F.phone], ['Chatwork ID', F.chatworkId], ['出品国', F.countries], ['動画撮影', F.video],
+    ['レビューカード', F.review], ['月間出荷', F.monthly], ['申込日時', F.timestamp]]
+    .filter(function(r){ return r[1]; })
+    .map(function(r){ return '<dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('');
+
+  var steps = s.steps.map(function(st){
+    var v = cur.steps[st.key] || '', k = stateOf(v);
+    var face = k === 'done' ? '済' : k === 'skip' ? '不要' : '';
+    return '<button type="button" class="step ' + k + (cur.just === st.key ? ' just' : '') + '" data-step="' + st.key + '">' +
+      '<span class="stamp">' + face + '</span><span class="lb">' + esc(st.label) +
+      (k === 'note' || (k === 'done' && v !== '○' && v !== '〇') ? '<span class="val">' + esc(v) + '</span>' : '') +
+      '</span></button>';
+  }).join('');
+
+  var T = texts();
+  var tabs = Object.keys(TAB_LABEL).map(function(k){
+    return '<button type="button" class="tab' + (tab === k ? ' on' : '') + '" data-tab="' + k + '">' + TAB_LABEL[k] + '</button>';
+  }).join('');
+
+  $('#detail').innerHTML =
+    '<div class="dhead"><button type="button" id="back">‹ 一覧</button><span class="t">' + esc(F.name) + ' 様</span><span class="src">' + esc(s.label) + '</span></div>' +
+    '<div class="wrap">' +
+    '<div class="sec"><h2>お申込み内容</h2><dl class="info">' + info + '</dl>' +
+      (F.question ? '<div class="question">' + esc(F.question) + '</div>' : '') + '</div>' +
+
+    '<div class="sec"><h2>登録情報</h2>' +
+      '<div class="field"><label for="f-no">管理番号（アカウント名）</label><div class="row">' +
+        '<input id="f-no" data-f="no" value="' + esc(f.no) + '"><button type="button" class="mini" id="sugNo">次の番号</button></div>' +
+        (cur.suggested.no ? '<div class="hint">次の空き番号を入れています。まだ保存されていません。</div>' : '') + '</div>' +
+      '<div class="field"><label for="f-id">システムのログインID</label><input id="f-id" data-f="loginId" value="' + esc(f.loginId) + '"></div>' +
+      '<div class="field"><label for="f-pw">パスワード</label><div class="row">' +
+        '<input id="f-pw" class="pw" data-f="pw" value="' + esc(f.pw) + '"><button type="button" class="mini" id="newPw">作り直す</button></div>' +
+        (cur.suggested.pw ? '<div class="hint">自動で作成しました。まだ保存されていません。</div>' : '') + '</div>' +
+      '<div class="field"><label for="f-tool">ツール管理番号</label><input id="f-tool" data-f="toolNo" placeholder="例：y0380" value="' + esc(f.toolNo) + '"></div>' +
+      '<div class="field"><label for="f-to">ご案内文の [To:] に入れるID（保存されません）</label><input id="f-to" data-to="1" inputmode="numeric" value="' + esc(cur.toId) + '"></div>' +
+    '</div>' +
+
+    '<div class="sec"><h2>手続き（タップで 済 → 不要 → 空欄）</h2><div class="steps">' + steps + '</div></div>' +
+
+    '<div class="sec"><h2>コピー用テキスト</h2><div class="tabs">' + tabs + '</div>' +
+      '<pre class="out" id="out">' + esc(T[tab]) + '</pre><button type="button" class="copy" id="copy">コピー</button></div>' +
+    '</div>' +
+    '<div class="savebar"><button type="button" class="save" id="save">シートに保存</button></div>';
+  cur.just = '';
+}
+
+function refreshOut(){ var o = $('#out'); if (o) o.textContent = texts()[tab]; }
+
+function cycleStep(key){
+  var v = cur.steps[key] || '', k = stateOf(v);
+  cur.steps[key] = (k === 'todo' || k === 'note') ? '○' : (k === 'done' ? '不要' : '');
+  cur.just = cur.steps[key] ? key : '';
+  renderDetail();
+}
+
+function copyText(t, btn){
+  var ok = function(){ btn.textContent = 'コピーしました'; setTimeout(function(){ btn.textContent = 'コピー'; }, 1500); };
+  var fallback = function(){
+    var ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, t.length);
+    try { document.execCommand('copy'); ok(); } catch (e) { toast('コピーできませんでした。長押しで選択してください', true); }
+    ta.remove();
+  };
+  if (navigator.clipboard && window.isSecureContext){ navigator.clipboard.writeText(t).then(ok, fallback); } else { fallback(); }
+}
+
+function save(){
+  var a = cur.a, s = cur.s, f = cur.form, F = a.fields;
+  var fields = {}, steps = {};
+  if (f.no !== (F.account || '')) fields.account = f.no;
+  if (s.hasRowNo && f.no !== (F.rowNo || '')) fields.rowNo = f.no;
+  if (f.loginId !== (F.loginId || '')) fields.loginId = f.loginId;
+  if (f.pw !== (F.pw || '')) fields.pw = f.pw;
+  if (f.toolNo !== (F.toolNo || '')) fields.toolNo = f.toolNo;
+  Object.keys(cur.steps).forEach(function(k){ if ((cur.steps[k] || '') !== (a.steps[k] || '')) steps[k] = cur.steps[k] || ''; });
+  if (!Object.keys(fields).length && !Object.keys(steps).length){ toast('変更はありません'); return; }
+
+  var btn = $('#save'); btn.disabled = true; btn.textContent = '保存中…';
+  google.script.run
+    .withSuccessHandler(function(res){
+      Object.keys(fields).forEach(function(k){ F[k] = fields[k]; });
+      Object.keys(steps).forEach(function(k){ a.steps[k] = steps[k]; });
+      if (res.subject) F.subject = res.subject;
+      DB.nextNo[s.key] = res.nextNo;
+      cur.suggested = { no: false, pw: false };
+      renderDetail(); renderList();
+      toast('シートに保存しました');
+    })
+    .withFailureHandler(function(e){ btn.disabled = false; btn.textContent = 'シートに保存'; toast(e.message, true); })
+    .saveApp({ source: a.source, row: a.row, check: { name: F.name || '', email: F.email || '' }, fields: fields, steps: steps });
+}
+
+// ===== イベント =====
+document.addEventListener('click', function(e){
+  var t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'reload') return load();
+  if (t.dataset.mode){ mode = t.dataset.mode;
+    document.querySelectorAll('.seg button').forEach(function(b){ b.classList.toggle('on', b === t); });
+    return renderList(); }
+  if (t.dataset.src != null && t.classList.contains('chip')){ srcFilter = t.dataset.src; renderChips(); return renderList(); }
+  if (t.dataset.i != null) return openDetail(+t.dataset.i);
+  if (t.id === 'back'){ $('#detail').hidden = true; cur = null; return; }
+  if (t.dataset.step) return cycleStep(t.dataset.step);
+  if (t.dataset.tab){ tab = t.dataset.tab; return renderDetail(); }
+  if (t.id === 'copy') return copyText(texts()[tab], t);
+  if (t.id === 'newPw'){ cur.form.pw = genPw(); cur.suggested.pw = true; return renderDetail(); }
+  if (t.id === 'sugNo'){ cur.form.no = DB.nextNo[cur.s.key]; cur.suggested.no = true; return renderDetail(); }
+  if (t.id === 'save') return save();
+});
+document.addEventListener('input', function(e){
+  var el = e.target;
+  if (el.id === 'q'){ query = el.value.trim(); return renderList(); }
+  if (!cur) return;
+  if (el.dataset.f){ cur.form[el.dataset.f] = el.value.trim(); refreshOut(); }
+  if (el.dataset.to){ cur.toId = el.value.trim(); refreshOut(); }
+});
+
+load();
+</script>
+</body>
+</html>
