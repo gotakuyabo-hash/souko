@@ -1709,12 +1709,26 @@ async function askQuestion(token, p) {
     + "[/info]"
     + "このメッセージに「返信」するか、「" + label + "」と書いて答えてください";
 
-  const posted = await cw(token, "post", "/rooms/" + qRoom + "/messages", { body, self_unread: "0" });
+  // 質問ルームのメンバーでないアカウント（松下アカウントなど）から聞いた時は、メンバーのアカウントで送る
+  //   回答が届いたら、聞いたアカウント側のカードに戻す（p.account で記録）
+  let posted = null, lastErr = null, postedBy = "";
+  const order = [p.account].concat(Object.keys(ACCOUNTS).filter(a => a !== p.account));
+  for (const acc of order) {
+    try {
+      const tk = acc === p.account ? token : getChatworkToken(acc);
+      posted = await cw(tk, "post", "/rooms/" + qRoom + "/messages", { body, self_unread: "0" });
+      postedBy = acc;
+      break;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (!posted) throw new Error("質問ルームに送れませんでした（どのアカウントもそのルームのメンバーでない可能性があります）：" + (lastErr ? lastErr.message : ""));
   const now = nowSec();
   const data = {
     no, label, status: "open", account: p.account, roomId: rid, roomName,
     question, customerText: lastCust.slice(0, 500), askedBy: by, askedAt: now,
-    questionRoomId: qRoom, cwMessageId: String((posted && posted.message_id) || ""),
+    questionRoomId: qRoom, cwMessageId: String((posted && posted.message_id) || ""), postedBy,
     answer: "", answeredBy: "", answeredAt: 0
   };
   await db.collection("cw_questions").doc("Q" + no).set(data);
