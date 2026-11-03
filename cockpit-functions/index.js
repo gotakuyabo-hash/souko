@@ -222,6 +222,8 @@ async function handleRequest(p) {
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
           result.later = await setLater(p.account, [p.room_id], false);
         }
+      } else if (action === "get_reply_refs") {
+        result = await getReplyRefs(token, p.refs);
       } else if (action === "ask_question") {
         result = await askQuestion(token, p);
       } else if (action === "sync_now") {
@@ -447,6 +449,14 @@ async function sendChatworkMessage(token, roomId, body) {
 }
 
 // このアカウント自身のID（自分のメッセージだけ編集・削除できるため）
+// 自社の人からでも、このアカウント宛て（[To:]・返信・タスクの担当）なら「依頼」として要対応に出す
+function isRequestToMe(m, meId) {
+  if (!meId || !m) return false;
+  if (String(m.account && m.account.account_id) === String(meId)) return false;
+  const b = String(m.body || "");
+  return b.indexOf("[To:" + meId + "]") !== -1 || b.indexOf("[rp aid=" + meId + " ") !== -1 || b.indexOf("[task aid=" + meId + " ") !== -1;
+}
+
 async function getMeId(account, token) {
   const key = "me_id_" + account;
   const hit = cacheGet(key);
@@ -1406,8 +1416,13 @@ async function saveSyncState(key, obj) {
 
 const syncStatusMem = {};
 
+// 自社かどうかの判定などを変えた時に上げる（上げると、最近のルームを1回だけ取り直す）
+const SYNC_VER = 2;
+
 async function syncAccount(acc, token, myIds, learn, opt = {}) {
   const ownerIds = await getOwnerIds();   // ラクロジスタッフ・松下のアカウント
+  let meId = "";
+  try { meId = await getMeId(acc, token); } catch (e) {}
   const msgCol = msgCollection();
   const stateKey = "sync_" + acc;
   const state = await loadSyncState(stateKey, opt.freshState);   // 🔄からの時は、定期同期と食い違わないよう Firestore から読む
@@ -1424,10 +1439,11 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     const st = state[rid] || {};
     const lu = r.last_update_time || 0;
     const un = Number(r.unread_num || 0);
-    newState[rid] = { u: lu, n: un, m: st.m || 0 };
+    newState[rid] = { u: lu, n: un, m: st.m || 0, v: st.v || 0 };
     if (st.tm) newState[rid].tm = st.tm;
     // 仕分けを入れる前から同期済みのルームも、1回だけ取り直して仕分ける（tm がまだないルーム）
-    const stale = (lu > (st.m || 0) || !st.tm) && (lu >= recent || un > 0);
+    // 判定のしかたを変えた時（SYNC_VER を上げた時）も、1回だけ取り直す
+    const stale = (lu > (st.m || 0) || !st.tm || st.v !== SYNC_VER) && (lu >= recent || un > 0);
     if (stale) need.push(r);
     if (st.u !== lu || st.n !== un || !state[rid]) {
       writes.push(wPatch("cw_rooms", acc + "_" + rid, { account: acc, roomId: rid, name: r.name || "", unread: un, lastUpdate: lu }));
@@ -1469,10 +1485,12 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     // 社内ルーム（渡辺さんとのルームなど）では、渡辺さんなど STAFF_ACCOUNT_IDS の人の発言は「相手からの連絡」として扱う
     //   （自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
     const mineIds = (learn && learn.internal.indexOf(rid) !== -1) ? ownerIds : myIds;
+    // 自社の人の発言でも、このアカウント宛ての依頼（[To:]・返信・タスク）は「相手からの連絡」として扱う
+    const isMineMsg = m => mineIds.indexOf(String(m.account && m.account.account_id)) !== -1 && !isRequestToMe(m, meId);
     if (msgs.length) {
       const last = msgs[msgs.length - 1];
       let lastMineIdx = -1;
-      msgs.forEach((m, idx) => { if (mineIds.indexOf(String(m.account && m.account.account_id)) !== -1) lastMineIdx = idx; });
+      msgs.forEach((m, idx) => { if (isMineMsg(m)) lastMineIdx = idx; });
       meta.lastMsgId = String(last.message_id);
       meta.lastMsgTime = last.send_time || 0;
       meta.lastMine = lastMineIdx === msgs.length - 1;
@@ -1498,6 +1516,7 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     writes.push(wPatch("cw_rooms", acc + "_" + rid, meta));
     writes.push(wPatch(msgCol, acc + "_" + rid, msgDoc));   // 上書きではなく追記（判定済みの用件メモを消さないため）
     newState[rid].m = r.last_update_time || 0;
+    newState[rid].v = SYNC_VER;
   });
 
   // 仕分け（AI）。失敗したルームは「未取得」に戻して、次の同期でもう一度判定する
@@ -1536,6 +1555,31 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
 
+}
+
+// ==============================
+// 返信先のメッセージ（どのメッセージへの返信か）を取ってくる。1回20件まで
+// ==============================
+async function getReplyRefs(token, refs) {
+  const list = (Array.isArray(refs) ? refs : []).slice(0, 20).map(r => ({
+    rid: String((r && r.room_id) || "").replace(/[^0-9]/g, ""),
+    mid: String((r && r.message_id) || "").replace(/[^0-9]/g, "")
+  })).filter(r => r.rid && r.mid);
+  const out = {};
+  await inChunks(list, 5, async r => {
+    const key = r.rid + "-" + r.mid;
+    try {
+      const m = await cw(token, "get", "/rooms/" + r.rid + "/messages/" + r.mid);
+      out[key] = {
+        name: (m && m.account && m.account.name) || "",
+        body: stripTags(m && m.body).slice(0, 300),
+        time: (m && m.send_time) || 0
+      };
+    } catch (e) {
+      out[key] = { error: "返信先のメッセージが見つかりませんでした（削除されたか、別のルームのメッセージです）" };
+    }
+  });
+  return { refs: out };
 }
 
 // ==============================
