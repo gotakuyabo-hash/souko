@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<base target="_top">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>新規お申込み</title>
 <style>
 :root{
@@ -18,10 +18,9 @@ button{cursor:pointer}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
 .top{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;
-  display:flex;align-items:center;justify-content:space-between;padding:12px 16px}
+  display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px}
 .top h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.04em}
-.top button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
-  border-radius:6px;padding:4px 12px;font-size:13px}
+.top .synced{font-size:12px;opacity:.75}
 
 .wrap{max-width:720px;margin:0 auto;padding:12px 12px 40px}
 .filters{display:grid;gap:10px;margin-bottom:12px}
@@ -42,13 +41,14 @@ input[type=search],.field input{width:100%;padding:9px 12px;border:1px solid var
 .no{font-variant-numeric:tabular-nums;font-weight:700;color:var(--blue);white-space:nowrap}
 .no.none{color:var(--warn);font-weight:600;font-size:13px}
 .item-sub{font-size:12.5px;color:var(--sub);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+.flag{font-size:12px;font-weight:600;color:var(--warn)}
+.flag.err{color:var(--stamp)}
 .dots{display:flex;gap:5px;margin-top:8px}
 .dot{width:11px;height:11px;border-radius:50%;border:1.5px dashed #A9B4BF}
 .dot.done{border:0;background:var(--stamp)}
 .dot.note{border:1.5px solid var(--warn)}
 .empty{text-align:center;color:var(--sub);padding:40px 0}
 
-/* 詳細 */
 #detail{position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:10}
 .dhead{position:sticky;top:0;z-index:2;background:var(--ink);color:#fff;padding:10px 12px;display:flex;align-items:center;gap:10px}
 .dhead button{background:transparent;border:0;color:#fff;font-size:14px;padding:4px 6px}
@@ -60,6 +60,8 @@ input[type=search],.field input{width:100%;padding:9px 12px;border:1px solid var
 .info dt{color:var(--sub)}
 .info dd{margin:0;word-break:break-all}
 .question{margin-top:10px;padding:10px;background:#FFF7E6;border-radius:8px;font-size:13.5px;white-space:pre-wrap}
+.status{margin:0 0 12px;padding:10px 12px;border-radius:8px;font-size:13.5px;background:#FFF7E6;color:#6B4600}
+.status.err{background:#FBEAE7;color:#8A2617}
 
 .field{margin-bottom:10px}
 .field label{display:block;font-size:13px;color:var(--sub);margin-bottom:3px}
@@ -69,7 +71,6 @@ input[type=search],.field input{width:100%;padding:9px 12px;border:1px solid var
 .hint{font-size:12px;color:var(--warn);margin-top:2px}
 .pw{font-family:"SFMono-Regular",Menlo,Consolas,monospace;letter-spacing:.06em}
 
-/* 判子 */
 .steps{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .step{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;
   background:var(--surface);padding:8px 10px;text-align:left}
@@ -107,12 +108,12 @@ pre.out{margin:0;white-space:pre-wrap;word-break:break-all;background:#F6F8FA;bo
 <body>
 <header class="top">
   <h1>新規お申込み</h1>
-  <button id="reload" type="button">再読み込み</button>
+  <span class="synced" id="synced"></span>
 </header>
 
 <div class="wrap">
   <div class="filters">
-    <div class="seg" role="tablist">
+    <div class="seg">
       <button type="button" data-mode="open" class="on">対応中</button>
       <button type="button" data-mode="all">すべて</button>
     </div>
@@ -126,100 +127,232 @@ pre.out{margin:0;white-space:pre-wrap;word-break:break-all;background:#F6F8FA;bo
 <section id="detail" hidden></section>
 <div id="toast"></div>
 
-<script>
-var DB = null, mode = 'open', srcFilter = '', query = '', cur = null, tab = 'welcome';
-var DONE_RE = /^(○|〇|済|契約済|締結済|-|－)/;
-var SKIP_RE = /^(不要|なし)/;
-var COUNTRY = {'シンガポール':'SGP','台湾':'TWN','マレーシア':'MYS','ベトナム':'VNM','フィリピン':'PHL','タイ':'THA','ブラジル':'BRA'};
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, onSnapshot, doc, updateDoc, serverTimestamp, deleteField }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-function $(s){ return document.querySelector(s); }
-function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
-  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+const firebaseConfig = {
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app",
+  messagingSenderId: "642116656086",
+  appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
+  measurementId: "G-8WG8GWQGCR"
+};
+const db = getFirestore(initializeApp(firebaseConfig));
+const COLLECTION = 'onboarding_apps';
+
+// 保存後すぐシートへ反映させるためのGAS WebアプリURL（空欄なら1分ごとの自動同期のみ）
+const SYNC_URL = '';
+
+const SOURCES = [
+  { key: 'IP',  label: '通常' },
+  { key: 'SMC', label: 'SMC様' },
+  { key: 'SP',  label: 'ショピ助様' },
+  { key: 'WBC', label: 'WBC様' },
+];
+const STEP_LABEL = {
+  cwGroup: 'Chatworkグループ作成', contract: '契約書送付', deposit: '保証金振込', square: 'Square月額請求',
+  system: 'システム登録', systemReport: 'システム登録完了報告', unpaid: '未入金リスト',
+  userSheet: 'ユーザー管理シート', mf: 'マネーフォワード登録', start: '利用開始'
+};
+
+// ===== コピー用テキスト =====
+// 差し込み：{{toId}} {{name}} {{no}} {{prefix}} {{loginId}} {{pw}}
+const TEMPLATES = {
+  welcome:
+`[To:{{toId}}]{{name}}さん
+【サービス開始に伴うお手続きのお願い】
+この度はサービスにお申込みいただき、誠にありがとうございます。
+サービス開始にあたり、以下の通りお手続きをお願いいたします。
+
+1.マニュアルのご確認
+まずは、こちらの導入マニュアルを最初にご一読ください。
+https://docs.google.com/document/d/15JFBodsZMgAbAYmwC_QHd_2Y0786UJqIA_9QXW6C_Lo/edit?usp=sharing
+
+2.各種お支払いとご契約
+費用と契約に関するお手続きをお願いいたします。
+
+■月額利用料のお支払い
+Squareより月額利用料（5,500円・税込）を請求させていただきます。
+メールが届きましたら、クレジットカードにてお支払いをお願いいたします。
+※作業費・送料等は銀行振込となります。
+
+■契約書へのご署名
+電子契約サービス「マネーフォワードクラウド契約」より契約書をお送りします。
+内容をご確認のうえ、電子署名をお願いいたします。
+
+■保証金のお振込み
+保証金として「1万円」を下記口座へお振込みください。
+
+【振込先口座】
+銀行名：GMOあおぞらネット銀行
+支店名：法人営業部
+口座種別：普通
+口座番号：1517380
+口座名義：カ）ロジックス
+
+3.配送システムの連携設定
+配送システムをご利用いただくため、以下の2ステップの設定をお願いいたします。
+
+①ShopeeAPIの申請
+以下よりAPI申請をお願いいたします。
+https://detailed-duck-454.notion.site/Shopee-API-389bed133f41819d92caceb61c779553
+
+②ツールでの連携作業
+アプリのステータスが「Online」になりましたら、下記システムへログインし、
+マニュアル「3.ツールによるAPI連携作業」に沿って、各出品国アカウントとの連携をお願いします。
+
+ログインURL：https://crossborder-auto.magitech-tool-lab.com/daikoUserLogin/
+ID：{{loginId}}
+Pass：{{pw}}
+
+4.商品の発送先について
+今後、商品を弊社へ発送いただく際は、以下の住所宛にお送りください。
+※「管理番号」および「OrderID」の記載が必須となります。
+
+氏名：株式会社LOGEX（{{no}}）※{{prefix}}から始まる管理番号
+郵便番号：〒182-0004
+住所：東京都調布市入間町2-29-29エステートハイムB棟1F
+建物名欄：OrderID（例：123456UWX0789N）を記入してください
+電話番号：ユーザー様ご自身の電話番号
+
+ご不明な点がございましたら、チャットにてお気軽にご連絡ください。
+これからどうぞよろしくお願い申し上げます。`,
+
+  overview:
+`▼配送管理依頼フォーム
+https://forms.gle/CN18H3WeEvRGkhtS6
+
+▼マニュアル
+https://docs.google.com/document/d/15JFBodsZMgAbAYmwC_QHd_2Y0786UJqIA_9QXW6C_Lo/edit?usp=sharing
+
+▼配送先について
+ご発送の際は、以下の住所宛にお送りください。
+また、「管理番号」および「Order ID」の記載が必須となりますので、
+お手数ですが、必ずご記載いただけますようお願いいたします。
+
+【配送先住所】
+氏名：株式会社LOGEX（{{no}}）※（　　　）内は管理番号
+（管理番号はチャットワークグループ名に記載しています）
+郵便番号：〒182-0004
+住所：東京都調布市入間町2-29-29 エステートハイムB棟1F
+建物名：Order ID（例：123456UWX0789N）
+電話番号：ユーザー様の電話番号`,
+
+  subject: '【Shopee発送代行】{{no}}_{{name}}様',
+};
+
+let APPS = [], mode = 'open', srcFilter = '', query = '', cur = null, tab = 'welcome';
+const DONE_RE = /^(○|〇|済|契約済|締結済|-|－)/;
+const SKIP_RE = /^(不要|なし)/;
+const COUNTRY = {'シンガポール':'SGP','台湾':'TWN','マレーシア':'MYS','ベトナム':'VNM','フィリピン':'PHL','タイ':'THA','ブラジル':'BRA'};
+const TAB_LABEL = { welcome:'ご案内文', overview:'概要欄', codes:'国別コード', subject:'グループ名', login:'ログイン情報' };
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function stateOf(v){ v = String(v || '').trim();
   if (!v) return 'todo'; if (SKIP_RE.test(v)) return 'skip'; if (DONE_RE.test(v)) return 'done'; return 'note'; }
-function srcOf(k){ return DB.sources.filter(function(s){ return s.key === k; })[0]; }
-function noOf(a){ return a.fields.account || a.fields.rowNo || ''; }
-function tsNum(s){ var m = String(s || '').match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+):(\d+)/);
+const labelOf = k => (SOURCES.find(s => s.key === k) || {}).label || k;
+const noOf = a => a.fields.account || a.fields.rowNo || '';
+function tsNum(s){ const m = String(s || '').match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+):(\d+)/);
   return m ? new Date(+m[1], m[2]-1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0; }
+const hasPending = a => a.pending && (Object.keys(a.pending.fields || {}).length || Object.keys(a.pending.steps || {}).length);
 function isOpen(a){
-  // 利用開始以外に、空欄かメモ書き（保留など）が残っていれば「対応中」
-  return srcOf(a.source).steps.some(function(s){
-    if (s.key === 'start') return false;
-    var k = stateOf(a.steps[s.key]);
-    return k === 'todo' || k === 'note';
+  return hasPending(a) || a.stepKeys.some(k => k !== 'start' && ['todo','note'].includes(stateOf(a.steps[k])));
+}
+function nextNo(source, prefix){
+  const re = new RegExp('^' + prefix + '(\\d+)$', 'i');
+  let max = 0;
+  APPS.filter(a => a.source === source).forEach(a => {
+    [a.fields.account, a.fields.rowNo].forEach(v => { const m = String(v || '').trim().match(re); if (m) max = Math.max(max, +m[1]); });
   });
+  return prefix + String(max ? max + 1 : 101).padStart(3, '0');
 }
-function toast(msg, err){ var t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
-  clearTimeout(t._t); t._t = setTimeout(function(){ t.className = ''; }, 2600); }
+function toast(msg, err){ const t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(t._t); t._t = setTimeout(() => { t.className = ''; }, 2800); }
 
-// ===== 読み込み =====
-function load(){
-  $('#list').innerHTML = '<p class="empty">読み込み中…</p>';
-  google.script.run
-    .withSuccessHandler(function(d){ DB = d; renderChips(); renderList(); })
-    .withFailureHandler(function(e){ $('#list').innerHTML = '<p class="empty">読み込めませんでした。' + esc(e.message) + '</p>'; })
-    .getData();
-}
+// ===== Firestore（リアルタイム） =====
+onSnapshot(collection(db, COLLECTION), snap => {
+  let last = 0;
+  APPS = snap.docs.map(d => {
+    const x = d.data();
+    const t = x.syncedAt && x.syncedAt.toDate ? x.syncedAt.toDate().getTime() : 0;
+    if (t > last) last = t;
+    return { id: d.id, source: x.source, prefix: x.prefix, row: x.row, hasRowNo: !!x.hasRowNo,
+      stepKeys: x.stepKeys || [], fields: x.info || {}, steps: x.steps || {},
+      pending: x.pending || null, syncError: x.syncError || '' };
+  });
+  if (last){ const d = new Date(last);
+    $('#synced').textContent = 'シート同期 ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  renderChips(); renderList();
+  if (cur){ const a = APPS.find(x => x.id === cur.a.id); if (a){ cur.a = a; renderStatus(); } }
+}, err => {
+  $('#list').innerHTML = '<p class="empty">読み込めませんでした。' + esc(err.message) + '</p>';
+});
 
 function renderChips(){
-  var h = '<button type="button" class="chip' + (srcFilter ? '' : ' on') + '" data-src="">すべてのフォーム</button>';
-  DB.sources.forEach(function(s){
-    h += '<button type="button" class="chip' + (srcFilter === s.key ? ' on' : '') + '" data-src="' + s.key + '">' + esc(s.label) + '</button>';
-  });
+  let h = '<button type="button" class="chip' + (srcFilter ? '' : ' on') + '" data-src="">すべてのフォーム</button>';
+  SOURCES.forEach(s => { h += '<button type="button" class="chip' + (srcFilter === s.key ? ' on' : '') + '" data-src="' + s.key + '">' + esc(s.label) + '</button>'; });
   $('#srcChips').innerHTML = h;
 }
 
 function renderList(){
-  var q = query.toLowerCase();
-  var rows = DB.apps.map(function(a, i){ return {a:a, i:i}; }).filter(function(x){
-    var a = x.a;
+  if (!APPS.length){
+    $('#count').textContent = '';
+    $('#list').innerHTML = '<p class="empty">まだデータがありません。GASの syncAll を一度実行してください。</p>';
+    return;
+  }
+  const q = query.toLowerCase();
+  const rows = APPS.filter(a => {
     if (srcFilter && a.source !== srcFilter) return false;
     if (mode === 'open' && !isOpen(a)) return false;
-    if (q){
-      var hay = [a.fields.name, a.fields.email, noOf(a), a.fields.shop, a.fields.toolNo].join(' ').toLowerCase();
-      if (hay.indexOf(q) < 0) return false;
-    }
+    if (q && ![a.fields.name, a.fields.email, noOf(a), a.fields.shop, a.fields.toolNo].join(' ').toLowerCase().includes(q)) return false;
     return true;
-  }).sort(function(x, y){ return tsNum(y.a.fields.timestamp) - tsNum(x.a.fields.timestamp); });
+  }).sort((x, y) => tsNum(y.fields.timestamp) - tsNum(x.fields.timestamp));
 
   $('#count').textContent = rows.length + '件';
   if (!rows.length){
     $('#list').innerHTML = '<p class="empty">' + (mode === 'open' ? '対応中のお申込みはありません。「すべて」で過去分を表示できます。' : '該当するお申込みはありません。') + '</p>';
     return;
   }
-  $('#list').innerHTML = rows.map(function(x){
-    var a = x.a, s = srcOf(a.source), no = noOf(a);
-    var dots = s.steps.map(function(st){ var k = stateOf(a.steps[st.key]);
-      return '<span class="dot ' + (k === 'done' || k === 'skip' ? 'done' : k === 'note' ? 'note' : '') + '" title="' + esc(st.label) + '"></span>'; }).join('');
-    return '<button type="button" class="item" data-i="' + x.i + '">' +
+  $('#list').innerHTML = rows.map(a => {
+    const no = noOf(a);
+    const dots = a.stepKeys.map(k => { const s = stateOf(a.steps[k]);
+      return '<span class="dot ' + (s === 'done' || s === 'skip' ? 'done' : s === 'note' ? 'note' : '') + '" title="' + esc(STEP_LABEL[k]) + '"></span>'; }).join('');
+    const flag = a.syncError ? '<span class="flag err">シートに反映できませんでした</span>'
+      : hasPending(a) ? '<span class="flag">シート反映待ち</span>' : '';
+    return '<button type="button" class="item" data-id="' + esc(a.id) + '">' +
       '<div class="item-top"><span class="nm">' + esc(a.fields.name) + ' 様</span>' +
       (no ? '<span class="no">' + esc(no) + '</span>' : '<span class="no none">番号未設定</span>') + '</div>' +
-      '<div class="item-sub"><span>' + esc(s.label) + '</span><span>' + esc(String(a.fields.timestamp || '').split(' ')[0]) + '</span>' +
-      (a.fields.countries ? '<span>' + esc(a.fields.countries) + '</span>' : '') + '</div>' +
+      '<div class="item-sub"><span>' + esc(labelOf(a.source)) + '</span><span>' + esc(String(a.fields.timestamp || '').split(' ')[0]) + '</span>' +
+      (a.fields.countries ? '<span>' + esc(a.fields.countries) + '</span>' : '') + flag + '</div>' +
       '<div class="dots">' + dots + '</div></button>';
   }).join('');
 }
 
 // ===== 詳細 =====
 function genPw(){
-  var U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnpqrstuvwxyz', D = '23456789', ALL = U + L + D;
-  var r = new Uint32Array(8); crypto.getRandomValues(r);
-  var p = [U[r[0] % U.length], L[r[1] % L.length], D[r[2] % D.length]];
-  for (var i = 3; i < 8; i++) p.push(ALL[r[i] % ALL.length]);
-  for (var j = p.length - 1; j > 0; j--){ var k = r[j] % (j + 1); var t = p[j]; p[j] = p[k]; p[k] = t; }
+  const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnpqrstuvwxyz', D = '23456789', ALL = U + L + D;
+  const r = new Uint32Array(8); crypto.getRandomValues(r);
+  const p = [U[r[0] % U.length], L[r[1] % L.length], D[r[2] % D.length]];
+  for (let i = 3; i < 8; i++) p.push(ALL[r[i] % ALL.length]);
+  for (let j = p.length - 1; j > 0; j--){ const k = r[j] % (j + 1); [p[j], p[k]] = [p[k], p[j]]; }
   return p.join('');
 }
 
-function openDetail(i){
-  var a = DB.apps[i], s = srcOf(a.source);
-  var notRegistered = stateOf(a.steps.system) === 'todo';
-  var no = noOf(a);
+function openDetail(id){
+  const a = APPS.find(x => x.id === id); if (!a) return;
+  const notRegistered = stateOf(a.steps.system) === 'todo';
+  const no = noOf(a);
   cur = {
-    i: i, a: a, s: s, toId: '', just: '',
+    a, base: JSON.parse(JSON.stringify({ fields: a.fields, steps: a.steps })), toId: '', just: '',
     suggested: { no: !no && notRegistered, pw: !a.fields.pw && notRegistered },
     form: {
-      no: no || (notRegistered ? DB.nextNo[s.key] : ''),
-      loginId: a.fields.loginId || (notRegistered ? a.fields.email : ''),
+      no: no || (notRegistered ? nextNo(a.source, a.prefix) : ''),
+      loginId: a.fields.loginId || (notRegistered ? (a.fields.email || '') : ''),
       pw: a.fields.pw || (notRegistered ? genPw() : ''),
       toolNo: a.fields.toolNo || ''
     },
@@ -231,60 +364,64 @@ function openDetail(i){
 }
 
 function countries(){
-  var raw = String(cur.a.fields.countries || '');
-  var out = [];
-  raw.split(/[,、，\s／\/]+/).forEach(function(t){
+  const out = [];
+  String(cur.a.fields.countries || '').split(/[,、，\s／\/]+/).forEach(t => {
     t = t.trim(); if (!t) return;
-    var c = COUNTRY[t] || (/^[A-Za-z]{3}$/.test(t) ? t.toUpperCase() : '');
-    if (c && out.indexOf(c) < 0) out.push(c);
+    const c = COUNTRY[t] || (/^[A-Za-z]{3}$/.test(t) ? t.toUpperCase() : '');
+    if (c && !out.includes(c)) out.push(c);
   });
   return out;
 }
 
 function fill(tpl){
-  var f = cur.form;
-  var map = { toId: cur.toId || '　', name: cur.a.fields.name || '', no: f.no || '（管理番号）',
-    prefix: cur.s.prefix, loginId: f.loginId || '（ID）', pw: f.pw || '（パスワード）' };
-  return tpl.replace(/\{\{(\w+)\}\}/g, function(_, k){ return map[k] != null ? map[k] : ''; });
+  const f = cur.form;
+  const map = { toId: cur.toId || '　', name: cur.a.fields.name || '', no: f.no || '（管理番号）',
+    prefix: cur.a.prefix, loginId: f.loginId || '（ID）', pw: f.pw || '（パスワード）' };
+  return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => map[k] != null ? map[k] : '');
 }
 
 function texts(){
-  var f = cur.form;
+  const f = cur.form;
   return {
-    welcome: fill(DB.templates.welcome),
-    overview: fill(DB.templates.overview),
-    codes: countries().map(function(c){ return (f.no || '（管理番号）') + '_' + c; }).join('\n') || '（出品国が未入力です）',
-    subject: fill(DB.templates.subject),
+    welcome: fill(TEMPLATES.welcome),
+    overview: fill(TEMPLATES.overview),
+    codes: countries().map(c => (f.no || '（管理番号）') + '_' + c).join('\n') || '（出品国が未入力です）',
+    subject: fill(TEMPLATES.subject),
     login: 'ログインURL：https://crossborder-auto.magitech-tool-lab.com/daikoUserLogin/\nID：' + (f.loginId || '') + '\nPass：' + (f.pw || '')
   };
 }
-var TAB_LABEL = { welcome:'ご案内文', overview:'概要欄', codes:'国別コード', subject:'グループ名', login:'ログイン情報' };
+
+function statusHtml(){
+  const a = cur.a;
+  if (a.syncError) return '<p class="status err">シートに反映できませんでした：' + esc(a.syncError) + '</p>';
+  if (hasPending(a)) return '<p class="status">保存済みです。シートへの反映を待っています（1分ほど）。</p>';
+  return '';
+}
+function renderStatus(){ const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
 
 function renderDetail(){
-  var a = cur.a, s = cur.s, f = cur.form, F = a.fields;
-  var info = [['ショップ名', F.shop], ['ショップID', F.shopId], ['企業名', F.company], ['メール', F.email],
+  const a = cur.a, f = cur.form, F = a.fields;
+  const info = [['ショップ名', F.shop], ['ショップID', F.shopId], ['企業名', F.company], ['メール', F.email],
     ['電話番号', F.phone], ['Chatwork ID', F.chatworkId], ['出品国', F.countries], ['動画撮影', F.video],
     ['レビューカード', F.review], ['月間出荷', F.monthly], ['申込日時', F.timestamp]]
-    .filter(function(r){ return r[1]; })
-    .map(function(r){ return '<dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('');
+    .filter(r => r[1]).map(r => '<dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd>').join('');
 
-  var steps = s.steps.map(function(st){
-    var v = cur.steps[st.key] || '', k = stateOf(v);
-    var face = k === 'done' ? '済' : k === 'skip' ? '不要' : '';
-    return '<button type="button" class="step ' + k + (cur.just === st.key ? ' just' : '') + '" data-step="' + st.key + '">' +
-      '<span class="stamp">' + face + '</span><span class="lb">' + esc(st.label) +
+  const steps = a.stepKeys.map(key => {
+    const v = cur.steps[key] || '', k = stateOf(v);
+    const face = k === 'done' ? '済' : k === 'skip' ? '不要' : '';
+    return '<button type="button" class="step ' + k + (cur.just === key ? ' just' : '') + '" data-step="' + key + '">' +
+      '<span class="stamp">' + face + '</span><span class="lb">' + esc(STEP_LABEL[key] || key) +
       (k === 'note' || (k === 'done' && v !== '○' && v !== '〇') ? '<span class="val">' + esc(v) + '</span>' : '') +
       '</span></button>';
   }).join('');
 
-  var T = texts();
-  var tabs = Object.keys(TAB_LABEL).map(function(k){
-    return '<button type="button" class="tab' + (tab === k ? ' on' : '') + '" data-tab="' + k + '">' + TAB_LABEL[k] + '</button>';
-  }).join('');
+  const T = texts();
+  const tabs = Object.keys(TAB_LABEL).map(k =>
+    '<button type="button" class="tab' + (tab === k ? ' on' : '') + '" data-tab="' + k + '">' + TAB_LABEL[k] + '</button>').join('');
 
   $('#detail').innerHTML =
-    '<div class="dhead"><button type="button" id="back">‹ 一覧</button><span class="t">' + esc(F.name) + ' 様</span><span class="src">' + esc(s.label) + '</span></div>' +
-    '<div class="wrap">' +
+    '<div class="dhead"><button type="button" id="back">‹ 一覧</button><span class="t">' + esc(F.name) + ' 様</span><span class="src">' + esc(labelOf(a.source)) + '</span></div>' +
+    '<div class="wrap"><div id="status">' + statusHtml() + '</div>' +
     '<div class="sec"><h2>お申込み内容</h2><dl class="info">' + info + '</dl>' +
       (F.question ? '<div class="question">' + esc(F.question) + '</div>' : '') + '</div>' +
 
@@ -305,83 +442,88 @@ function renderDetail(){
     '<div class="sec"><h2>コピー用テキスト</h2><div class="tabs">' + tabs + '</div>' +
       '<pre class="out" id="out">' + esc(T[tab]) + '</pre><button type="button" class="copy" id="copy">コピー</button></div>' +
     '</div>' +
-    '<div class="savebar"><button type="button" class="save" id="save">シートに保存</button></div>';
+    '<div class="savebar"><button type="button" class="save" id="save">保存</button></div>';
   cur.just = '';
 }
 
-function refreshOut(){ var o = $('#out'); if (o) o.textContent = texts()[tab]; }
+function refreshOut(){ const o = $('#out'); if (o) o.textContent = texts()[tab]; }
 
 function cycleStep(key){
-  var v = cur.steps[key] || '', k = stateOf(v);
+  const k = stateOf(cur.steps[key]);
   cur.steps[key] = (k === 'todo' || k === 'note') ? '○' : (k === 'done' ? '不要' : '');
   cur.just = cur.steps[key] ? key : '';
   renderDetail();
 }
 
 function copyText(t, btn){
-  var ok = function(){ btn.textContent = 'コピーしました'; setTimeout(function(){ btn.textContent = 'コピー'; }, 1500); };
-  var fallback = function(){
-    var ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', '');
+  const ok = () => { btn.textContent = 'コピーしました'; setTimeout(() => { btn.textContent = 'コピー'; }, 1500); };
+  const fallback = () => {
+    const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', '');
     ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, t.length);
     try { document.execCommand('copy'); ok(); } catch (e) { toast('コピーできませんでした。長押しで選択してください', true); }
     ta.remove();
   };
-  if (navigator.clipboard && window.isSecureContext){ navigator.clipboard.writeText(t).then(ok, fallback); } else { fallback(); }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(ok, fallback); else fallback();
 }
 
-function save(){
-  var a = cur.a, s = cur.s, f = cur.form, F = a.fields;
-  var fields = {}, steps = {};
-  if (f.no !== (F.account || '')) fields.account = f.no;
-  if (s.hasRowNo && f.no !== (F.rowNo || '')) fields.rowNo = f.no;
-  if (f.loginId !== (F.loginId || '')) fields.loginId = f.loginId;
-  if (f.pw !== (F.pw || '')) fields.pw = f.pw;
-  if (f.toolNo !== (F.toolNo || '')) fields.toolNo = f.toolNo;
-  Object.keys(cur.steps).forEach(function(k){ if ((cur.steps[k] || '') !== (a.steps[k] || '')) steps[k] = cur.steps[k] || ''; });
+async function save(){
+  const a = cur.a, f = cur.form, B = cur.base;
+  const fields = {}, steps = {};
+  if (f.no !== (B.fields.account || '')) fields.account = f.no;
+  if (a.hasRowNo && f.no !== (B.fields.rowNo || '')) fields.rowNo = f.no;
+  if (f.loginId !== (B.fields.loginId || '')) fields.loginId = f.loginId;
+  if (f.pw !== (B.fields.pw || '')) fields.pw = f.pw;
+  if (f.toolNo !== (B.fields.toolNo || '')) fields.toolNo = f.toolNo;
+  Object.keys(cur.steps).forEach(k => { if ((cur.steps[k] || '') !== (B.steps[k] || '')) steps[k] = cur.steps[k] || ''; });
   if (!Object.keys(fields).length && !Object.keys(steps).length){ toast('変更はありません'); return; }
 
-  var btn = $('#save'); btn.disabled = true; btn.textContent = '保存中…';
-  google.script.run
-    .withSuccessHandler(function(res){
-      Object.keys(fields).forEach(function(k){ F[k] = fields[k]; });
-      Object.keys(steps).forEach(function(k){ a.steps[k] = steps[k]; });
-      if (res.subject) F.subject = res.subject;
-      DB.nextNo[s.key] = res.nextNo;
-      cur.suggested = { no: false, pw: false };
-      renderDetail(); renderList();
-      toast('シートに保存しました');
-    })
-    .withFailureHandler(function(e){ btn.disabled = false; btn.textContent = 'シートに保存'; toast(e.message, true); })
-    .saveApp({ source: a.source, row: a.row, check: { name: F.name || '', email: F.email || '' }, fields: fields, steps: steps });
+  if (f.no){
+    const dup = APPS.find(x => x.id !== a.id && x.source === a.source && noOf(x) === f.no);
+    if (dup){ toast('管理番号 ' + f.no + ' は ' + dup.fields.name + ' 様で使われています', true); return; }
+  }
+
+  const upd = { pendingAt: serverTimestamp(), syncError: deleteField() };
+  Object.keys(fields).forEach(k => { upd['info.' + k] = fields[k]; upd['pending.fields.' + k] = fields[k]; });
+  Object.keys(steps).forEach(k => { upd['steps.' + k] = steps[k]; upd['pending.steps.' + k] = steps[k]; });
+
+  const btn = $('#save'); btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    await updateDoc(doc(db, COLLECTION, a.id), upd);
+    cur.base = JSON.parse(JSON.stringify({ fields: Object.assign({}, B.fields, fields), steps: Object.assign({}, B.steps, steps) }));
+    cur.suggested = { no: false, pw: false };
+    if (SYNC_URL) fetch(SYNC_URL, { method: 'POST', mode: 'no-cors' }).catch(() => {});
+    renderDetail();
+    toast('保存しました。シートには1分ほどで反映されます');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '保存';
+    toast('保存できませんでした：' + e.message, true);
+  }
 }
 
 // ===== イベント =====
-document.addEventListener('click', function(e){
-  var t = e.target.closest('button'); if (!t) return;
-  if (t.id === 'reload') return load();
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
   if (t.dataset.mode){ mode = t.dataset.mode;
-    document.querySelectorAll('.seg button').forEach(function(b){ b.classList.toggle('on', b === t); });
+    document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b === t));
     return renderList(); }
   if (t.dataset.src != null && t.classList.contains('chip')){ srcFilter = t.dataset.src; renderChips(); return renderList(); }
-  if (t.dataset.i != null) return openDetail(+t.dataset.i);
+  if (t.dataset.id) return openDetail(t.dataset.id);
   if (t.id === 'back'){ $('#detail').hidden = true; cur = null; return; }
   if (t.dataset.step) return cycleStep(t.dataset.step);
   if (t.dataset.tab){ tab = t.dataset.tab; return renderDetail(); }
   if (t.id === 'copy') return copyText(texts()[tab], t);
   if (t.id === 'newPw'){ cur.form.pw = genPw(); cur.suggested.pw = true; return renderDetail(); }
-  if (t.id === 'sugNo'){ cur.form.no = DB.nextNo[cur.s.key]; cur.suggested.no = true; return renderDetail(); }
+  if (t.id === 'sugNo'){ cur.form.no = nextNo(cur.a.source, cur.a.prefix); cur.suggested.no = true; return renderDetail(); }
   if (t.id === 'save') return save();
 });
-document.addEventListener('input', function(e){
-  var el = e.target;
+document.addEventListener('input', e => {
+  const el = e.target;
   if (el.id === 'q'){ query = el.value.trim(); return renderList(); }
   if (!cur) return;
   if (el.dataset.f){ cur.form[el.dataset.f] = el.value.trim(); refreshOut(); }
   if (el.dataset.to){ cur.toId = el.value.trim(); refreshOut(); }
 });
-
-load();
 </script>
 </body>
 </html>
