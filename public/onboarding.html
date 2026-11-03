@@ -43,6 +43,10 @@ input[type=search],.field input{width:100%;padding:9px 12px;border:1px solid var
 .item-sub{font-size:12.5px;color:var(--sub);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
 .flag{font-size:12px;font-weight:600;color:var(--warn)}
 .flag.err{color:var(--stamp)}
+.opt{font-size:12px;font-weight:700;color:#fff;background:#6B4FA0;border-radius:999px;padding:0 9px}
+.optbox{margin:0 0 12px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:700}
+.optbox.yes{background:#EFEAF8;color:#4A3378;border:1px solid #CFC3E8}
+.optbox.no{background:var(--surface);color:var(--sub);border:1px solid var(--line);font-weight:600}
 .dots{display:flex;gap:5px;margin-top:8px}
 .dot{width:11px;height:11px;border-radius:50%;border:1.5px dashed #A9B4BF}
 .dot.done{border:0;background:var(--stamp)}
@@ -259,6 +263,7 @@ const labelOf = k => (SOURCES.find(s => s.key === k) || {}).label || k;
 const noOf = a => a.fields.account || a.fields.rowNo || '';
 function tsNum(s){ const m = String(s || '').match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+):(\d+)/);
   return m ? new Date(+m[1], m[2]-1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0; }
+const wantsVideo = a => /^(はい|利用する)/.test(String(a.fields.video || '').trim());
 const hasPending = a => a.pending && (Object.keys(a.pending.fields || {}).length || Object.keys(a.pending.steps || {}).length);
 function isOpen(a){
   return hasPending(a) || a.stepKeys.some(k => k !== 'start' && ['todo','note'].includes(stateOf(a.steps[k])));
@@ -328,7 +333,7 @@ function renderList(){
       '<div class="item-top"><span class="nm">' + esc(a.fields.name) + ' 様</span>' +
       (no ? '<span class="no">' + esc(no) + '</span>' : '<span class="no none">番号未設定</span>') + '</div>' +
       '<div class="item-sub"><span>' + esc(labelOf(a.source)) + '</span><span>' + esc(String(a.fields.timestamp || '').split(' ')[0]) + '</span>' +
-      (a.fields.countries ? '<span>' + esc(a.fields.countries) + '</span>' : '') + flag + '</div>' +
+      (a.fields.countries ? '<span>' + esc(a.fields.countries) + '</span>' : '') + (wantsVideo(a) ? '<span class="opt">🎥 撮影オプション</span>' : '') + flag + '</div>' +
       '<div class="dots">' + dots + '</div></button>';
   }).join('');
 }
@@ -422,6 +427,7 @@ function renderDetail(){
   $('#detail').innerHTML =
     '<div class="dhead"><button type="button" id="back">‹ 一覧</button><span class="t">' + esc(F.name) + ' 様</span><span class="src">' + esc(labelOf(a.source)) + '</span></div>' +
     '<div class="wrap"><div id="status">' + statusHtml() + '</div>' +
+    (F.video ? (wantsVideo(a) ? '<p class="optbox yes">🎥 撮影オプション希望（' + esc(F.video) + '）</p>' : '<p class="optbox no">撮影オプションなし</p>') : '<p class="optbox no">撮影オプション：未回答</p>') +
     '<div class="sec"><h2>お申込み内容</h2><dl class="info">' + info + '</dl>' +
       (F.question ? '<div class="question">' + esc(F.question) + '</div>' : '') + '</div>' +
 
