@@ -532,14 +532,16 @@ const shukkaAuto = (() => {
             <div class="flex justify-between items-center border-b pb-3 no-print">
                 <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs font-normal text-slate-500">(行をドラッグして並び替え可能)</span></h3>
                 <div class="flex space-x-2">
+                    <button onclick="loadStock(true).then(rerenderPicking)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-rotate mr-1"></i>在庫を更新</button>
                     <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
                     <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
+            <p id="pickingStockStatus" class="text-xs text-slate-500 no-print"></p>
             <div class="overflow-x-auto border rounded-xl">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead class="bg-slate-100 border-b">
-                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
+                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th><th class="px-4 py-3 text-center">在庫</th><th class="px-4 py-3 text-center">出荷後</th></tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
                 </table>
@@ -702,6 +704,7 @@ const shukkaAuto = (() => {
 
         window.addEventListener('DOMContentLoaded', () => {
             setupFileHandlers();
+            loadStock(false).then(() => { if (multiplierMaster.length) renderMasterTable(); });
             document.getElementById('masterClientFilter').insertAdjacentHTML('beforeend',
                 CLIENTS.map(c => `<option value="${c.key}">取引先：${esc(c.name)}</option>`).join(''));
         });
@@ -814,6 +817,7 @@ const shukkaAuto = (() => {
                         <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${esc(it.shelf || '未設定')}</span>
                         <span class="font-semibold text-slate-800 flex-grow">${esc(it.jpName)}</span>
                         <span class="text-indigo-600 font-bold">× ${esc(it.multiplier)}</span>
+                        ${stockBadge(rule.client, it.jpName)}
                     </div>
                 `).join('');
 
@@ -1536,17 +1540,26 @@ const shukkaAuto = (() => {
             let map = {};
             processedDataRows.forEach(r => {
                 let k = (r.shelf || '未設定') + "_" + r.jpName;
-                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, total: 0 };
+                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, client: r.client || '', total: 0 };
                 map[k].total += r.baseQty * r.multiplier;
             });
             let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf, 'ja', { numeric: true }));
+            pickingData = sorted;
             renderTotalPickingTable(sorted);
             document.getElementById('totalPickingModal').classList.remove('hidden');
+            // 在庫は開くたびに最新を読み込む
+            loadStock(true).then(rerenderPicking);
+        }
+
+        let pickingData = [];
+        function rerenderPicking() {
+            if (!document.getElementById('totalPickingModal').classList.contains('hidden')) renderTotalPickingTable(pickingData);
         }
 
         function renderTotalPickingTable(data) {
             const tbody = document.getElementById('totalPickingBody');
             tbody.innerHTML = '';
+            document.getElementById('pickingStockStatus').innerHTML = stockStatusText(data);
             data.forEach((x, index) => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 cursor-grab';
@@ -1575,7 +1588,9 @@ const shukkaAuto = (() => {
                     <td class="px-4 py-2 font-bold text-indigo-700">${esc(x.shelf)}</td>
                     <td class="px-4 py-2 font-semibold">${esc(x.name)}</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base">${x.total}</td>
+                    ${stockCells(x.client, x.name, x.total)}
                 `;
+                if (stockShort(x.client, x.name, x.total)) tr.classList.add('bg-rose-50');
                 tbody.appendChild(tr);
             });
         }
@@ -1595,6 +1610,102 @@ const shukkaAuto = (() => {
             let wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "処理結果");
             XLSX.writeFile(wb, `受注データ_処理結果_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }
+
+        // ===== 在庫（各取引先の【商品リスト】在庫シートから読み込み） =====
+        // stockCache[取引先key] = { byJan: {JAN: 在庫}, byName: {商品名: 在庫}, at: 読込時刻, error: エラー文 }
+        let stockCache = {};
+        let stockLoading = null;
+
+        // 商品名から JAN を取り出す
+        //  「（JAN：9144）」「(JAN:9818)」→ 9144 / 9818
+        //  「JELBE朝の麹青汁 4977569260649」のような13桁・8桁 → 13桁そのものと下4桁の両方
+        function jansOf(text) {
+            const t = String(text || '').normalize('NFKC');
+            const out = [];
+            const m = t.match(/JAN\s*[:：]?\s*(\d+)/i);
+            if (m) out.push(m[1]);
+            (t.match(/\d{13}|\d{8}/g) || []).forEach(n => { out.push(n, n.slice(-4)); });
+            if (m && m[1].length >= 8) out.push(m[1].slice(-4));
+            return [...new Set(out)];
+        }
+        // 全角・半角スペースの違いを気にせず比べるための形
+        function nameKey(name) {
+            return String(name || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+        }
+
+        async function loadStock(force) {
+            if (stockLoading) return stockLoading;
+            if (!force && Object.keys(stockCache).length) return;
+            const targets = CLIENTS.filter(c => c.gasUrl && c.gasUrl.startsWith('https://'));
+            stockLoading = Promise.all(targets.map(async c => {
+                try {
+                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=stock`;
+                    const data = await readGas(await fetch(url));
+                    if (data.ok === false && data.error) throw new Error(data.error);
+                    if (!Array.isArray(data.items)) throw new Error('GASに在庫の機能がまだありません（新しいコードで再デプロイしてください）');
+                    const byJan = {}, byName = {};
+                    data.items.forEach(it => {
+                        const n = Number(it.stock);
+                        if (!isFinite(n)) return;
+                        // 商品名②のJAN →（品番の13桁JAN）→ 商品名 の順で登録（先に登録したものが優先）
+                        [it.name2, it.code, it.name].forEach(nm => {
+                            if (!nm) return;
+                            jansOf(nm).forEach(j => { if (byJan[j] === undefined) byJan[j] = n; });
+                        });
+                        [it.name, it.name2].forEach(nm => { if (nm) byName[nameKey(nm)] = n; });
+                    });
+                    stockCache[c.key] = { byJan, byName, at: new Date() };
+                } catch (err) {
+                    stockCache[c.key] = { byJan: {}, byName: {}, at: new Date(),
+                        error: err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message };
+                }
+            })).finally(() => { stockLoading = null; });
+            return stockLoading;
+        }
+
+        // 在庫数を返す（見つからなければ null）
+        function stockOf(client, jpName) {
+            const list = client ? [stockCache[client]] : Object.values(stockCache);
+            for (const sc of list) {
+                if (!sc) continue;
+                for (const j of jansOf(jpName)) if (sc.byJan[j] !== undefined) return sc.byJan[j];
+                const n = sc.byName[nameKey(jpName)];
+                if (n !== undefined) return n;
+            }
+            return null;
+        }
+        function stockShort(client, jpName, need) {
+            const s = stockOf(client, jpName);
+            return s !== null && need > s;
+        }
+        function stockCells(client, jpName, need) {
+            const s = stockOf(client, jpName);
+            if (s === null) return `<td class="px-4 py-2 text-center text-slate-400">－</td><td class="px-4 py-2 text-center text-slate-400">－</td>`;
+            const after = s - need;
+            return `<td class="px-4 py-2 text-center font-bold text-slate-700 text-base">${s}</td>
+                    <td class="px-4 py-2 text-center font-bold text-base ${after < 0 ? 'text-rose-600' : 'text-slate-500'}">${after}${after < 0 ? '<div class="text-[10px]">在庫不足</div>' : ''}</td>`;
+        }
+        function stockBadge(client, jpName) {
+            const s = stockOf(client, jpName);
+            if (s === null) return '';
+            const color = s <= 0 ? 'bg-rose-100 text-rose-700' : s < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700';
+            return `<span class="${color} font-bold px-2 py-0.5 rounded text-[10px] whitespace-nowrap">在庫 ${s}</span>`;
+        }
+        function stockStatusText(data) {
+            if (stockLoading) return '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>在庫を読み込み中...';
+            const keys = Object.keys(stockCache);
+            if (!keys.length) return '';
+            const errs = keys.filter(k => stockCache[k].error).map(k => `${esc(clientOf(k)?.name || k)}：${esc(stockCache[k].error)}`);
+            const at = stockCache[keys[0]].at;
+            const time = at ? `${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}` : '';
+            const short = (data || []).filter(x => stockShort(x.client, x.name, x.total)).length;
+            const missing = (data || []).filter(x => stockOf(x.client, x.name) === null).length;
+            let html = `在庫は在庫シートの値です（${time} 時点）。`;
+            if (short) html += ` <span class="text-rose-600 font-bold">在庫不足 ${short} 件</span>`;
+            if (missing) html += ` <span class="text-amber-700">在庫シートに見つからない商品 ${missing} 件（－表示）</span>`;
+            if (errs.length) html += `<br><span class="text-rose-600">${errs.join('<br>')}</span>`;
+            return html;
         }
 
         // ===== 出庫シートに書き込み =====
