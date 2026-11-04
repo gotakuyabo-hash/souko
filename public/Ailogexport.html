@@ -86,7 +86,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, getDocs, query, where, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, getDocs, query, where, orderBy, limit, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
@@ -131,7 +131,20 @@ const today = new Date();
 document.getElementById('toDate').value = ymd(today);
 document.getElementById('fromDate').value = ymd(new Date(today.getTime() - 29 * 86400000));
 
-const toDate = v => (v && v.toDate) ? v.toDate() : null;
+// 日付の形がバラバラでも読めるようにする（Timestamp／Date／数値ミリ秒・秒／文字列）
+const toDate = v => {
+    if (v === null || v === undefined || v === '') return null;
+    if (v.toDate) return v.toDate();
+    if (v instanceof Date) return isNaN(v) ? null : v;
+    if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v);
+    if (typeof v === 'string') {
+        const d = new Date(v.trim().replace(/\//g, '-').replace(' ', 'T'));
+        return isNaN(d) ? null : d;
+    }
+    if (typeof v.seconds === 'number') return new Date(v.seconds * 1000);
+    if (typeof v._seconds === 'number') return new Date(v._seconds * 1000);
+    return null;
+};
 const fmt = d => d ? `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
 
 // 宛先・返信マークを外して比較
@@ -156,13 +169,43 @@ function editRatio(a, b) {
 }
 const editLevel = r => r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正';
 
+// 診断用：コレクション全体の件数と、日付の保存形式
+const fetchInfo = {};
+const typeName = v => v === undefined ? 'なし' : (v && v.toDate) ? 'Timestamp' : (v instanceof Date) ? 'Date' : typeof v;
+
 async function fetchRange(name, field, from, to) {
-    const q = query(collection(db, name),
-        where(field, '>=', Timestamp.fromDate(from)),
-        where(field, '<', Timestamp.fromDate(to)),
-        orderBy(field));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => Object.assign({ _id: d.id }, d.data()));
+    const col = collection(db, name);
+    const map = new Map();
+    // ① Timestamp・数値（ミリ秒）・文字列（ISO）のどれで保存されていても拾えるよう3通りで検索
+    const tries = [
+        [Timestamp.fromDate(from), Timestamp.fromDate(to)],
+        [from.getTime(), to.getTime()],
+        [from.toISOString(), to.toISOString()]
+    ];
+    for (const [a, b] of tries) {
+        const snap = await getDocs(query(col, where(field, '>=', a), where(field, '<', b), orderBy(field)));
+        snap.docs.forEach(d => map.set(d.id, Object.assign({ _id: d.id }, d.data())));
+    }
+    let list = Array.from(map.values());
+    let mode = '期間検索';
+
+    // ② それでも0件なら、全件を読んで手元で期間を絞り込む（項目名や日付形式が違う場合の予備）
+    if (!list.length) {
+        const snap = await getDocs(query(col, limit(5000)));
+        const all = snap.docs.map(d => Object.assign({ _id: d.id }, d.data()));
+        const sample = all[0] || {};
+        fetchInfo[name] = { total: all.length, type: typeName(sample[field]),
+            keys: Object.keys(sample).filter(k => k !== '_id').slice(0, 15).join(', ') };
+        list = all.filter(d => {
+            const t = toDate(d[field]) || toDate(d.createdAt) || toDate(d.updatedAt) || toDate(d.timestamp) || toDate(d.sentAt);
+            if (!t || t < from || t >= to) return false;
+            if (!toDate(d[field])) d[field] = t;   // 後の処理で使えるよう日付をそろえる
+            return true;
+        });
+        mode = '全件から絞り込み';
+    }
+    fetchInfo[name] = Object.assign(fetchInfo[name] || {}, { mode });
+    return list.sort((x, y) => (toDate(x[field]) || 0) - (toDate(y[field]) || 0));
 }
 
 window.loadLogs = async function () {
@@ -196,6 +239,16 @@ window.loadLogs = async function () {
         renderSummary(from, to);
         document.getElementById('result').style.display = 'block';
         msg.textContent = `AI生成ログ ${aiLogs.length} 件、送信ログ ${sendLogs.length} 件を読み込みました。`;
+        // 0件のときは原因がわかるように中身を表示
+        const diag = [['ai_reply_logs', 'createdAt', aiLogs], ['ai_brushup_feedback', 'updatedAt', sendLogs]]
+            .filter(([n, , l]) => !l.length && fetchInfo[n] && fetchInfo[n].total !== undefined)
+            .map(([n, f]) => {
+                const i = fetchInfo[n];
+                return i.total === 0
+                    ? `・${n}：コレクションにデータが1件もありません（名前違い、または記録されていない可能性）`
+                    : `・${n}：全体 ${i.total} 件あり／「${f}」の形式＝${i.type}／項目：${i.keys}`;
+            });
+        if (diag.length) msg.innerHTML = escHtml(msg.textContent) + '<br><br>【0件の原因チェック】<br>' + diag.map(escHtml).join('<br>');
     } catch (e) {
         msg.textContent = '読み込みに失敗しました：' + e.message;
     } finally {
@@ -412,7 +465,7 @@ window.applySuggestion = async function () {
 window.downloadRaw = function (kind) {
     const list = kind === 'ai' ? aiLogs : sendLogs;
     const keys = Array.from(list.reduce((set, d) => { Object.keys(d).forEach(k => set.add(k)); return set; }, new Set()));
-    const data = list.map(d => keys.map(k => { const v = d[k]; return (v && v.toDate) ? fmt(v.toDate()) : (typeof v === 'object' && v !== null ? JSON.stringify(v) : v); }));
+    const data = list.map(d => keys.map(k => { const v = d[k]; return (v && v.toDate) ? fmt(v.toDate()) : (v instanceof Date) ? fmt(v) : (typeof v === 'object' && v !== null ? JSON.stringify(v) : v); }));
     download(`${kind === 'ai' ? 'AI生成ログ' : '送信ログ'}_${stamp()}.csv`, toCsv(keys, data));
 };
 </script>
