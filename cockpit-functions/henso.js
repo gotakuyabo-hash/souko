@@ -8,6 +8,8 @@
  *  - アプリの完了ボタンで、Chatworkのタスクを完了（または元に戻す）
  *  - 荷物を受領したときの状態（元払/着払 × 未開封/開封済）を返送管理シートのC列に書き込む
  *  - 読み書きするシートは、配送管理アプリ（USyoshida.html）と同じ設定を使う
+ *  - 完了したタスクを Firestore（henso_history）に記録し、過去の返送品（返送・破棄など）を探せる
+ *    アプリ導入前の分は、Chatworkの完了済みタスク（直近100件まで）から自動で取り込む
  *    （Firestore の deliveryClients/150 の sheetId）。どちらのアプリで差し替えても両方に反映される
  *
  * 使い方
@@ -252,6 +254,68 @@ async function unmarkReceived(no) {
   await admin.firestore().collection(RECEIVED_COL).doc(no).delete();
 }
 
+/* ---------- 完了したタスクの記録（Firestore：henso_history/{taskId}） ---------- */
+// Chatworkでは完了済みタスクを直近100件までしか取れないため、完了した時点で記録を残しておく
+const HISTORY_COL = "henso_history";
+function historyDoc(v, source, doneAt) {
+  return {
+    taskId: Number(v.taskId),
+    roomId: String(v.roomId || ""),
+    roomName: v.roomName || "",
+    nos: v.nos || [],
+    kind: v.kind || { key: "", label: "" },
+    body: String(v.body || "").slice(0, 3000),
+    assignedBy: v.assignedBy || "",
+    limitTime: v.limitTime || 0,
+    messageId: v.messageId || "0",
+    doneAt: doneAt || 0, // アプリで完了したときだけ日時が分かる（Chatworkから取り込んだ分は0）
+    source, // "app" または "chatwork"
+    savedAt: Date.now(),
+  };
+}
+async function saveHistoryFromTask(token, roomId, taskId) {
+  const t = await cwTask(token, roomId, taskId);
+  const v = taskView({ ...t, room: { room_id: Number(roomId), name: "" } });
+  if (!v.nos.length) return; // 返送No.の無いタスクは記録しない
+  await admin.firestore().collection(HISTORY_COL).doc(String(taskId)).set(historyDoc(v, "app", Date.now()));
+}
+async function deleteHistory(taskId) {
+  await admin.firestore().collection(HISTORY_COL).doc(String(taskId)).delete();
+}
+
+// Chatworkの完了済みタスクのうち、まだ記録していない返送タスクを取り込む（2分に1回まで）
+let lastSync = 0;
+async function syncDoneTasks(existingIds, force) {
+  if (!force && Date.now() - lastSync < 2 * 60 * 1000) return 0;
+  lastSync = Date.now();
+  const done = await cwMyTasks(tokenOf(), "done");
+  const add = done.map(taskView).filter((v) => v.nos.length && !existingIds.has(String(v.taskId)));
+  const db = admin.firestore();
+  for (let i = 0; i < add.length; i += 400) {
+    const batch = db.batch();
+    add.slice(i, i + 400).forEach((v) =>
+      batch.set(db.collection(HISTORY_COL).doc(String(v.taskId)), historyDoc(v, "chatwork", 0))
+    );
+    await batch.commit();
+  }
+  return add.length;
+}
+async function loadHistory(fresh) {
+  const col = admin.firestore().collection(HISTORY_COL);
+  let snap = await col.get();
+  const ids = new Set(snap.docs.map((d) => d.id));
+  const added = await syncDoneTasks(ids, fresh).catch((e) => { console.error("完了タスクの取り込み失敗: " + e.message); return 0; });
+  if (added) snap = await col.get();
+  return snap.docs.map((d) => d.data());
+}
+
+// 過去の返送品として扱うステータス（返送管理シートC列）
+//   進行中（返品承認・到着済・空欄）は除く。絞り込みボタンもこの並び
+const PAST_STATUSES = ["破棄", "完了", "DHL", "EMS", "有在庫", "返品ラベル発行不可"];
+function isPastStatus(s) {
+  return PAST_STATUSES.includes(String(s || "").trim());
+}
+
 // Chatworkタスクを画面用の形にする
 function taskView(t) {
   const body = cleanBody(t.body);
@@ -348,12 +412,19 @@ async function cwFileUrl(token, roomId, fileId) {
   return d.download_url;
 }
 
-async function cwMyTasks(token) {
-  const r = await fetch("https://api.chatwork.com/v2/my/tasks?status=open", {
+async function cwMyTasks(token, status) {
+  const r = await fetch("https://api.chatwork.com/v2/my/tasks?status=" + (status === "done" ? "done" : "open"), {
     headers: { "x-chatworktoken": token },
   });
   if (r.status === 204) return [];
   if (!r.ok) throw new Error("Chatworkのタスク取得に失敗しました（" + r.status + "）");
+  return r.json();
+}
+async function cwTask(token, roomId, taskId) {
+  const r = await fetch(`https://api.chatwork.com/v2/rooms/${roomId}/tasks/${taskId}`, {
+    headers: { "x-chatworktoken": token },
+  });
+  if (!r.ok) throw new Error("Chatworkのタスクを読めませんでした（" + r.status + "）");
   return r.json();
 }
 async function cwSetStatus(token, roomId, taskId, status) {
@@ -505,6 +576,41 @@ exports.henso = onRequest(
         return res.json({ items: received, loadedAt: Date.now() });
       }
 
+      // 過去の返送品：返送管理シートC列のステータスで探す（完了したタスクの記録もあわせて表示）
+      //   q なし → 過去のステータス（破棄・完了・DHL・EMS・有在庫・返品ラベル発行不可）のもの
+      //   q あり → シート全体から返送No.・名前・品名・注文番号・ASINで探す（ステータスは問わない）
+      //   status を指定すると、C列がそのステータスのものだけ
+      if (action === "history" && req.method === "GET") {
+        const q = normText(req.query.q);
+        const qNo = /^\d+$/.test(q) ? String(parseInt(q, 10)) : "";
+        const status = String(req.query.status || "").trim();
+        const [items, hist] = await Promise.all([allItems(fresh), loadHistory(fresh)]);
+        const byNo = {};
+        hist.forEach((h) => (h.nos || []).forEach((n) => (byNo[n] = byNo[n] || []).push(h)));
+
+        let list = q
+          ? items.filter((x) => x.no === qNo || ["name", "title", "orderNo", "asin"].some((f) => normText(x[f]).includes(q)))
+          : items.filter((x) => isPastStatus(x.status));
+        if (status) list = list.filter((x) => x.status === status);
+        // ステータスごとの件数（絞り込みボタンに表示）
+        const counts = {};
+        (q ? items.filter((x) => x.no === qNo || ["name", "title", "orderNo", "asin"].some((f) => normText(x[f]).includes(q))) : items)
+          .forEach((x) => { if (isPastStatus(x.status)) counts[x.status] = (counts[x.status] || 0) + 1; });
+
+        const total = list.length;
+        list = list.sort(byNoDesc).slice(0, 50);
+        list.forEach((x) => {
+          x.history = (byNo[x.no] || []).slice().sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0) || b.taskId - a.taskId);
+        });
+        await fillImages(list);
+        const files = await cwRoomFiles(tokenOf(), RETURN_ROOM_ID, fresh).then(filesByNo).catch(() => ({}));
+        list.forEach((x) => {
+          x.files = files[x.no] || [];
+          x.roomId = RETURN_ROOM_ID;
+        });
+        return res.json({ items: list, total, counts, statuses: PAST_STATUSES, loadedAt: Date.now() });
+      }
+
       if (action === "lookup" && req.method === "GET") {
         const no = normNo(req.query.no);
         if (!no) return res.status(400).json({ error: "返送管理No.を入れてください" });
@@ -544,6 +650,11 @@ exports.henso = onRequest(
           return res.status(400).json({ error: "statusは done か open です" });
         }
         await cwSetStatus(tokenOf(account), roomId, taskId, status);
+        // 過去の返送品で探せるように記録する（記録に失敗しても完了そのものは成功扱い）
+        try {
+          if (status === "done") await saveHistoryFromTask(tokenOf(account), roomId, taskId);
+          else await deleteHistory(taskId);
+        } catch (e) { console.error("完了の記録に失敗: " + e.message); }
         return res.json({ ok: true, status });
       }
 
