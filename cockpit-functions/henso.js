@@ -10,6 +10,7 @@
  *  - 読み書きするシートは、配送管理アプリ（USyoshida.html）と同じ設定を使う
  *  - 完了したタスクを Firestore（henso_history）に記録し、過去の返送品（返送・破棄など）を探せる
  *    アプリ導入前の分は、Chatworkの完了済みタスク（直近100件まで）から自動で取り込む
+ *  - 「破棄した」ボタンで、破棄した日時と作業者を Firestore（henso_haiki/{返送No.}）に記録する（シートには書かない）
  *    （Firestore の deliveryClients/150 の sheetId）。どちらのアプリで差し替えても両方に反映される
  *
  * 使い方
@@ -309,6 +310,19 @@ async function loadHistory(fresh) {
   return snap.docs.map((d) => d.data());
 }
 
+/* ---------- 破棄の記録（Firestore：henso_haiki/{返送No.}） ---------- */
+const HAIKI_COL = "henso_haiki";
+async function loadHaikiMarks() {
+  const snap = await admin.firestore().collection(HAIKI_COL).get();
+  const map = {};
+  snap.forEach((d) => (map[d.id] = d.data()));
+  return map;
+}
+// 破棄の対象：C列が「破棄」、または破棄のタスクを完了したもの、またはすでに記録があるもの
+function isHaikiTarget(x) {
+  return x.status === "破棄" || !!x.haiki || (x.history || []).some((h) => h.kind && h.kind.key === "haiki");
+}
+
 // 過去の返送品として扱うステータス（返送管理シートC列）
 //   進行中（返品承認・到着済・空欄）は除く。絞り込みボタンもこの並び
 const PAST_STATUSES = ["破棄", "完了", "DHL", "EMS", "有在庫", "返品ラベル発行不可"];
@@ -584,14 +598,27 @@ exports.henso = onRequest(
         const q = normText(req.query.q);
         const qNo = /^\d+$/.test(q) ? String(parseInt(q, 10)) : "";
         const status = String(req.query.status || "").trim();
-        const [items, hist] = await Promise.all([allItems(fresh), loadHistory(fresh)]);
+        const haikiFilter = String(req.query.haiki || ""); // "todo"=まだ記録なし / "done"=破棄済み
+        const [items, hist, haikiMarks] = await Promise.all([allItems(fresh), loadHistory(fresh), loadHaikiMarks()]);
         const byNo = {};
         hist.forEach((h) => (h.nos || []).forEach((n) => (byNo[n] = byNo[n] || []).push(h)));
+        items.forEach((x) => {
+          x.history = (byNo[x.no] || []).slice().sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0) || b.taskId - a.taskId);
+          x.haiki = haikiMarks[x.no] || null;
+          x.haikiTarget = isHaikiTarget(x);
+        });
 
         let list = q
           ? items.filter((x) => x.no === qNo || ["name", "title", "orderNo", "asin"].some((f) => normText(x[f]).includes(q)))
           : items.filter((x) => isPastStatus(x.status));
         if (status) list = list.filter((x) => x.status === status);
+        // 破棄の記録あり・なしの件数（絞り込み前）
+        const haikiCounts = {
+          todo: list.filter((x) => x.haikiTarget && !x.haiki).length,
+          done: list.filter((x) => x.haikiTarget && x.haiki).length,
+        };
+        if (haikiFilter === "todo") list = list.filter((x) => x.haikiTarget && !x.haiki);
+        if (haikiFilter === "done") list = list.filter((x) => x.haikiTarget && x.haiki);
         // ステータスごとの件数（絞り込みボタンに表示）
         const counts = {};
         (q ? items.filter((x) => x.no === qNo || ["name", "title", "orderNo", "asin"].some((f) => normText(x[f]).includes(q))) : items)
@@ -599,16 +626,30 @@ exports.henso = onRequest(
 
         const total = list.length;
         list = list.sort(byNoDesc).slice(0, 50);
-        list.forEach((x) => {
-          x.history = (byNo[x.no] || []).slice().sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0) || b.taskId - a.taskId);
-        });
         await fillImages(list);
         const files = await cwRoomFiles(tokenOf(), RETURN_ROOM_ID, fresh).then(filesByNo).catch(() => ({}));
         list.forEach((x) => {
           x.files = files[x.no] || [];
           x.roomId = RETURN_ROOM_ID;
         });
-        return res.json({ items: list, total, counts, statuses: PAST_STATUSES, loadedAt: Date.now() });
+        return res.json({ items: list, total, counts, haikiCounts, statuses: PAST_STATUSES, loadedAt: Date.now() });
+      }
+
+      // 破棄した記録をつける（undo: true で取り消し）。シートには書き込まない
+      if (action === "haiki" && req.method === "POST") {
+        const { no, by, undo } = req.body || {};
+        const n = normNo(no);
+        if (!n) return res.status(400).json({ error: "返送No.の指定が正しくありません" });
+        const ref = admin.firestore().collection(HAIKI_COL).doc(n);
+        if (undo) {
+          await ref.delete();
+          return res.json({ ok: true, no: n, haiki: null });
+        }
+        const name = String(by || "").trim().slice(0, 30);
+        if (!name) return res.status(400).json({ error: "作業者の名前を入れてください" });
+        const data = { no: n, at: Date.now(), by: name };
+        await ref.set(data);
+        return res.json({ ok: true, no: n, haiki: data });
       }
 
       if (action === "lookup" && req.method === "GET") {
