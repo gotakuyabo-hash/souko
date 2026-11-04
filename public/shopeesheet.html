@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
 <title>配送管理シート</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.0.0/encoding.min.js"></script>
 <style>
 :root{
   --paper:#EEF2F1; --surface:#FFFFFF; --ink:#1F2B2E; --muted:#5F6E73; --line:#D5DDDB;
@@ -163,6 +164,17 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 .dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
 .dlg .checks{display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 10px}
 .dlg ul{margin:6px 0;padding-left:20px;font-size:13px}
+/* 国内倉庫 送り状 */
+.seg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.seg label{display:flex;align-items:center;gap:6px;margin:0;padding:8px 14px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-weight:700;background:var(--surface)}
+.seg label:has(input:checked){border-color:var(--wh);background:var(--wh-bg);color:var(--wh)}
+.seg label:has(input:disabled){opacity:.5;cursor:default}
+.seg input{margin:0}
+.dest{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;margin:0 0 12px;background:var(--paper)}
+.dest b{font-size:14px}
+.dlg details{margin:4px 0 6px;font-size:14px}
+.dlg details summary{cursor:pointer;font-weight:700;padding:4px 0}
+.gl{font-size:13px;font-weight:700;margin:4px 0 6px}
 .prog{height:8px;background:var(--paper);border-radius:4px;overflow:hidden;margin:12px 0}
 .prog i{display:block;height:100%;background:var(--wh);width:0;transition:width .2s}
 
@@ -308,6 +320,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <button class="btn" data-bulk="pick" type="button">ピックリスト</button>
   <button class="btn" data-bulk="label" type="button">ラベル印刷</button>
   <button class="btn" data-bulk="invoice" type="button">Invoice印刷</button>
+  <button class="btn" data-bulk="domestic" type="button">国内倉庫 送り状</button>
   <button class="btn ghost" data-bulk="clear" type="button">選択解除</button>
 </div>
 
@@ -910,6 +923,174 @@ async function printLabels(rows, kind = 'label'){
   );
 }
 
+/* =========================================================
+   国内倉庫（モールの仕分けセンター）あての送り状データ（佐川・ヤマト）
+   - 送り先はここに足していく。クーパンの宛先が分かったら zip などを入れれば使えるようになる
+   - 依頼主（倉庫側）やお客様コードは Firestore の settings/domestic_ship_from に保存（どのPCでも同じ）
+   ========================================================= */
+const DOMESTIC_DESTS = {
+  lazada: {
+    label:'Lazada', code:'LZD',
+    zip:'136-0082', addr1:'東京都江東区新木場2-12-3', addr2:'EFC新木場',
+    company:'Lazada仕分けセンター', person:'Lazada荷物受取係', tel:'070-3224-2584',
+    item:'Lazada出荷商品',
+  },
+  coupang: {
+    label:'クーパン', code:'CPG',
+    zip:'', addr1:'', addr2:'', company:'', person:'', tel:'', // ← 宛先が分かったらここに入れる
+    item:'クーパン出荷商品',
+  },
+};
+const FROM_DOC = () => doc(db, 'settings', 'domestic_ship_from');
+// 依頼主・お客様コードの初期値（画面で書き換えて保存したら、そちらが優先）
+const DOMESTIC_CODES = {
+  name:'株式会社LOGEX', tel:'03-6824-6590', zip:'182-0004', addr1:'東京都調布市入間町2-29-29', addr2:'1階B棟',
+  yamatoCode:'09050540672', yamatoFare:'01', sagawaCode:'155924420000',
+};
+// 依頼主名のうしろにサービス名をつける（例：株式会社LOGEX(Lazada)）
+const fromName = (f, dest) => f.name + '(' + dest.label + ')';
+// ヤマトは「全角16文字（半角32文字）まで」なので、全角2・半角1で数えて切る
+const byteCut = (s, max) => { let n = 0, out = ''; for (const ch of String(s || '')){ const w = /[\u0020-\u007E\uFF61-\uFF9F]/.test(ch) ? 1 : 2; if (n + w > max) break; n += w; out += ch; } return out; };
+const destReady = d => !!(d && d.zip && d.addr1 && (d.company || d.person) && d.tel);
+const ymdSlash = s => String(s || today()).replace(/-/g, '/');
+const zen16 = (s, n) => [...String(s || '')].slice(0, n).join(''); // 文字数で切る（佐川は半角・全角とも16文字まで）
+
+async function openDomestic(rows){
+  const ids = [...new Set(rows.map(keyOf))];
+  let from = {};
+  busy(true);
+  try { const { getDoc } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js'); const snap = await getDoc(FROM_DOC()); from = snap.exists() ? snap.data() : {}; }
+  catch(e){ console.warn('依頼主の設定を読めませんでした', e); }
+  finally { busy(false); }
+
+  const seller = SELLERS.find(x => x.id === S.sellerId) || {};
+  const plat = String(seller.platform || '').toLowerCase();
+  let destKey = store('domDest') || (plat.includes('coupang') || plat.includes('クーパン') ? 'coupang' : 'lazada');
+  if (!destReady(DOMESTIC_DESTS[destKey])) destKey = Object.keys(DOMESTIC_DESTS).find(k => destReady(DOMESTIC_DESTS[k])) || '';
+  const carrier = store('domCarrier') || 'sagawa';
+  from = { ...DOMESTIC_CODES, ...Object.fromEntries(Object.entries(from).filter(([, x]) => x !== '' && x != null)) };
+  const v = k => esc(from[k] || '');
+  const noFrom = !(from.name && from.zip && from.addr1 && from.tel);
+
+  openDlg(
+    '<form><h2>国内倉庫あての送り状データ</h2>' +
+    '<p class="sub">選択中 '+ids.length+'件：'+summaryOf(rows)+'</p>' +
+    '<p class="gl">送り先</p><div class="seg">' + Object.entries(DOMESTIC_DESTS).map(([k, d]) =>
+      '<label><input type="radio" name="dest" value="'+k+'"'+(k === destKey && destReady(d) ? ' checked' : '')+(destReady(d) ? '' : ' disabled')+'>'+esc(d.label)+(destReady(d) ? '' : '（宛先未登録）')+'</label>').join('') + '</div>' +
+    '<div class="dest" id="domDestView"></div>' +
+    '<p class="gl">配送会社</p><div class="seg">' +
+      '<label><input type="radio" name="carrier" value="sagawa"'+(carrier === 'sagawa' ? ' checked' : '')+'>佐川（e飛伝）</label>' +
+      '<label><input type="radio" name="carrier" value="yamato"'+(carrier === 'yamato' ? ' checked' : '')+'>ヤマト（B2クラウド）</label></div>' +
+    '<div class="two"><label>個口数<select name="boxes">' + Array.from({ length:30 }, (_, i) => '<option value="'+(i+1)+'">'+(i+1)+'個口</option>').join('') + '</select></label>' +
+    '<label>出荷日<input name="shipDate" type="date" value="'+today()+'"></label></div>' +
+    '<label>品名<input name="item" autocomplete="off" maxlength="16"></label>' +
+    '<details'+(noFrom ? ' open' : '')+'><summary>依頼主（発送元の倉庫）・お客様コード'+(noFrom ? '　※はじめに入力してください' : '')+'</summary>' +
+      '<div class="two"><label>依頼主名<input name="name" value="'+v('name')+'" autocomplete="off" placeholder="株式会社LOGEX"></label>' +
+      '<label>電話番号<input name="tel" value="'+v('tel')+'" autocomplete="off" inputmode="tel"></label></div>' +
+      '<div class="two"><label>郵便番号<input name="zip" value="'+v('zip')+'" autocomplete="off" inputmode="numeric"></label>' +
+      '<label>建物名など<input name="addr2" value="'+v('addr2')+'" autocomplete="off"></label></div>' +
+      '<label>住所<input name="addr1" value="'+v('addr1')+'" autocomplete="off"></label>' +
+      '<div class="two"><label>佐川 お客様コード<input name="sagawaCode" value="'+v('sagawaCode')+'" autocomplete="off" inputmode="numeric"></label>' +
+      '<label>ヤマト 請求先顧客コード<input name="yamatoCode" value="'+v('yamatoCode')+'" autocomplete="off" inputmode="numeric"></label></div>' +
+      '<div class="two"><label>ヤマト 運賃管理番号<input name="yamatoFare" value="'+esc(from.yamatoFare || '01')+'" autocomplete="off" inputmode="numeric"></label><span></span></div>' +
+      '<p class="hint" style="margin-top:0">ここは全員共通で保存されます。</p>' +
+    '</details>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">CSVをダウンロード</button></div></form>',
+    async fd => {
+      const destK = fd.get('dest');
+      const dest = DOMESTIC_DESTS[destK];
+      if (!destReady(dest)){ toast('送り先を選んでください', true); return false; }
+      const f = {};
+      ['name','tel','zip','addr1','addr2','sagawaCode','yamatoCode','yamatoFare'].forEach(k => f[k] = String(fd.get(k) || '').trim());
+      if (!f.name || !f.tel || !f.zip || !f.addr1){ toast('依頼主の名前・電話番号・郵便番号・住所を入れてください', true); $('dlgBody').querySelector('details').open = true; return false; }
+      if (!window.Encoding){ toast('文字コードを変える部品を読み込めませんでした。ページを開き直してください', true); return false; }
+      const carrierK = fd.get('carrier');
+      const boxes = Math.max(1, parseInt(fd.get('boxes'), 10) || 1);
+      const item = String(fd.get('item') || '').trim() || dest.item;
+      store('domDest', destK); store('domCarrier', carrierK); store('domBoxes', String(boxes));
+      // 依頼主を保存（変わったときだけ）
+      if (['name','tel','zip','addr1','addr2','sagawaCode','yamatoCode','yamatoFare'].some(k => (from[k] || '') !== f[k])){
+        try { const { setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+          await setDoc(FROM_DOC(), { ...f, updatedAt: serverTimestamp(), updatedBy: auth.currentUser ? auth.currentUser.email : '' }, { merge:true }); }
+        catch(e){ toast('依頼主の保存に失敗しました（CSVは作ります）：' + (e.code || e.message), true); }
+      }
+      // まとめて1件の送り状（個口数ぶんラベルが出る）
+      const day = fd.get('shipDate') || today();
+      const stamp = day.replace(/-/g, '');
+      const lines = [{ ref: dest.code + '-' + stamp, item2: '注文' + ids.length + '件', note: '注文' + ids.length + '件・' + boxes + '個口', pieces: boxes }];
+      const table = carrierK === 'yamato' ? yamatoB2Rows(dest, f, lines, day, item) : sagawaRows(dest, f, lines, day, item);
+      downloadSjisCsv(table, (carrierK === 'yamato' ? 'yamato_' : 'sagawa_') + dest.code.toLowerCase() + '_' + stamp + '.csv');
+      toast((carrierK === 'yamato' ? 'ヤマト' : '佐川') + 'の送り状データを作りました（' + boxes + '個口）');
+    }
+  );
+  const form = $('dlgBody').querySelector('form');
+  const showDest = () => {
+    const k = (form.querySelector('input[name="dest"]:checked') || {}).value;
+    const d = DOMESTIC_DESTS[k];
+    $('domDestView').innerHTML = d ? '<b>'+esc(d.company)+'</b>　'+esc(d.person)+'<br>〒'+esc(d.zip)+' '+esc(d.addr1)+' '+esc(d.addr2)+'<br>TEL '+esc(d.tel)
+      : '送り先を選んでください';
+    if (d && !form.elements.item.dataset.touched) form.elements.item.value = d.item;
+  };
+  form.elements.item.addEventListener('input', e => e.target.dataset.touched = '1');
+  form.elements.boxes.value = store('domBoxes') || '1';
+  form.addEventListener('change', e => { if (e.target.name === 'dest') showDest(); });
+  showDest();
+}
+
+// ヤマト B2クラウド（外部データ取込 基本レイアウト）
+function yamatoB2Rows(dest, f, lines, day, item){
+  const H = ['お客様管理番号','送り状種類','クール区分','伝票番号','出荷予定日','お届け予定日','配達時間帯','お届け先コード','お届け先電話番号','お届け先電話番号枝番',
+    'お届け先郵便番号','お届け先住所','お届け先アパートマンション名','お届け先会社・部門１','お届け先会社・部門２','お届け先名','お届け先名(ｶﾅ)','敬称','ご依頼主コード','ご依頼主電話番号',
+    'ご依頼主電話番号枝番','ご依頼主郵便番号','ご依頼主住所','ご依頼主アパートマンション','ご依頼主名','ご依頼主名(ｶﾅ)','品名コード１','品名１','品名コード２','品名２',
+    '荷扱い１','荷扱い２','記事','ｺﾚｸﾄ代金引換額（税込)','内消費税額等','止置き','営業所コード','発行枚数','個数口表示フラグ','請求先顧客コード',
+    '請求先分類コード','運賃管理番号'];
+  const rows = lines.map(l => [
+    l.ref, '0', '0', '', ymdSlash(day), '', '', '', dest.tel, '',
+    dest.zip, zen16(dest.addr1, 32), zen16(dest.addr2, 16), zen16(dest.company, 25), '', zen16(dest.person, 16), '', '様', '', f.tel,
+    '', f.zip, zen16(f.addr1, 32), zen16(f.addr2, 16), byteCut(fromName(f, dest), 32), '', '', zen16(item, 25), '', zen16(l.item2, 25),
+    '', '', zen16(l.note, 22), '', '', '0', '', String(l.pieces || 1), '1', f.yamatoCode,
+    '', f.yamatoFare || '01',
+  ]);
+  return [H, ...rows];
+}
+
+// 佐川 e飛伝（e飛伝Ⅱ 標準レイアウト）
+function sagawaRows(dest, f, lines, day, item){
+  const H = ['住所録コード','お届け先電話番号','お届け先郵便番号','お届け先住所１','お届け先住所２','お届け先住所３','お届け先名称１','お届け先名称２','お客様管理番号','お客様コード',
+    '部署ご担当者コード取得区分','部署ご担当者コード','部署ご担当者名称','荷送人電話番号','ご依頼主コード取得区分','ご依頼主コード','ご依頼主電話番号','ご依頼主郵便番号','ご依頼主住所１','ご依頼主住所２',
+    'ご依頼主名称１','ご依頼主名称２','荷姿','品名１','品名２','品名３','品名４','品名５','荷札荷姿','荷札品名１',
+    '荷札品名２','荷札品名３','荷札品名４','荷札品名５','荷札品名６','荷札品名７','荷札品名８','荷札品名９','荷札品名１０','出荷個数',
+    'スピード指定','クール便指定','配達日','配達指定時間帯','配達指定時間（時分）','代引金額','消費税','決済種別','保険金額','指定シール１',
+    '指定シール２','指定シール３','営業所受取','SRC区分','営業所受取営業所コード','元着区分','メールアドレス','ご不在時連絡先','出荷日','お問合せ送り状No',
+    '出荷場印字区分','集約解除指定','編集01','編集02','編集03','編集04','編集05','編集06','編集07','編集08','編集09','編集10'];
+  const a1 = zen16(dest.addr1, 16), a2 = zen16([...dest.addr1].slice(16).join('') + dest.addr2, 16);
+  const fa1 = zen16(f.addr1, 16), fa2 = zen16([...f.addr1].slice(16).join('') + f.addr2, 16);
+  const rows = lines.map(l => {
+    const r = new Array(H.length).fill('');
+    r[1] = dest.tel; r[2] = dest.zip; r[3] = a1; r[4] = a2;
+    r[6] = zen16(dest.company, 16); r[7] = zen16(dest.person, 16);
+    r[8] = l.ref; r[9] = f.sagawaCode;
+    r[16] = f.tel; r[17] = f.zip; r[18] = fa1; r[19] = fa2; // 佐川は16文字まで。入りきらないときはサービス名を名称２に回す
+    const nm = fromName(f, dest);
+    if ([...nm].length <= 16) r[20] = nm; else { r[20] = zen16(f.name, 16); r[21] = zen16('(' + dest.label + ')', 16); }
+    r[23] = zen16(item, 16); r[24] = zen16(l.item2, 16);
+    r[39] = String(l.pieces || 1); r[40] = '000'; r[41] = '001'; r[58] = ymdSlash(day);
+    return r;
+  });
+  return [H, ...rows];
+}
+
+function downloadSjisCsv(table, fname){
+  const q = v => { const s = String(v == null ? '' : v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const text = table.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
+  const sjis = Encoding.convert(Encoding.stringToCode(text), { to:'SJIS', from:'UNICODE' });
+  const blob = new Blob([new Uint8Array(sjis)], { type:'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
 /* ===== 入庫 ===== */
 function renderInbound(){
   if (!D.hasInbound){
@@ -1215,6 +1396,7 @@ document.addEventListener('click', e => {
     if (t.dataset.bulk === 'recv') setReceived(rows.filter(o => !o.received), true).catch(() => {});
     if (t.dataset.bulk === 'ship') openShip(rows);
     if (t.dataset.bulk === 'pick') openPick('sel');
+    if (t.dataset.bulk === 'domestic') openDomestic(rows).catch(err => toast(String(err.message || err), true));
     if (t.dataset.bulk === 'label' || t.dataset.bulk === 'invoice') printLabels(rows, t.dataset.bulk).catch(err => toast(String(err.message || err), true));
     return;
   }
@@ -1306,7 +1488,7 @@ function openSellerAdmin(){
     '<form><h2>セラー管理</h2>' + list +
     '<label>配送管理シートのURL<input name="url" required placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off"></label>' +
     '<div class="two"><label>表示名（空ならシート名）<input name="name" autocomplete="off"></label>' +
-    '<label>モール<select name="platform"><option>Lazada</option><option>Shopee</option><option value="">その他</option></select></label></div>' +
+    '<label>モール<select name="platform"><option>Lazada</option><option>Shopee</option><option>Coupang</option><option value="">その他</option></select></label></div>' +
     '<p class="hint">シートは、GASを作ったアカウントが編集できる状態にしておいてください。</p>' +
     '<div class="acts"><button type="button" class="btn ghost" data-close>閉じる</button><button class="btn primary" type="submit">セラーを追加</button></div></form>',
     async fd => {
