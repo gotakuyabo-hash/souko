@@ -171,6 +171,16 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
 .past-meta b{color:var(--ink);font-weight:700}
 .hist-date{font-weight:700;color:var(--ink)}
 .more-note{font-size:13px;color:var(--muted);margin:12px 0 0}
+.sub-filter{margin-top:8px}
+.worker{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:14px;font-weight:700}
+.finder .worker input{flex:0 1 180px;font-size:16px;font-weight:400;letter-spacing:0;padding:8px 10px;border-width:1px;border-radius:9px}
+.haiki-box{border-top:1px solid var(--line);padding:12px 16px 16px}
+.haiki-btn{width:100%;padding:13px;border:0;border-radius:12px;background:#B3261E;color:#fff;font-weight:700;font-size:17px}
+.haiki-btn.confirm{background:var(--warn)}
+.haiki-btn:disabled{opacity:.6;cursor:wait}
+.haiki-done{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:700;color:var(--done)}
+.haiki-done button{background:none;border:0;color:var(--accent);font-weight:700;text-decoration:underline;padding:6px;white-space:nowrap}
+.haiki-badge{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--done);color:#fff}
 
 /* 設定 */
 .settings{border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:22px 20px;width:min(520px,92vw)}
@@ -244,10 +254,15 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
       <form class="finder" id="pastForm">
         <label for="pastQ">過去の返送品を探す（返送No.・名前・品名・注文番号）</label>
         <div class="finder-row">
-          <input id="pastQ" class="text" autocomplete="off" placeholder="空欄なら過去分をすべて">
+          <input id="pastQ" class="text" autocomplete="off" placeholder="空欄で全件">
           <button type="submit" id="pastBtn">検索</button>
         </div>
         <div class="kind-filter" id="pastKinds"></div>
+        <div class="kind-filter sub-filter" id="pastHaiki" hidden></div>
+        <div class="worker">
+          <label for="workerName" style="margin:0">作業者</label>
+          <input id="workerName" autocomplete="off" placeholder="例：萩原">
+        </div>
       </form>
       <div id="pastResult"></div>
     </section>
@@ -282,6 +297,7 @@ let recv = null;            // 受領タブの検索結果 { matchedBy, items }
 let received = null;        // タスク完了タブの受領済み一覧
 let past = null;            // 過去の返送品タブの検索結果 { items, total, counts, q, status }
 let pastStatus = "";        // ステータス（シートC列）の絞り込み
+let pastHaiki = "";         // 破棄の記録：""=すべて / "todo"=まだ / "done"=破棄済み
 const PAST_STATUSES = ["破棄", "完了", "DHL", "EMS", "有在庫", "返品ラベル発行不可"];
 const doneSet = new Set();  // このページで完了にしたタスク
 
@@ -568,14 +584,40 @@ function renderPastFilter(counts) {
 }
 renderPastFilter(null);
 
+// 作業者名はこの端末に覚えておく
+try { $("workerName").value = localStorage.getItem("henso_worker") || ""; } catch (e) {}
+$("workerName").addEventListener("change", () => {
+  try { localStorage.setItem("henso_worker", $("workerName").value.trim()); } catch (e) {}
+});
+
+// 破棄の記録で絞り込むボタン（ステータス「破棄」を選んだときだけ出す）
+function renderHaikiFilter(c) {
+  const box = $("pastHaiki");
+  box.hidden = pastStatus !== "破棄";
+  if (box.hidden) return;
+  const btn = (v, label, n) =>
+    `<button type="button" data-haiki="${v}" aria-pressed="${pastHaiki === v}">${label}${n == null ? "" : `<small>${n}</small>`}</button>`;
+  box.innerHTML = btn("", "破棄：すべて", c ? c.todo + c.done : null) +
+    btn("todo", "まだ記録していない", c ? c.todo : null) +
+    btn("done", "破棄済み", c ? c.done : null);
+}
+$("pastHaiki").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-haiki]");
+  if (!b) return;
+  pastHaiki = b.dataset.haiki;
+  searchPast();
+});
+
 async function searchPast() {
   const q = $("pastQ").value.trim();
   $("pastBtn").disabled = true; $("pastBtn").textContent = "検索中…";
   $("pastResult").innerHTML = `<div class="notice">探しています…</div>`;
   try {
-    const d = await api("/history?fresh=1&q=" + encodeURIComponent(q) + "&status=" + encodeURIComponent(pastStatus));
-    past = { ...d, q, status: pastStatus };
+    if (pastStatus !== "破棄") pastHaiki = "";
+    const d = await api("/history?fresh=1&q=" + encodeURIComponent(q) + "&status=" + encodeURIComponent(pastStatus) + "&haiki=" + pastHaiki);
+    past = { ...d, q, status: pastStatus, haikiFilter: pastHaiki };
     renderPastFilter(d.counts);
+    renderHaikiFilter(d.haikiCounts);
     renderPast();
   } catch (err) {
     $("pastResult").innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
@@ -617,9 +659,18 @@ function histHtml(h) {
   </div>`;
 }
 
+function haikiHtml(it) {
+  if (!it.haikiTarget) return "";
+  const h = it.haiki;
+  return `<div class="haiki-box">${h
+    ? `<div class="haiki-done"><span>🗑 破棄済み ${fmtDate(h.at)}（${esc(h.by)}）</span><button data-haiki-undo="${esc(it.no)}">取り消す</button></div>`
+    : `<button class="haiki-btn" data-haiki-no="${esc(it.no)}">破棄した</button>`}</div>`;
+}
+
 function renderPast() {
   if (!past) return;
-  const st = past.status ? `ステータス「${esc(past.status)}」の` : "";
+  const st = (past.status ? `ステータス「${esc(past.status)}」の` : "") +
+    (past.haikiFilter === "todo" ? "破棄をまだ記録していない" : past.haikiFilter === "done" ? "破棄済みの" : "");
   if (!past.items.length) {
     $("pastResult").innerHTML = `<div class="notice">${past.q
       ? `「${esc(past.q)}」で${st}返送品は見つかりませんでした。字を短くして（名字だけ、品名の一部など）お試しください。`
@@ -633,14 +684,28 @@ function renderPast() {
     ? `<p class="more-note">新しい順に ${past.items.length} 件まで表示しています。古いものは返送No.・名前・品名で探してください。</p>` : "";
   $("pastResult").innerHTML = `<p class="hit-note">${head}</p><div class="list">${
     past.items.map((it) => `<article class="task">
-      <div class="item">${photoHtml(it)}${infoHtml(it)}${pastMetaHtml(it)}${filesHtml(it)}</div>
+      <div class="item">${photoHtml(it)}${infoHtml(it)}${it.haiki ? `<div style="grid-column:1/-1"><span class="haiki-badge">破棄済み ${fmtDate(it.haiki.at).split(" ")[0]}</span></div>` : ""}${pastMetaHtml(it)}${filesHtml(it)}</div>
       <div class="tasks-box">
         <p class="section-title">完了した作業 ${it.history.length ? `<span class="badge-task" style="background:var(--done)">${it.history.length}件</span>` : ""}</p>
         ${it.history.length ? it.history.map(histHtml).join("")
           : `<p class="no-task" style="padding-top:8px">完了したタスクの記録はありません</p>`}
       </div>
+      ${haikiHtml(it)}
     </article>`).join("")
   }</div>${more}`;
+}
+
+async function setHaiki(no, by, undo) {
+  const d = await api("/haiki", { method: "POST", body: JSON.stringify({ no, by, undo }) });
+  if (past) {
+    past.items.filter((it) => String(it.no) === String(d.no)).forEach((it) => (it.haiki = d.haiki));
+    if (past.haikiCounts) {
+      past.haikiCounts.todo += undo ? 1 : -1;
+      past.haikiCounts.done += undo ? -1 : 1;
+      renderHaikiFilter(past.haikiCounts);
+    }
+    renderPast();
+  }
 }
 
 async function setStatus(roomId, taskId, status) {
@@ -686,6 +751,45 @@ document.addEventListener("click", async (e) => {
       toast(err.message);
       rc.closest(".receipt-grid").querySelectorAll(".rc").forEach((b) => (b.disabled = false));
     }
+    return;
+  }
+
+  const haikiBtn = e.target.closest("[data-haiki-no]");
+  if (haikiBtn) {
+    const no = haikiBtn.dataset.haikiNo;
+    const by = $("workerName").value.trim();
+    if (!by) { toast("先に「作業者」に名前を入れてください"); $("workerName").focus(); return; }
+    // 誤タップ防止：2回押しで記録
+    if (!haikiBtn.classList.contains("confirm")) {
+      haikiBtn.classList.add("confirm");
+      haikiBtn.textContent = "もう一度押すと記録";
+      clearTimeout(confirmTimers["h" + no]);
+      confirmTimers["h" + no] = setTimeout(() => {
+        haikiBtn.classList.remove("confirm");
+        haikiBtn.textContent = "破棄した";
+      }, 3000);
+      return;
+    }
+    clearTimeout(confirmTimers["h" + no]);
+    haikiBtn.disabled = true; haikiBtn.textContent = "記録中…";
+    try {
+      try { localStorage.setItem("henso_worker", by); } catch (e) {}
+      await setHaiki(no, by, false);
+      toast(`返送No.${no}：破棄を記録しました`, "元に戻す", async () => {
+        try { await setHaiki(no, "", true); toast("破棄の記録を取り消しました"); }
+        catch (err) { toast(err.message); }
+      });
+    } catch (err) {
+      toast(err.message);
+      haikiBtn.disabled = false; haikiBtn.classList.remove("confirm"); haikiBtn.textContent = "破棄した";
+    }
+    return;
+  }
+  const haikiUndo = e.target.closest("[data-haiki-undo]");
+  if (haikiUndo) {
+    haikiUndo.disabled = true;
+    try { await setHaiki(haikiUndo.dataset.haikiUndo, "", true); toast("破棄の記録を取り消しました"); }
+    catch (err) { toast(err.message); haikiUndo.disabled = false; }
     return;
   }
 
