@@ -1151,6 +1151,33 @@ window.saveAllOrderPickItems = async () => {
 };
 
 /* ---------- zaico送信 ---------- */
+// サーバーから返ってきた「登録できなかった商品」を取り出す（apiCreateZaicoShipment は missingBarcodes にバーコードの配列を返す）
+function pickZaicoFailures(data, sentItems) {
+  const keys = ['missingBarcodes', 'notFound', 'not_found', 'skipped', 'skippedItems', 'failed', 'failedItems', 'missing', 'missingItems', 'unregistered', 'errors'];
+  let raw = [];
+  keys.forEach(k => { if (Array.isArray(data && data[k])) raw = raw.concat(data[k]); });
+  const byBarcode = new Map(sentItems.map(it => [String(it.barcode), it]));
+  const seen = new Set();
+  const out = [];
+  raw.forEach(x => {
+    let bc = '', name = '', reason = '';
+    if (x && typeof x === 'object') {
+      bc = String(x.barcode || x.code || x.jan || '').trim();
+      name = String(x.productName || x.title || x.name || '').trim();
+      reason = String(x.reason || x.message || x.error || '').trim();
+    } else {
+      bc = String(x || '').trim();
+    }
+    const hit = bc ? byBarcode.get(bc) : null;
+    if (!name && hit) name = hit.productName;
+    const key = bc || name;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ barcode: bc, productName: name, shelfNumber: hit ? hit.shelfNumber : '', pickCount: hit ? hit.pickCount : '', reason });
+  });
+  return out;
+}
+
 window.sendToZaico = async () => {
   if (!pickGroups.length || pickStale) { alert('先に「ピック数を算出」を押してください。'); return; }
   const inputEl = document.getElementById('customerNameInput');
@@ -1158,8 +1185,13 @@ window.sendToZaico = async () => {
 
   syncInputs();
   const validItems = [];
+  const notSent = []; // バーコードまたは棚番がなく、送信しない行
   pickGroups.forEach(g => {
-    if (!g.barcode || !g.shelfNumber) return;
+    if (!g.barcode || !g.shelfNumber) {
+      const lack = [!g.barcode ? 'バーコード' : '', !g.shelfNumber ? '棚番' : ''].filter(Boolean).join('・');
+      notSent.push(`・${g.productName || g.skus[0].skuCode || '（名前なし）'}（ピック数 ${g.pickCount}）：${lack}がありません`);
+      return;
+    }
     // 倍率がSKUごとに違う合算行は、注文数＝ピック数・倍率1として送る（どちらを使っても数量が合うように）
     const mult = g.uniformMultiplier ? (g.skus[0].multiplier || 1) : 1;
     validItems.push({
@@ -1173,9 +1205,8 @@ window.sendToZaico = async () => {
     });
   });
 
-  if (!validItems.length) { alert('送信できる明細がありません。\nバーコードと棚番の両方が入っている行だけが送信されます。'); return; }
-  const skipped = pickGroups.length - validItems.length;
-  if (!confirm(`取引先「${customerName}」として、画面の並び順で ${validItems.length} 明細をzaicoに送信しますか？${skipped ? `\n\n※バーコードまたは棚番がない ${skipped} 行は送信されません。` : ''}`)) return;
+  if (!validItems.length) { alert('送信できる明細がありません。\nバーコードと棚番の両方が入っている行だけが送信されます。\n\n' + notSent.join('\n')); return; }
+  if (!confirm(`取引先「${customerName}」として、画面の並び順で ${validItems.length} 明細をzaicoに送信しますか？${notSent.length ? `\n\n※次の ${notSent.length} 行は送信されません：\n${notSent.join('\n')}` : ''}`)) return;
 
   const btn = document.getElementById('zaicoBtn');
   btn.disabled = true;
@@ -1188,10 +1219,27 @@ window.sendToZaico = async () => {
     });
     const data = await res.json();
     if (data.success) {
-      alert(`zaicoに出庫指示を登録しました。\n伝票番号: ${data.slipNum}（${data.count}明細）`);
-      toast('zaicoに送信しました');
+      const failures = pickZaicoFailures(data, validItems);
+      const registered = Number(data.count);
+      const hasCount = !isNaN(registered) && data.count !== undefined && data.count !== null;
+      const unknownGap = !failures.length && hasCount && registered < validItems.length ? validItems.length - registered : 0;
+
+      let msg = `zaicoに出庫指示を登録しました。\n伝票番号: ${data.slipNum}（${hasCount ? registered : validItems.length}明細）`;
+      if (failures.length) {
+        msg += `\n\n【出荷登録できなかった商品 ${failures.length}件】\nzaicoに商品がないなどの理由で登録されていません。手作業で出庫するか、zaicoに商品を登録してから送り直してください。\n`;
+        msg += failures.map(f => `・${f.productName || '（商品名不明）'}${f.barcode ? `／バーコード ${f.barcode}` : ''}${f.shelfNumber ? `／棚番 ${f.shelfNumber}` : ''}${f.pickCount !== '' ? `／ピック数 ${f.pickCount}` : ''}${f.reason ? `（${f.reason}）` : ''}`).join('\n');
+      } else if (unknownGap) {
+        msg += `\n\n【注意】送信した ${validItems.length} 明細のうち ${unknownGap} 明細が登録されていません。\nzaicoにない商品がある可能性があります。zaicoの伝票で、登録されていない商品を確認してください。`;
+      }
+      if (notSent.length) msg += `\n\n【送信しなかった行 ${notSent.length}件】\n${notSent.join('\n')}`;
+      alert(msg);
+      toast(failures.length || unknownGap ? '登録できなかった商品があります' : 'zaicoに送信しました');
+      if (failures.length) console.warn('zaicoに登録できなかった商品', failures);
     } else {
-      alert('送信できませんでした：' + data.error);
+      const failures = pickZaicoFailures(data, validItems);
+      let msg = '送信できませんでした：' + (data.error || '');
+      if (failures.length) msg += `\n\n【登録できなかった商品】\n${failures.map(f => `・${f.productName || '（商品名不明）'}${f.barcode ? `／バーコード ${f.barcode}` : ''}${f.reason ? `（${f.reason}）` : ''}`).join('\n')}`;
+      alert(msg);
     }
   } catch (err) {
     console.error(err);
@@ -1642,7 +1690,7 @@ window.exportEhidenCsv = () => {
   let targetIdx = header.findIndex(h => String(h).includes('品名１') || String(h).includes('品名1'));
   if (targetIdx === -1) targetIdx = 24;
 
-  let excludedCount = 0, itemCutCount = 0;
+  let excludedCount = 0;
   uniqueOrderNos.forEach(oNum => {
     if (okiOn && okinawaOrderNos.has(oNum)) { excludedCount++; return; }
     const matched = sagawaRows.find(r => r.some(c => cleanOrderNoNormalized(c) === oNum));
@@ -1654,9 +1702,7 @@ window.exportEhidenCsv = () => {
     // 品名1：半角・全角に関係なく16文字まで（余分な空白はまとめ、最後の空白は削る）
     if (newRow[targetIdx]) {
       const item = normText(newRow[targetIdx]);
-      const cut = cutByChars(item, SAGAWA_ITEM_MAX);
-      if (cut !== item) itemCutCount++;
-      newRow[targetIdx] = cut;
+      newRow[targetIdx] = cutByChars(item, SAGAWA_ITEM_MAX);
     }
     // 住所1〜3（各全角16文字）：英語の住所なら、郵便番号から都道府県・市区町村を日本語に
     if (addrOn) {
@@ -1680,7 +1726,6 @@ window.exportEhidenCsv = () => {
   let msg = `佐川CSVを出力しました（${outputRows.length - (header.length > 0 ? 1 : 0)}件）。`;
   if (okiOn) msg += `\n・沖縄宛て ${excludedCount} 件はヤマトで出すため除外しています。`;
   else if (okinawaOrderNos.size) msg += `\n・沖縄宛ても佐川に含めています（「沖縄宛てはヤマト」の設定がOFFのため）。`;
-  if (itemCutCount) msg += `\n・品名を${SAGAWA_ITEM_MAX}文字に切り詰めた件数：${itemCutCount}件`;
   if (addrOn) msg += `\n・英語の住所を日本語にした件数：${addrChanged}件`;
   if (warnLines.length) msg += `\n\n確認が必要な行：\n${warnLines.join('\n')}`;
   const cov = coverageWarnLines();
