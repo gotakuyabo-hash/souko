@@ -234,6 +234,7 @@ const shukkaAuto = (() => {
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
                 <button onclick="switchTab('tracking')" id="tabBtnTracking" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">追跡番号の追記</button>
                 <button onclick="switchTab('monthly')" id="tabBtnMonthly" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">月別出荷件数</button>
+                <button onclick="switchTab('stock')" id="tabBtnStock" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">在庫一覧</button>
             </div>
         </div>
     </header>
@@ -436,6 +437,55 @@ const shukkaAuto = (() => {
                     <table class="w-full text-left border-collapse text-sm">
                         <thead id="monthlyHead" class="bg-slate-100 text-slate-600 text-xs border-b"></thead>
                         <tbody id="monthlyBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="tabContentStock" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-boxes-stacked text-indigo-600 mr-2"></i>在庫一覧（在庫シートから読み込み）</h2>
+                        <p class="text-xs text-slate-500 mt-1">各取引先の【商品リスト】「在庫シート」の在庫列をそのまま表示しています。<br>受注データを取り込んでいるときは「今回の出荷数」と「出荷後」も表示します。</p>
+                    </div>
+                    <button onclick="loadStock(true).then(renderStockList); renderStockList();" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                </div>
+
+                <div id="stockSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+                <div class="flex flex-wrap gap-2 items-center text-xs">
+                    <select id="stockClientFilter" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
+                        <option value="">すべての取引先</option>
+                    </select>
+                    <select id="stockLevelFilter" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
+                        <option value="">すべての在庫</option>
+                        <option value="zero">在庫0以下</option>
+                        <option value="low">在庫10未満</option>
+                        <option value="short">今回の出荷で不足</option>
+                    </select>
+                    <select id="stockSort" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
+                        <option value="sheet">シートの並び順</option>
+                        <option value="asc">在庫が少ない順</option>
+                        <option value="desc">在庫が多い順</option>
+                        <option value="name">商品名順</option>
+                    </select>
+                    <input id="stockSearch" oninput="renderStockList()" type="search" placeholder="商品名・JANで検索" class="border rounded-lg px-3 py-2 flex-grow min-w-[180px]">
+                </div>
+
+                <p id="stockListStatus" class="text-xs text-slate-500"></p>
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
+                            <tr>
+                                <th class="px-3 py-3">取引先</th>
+                                <th class="px-3 py-3">商品名</th>
+                                <th class="px-3 py-3 text-center">在庫</th>
+                                <th class="px-3 py-3 text-center">今回の出荷数</th>
+                                <th class="px-3 py-3 text-center">出荷後</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stockListBody" class="divide-y"></tbody>
                     </table>
                 </div>
             </div>
@@ -739,13 +789,14 @@ const shukkaAuto = (() => {
         function switchTab(tabName) {
             const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
             const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly']].forEach(([key, id]) => {
+            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly'],['stock','Stock']].forEach(([key, id]) => {
                 document.getElementById('tabBtn' + id).className = tabName === key ? on : off;
                 document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== key);
             });
             if (tabName === 'master') renderMasterTable();
             if (tabName === 'monthly') loadMonthly();
             if (tabName === 'tracking') loadPending();
+            if (tabName === 'stock') { renderStockList(); loadStock(true).then(renderStockList); }
         }
 
         function updateMasterCountBadge() {
@@ -1655,7 +1706,7 @@ const shukkaAuto = (() => {
                         });
                         [it.name, it.name2].forEach(nm => { if (nm) byName[nameKey(nm)] = n; });
                     });
-                    stockCache[c.key] = { byJan, byName, at: new Date() };
+                    stockCache[c.key] = { byJan, byName, items: data.items, at: new Date() };
                 } catch (err) {
                     stockCache[c.key] = { byJan: {}, byName: {}, at: new Date(),
                         error: err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message };
@@ -1706,6 +1757,108 @@ const shukkaAuto = (() => {
             if (missing) html += ` <span class="text-amber-700">在庫シートに見つからない商品 ${missing} 件（－表示）</span>`;
             if (errs.length) html += `<br><span class="text-rose-600">${errs.join('<br>')}</span>`;
             return html;
+        }
+
+        // ===== 在庫一覧タブ =====
+        // 取り込み中の受注データから、この在庫行の「今回の出荷数」を数える
+        function needForStockItem(clientKey, it) {
+            if (!processedDataRows.length) return null;
+            const jans = new Set([it.name2, it.code, it.name].flatMap(t => jansOf(t)));
+            const names = new Set([it.name, it.name2].filter(Boolean).map(nameKey));
+            let total = 0;
+            processedDataRows.forEach(r => {
+                if (r.client && r.client !== clientKey) return;
+                const hit = jansOf(r.jpName).some(j => jans.has(j)) || names.has(nameKey(r.jpName));
+                if (hit) total += (Number(r.baseQty) || 0) * (Number(r.multiplier) || 1);
+            });
+            return total;
+        }
+
+        function renderStockList() {
+            const sel = document.getElementById('stockClientFilter');
+            if (sel.options.length === 1) {
+                CLIENTS.forEach(c => sel.insertAdjacentHTML('beforeend', `<option value="${esc(c.key)}">${esc(c.name)}</option>`));
+            }
+            const fClient = sel.value;
+            const fLevel = document.getElementById('stockLevelFilter').value;
+            const sort = document.getElementById('stockSort').value;
+            const q = nameKey(document.getElementById('stockSearch').value);
+
+            // 一覧を作る
+            let rows = [];
+            CLIENTS.forEach(c => {
+                const sc = stockCache[c.key];
+                if (!sc || !sc.items) return;
+                if (fClient && fClient !== c.key) return;
+                sc.items.forEach((it, i) => {
+                    const need = needForStockItem(c.key, it);
+                    rows.push({ client: c, it, order: i, stock: Number(it.stock), need,
+                                after: need === null ? null : Number(it.stock) - need });
+                });
+            });
+
+            // 集計カード（絞り込み前の数）
+            const total = rows.length;
+            const zero = rows.filter(r => r.stock <= 0).length;
+            const low = rows.filter(r => r.stock > 0 && r.stock < 10).length;
+            const short = rows.filter(r => r.after !== null && r.need > 0 && r.after < 0).length;
+            const card = (label, n, cls) => `<div class="rounded-xl border px-4 py-3 ${cls}"><div class="text-[11px]">${label}</div><div class="text-2xl font-bold">${n}</div></div>`;
+            document.getElementById('stockSummary').innerHTML =
+                card('品目数', total, 'bg-slate-50 text-slate-700') +
+                card('在庫0以下', zero, zero ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-500') +
+                card('在庫10未満', low, low ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-500') +
+                card('今回の出荷で不足', short, short ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-500');
+
+            // 絞り込み
+            if (fLevel === 'zero') rows = rows.filter(r => r.stock <= 0);
+            if (fLevel === 'low') rows = rows.filter(r => r.stock < 10);
+            if (fLevel === 'short') rows = rows.filter(r => r.after !== null && r.need > 0 && r.after < 0);
+            if (q) rows = rows.filter(r => nameKey([r.it.code, r.it.name, r.it.name2].join(' ')).includes(q));
+
+            // 並べ替え
+            if (sort === 'asc') rows.sort((a, b) => a.stock - b.stock);
+            if (sort === 'desc') rows.sort((a, b) => b.stock - a.stock);
+            if (sort === 'name') rows.sort((a, b) => (a.it.name2 || a.it.name).localeCompare(b.it.name2 || b.it.name, 'ja'));
+
+            // 表
+            const body = document.getElementById('stockListBody');
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="5" class="px-3 py-8 text-center text-slate-400 text-xs">${stockLoading ? '読み込み中...' : '表示する商品がありません'}</td></tr>`;
+            } else {
+                body.innerHTML = rows.map(r => {
+                    const s = r.stock;
+                    const sCls = s <= 0 ? 'bg-rose-100 text-rose-700' : s < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700';
+                    const main = r.it.name2 || r.it.name;
+                    const sub = r.it.name2 && r.it.name && r.it.name !== r.it.name2 ? r.it.name : '';
+                    const needTd = r.need === null || r.need === 0
+                        ? `<td class="px-3 py-2 text-center text-slate-300">－</td><td class="px-3 py-2 text-center text-slate-300">－</td>`
+                        : `<td class="px-3 py-2 text-center font-bold text-indigo-700">${r.need}</td>
+                           <td class="px-3 py-2 text-center font-bold ${r.after < 0 ? 'text-rose-600' : 'text-slate-600'}">${r.after}${r.after < 0 ? '<div class="text-[10px]">在庫不足</div>' : ''}</td>`;
+                    return `<tr class="${r.after !== null && r.need > 0 && r.after < 0 ? 'bg-rose-50' : 'hover:bg-slate-50'}">
+                        <td class="px-3 py-2"><span class="${r.client.color} text-[10px] font-bold px-2 py-0.5 rounded whitespace-nowrap">${esc(r.client.name)}</span></td>
+                        <td class="px-3 py-2">
+                            <div class="font-medium text-slate-800">${esc(main)}</div>
+                            ${sub ? `<div class="text-[11px] text-slate-400">${esc(sub)}</div>` : ''}
+                            ${r.it.code ? `<div class="text-[11px] text-slate-400">品番 ${esc(r.it.code)}</div>` : ''}
+                        </td>
+                        <td class="px-3 py-2 text-center"><span class="${sCls} font-bold px-3 py-1 rounded-lg text-base">${s}</span></td>
+                        ${needTd}
+                    </tr>`;
+                }).join('');
+            }
+
+            // 状態表示
+            const st = document.getElementById('stockListStatus');
+            if (stockLoading) { st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>在庫シートを読み込み中...'; return; }
+            const keys = Object.keys(stockCache);
+            if (!keys.length) { st.innerHTML = '「最新に更新」を押すと在庫シートから読み込みます。'; return; }
+            const at = stockCache[keys[0]].at;
+            const time = at ? `${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}` : '';
+            const errs = keys.filter(k => stockCache[k].error)
+                .map(k => `<span class="text-rose-600">${esc(clientOf(k)?.name || k)}：${esc(stockCache[k].error)}</span>`);
+            st.innerHTML = `${time} 時点の在庫です。表示 ${rows.length} 件` +
+                (processedDataRows.length ? '' : '（受注データを取り込むと「今回の出荷数」も出ます）') +
+                (errs.length ? '<br>' + errs.join('<br>') : '');
         }
 
         // ===== 出庫シートに書き込み =====
