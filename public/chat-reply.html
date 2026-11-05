@@ -395,14 +395,26 @@
         }
 
         // 通行証が古くなった時（合言葉・世代番号を変えた時）は、ログインし直して再読み込み
+        let _fsReauthing = false;      // 再ログイン中（同時に何個エラーが来ても1回だけ動かす）
+        let _fsDeniedShown = false;    // エラー表示は1回だけ
         function handleFsDenied(err) {
             if (!err || err.code !== 'permission-denied') return;
+            if (_fsReauthing) return;
             if (sessionStorage.getItem('cw_reauth')) {
+                if (_fsDeniedShown) return;
+                _fsDeniedShown = true;
                 showToast('Firestoreの読み込みが許可されていません' + (window.__fsLoginError ? '（ログイン失敗：' + window.__fsLoginError + '）' : '。合言葉を確認してください'));
                 return;
             }
+            _fsReauthing = true;
             sessionStorage.setItem('cw_reauth', '1');
             loadFirestore().then(f => f.signOut()).catch(() => {}).finally(() => location.reload());
+        }
+        // サーバーから正しく読めたら「再ログイン済み」の印を消す（次に通行証が古くなった時も、また自動で再ログインできるように）
+        function fsOk(snap) {
+            if (snap && snap.metadata && snap.metadata.fromCache) return;
+            try { sessionStorage.removeItem('cw_reauth'); } catch (e) {}
+            _fsDeniedShown = false;
         }
         // 「権限がない」エラーの時は、ログインに失敗した理由も一緒に出す
         function fsErrText(e) {
@@ -1673,6 +1685,7 @@
                 optionOvUnsub = f.onSnapshot(
                     f.query(f.collection(f.db, 'option_overrides'), f.where('label', '==', OPTION_LABEL)),
                     qs => {
+                        fsOk(qs);
                         const map = {};
                         qs.forEach(d => { const x = d.data(); if (x.k) map[x.k] = x; });
                         optionOv = map;
@@ -2123,6 +2136,7 @@
                     handledUnsub = f.onSnapshot(
                         f.query(f.collection(f.db, 'cw_handled'), f.where('account', '==', acc)),
                         qs => {
+                            fsOk(qs);
                             const map = {};
                             qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
                             if (handledAcc !== acc) return;
@@ -2328,12 +2342,14 @@
                     const done = () => { if (gotStatus && gotRooms) resolve(); };
                     setTimeout(resolve, 4000);   // 4秒待っても届かなければ、従来の方式で表示
                     roomsUnsubs.push(f.onSnapshot(f.doc(f.db, 'cw_sync_status', acc), d => {
+                        fsOk(d);
                         if (roomsAcc !== acc) return;
                         syncStatus = d.exists() ? d.data() : null;
                         gotStatus = true; done();
                         if (currentMode === 'burst' && fsActive()) setLastUpdatedFs();
                     }, err => { handleFsDenied(err); gotStatus = true; done(); }));
                     roomsUnsubs.push(f.onSnapshot(f.query(f.collection(f.db, 'cw_rooms'), f.where('account', '==', acc)), qs => {
+                        fsOk(qs);
                         if (roomsAcc !== acc) return;
                         const map = {};
                         qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
