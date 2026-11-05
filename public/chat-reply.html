@@ -62,6 +62,7 @@
         .tri-none { background: #ecfdf5; color: #047857; }
         .tri-easy { background: #eef2ff; color: #4338ca; }
         .tri-check { background: #fffbeb; color: #b45309; }
+        .tri-wait { background: #f1f5f9; color: #64748b; font-weight: 600; }
         .tri-line { margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: #334155; }
         .tri-line:empty { display: none; }
         .q-box { margin-top: 10px; border-radius: 12px; padding: 8px 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -2923,7 +2924,12 @@
         }
         function triageLineHtml(rid) {
             const cat = triageCat(rid);
-            if (!cat) return '';
+            if (!cat) {
+                // まだ仕分けが済んでいない時は「仕分け中」と出す（最後が自社の発言なら、仕分けはしないので何も出さない）
+                const d = roomsMeta[rid];
+                if (!d || d.lastMine) return '';
+                return `<span class="tri-tag tri-wait">⏳ 仕分け中</span><span class="min-w-0 text-xs text-slate-400">1〜2分で表示されます</span>`;
+            }
             const c = msgCache[rid];
             const point = (c && c.pointFor && c.pointFor === String((roomsMeta[rid] || {}).triageFor || '')) ? c.point : '';
             return `<span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
@@ -3070,6 +3076,8 @@
                 const container = document.getElementById('burstModeContainer');
                 if (isUserBusy(container)) {
                     setTodoStatus(computeTodoMeta().length);
+                    // 返信を書いている間も、仕分けの1行だけは最新にする（書きかけの返信は消さない）
+                    container.querySelectorAll('.burst-card').forEach(c => updateTriageLine(c.getAttribute('data-room-id')));
                     if (Date.now() - busyToastAt > 60000) { busyToastAt = Date.now(); showToast('新着があります。🔄で更新できます'); }
                 } else {
                     renderTodoFs();
