@@ -690,20 +690,31 @@ async function doSearch(preselect){
 
 /* ===== 倉庫追跡番号の候補（部分入力） ===== */
 // 連携GASの action「trackings」でシートの倉庫追跡番号を一度だけ取り寄せ、手元で絞り込む
-const SUG = { items:null, at:0, loading:null, off:false, list:[], idx:-1 };
-async function loadTrackings(force){
+const SUG = { items:null, at:0, loading:null, off:false, failAt:0, warned:false, list:[], idx:-1 };
+// quiet：開いた直後（入力欄に入っただけ）の先読み。失敗してもお知らせを出さない
+async function loadTrackings(force, quiet){
   if (SUG.off) return null;
+  if (!state.config || !state.config.gasUrl || !state.config.sheetId) return null; // 設定の読み込み前は何もしない
   if (!force && SUG.items && Date.now() - SUG.at < 10*60*1000) return SUG.items; // 10分は使い回す
+  if (!force && !SUG.items && Date.now() - SUG.failAt < 60*1000) return null;    // 失敗したら1分は取り直さない
   if (SUG.loading) return SUG.loading;
   SUG.loading = gas('trackings').then(j => {
     SUG.items = (j.items || []).map(x => ({ t:normTracking(x.t), n:x.n||1, last:x.last||0 })).filter(x => x.t);
     SUG.at = Date.now(); return SUG.items;
   }).catch(e => {
-    SUG.off = true;
-    toast('候補を出せませんでした。連携GASに「trackings」を追加すると使えるようになります（'+e.message+'）', 8000);
+    SUG.failAt = Date.now();
+    console.warn('倉庫追跡番号の候補を取得できませんでした:', e.message);
+    // 連携GASに「trackings」が無いときだけ、以後は候補を使わない
+    if (/unknown|action|不明/i.test(e.message)) SUG.off = true;
     return null;
   }).finally(() => { SUG.loading = null; });
-  return SUG.loading;
+  const items = await SUG.loading;
+  // 番号を打っている途中に候補が出せないときだけ、1回お知らせする
+  if (!items && !quiet && !SUG.warned) {
+    SUG.warned = true;
+    toast('倉庫追跡番号の候補を出せませんでした（検索はそのまま使えます）', 5000);
+  }
+  return items;
 }
 // カーソル位置の入力途中の番号
 function currentToken(){
@@ -752,7 +763,7 @@ function pickSugg(i){
 }
 let suggTimer = null;
 $('#q').addEventListener('input', () => { clearTimeout(suggTimer); suggTimer = setTimeout(showSugg, 150); });
-$('#q').addEventListener('focus', () => { if (state.mode==='tracking') loadTrackings(); });
+$('#q').addEventListener('focus', () => { if (state.mode==='tracking') loadTrackings(false, true); });
 $('#q').addEventListener('keydown', e => {
   if ($('#qSugg').hidden || !SUG.list.length) { if (e.key==='Escape') closeSugg(); return; }
   if (e.key==='ArrowDown') { e.preventDefault(); moveSugg(1); }
@@ -1276,16 +1287,34 @@ function focusEdit(){
 $('#labList').addEventListener('input', e => {
   const box = e.target.closest('.lab-edit'); if (box) updateEditCounts(box);
 });
-function applyEdit(key){
-  const box = document.querySelector('#labList .lab-edit[data-k="'+CSS.escape(key)+'"]'); if (!box) return;
+// 郵便番号の住所を調べる（まだ調べていない番号だけ）
+async function ensureZip(z){
+  if (z.length===7 && !(z in L.zipInfo)) {
+    try { const j = await gas('zip', { zips:[z] }); Object.assign(L.zipInfo, j.zips); }
+    catch(e){ toast(e.message, 6000); }
+  }
+  return L.zipInfo[z] || null;
+}
+function formBox(key){ return document.querySelector('#labList .lab-edit[data-k="'+CSS.escape(key)+'"]'); }
+async function applyEdit(key){
+  const box = formBox(key); if (!box) return;
   const val = f => { const el = box.querySelector('[data-f="'+f+'"]'); return el ? el.value.trim() : undefined; };
   const e = { name:val('name'), zip:val('zip'), tel:val('tel'), dd:val('dd'), time:val('time'), item:val('item') };
-  if (val('y1') !== undefined) { e.y1 = val('y1'); e.y2 = val('y2'); e.addr = e.y1 + (e.y2 ? ' ' + e.y2 : ''); }
-  else e.addr = val('addr');
+  const zip = digits(e.zip);
+  const z = await ensureZip(zip);
+  let conv = false;
+  if (val('y1') !== undefined) {
+    e.y1 = val('y1'); e.y2 = val('y2'); e.addr = (e.y1 + (e.y2 ? ' ' + e.y2 : '')).trim();
+    // 英語のまま反映したときは日本語にして、ヤマトの欄に分け直す
+    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z); delete e.y1; delete e.y2; conv = true; }
+  } else {
+    e.addr = val('addr');
+    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z); conv = true; }
+  }
   L.edits[key] = e; L.editing = null;
   renderLabels();
   const l = L.labels.find(x => x.key===key);
-  toast(l && l.errors.length ? '反映しました（まだエラーがあります）' : '反映しました');
+  toast((conv ? '英語住所を日本語にして' : '') + (l && l.errors.length ? '反映しました（まだエラーがあります）' : '反映しました'), conv ? 5000 : 3200);
 }
 
 function yamatoRow(l, cfg){
