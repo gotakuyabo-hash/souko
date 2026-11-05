@@ -150,6 +150,36 @@ td.changed{background:#e5f0f6}
 tr.row-err td{background:var(--danger-soft)}
 @media (max-width:760px){.bulk-grid{grid-template-columns:1fr}}
 
+/* zaico出庫履歴 */
+input[type=date]{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:#fff;color:var(--ink)}
+.log-list{display:flex;flex-direction:column;gap:10px}
+.log-card{border:1px solid var(--line);border-left:6px solid var(--yamato);border-radius:8px;background:#fff}
+.log-card.has-problem{border-left-color:var(--danger)}
+.log-card.has-problem.handled{border-left-color:#9aa7b1}
+.log-card.is-error{border-left-color:var(--danger);background:#fffaf8}
+.log-card > summary{list-style:none;cursor:pointer;padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.log-card > summary::-webkit-details-marker{display:none}
+.log-card > summary::before{content:"▸";color:var(--muted);font-size:12px;width:10px}
+.log-card[open] > summary::before{content:"▾"}
+.log-time{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.log-cust{font-weight:700}
+.log-slip{color:var(--muted);font-size:12px}
+.log-counts{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.log-body{padding:0 14px 14px;border-top:1px solid var(--line-soft)}
+.log-sub{font-size:13px;font-weight:700;margin:14px 0 6px;display:flex;align-items:center;gap:8px}
+.log-sub.danger{color:var(--danger)}
+.log-sub.warn{color:#8a6a00}
+.log-msg{margin:12px 0 0;padding:8px 10px;border-radius:6px;background:var(--danger-soft);color:var(--danger);font-size:12px;font-weight:700}
+.log-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.log-actions .muted{color:var(--muted);font-size:12px}
+.badge-ok{background:var(--yamato);color:#fff}
+.badge-fail{background:var(--danger);color:#fff}
+.badge-done{background:#9aa7b1;color:#fff}
+tr.row-fail td{background:var(--danger-soft)}
+tr.row-notsent td{background:var(--tape-soft)}
+tr.row-check td{background:#e5f0f6}
+details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);margin-top:14px}
+
 /* トースト */
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:700;z-index:50;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
@@ -163,6 +193,7 @@ tr.row-err td{background:var(--danger-soft)}
     <nav class="tabs">
       <button class="tab-btn active" data-tab="allInOneTab" onclick="switchTab('allInOneTab')">出荷処理</button>
       <button class="tab-btn" data-tab="masterTab" onclick="switchTab('masterTab')">商品マスタ</button>
+      <button class="tab-btn" data-tab="zaicoLogTab" onclick="switchTab('zaicoLogTab')">zaico出庫履歴</button>
     </nav>
     <button class="btn-reset" onclick="resetAllData()">読み込みデータをリセット</button>
   </div>
@@ -330,13 +361,49 @@ tr.row-err td{background:var(--danger-soft)}
       </div>
     </section>
   </div>
+
+  <!-- ===== zaico出庫履歴タブ ===== -->
+  <div id="zaicoLogTab" class="tab-content">
+    <section class="step">
+      <div class="step-head">
+        <h2 class="step-title">zaico出庫登録の履歴</h2>
+        <span class="step-sub">「zaicoに出庫指示を送信」を押すたびに自動で記録されます（登録できなかった商品は赤で表示）</span>
+      </div>
+      <div class="step-body">
+        <div class="toolbar">
+          <label style="font-size:12px;font-weight:700">期間</label>
+          <input type="date" id="logFrom" onchange="renderZaicoLogs()">
+          <span>〜</span>
+          <input type="date" id="logTo" onchange="renderZaicoLogs()">
+          <button class="btn btn-ghost btn-sm" onclick="setLogRange(0)">今日</button>
+          <button class="btn btn-ghost btn-sm" onclick="setLogRange(6)">7日間</button>
+          <button class="btn btn-ghost btn-sm" onclick="setLogRange(29)">30日間</button>
+          <button class="btn btn-ghost btn-sm" onclick="setLogRange(null)">すべて</button>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="logSearch" placeholder="商品名・バーコード・伝票番号・取引先で検索" oninput="renderZaicoLogs()" style="flex:2;min-width:220px">
+          <button class="btn btn-ghost btn-sm" id="logOnlyProblem" onclick="toggleLogProblemOnly()">登録できなかった商品がある回だけ</button>
+          <button class="btn btn-ghost btn-sm" id="logOnlyOpen" onclick="toggleLogOpenOnly()">未対応だけ</button>
+        </div>
+        <div class="toolbar">
+          <button class="btn btn-ghost btn-sm on" id="logViewByLog" onclick="setLogView('byLog')">送信した回ごとに見る</button>
+          <button class="btn btn-ghost btn-sm" id="logViewProblems" onclick="setLogView('problems')">登録できなかった商品をまとめて見る</button>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" onclick="loadZaicoLogs()">最新の状態に更新</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportZaicoLogCsv()">表示中の履歴をCSVで書き出す</button>
+        </div>
+        <div class="stats" id="logStats" style="margin-bottom:12px"></div>
+        <div id="logArea"><p class="empty">履歴を読み込んでいます…</p></div>
+      </div>
+    </section>
+  </div>
 </main>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -527,6 +594,7 @@ window.switchTab = (tabId) => {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === tabId));
   if (tabId === 'masterTab') loadMasterItems();
+  if (tabId === 'zaicoLogTab') loadZaicoLogs();
 };
 
 /* ---------- CSV読み込み ---------- */
@@ -1178,6 +1246,288 @@ function pickZaicoFailures(data, sentItems) {
   return out;
 }
 
+/* ---------- zaico出庫履歴 ---------- */
+// 保存先：Firestore の zaico_shipment_logs（保存できないときはこのブラウザに一時保存）
+const ZAICO_LOG_COL = 'zaico_shipment_logs';
+const ZAICO_LOG_LOCAL_KEY = 'zaico_shipment_logs_local';
+let zaicoLogs = [];
+let zaicoLogsLoaded = false;
+let logProblemOnly = false;
+let logOpenOnly = false;
+let logView = 'byLog';
+
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// 送信結果から、1回分の履歴データを作る
+function buildZaicoLog({ kind, customerName, slipNum, validItems, notSentItems, failures, unknownGap = 0, registered = null, errorMessage = '' }) {
+  const now = new Date();
+  const failMap = new Map();
+  (failures || []).forEach(f => { if (f.barcode) failMap.set(String(f.barcode), f); });
+  const items = [];
+  validItems.forEach(it => {
+    const base = { barcode: String(it.barcode || ''), productName: it.productName || '', shelfNumber: it.shelfNumber || '', pickCount: it.pickCount, orderQty: it.orderQty, multiplier: it.multiplier };
+    const f = failMap.get(String(it.barcode));
+    if (kind === 'network') items.push({ ...base, result: 'check', reason: '通信エラーのため、zaicoに登録されたか不明です' });
+    else if (kind === 'error') { items.push({ ...base, result: 'failed', reason: (f && f.reason) || errorMessage || '送信できませんでした' }); failMap.delete(String(it.barcode)); }
+    else if (f) { items.push({ ...base, result: 'failed', reason: f.reason || 'zaicoに商品がないなどの理由で登録されませんでした' }); failMap.delete(String(it.barcode)); }
+    else if (unknownGap) items.push({ ...base, result: 'check', reason: `送信${validItems.length}明細のうち${unknownGap}明細が未登録。どれが未登録かzaicoで確認してください` });
+    else items.push({ ...base, result: 'registered', reason: '' });
+  });
+  // 送った明細と結びつかない「登録できなかった商品」も残す
+  (failures || []).forEach(f => {
+    if (f.barcode && !failMap.has(String(f.barcode))) return;
+    if (!f.barcode && !f.productName) return;
+    items.push({ barcode: f.barcode || '', productName: f.productName || '（商品名不明）', shelfNumber: f.shelfNumber || '', pickCount: f.pickCount, orderQty: '', multiplier: '', result: 'failed', reason: f.reason || '登録されませんでした' });
+  });
+  (notSentItems || []).forEach(n => items.push({ ...n, orderQty: '', multiplier: '', result: 'notSent' }));
+
+  const count = r => items.filter(x => x.result === r).length;
+  const counts = { registered: count('registered'), failed: count('failed'), notSent: count('notSent'), check: count('check') };
+  const status = kind === 'success' ? (counts.failed || counts.notSent || counts.check ? 'partial' : 'ok') : 'error';
+  return {
+    id: `${localDateStr(now).replace(/-/g, '')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}-${Math.random().toString(36).slice(2, 6)}`,
+    createdAt: now.toISOString(),
+    date: localDateStr(now),
+    customerName: customerName || '',
+    slipNum: slipNum ? String(slipNum) : '',
+    status,
+    kind,
+    errorMessage: errorMessage || '',
+    sentCount: validItems.length,
+    registeredCountFromZaico: registered,
+    counts,
+    sourceFiles: (typeof uploadedFiles !== 'undefined' ? uploadedFiles : []).filter(f => f.type === 'order').map(f => f.name).slice(0, 20),
+    handled: false,
+    items
+  };
+}
+
+function readLocalLogs() {
+  try { return JSON.parse(localStorage.getItem(ZAICO_LOG_LOCAL_KEY) || '[]'); } catch (e) { return []; }
+}
+function writeLocalLogs(list) {
+  try { localStorage.setItem(ZAICO_LOG_LOCAL_KEY, JSON.stringify(list.slice(0, 200))); return true; } catch (e) { return false; }
+}
+
+async function saveZaicoLog(log) {
+  let ok = false;
+  try {
+    await setDoc(doc(db, ZAICO_LOG_COL, log.id), log);
+    ok = true;
+  } catch (err) {
+    console.warn('zaico履歴をFirestoreに保存できませんでした。このブラウザに保存します', err);
+    const list = readLocalLogs();
+    list.unshift({ ...log, localOnly: true });
+    ok = writeLocalLogs(list);
+  }
+  if (ok) {
+    zaicoLogs = [{ ...log }, ...zaicoLogs.filter(x => x.id !== log.id)];
+    if (document.getElementById('zaicoLogTab').classList.contains('active')) renderZaicoLogs();
+  }
+  return ok;
+}
+
+window.loadZaicoLogs = async () => {
+  const area = document.getElementById('logArea');
+  if (!zaicoLogsLoaded) area.innerHTML = '<p class="empty">履歴を読み込んでいます…</p>';
+  let list = [];
+  try {
+    const snap = await getDocs(query(collection(db, ZAICO_LOG_COL), orderBy('createdAt', 'desc'), limit(500)));
+    snap.forEach(d => list.push({ ...d.data(), id: d.id }));
+  } catch (err) {
+    console.warn(err);
+    toast('履歴を読み込めませんでした（このブラウザの履歴だけ表示します）');
+  }
+  const local = readLocalLogs().filter(l => !list.some(x => x.id === l.id));
+  zaicoLogs = [...list, ...local].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  zaicoLogsLoaded = true;
+  renderZaicoLogs();
+};
+
+window.setLogRange = (days) => {
+  const from = document.getElementById('logFrom'), to = document.getElementById('logTo');
+  if (days === null) { from.value = ''; to.value = ''; }
+  else { const d = new Date(); to.value = localDateStr(d); d.setDate(d.getDate() - days); from.value = localDateStr(d); }
+  renderZaicoLogs();
+};
+window.toggleLogProblemOnly = () => {
+  logProblemOnly = !logProblemOnly;
+  document.getElementById('logOnlyProblem').classList.toggle('on', logProblemOnly);
+  renderZaicoLogs();
+};
+window.toggleLogOpenOnly = () => {
+  logOpenOnly = !logOpenOnly;
+  document.getElementById('logOnlyOpen').classList.toggle('on', logOpenOnly);
+  renderZaicoLogs();
+};
+window.setLogView = (v) => {
+  logView = v;
+  document.getElementById('logViewByLog').classList.toggle('on', v === 'byLog');
+  document.getElementById('logViewProblems').classList.toggle('on', v === 'problems');
+  renderZaicoLogs();
+};
+
+const isProblem = it => it.result === 'failed' || it.result === 'notSent' || it.result === 'check';
+const logHasProblem = l => (l.items || []).some(isProblem);
+
+function filteredZaicoLogs() {
+  const from = document.getElementById('logFrom').value;
+  const to = document.getElementById('logTo').value;
+  const q = document.getElementById('logSearch').value.trim().toLowerCase();
+  return zaicoLogs.filter(l => {
+    if (from && l.date < from) return false;
+    if (to && l.date > to) return false;
+    if (logProblemOnly && !logHasProblem(l)) return false;
+    if (logOpenOnly && (!logHasProblem(l) || l.handled)) return false;
+    if (q) {
+      const hay = [l.customerName, l.slipNum, ...(l.items || []).flatMap(it => [it.productName, it.barcode, it.shelfNumber])].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function fmtLogTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso || '';
+  const w = '日月火水木金土'[d.getDay()];
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}(${w}) ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+const RESULT_LABEL = { registered: '登録OK', failed: '登録できず', notSent: '送信せず', check: '要確認' };
+const RESULT_BADGE = { registered: 'badge-ok', failed: 'badge-fail', notSent: 'badge-warn', check: 'badge-upd' };
+const RESULT_ROW = { registered: '', failed: 'row-fail', notSent: 'row-notsent', check: 'row-check' };
+
+function logItemTable(items, withReason = true) {
+  return `<div class="table-wrap tall"><table><thead><tr>
+    <th>結果</th><th>商品名</th><th>バーコード</th><th>棚番</th><th class="num">ピック数</th>${withReason ? '<th>理由・やること</th>' : ''}
+  </tr></thead><tbody>${items.map(it => `<tr class="${RESULT_ROW[it.result] || ''}">
+    <td><span class="badge ${RESULT_BADGE[it.result] || 'badge-muted'}">${RESULT_LABEL[it.result] || escapeHtml(it.result)}</span></td>
+    <td class="prod-name">${escapeHtml(it.productName)}</td>
+    <td>${it.barcode ? `<code>${escapeHtml(it.barcode)}</code>` : '<span class="empty">なし</span>'}</td>
+    <td>${escapeHtml(it.shelfNumber) || '<span class="empty">なし</span>'}</td>
+    <td class="num">${escapeHtml(it.pickCount)}</td>
+    ${withReason ? `<td>${escapeHtml(it.reason)}</td>` : ''}
+  </tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderZaicoLogs() {
+  const area = document.getElementById('logArea');
+  const stats = document.getElementById('logStats');
+  if (!zaicoLogsLoaded) return;
+  const logs = filteredZaicoLogs();
+
+  const sum = { registered: 0, failed: 0, notSent: 0, check: 0 };
+  logs.forEach(l => (l.items || []).forEach(it => { if (sum[it.result] !== undefined) sum[it.result]++; }));
+  const openCount = logs.filter(l => logHasProblem(l) && !l.handled).length;
+  stats.innerHTML = `
+    <span class="stat">送信した回数<b>${logs.length}</b></span>
+    <span class="stat">登録できた明細<b>${sum.registered}</b></span>
+    <span class="stat ${sum.failed ? 'alert' : ''}">登録できなかった<b>${sum.failed}</b></span>
+    <span class="stat ${sum.notSent ? 'warn' : ''}">送信しなかった<b>${sum.notSent}</b></span>
+    ${sum.check ? `<span class="stat info">要確認<b>${sum.check}</b></span>` : ''}
+    <span class="stat ${openCount ? 'alert' : ''}">未対応の回<b>${openCount}</b></span>`;
+
+  if (!zaicoLogs.length) { area.innerHTML = '<div class="notice">まだ履歴がありません。「出荷処理」タブでzaicoに出庫指示を送信すると、ここに記録されます。</div>'; return; }
+  if (!logs.length) { area.innerHTML = '<div class="notice">条件に合う履歴がありません。</div>'; return; }
+
+  if (logView === 'problems') {
+    const rows = [];
+    logs.forEach(l => (l.items || []).filter(isProblem).forEach(it => rows.push({ l, it })));
+    if (!rows.length) { area.innerHTML = '<div class="notice">この条件では、登録できなかった商品はありません。</div>'; return; }
+    area.innerHTML = `<div class="table-wrap tall"><table><thead><tr>
+      <th>送信日時</th><th>取引先</th><th>伝票番号</th><th>結果</th><th>商品名</th><th>バーコード</th><th>棚番</th><th class="num">ピック数</th><th>理由・やること</th><th>対応</th>
+    </tr></thead><tbody>${rows.map(({ l, it }) => `<tr class="${l.handled ? '' : RESULT_ROW[it.result]}">
+      <td style="white-space:nowrap">${escapeHtml(fmtLogTime(l.createdAt))}</td>
+      <td>${escapeHtml(l.customerName)}</td>
+      <td>${escapeHtml(l.slipNum) || '<span class="empty">なし</span>'}</td>
+      <td><span class="badge ${RESULT_BADGE[it.result]}">${RESULT_LABEL[it.result]}</span></td>
+      <td class="prod-name">${escapeHtml(it.productName)}</td>
+      <td>${it.barcode ? `<code>${escapeHtml(it.barcode)}</code>` : '<span class="empty">なし</span>'}</td>
+      <td>${escapeHtml(it.shelfNumber)}</td>
+      <td class="num">${escapeHtml(it.pickCount)}</td>
+      <td>${escapeHtml(it.reason)}</td>
+      <td>${l.handled ? '<span class="badge badge-done">対応済み</span>' : `<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button>`}</td>
+    </tr>`).join('')}</tbody></table></div>
+    <p class="bulk-help">「対応済みにする」は、その回（同じ送信）の商品すべてに付きます。</p>`;
+    return;
+  }
+
+  area.innerHTML = `<div class="log-list">${logs.map(l => {
+    const items = l.items || [];
+    const failed = items.filter(it => it.result === 'failed');
+    const check = items.filter(it => it.result === 'check');
+    const notSent = items.filter(it => it.result === 'notSent');
+    const okItems = items.filter(it => it.result === 'registered');
+    const problem = failed.length + check.length + notSent.length > 0;
+    const cls = ['log-card', problem ? 'has-problem' : '', l.handled ? 'handled' : '', l.status === 'error' ? 'is-error' : ''].join(' ');
+    const statusBadge = l.status === 'error' ? '<span class="badge badge-fail">送信エラー</span>'
+      : problem ? (l.handled ? '<span class="badge badge-done">対応済み</span>' : '<span class="badge badge-fail">未対応あり</span>')
+      : '<span class="badge badge-ok">すべて登録OK</span>';
+    return `<details class="${cls}" ${problem && !l.handled ? 'open' : ''}>
+      <summary>
+        <span class="log-time">${escapeHtml(fmtLogTime(l.createdAt))}</span>
+        <span class="log-cust">${escapeHtml(l.customerName)}</span>
+        <span class="log-slip">伝票番号 ${escapeHtml(l.slipNum) || 'なし'}</span>
+        ${statusBadge}
+        ${l.localOnly ? '<span class="badge badge-muted">このブラウザにだけ保存</span>' : ''}
+        <span class="log-counts">
+          <span class="stat">登録OK<b>${okItems.length}</b></span>
+          ${failed.length ? `<span class="stat alert">登録できず<b>${failed.length}</b></span>` : ''}
+          ${check.length ? `<span class="stat info">要確認<b>${check.length}</b></span>` : ''}
+          ${notSent.length ? `<span class="stat warn">送信せず<b>${notSent.length}</b></span>` : ''}
+        </span>
+      </summary>
+      <div class="log-body">
+        ${l.errorMessage ? `<div class="log-msg">${escapeHtml(l.errorMessage)}</div>` : ''}
+        ${failed.length ? `<div class="log-sub danger">登録できなかった商品 ${failed.length}件 <span class="empty" style="font-weight:400">手作業で出庫するか、zaicoに商品を登録してから送り直してください</span></div>${logItemTable(failed)}` : ''}
+        ${check.length ? `<div class="log-sub">要確認 ${check.length}件</div>${logItemTable(check)}` : ''}
+        ${notSent.length ? `<div class="log-sub warn">送信しなかった行 ${notSent.length}件 <span class="empty" style="font-weight:400">商品マスタにバーコード・棚番を入れてください</span></div>${logItemTable(notSent)}` : ''}
+        ${okItems.length ? `<details class="log-ok-items" ${problem ? '' : 'open'}><summary>登録できた商品 ${okItems.length}件を表示</summary>${logItemTable(okItems, false)}</details>` : ''}
+        <div class="log-actions">
+          ${problem ? (l.handled
+            ? `<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', false)">未対応に戻す</button><span class="muted">${l.handledAt ? escapeHtml(fmtLogTime(l.handledAt)) + ' に対応済み' : ''}</span>`
+            : `<button class="btn btn-primary btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button><span class="muted">手作業での出庫などが終わったら押してください</span>`) : ''}
+          ${l.sourceFiles && l.sourceFiles.length ? `<span class="muted">受注CSV：${escapeHtml(l.sourceFiles.join('、'))}</span>` : ''}
+        </div>
+      </div>
+    </details>`;
+  }).join('')}</div>`;
+}
+window.renderZaicoLogs = renderZaicoLogs;
+
+window.setZaicoLogHandled = async (id, handled) => {
+  const log = zaicoLogs.find(l => l.id === id);
+  if (!log) return;
+  const patch = { handled, handledAt: handled ? new Date().toISOString() : '' };
+  try {
+    if (log.localOnly) {
+      writeLocalLogs(readLocalLogs().map(l => l.id === id ? { ...l, ...patch } : l));
+    } else {
+      await setDoc(doc(db, ZAICO_LOG_COL, id), patch, { merge: true });
+    }
+    Object.assign(log, patch);
+    renderZaicoLogs();
+    toast(handled ? '対応済みにしました' : '未対応に戻しました');
+  } catch (err) {
+    console.error(err);
+    alert('保存できませんでした：' + err.message);
+  }
+};
+
+window.exportZaicoLogCsv = () => {
+  const logs = filteredZaicoLogs();
+  if (!logs.length) { alert('書き出す履歴がありません。'); return; }
+  const rows = [['送信日時', '取引先', '伝票番号', '結果', '商品名', 'バーコード', '棚番', 'ピック数', '理由', '対応']];
+  logs.forEach(l => (l.items || []).forEach(it => rows.push([
+    fmtLogTime(l.createdAt), l.customerName, l.slipNum, RESULT_LABEL[it.result] || it.result, it.productName, it.barcode, it.shelfNumber, it.pickCount, it.reason,
+    isProblem(it) ? (l.handled ? '対応済み' : '未対応') : ''
+  ])));
+  downloadUtf8Csv(rows, `zaico出庫履歴_${localDateStr(new Date())}.csv`);
+};
+
 window.sendToZaico = async () => {
   if (!pickGroups.length || pickStale) { alert('先に「ピック数を算出」を押してください。'); return; }
   const inputEl = document.getElementById('customerNameInput');
@@ -1186,10 +1536,12 @@ window.sendToZaico = async () => {
   syncInputs();
   const validItems = [];
   const notSent = []; // バーコードまたは棚番がなく、送信しない行
+  const notSentItems = []; // 履歴用
   pickGroups.forEach(g => {
     if (!g.barcode || !g.shelfNumber) {
       const lack = [!g.barcode ? 'バーコード' : '', !g.shelfNumber ? '棚番' : ''].filter(Boolean).join('・');
       notSent.push(`・${g.productName || g.skus[0].skuCode || '（名前なし）'}（ピック数 ${g.pickCount}）：${lack}がありません`);
+      notSentItems.push({ barcode: g.barcode || '', productName: g.productName || g.skus[0].skuCode || '（名前なし）', shelfNumber: g.shelfNumber || '', pickCount: g.pickCount, reason: `${lack}がないため送信していません` });
       return;
     }
     // 倍率がSKUごとに違う合算行は、注文数＝ピック数・倍率1として送る（どちらを使っても数量が合うように）
@@ -1232,6 +1584,8 @@ window.sendToZaico = async () => {
         msg += `\n\n【注意】送信した ${validItems.length} 明細のうち ${unknownGap} 明細が登録されていません。\nzaicoにない商品がある可能性があります。zaicoの伝票で、登録されていない商品を確認してください。`;
       }
       if (notSent.length) msg += `\n\n【送信しなかった行 ${notSent.length}件】\n${notSent.join('\n')}`;
+      const saved = await saveZaicoLog(buildZaicoLog({ kind: 'success', customerName, slipNum: data.slipNum, validItems, notSentItems, failures, unknownGap, registered: hasCount ? registered : null }));
+      msg += saved ? '\n\n※この送信内容は「zaico出庫履歴」タブで確認できます。' : '\n\n※履歴の保存に失敗しました（送信自体は完了しています）。';
       alert(msg);
       toast(failures.length || unknownGap ? '登録できなかった商品があります' : 'zaicoに送信しました');
       if (failures.length) console.warn('zaicoに登録できなかった商品', failures);
@@ -1239,11 +1593,14 @@ window.sendToZaico = async () => {
       const failures = pickZaicoFailures(data, validItems);
       let msg = '送信できませんでした：' + (data.error || '');
       if (failures.length) msg += `\n\n【登録できなかった商品】\n${failures.map(f => `・${f.productName || '（商品名不明）'}${f.barcode ? `／バーコード ${f.barcode}` : ''}${f.reason ? `（${f.reason}）` : ''}`).join('\n')}`;
+      const saved = await saveZaicoLog(buildZaicoLog({ kind: 'error', customerName, slipNum: data.slipNum || '', validItems, notSentItems, failures, errorMessage: data.error || '送信できませんでした' }));
+      if (saved) msg += '\n\n※この内容は「zaico出庫履歴」タブに記録しました。';
       alert(msg);
     }
   } catch (err) {
     console.error(err);
-    alert('通信エラーが発生しました：' + err.message);
+    await saveZaicoLog(buildZaicoLog({ kind: 'network', customerName, slipNum: '', validItems, notSentItems, failures: [], errorMessage: '通信エラー：' + err.message }));
+    alert('通信エラーが発生しました：' + err.message + '\n\nzaico側に登録されたかどうか分からないため、zaicoの出庫一覧を確認してください。\n（この内容は「zaico出庫履歴」タブに記録しました）');
   } finally {
     updateButtons();
   }
