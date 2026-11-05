@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>分割くん</title>
+    <title>分割くん吉原</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -227,7 +227,7 @@ const shukkaAuto = (() => {
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
             <div class="flex items-center space-x-3">
                 <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
-                <h1 class="text-xl font-bold">受注データ自動分割 ＆ Firestoreマスタ管理ツール</h1>
+                <h1 class="text-xl font-bold">分割くん吉原</h1>
             </div>
             <div class="flex bg-indigo-900/60 p-1 rounded-xl">
                 <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
@@ -235,6 +235,7 @@ const shukkaAuto = (() => {
                 <button onclick="switchTab('tracking')" id="tabBtnTracking" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">追跡番号の追記</button>
                 <button onclick="switchTab('monthly')" id="tabBtnMonthly" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">月別出荷件数</button>
                 <button onclick="switchTab('stock')" id="tabBtnStock" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">在庫一覧</button>
+                <button onclick="switchTab('inbound')" id="tabBtnInbound" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">入庫登録</button>
             </div>
         </div>
     </header>
@@ -489,6 +490,79 @@ const shukkaAuto = (() => {
                     </table>
                 </div>
             </div>
+        </div>
+
+        <div id="tabContentInbound" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div>
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-truck-ramp-box text-emerald-600 mr-2"></i>入庫登録（入庫シートに記入）</h2>
+                    <p class="text-xs text-slate-500 mt-1">入庫シートの「倉庫入力」欄（入荷日・入庫数量・担当者・備考）に書き込みます。書き込むと在庫シートの在庫に反映されます。</p>
+                </div>
+                <div class="grid md:grid-cols-3 gap-3 text-sm bg-slate-50 border rounded-xl p-4">
+                    <label class="space-y-1">
+                        <span class="text-xs font-semibold text-slate-600">取引先</span>
+                        <select id="inClient" onchange="loadInboundPending()" class="w-full border rounded-lg px-3 py-2 bg-white"></select>
+                    </label>
+                    <label class="space-y-1">
+                        <span class="text-xs font-semibold text-slate-600">入荷日</span>
+                        <input type="date" id="inDate" class="w-full border rounded-lg px-3 py-2 bg-white">
+                    </label>
+                    <label class="space-y-1">
+                        <span class="text-xs font-semibold text-slate-600">担当者</span>
+                        <input type="text" id="inStaff" onchange="saveInboundStaff()" class="w-full border rounded-lg px-3 py-2 bg-white" placeholder="例：松下">
+                    </label>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <div>
+                        <h3 class="font-semibold"><i class="fa-solid fa-clipboard-check text-emerald-600 mr-2"></i>① 入荷予定から入庫する</h3>
+                        <p class="text-xs text-slate-500 mt-1">お客様が入荷予定数を入れていて、入庫数量がまだ空欄の行です。届いた数を確認してチェックしてください。</p>
+                    </div>
+                    <button onclick="loadInboundPending()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-2 px-3 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                </div>
+                <p id="inPendingStatus" class="text-xs text-slate-500"></p>
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
+                            <tr>
+                                <th class="px-3 py-3 w-10 text-center"><input type="checkbox" id="inPendingAll" onchange="toggleInboundAll(this.checked)"></th>
+                                <th class="px-3 py-3">商品名</th>
+                                <th class="px-3 py-3">発送情報</th>
+                                <th class="px-3 py-3 text-center">入荷予定数</th>
+                                <th class="px-3 py-3 text-center">入庫数量</th>
+                                <th class="px-3 py-3">備考</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inPendingBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-end">
+                    <button id="inFillBtn" onclick="submitInboundFill()" class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium" disabled><i class="fa-solid fa-check mr-1"></i>チェックした行を入庫済みにする</button>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div>
+                    <h3 class="font-semibold"><i class="fa-solid fa-plus text-emerald-600 mr-2"></i>② 予定にない入庫を追加する</h3>
+                    <p class="text-xs text-slate-500 mt-1">入荷予定がない商品が届いたときに使います。商品は在庫シートの商品から選んでください（同じ名前でないと在庫に反映されません）。</p>
+                </div>
+                <datalist id="inProductList"></datalist>
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
+                            <tr><th class="px-3 py-3">商品名</th><th class="px-3 py-3 w-28 text-center">入庫数量</th><th class="px-3 py-3 w-32">賞味期限</th><th class="px-3 py-3">備考</th><th class="px-3 py-3 w-10"></th></tr>
+                        </thead>
+                        <tbody id="inAddBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-between flex-wrap gap-2">
+                    <button onclick="addInboundRow()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-2 px-3 rounded-lg font-medium"><i class="fa-solid fa-plus mr-1"></i>行を追加</button>
+                    <button id="inAddBtn" onclick="submitInboundAdd()" class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-file-import mr-1"></i>入庫シートに追加</button>
+                </div>
+            </div>
+            <div id="inResult" class="hidden text-sm rounded-lg px-4 py-3"></div>
         </div>
 
     </main>
@@ -789,7 +863,7 @@ const shukkaAuto = (() => {
         function switchTab(tabName) {
             const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
             const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly'],['stock','Stock']].forEach(([key, id]) => {
+            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly'],['stock','Stock'],['inbound','Inbound']].forEach(([key, id]) => {
                 document.getElementById('tabBtn' + id).className = tabName === key ? on : off;
                 document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== key);
             });
@@ -797,6 +871,7 @@ const shukkaAuto = (() => {
             if (tabName === 'monthly') loadMonthly();
             if (tabName === 'tracking') loadPending();
             if (tabName === 'stock') { renderStockList(); loadStock(true).then(renderStockList); }
+            if (tabName === 'inbound') openInboundTab();
         }
 
         function updateMasterCountBadge() {
@@ -1859,6 +1934,214 @@ const shukkaAuto = (() => {
             st.innerHTML = `${time} 時点の在庫です。表示 ${rows.length} 件` +
                 (processedDataRows.length ? '' : '（受注データを取り込むと「今回の出荷数」も出ます）') +
                 (errs.length ? '<br>' + errs.join('<br>') : '');
+        }
+
+        // ===== 入庫登録タブ =====
+        let inPending = [];
+
+        function todayYmd() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+        function saveInboundStaff() {
+            try { localStorage.setItem('bunkatsu_inbound_staff', document.getElementById('inStaff').value.trim()); } catch (_) {}
+        }
+        function inClientKey() { return document.getElementById('inClient').value; }
+
+        async function openInboundTab() {
+            const sel = document.getElementById('inClient');
+            if (!sel.options.length) {
+                CLIENTS.forEach(c => sel.insertAdjacentHTML('beforeend', `<option value="${esc(c.key)}">${esc(c.name)}</option>`));
+                document.getElementById('inDate').value = todayYmd();
+                try { document.getElementById('inStaff').value = localStorage.getItem('bunkatsu_inbound_staff') || ''; } catch (_) {}
+            }
+            if (!document.getElementById('inAddBody').children.length) addInboundRow();
+            await loadStock(false);
+            loadInboundPending();
+        }
+
+        // 在庫シートの商品を候補にする（入庫シートには在庫シートと同じ商品名で書く必要があるため）
+        function inboundProducts() {
+            const sc = stockCache[inClientKey()];
+            return sc && sc.items ? sc.items : [];
+        }
+        function fillInboundProducts() {
+            document.getElementById('inProductList').innerHTML = inboundProducts()
+                .map(it => `<option value="${esc(it.name || it.name2)}">${esc(it.name2 && it.name2 !== it.name ? it.name2 : '')}</option>`).join('');
+        }
+        function findInboundProduct(text) {
+            const k = nameKey(text);
+            if (!k) return null;
+            return inboundProducts().find(it => nameKey(it.name) === k || nameKey(it.name2) === k) || null;
+        }
+
+        async function loadInboundPending() {
+            const c = clientOf(inClientKey());
+            const st = document.getElementById('inPendingStatus');
+            const body = document.getElementById('inPendingBody');
+            fillInboundProducts();
+            if (!c || !c.gasUrl) return;
+            st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>入庫シートを読み込み中...';
+            body.innerHTML = '';
+            try {
+                const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=inboundPending`;
+                const data = await readGas(await fetch(url));
+                if (data.ok === false) throw new Error(data.error);
+                if (!Array.isArray(data.items)) throw new Error('GASに入庫の機能がまだありません（新しいコードで再デプロイしてください）');
+                inPending = data.items;
+                renderInboundPending();
+                st.innerHTML = inPending.length ? `入荷予定 ${inPending.length} 行` : '入庫待ちの入荷予定はありません。';
+            } catch (err) {
+                inPending = [];
+                renderInboundPending();
+                st.innerHTML = `<span class="text-rose-600">${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}</span>`;
+            }
+        }
+
+        function renderInboundPending() {
+            document.getElementById('inPendingAll').checked = false;
+            document.getElementById('inPendingBody').innerHTML = inPending.map((r, i) => `
+                <tr class="hover:bg-slate-50">
+                    <td class="px-3 py-2 text-center"><input type="checkbox" class="in-chk" data-i="${i}" onchange="updateInboundFillBtn()"></td>
+                    <td class="px-3 py-2">
+                        <div class="font-medium text-slate-800">${esc(r.name)}</div>
+                        <div class="text-[11px] text-slate-400">入庫シート ${r.row}行目${r.code ? '　コード ' + esc(r.code) : ''}${r.expiry ? '　賞味期限 ' + esc(r.expiry) : ''}${findInboundProduct(r.name) ? '' : '　<span class="text-amber-700">※在庫シートに同じ名前の商品がありません</span>'}</div>
+                    </td>
+                    <td class="px-3 py-2 text-xs text-slate-500">${[r.shipDate && '出荷 ' + esc(r.shipDate), esc(r.carrier), esc(r.track)].filter(Boolean).join('<br>') || '－'}</td>
+                    <td class="px-3 py-2 text-center font-bold text-slate-600">${esc(r.plan)}</td>
+                    <td class="px-3 py-2 text-center"><input type="number" min="0" class="in-qty w-20 border rounded px-2 py-1 text-center" data-i="${i}" value="${esc(r.plan)}" oninput="markInboundDiff(this)"></td>
+                    <td class="px-3 py-2"><input type="text" class="in-note w-full border rounded px-2 py-1 text-xs" data-i="${i}" placeholder="数の違いなど"></td>
+                </tr>`).join('') || '';
+            updateInboundFillBtn();
+        }
+        function markInboundDiff(el) {
+            const r = inPending[el.dataset.i];
+            el.classList.toggle('bg-amber-50', String(el.value) !== String(r.plan));
+            el.classList.toggle('border-amber-400', String(el.value) !== String(r.plan));
+        }
+        function toggleInboundAll(on) {
+            document.querySelectorAll('.in-chk').forEach(c => c.checked = on);
+            updateInboundFillBtn();
+        }
+        function updateInboundFillBtn() {
+            const n = document.querySelectorAll('.in-chk:checked').length;
+            const btn = document.getElementById('inFillBtn');
+            btn.disabled = !n;
+            btn.innerHTML = `<i class="fa-solid fa-check mr-1"></i>チェックした行を入庫済みにする${n ? `（${n}行）` : ''}`;
+        }
+
+        function inboundCommon() {
+            const date = document.getElementById('inDate').value;
+            const staff = document.getElementById('inStaff').value.trim();
+            if (!date) { alert('入荷日を入れてください'); return null; }
+            if (!staff && !confirm('担当者が空欄です。このまま書き込みますか？')) return null;
+            saveInboundStaff();
+            return { token: GAS_TOKEN, client: inClientKey(), date, staff };
+        }
+
+        function showInboundResult(ok, html) {
+            const box = document.getElementById('inResult');
+            box.className = `text-sm rounded-lg px-4 py-3 ${ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`;
+            box.innerHTML = html;
+            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        async function postGas(key, payload) {
+            const resp = await fetch(clientOf(key).gasUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+            const data = await readGas(resp);
+            if (data.ok === false) throw new Error(data.error || '書き込みに失敗しました');
+            return data;
+        }
+
+        async function submitInboundFill() {
+            const base = inboundCommon(); if (!base) return;
+            const entries = [...document.querySelectorAll('.in-chk:checked')].map(c => {
+                const i = c.dataset.i, r = inPending[i];
+                return { row: r.row, name: r.name,
+                         qty: Number(document.querySelector(`.in-qty[data-i="${i}"]`).value),
+                         note: document.querySelector(`.in-note[data-i="${i}"]`).value.trim() };
+            });
+            const bad = entries.find(e => !(e.qty >= 0) || document.querySelector(`.in-qty[data-i="${inPending.findIndex(r => r.row === e.row)}"]`).value === '');
+            if (bad) { alert(`「${bad.name}」の入庫数量を入れてください`); return; }
+            const diff = entries.filter(e => String(e.qty) !== String(inPending.find(r => r.row === e.row).plan));
+            let msg = `${clientOf(base.client).name} の入庫シートに ${entries.length} 行を記入します。\n入荷日：${base.date}　担当者：${base.staff || '（空欄）'}`;
+            if (diff.length) msg += `\n\n※入荷予定数と違う行が ${diff.length} 行あります。`;
+            if (!confirm(msg)) return;
+
+            const btn = document.getElementById('inFillBtn');
+            btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
+            try {
+                const data = await postGas(base.client, { ...base, action: 'inboundFill', entries });
+                let html = `<i class="fa-solid fa-circle-check mr-1"></i>${esc(data.client)}：${data.updated} 行を入庫済みにしました。`;
+                if (data.skipped && data.skipped.length) html += `<br><span class="text-amber-700">書き込まなかった行（シートが変わっていたため）：${data.skipped.map(esc).join('、')}</span>`;
+                showInboundResult(true, html);
+                await loadInboundPending();
+                loadStock(true).then(() => { renderStockList(); fillInboundProducts(); });
+            } catch (err) {
+                showInboundResult(false, `<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}`);
+                updateInboundFillBtn();
+            }
+        }
+
+        function addInboundRow() {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="px-3 py-2"><input type="text" list="inProductList" class="in-add-name w-full border rounded px-2 py-1" placeholder="商品名を入力して候補から選ぶ" oninput="checkInboundName(this)">
+                    <div class="in-add-hint text-[11px] mt-0.5"></div></td>
+                <td class="px-3 py-2"><input type="number" min="1" class="in-add-qty w-full border rounded px-2 py-1 text-center"></td>
+                <td class="px-3 py-2"><input type="text" class="in-add-exp w-full border rounded px-2 py-1" placeholder="例：2027.6"></td>
+                <td class="px-3 py-2"><input type="text" class="in-add-note w-full border rounded px-2 py-1 text-xs"></td>
+                <td class="px-3 py-2 text-center"><button onclick="this.closest('tr').remove()" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></td>`;
+            document.getElementById('inAddBody').appendChild(tr);
+        }
+        function checkInboundName(el) {
+            const hint = el.parentElement.querySelector('.in-add-hint');
+            if (!el.value.trim()) { hint.innerHTML = ''; return; }
+            const it = findInboundProduct(el.value);
+            hint.innerHTML = it
+                ? `<span class="text-emerald-700"><i class="fa-solid fa-check mr-1"></i>在庫シートの商品（現在の在庫 ${it.stock}）</span>`
+                : `<span class="text-amber-700">在庫シートにない名前です（このままだと在庫に反映されません）</span>`;
+        }
+
+        async function submitInboundAdd() {
+            const base = inboundCommon(); if (!base) return;
+            const rows = [...document.querySelectorAll('#inAddBody tr')].map(tr => ({
+                name: tr.querySelector('.in-add-name').value.trim(),
+                qty: Number(tr.querySelector('.in-add-qty').value),
+                expiry: tr.querySelector('.in-add-exp').value.trim(),
+                note: tr.querySelector('.in-add-note').value.trim(),
+            })).filter(r => r.name || r.qty);
+            if (!rows.length) { alert('商品と入庫数量を入れてください'); return; }
+            const noQty = rows.find(r => !(r.qty > 0));
+            if (noQty) { alert(`「${noQty.name || '（商品名なし）'}」の入庫数量を入れてください`); return; }
+            const noName = rows.find(r => !r.name);
+            if (noName) { alert('商品名が空欄の行があります'); return; }
+
+            // 在庫シートの商品名に合わせる（品番があれば商品コードにも入れる）
+            const unknown = [];
+            const items = rows.map(r => {
+                const it = findInboundProduct(r.name);
+                if (!it) unknown.push(r.name);
+                return { name: it ? (it.name || it.name2) : r.name, code: it ? (it.code || '') : '', qty: r.qty, expiry: r.expiry, note: r.note };
+            });
+            let msg = `${clientOf(base.client).name} の入庫シートに ${items.length} 行を追加します。\n入荷日：${base.date}　担当者：${base.staff || '（空欄）'}\n\n` +
+                      items.map(it => `・${it.name} × ${it.qty}`).join('\n');
+            if (unknown.length) msg += `\n\n※在庫シートにない名前が ${unknown.length} 件あります（在庫に反映されません）：\n${unknown.join('\n')}`;
+            if (!confirm(msg)) return;
+
+            const btn = document.getElementById('inAddBtn');
+            btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
+            try {
+                const data = await postGas(base.client, { ...base, action: 'inboundAdd', items });
+                showInboundResult(true, `<i class="fa-solid fa-circle-check mr-1"></i>${esc(data.client)}：入庫シートの ${data.startRow} 行目から ${data.added} 行を追加しました。`);
+                document.getElementById('inAddBody').innerHTML = '';
+                addInboundRow();
+                loadStock(true).then(() => { renderStockList(); fillInboundProducts(); });
+            } catch (err) {
+                showInboundResult(false, `<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}`);
+            } finally {
+                btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-file-import mr-1"></i>入庫シートに追加';
+            }
         }
 
         // ===== 出庫シートに書き込み =====
