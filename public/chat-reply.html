@@ -245,9 +245,9 @@
                 <input type="text" id="aiRule_questionRoomId" class="inp text-sm" placeholder="空欄なら、社内ルームIDの1つ目" inputmode="numeric">
             </div>
             <div>
-                <label class="field-label">質問の宛先（渡辺さんのChatworkアカウントID・任意）</label>
-                <input type="text" id="aiRule_questionToId" class="inp text-sm" placeholder="入れると [To:] 付きで送ります" inputmode="numeric">
-                <div class="text-xs text-slate-500 mt-1">アカウントIDは、渡辺さんのプロフィール画面で確認できます</div>
+                <label class="field-label">質問の宛先（渡辺さんのChatworkアカウントID）</label>
+                <input type="text" id="aiRule_questionToId" class="inp text-sm" placeholder="入れると [To:] 付き＋渡辺さん担当のタスクで送ります" inputmode="numeric">
+                <div class="text-xs text-slate-500 mt-1">アカウントIDは、渡辺さんのプロフィール画面で確認できます。空欄だとタスクは作られません</div>
             </div>
             <div class="text-xs text-slate-500">空欄の項目は、GASに書いてある初期値が使われます。保存すると1分以内に反映されます。</div>
             <button id="aiRulesSaveBtn" onclick="saveAiRules(this)" class="btn btn-main w-full">💾 保存する</button>
@@ -2839,7 +2839,7 @@
                     <div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 clamp-s">${esc(String(m.body || '').slice(0, 400))}</div>
                     <div><label class="field-label">聞きたいこと（空欄なら、AIがチャットからまとめます）</label>
                         <textarea id="ask_note" rows="4" class="inp" placeholder="例：この商品の補填は全額でいいですか？"></textarea></div>
-                    <div class="text-xs text-slate-500">社内ルームに質問を送り、このルームは「後で対応」に移ります。渡辺さんがChatworkで返信すると、回答つきで要対応に戻ります。</div>
+                    <div class="text-xs text-slate-500">社内ルームに質問を送り、渡辺さん担当のタスクも作ります。このルームは「後で対応」に移ります。渡辺さんがChatworkで質問に返信すると、回答つきで要対応に戻り、タスクも自動で完了します。</div>
                     <button onclick="sendQuestion('${key}', this)" class="btn btn-main w-full">👤 渡辺さんに送る</button>
                 </div>`;
             openSheet('sheetActions');
@@ -2856,6 +2856,7 @@
                 });
                 closeAllModals();
                 showToast(`${d.label} を渡辺さんに送りました`);
+                if (d.taskError) alert(`質問は送りましたが、タスクは作れませんでした。\n${d.taskError}`);
                 if (currentMode === 'burst') removeCard(m.roomId);
                 else if (currentMode === 'later') renderLaterRooms(true);
             } catch (e) {
@@ -2866,7 +2867,7 @@
         };
 
         window.cancelQuestion = async function(no) {
-            if (!no || !confirm('この質問を取り下げますか？\n（社内ルームに送ったメッセージは残ります）')) return;
+            if (!no || !confirm('この質問を取り下げますか？\n（社内ルームに送ったメッセージは残ります。タスクは完了にします）')) return;
             try {
                 await callApi("close_question", { no: no });
                 closeAllModals();
