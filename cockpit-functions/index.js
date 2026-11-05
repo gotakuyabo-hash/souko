@@ -1694,9 +1694,11 @@ async function createUsRequest(p) {
 
 // ==============================
 // 渡辺さんへの質問リスト
-//   ① カードの「👤 渡辺さんに聞く」→ 質問ルーム（社内ルーム）に投稿し、cw_questions/Q{番号} に保存。ルームは「後で対応」へ
-//   ② 渡辺さんがChatworkで「返信（↩）」するか、本文に「Q-番号」を入れて答える → 同期のときに読み取って「回答済み」に
+//   ① カードの「👤 渡辺さんに聞く」→ 質問ルーム（社内ルーム）に投稿し、同じルームに渡辺さん担当のタスクも作る。
+//      cw_questions/Q{番号} に保存（taskId も）。ルームは「後で対応」へ
+//   ② 渡辺さんがChatworkで質問メッセージに「返信（↩）」して答える → 同期のときに読み取って「回答済み」に
 //      → ルームを「後で対応」から外し、要対応に戻す（カードに回答が表示される）
+//      → タスクも自動で完了にする（取り下げた時も完了にする）
 //   ③ 回答済みのQ&Aは cw_server/qa_recent（最新40件）にもためて、AI返信作成の参考に渡す
 //   カードの表示用に、ルームの最新の質問を cw_rooms/{アカウント}_{ルームID} の question にも入れる
 // ==============================
@@ -1751,7 +1753,7 @@ async function askQuestion(token, p) {
     + "【聞きたいこと】" + question
     + (by ? "\n（質問：" + by + "）" : "")
     + "[/info]"
-    + "このメッセージに「返信」するか、「" + label + "」と書いて答えてください";
+    + "このメッセージに「返信」して答えてください（返信するとタスクも自動で完了します）";
 
   // 質問ルームのメンバーでないアカウント（松下アカウントなど）から聞いた時は、メンバーのアカウントで送る
   //   回答が届いたら、聞いたアカウント側のカードに戻す（p.account で記録）
@@ -1768,17 +1770,58 @@ async function askQuestion(token, p) {
     }
   }
   if (!posted) throw new Error("質問ルームに送れませんでした（どのアカウントもそのルームのメンバーでない可能性があります）：" + (lastErr ? lastErr.message : ""));
+
+  // 渡辺さん担当のタスクを作る（宛先のアカウントIDが設定されている時だけ。失敗しても質問は送れているので止めない）
+  let taskId = "", taskError = "";
+  const toId = String(cfg.questionToId || "").replace(/[^0-9]/g, "");
+  if (toId) {
+    try {
+      const taskBody = label + "　" + roomName + "\n" + question.slice(0, 300)
+        + "\n（社内ルームの質問メッセージに返信してください。返信すると自動で完了します）";
+      const tk = postedBy === p.account ? token : getChatworkToken(postedBy);
+      const t = await cw(tk, "post", "/rooms/" + qRoom + "/tasks", { body: taskBody, to_ids: toId, limit_type: "none" });
+      taskId = String((t && Array.isArray(t.task_ids) && t.task_ids[0]) || "");
+    } catch (e) {
+      taskError = e.message;
+      console.error("質問タスクを作れませんでした: " + e.message);
+    }
+  }
+
   const now = nowSec();
   const data = {
     no, label, status: "open", account: p.account, roomId: rid, roomName,
     question, customerText: lastCust.slice(0, 500), askedBy: by, askedAt: now,
     questionRoomId: qRoom, cwMessageId: String((posted && posted.message_id) || ""), postedBy,
+    taskId, taskDone: false,
     answer: "", answeredBy: "", answeredAt: 0
   };
   await db.collection("cw_questions").doc("Q" + no).set(data);
   await db.collection("cw_rooms").doc(p.account + "_" + rid).set({ question: roomQuestion(data) }, { merge: true });
   const later = await setLater(p.account, [rid], true);
-  return { no, label, question, later };
+  return { no, label, question, later, taskId, taskError };
+}
+
+// 質問タスクを完了にする
+//   タスクを作ったアカウント（依頼者）で完了にし、だめならほかのアカウントでも試す。
+//   失敗しても回答の処理は止めない（失敗した理由は cw_questions の taskError に残す）
+async function completeQuestionTask(id, q) {
+  if (!q || !q.taskId || q.taskDone) return;
+  const tokens = [];
+  const order = [q.postedBy].concat(Object.keys(ACCOUNTS).filter(a => a !== q.postedBy));
+  order.forEach(a => { try { if (a && ACCOUNTS[a]) tokens.push(getChatworkToken(a)); } catch (e) {} });
+  let lastErr = null;
+  for (const tk of tokens) {
+    try {
+      await cw(tk, "put", "/rooms/" + q.questionRoomId + "/tasks/" + q.taskId + "/status", { body_status: "done" });
+      await db.collection("cw_questions").doc(id).set({ taskDone: true, taskDoneAt: nowSec() }, { merge: true });
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const msg = lastErr ? lastErr.message : "トークンがありません";
+  console.error("質問タスク（" + (q.label || id) + "）を完了にできませんでした: " + msg);
+  try { await db.collection("cw_questions").doc(id).set({ taskError: msg.slice(0, 300) }, { merge: true }); } catch (e) {}
 }
 
 // カード表示用（cw_rooms に入れる分）
@@ -1804,12 +1847,11 @@ async function detectAnswers(qRoomId, msgs) {
       const body = String(m.body || "");
       if (mid === q.cwMessageId || (m.send_time || 0) < (q.askedAt || 0)) return false;
       if (body.indexOf("[info][title]❓") !== -1) return false;   // ほかの質問の投稿
-      if (q.cwMessageId && body.indexOf("-" + q.cwMessageId + "]") !== -1 && /\[rp aid=\d+ to=\d+-\d+\]/.test(body)) return true;
-      return new RegExp("Q-?" + q.no + "(?![0-9])", "i").test(body);
+      // 質問メッセージへの「返信（↩）」だけを回答として扱う
+      return !!(q.cwMessageId && body.indexOf("-" + q.cwMessageId + "]") !== -1 && /\[rp aid=\d+ to=\d+-\d+\]/.test(body));
     });
     if (!hit) continue;
-    const answer = stripTags(String(hit.body).replace(/\[rp aid=\d+ to=\d+-\d+\][^\n]*\n?/, ""))
-      .replace(new RegExp("^\\s*Q-?" + q.no + "(?![0-9])[\\s:：、。]*", "i"), "").trim().slice(0, 2000);
+    const answer = stripTags(String(hit.body).replace(/\[rp aid=\d+ to=\d+-\d+\][^\n]*\n?/, "")).trim().slice(0, 2000);
     const done = Object.assign({}, q, {
       status: "answered", answer: answer || "（本文なし）",
       answeredBy: (hit.account && hit.account.name) || "", answeredAt: hit.send_time || nowSec(),
@@ -1824,6 +1866,7 @@ async function detectAnswers(qRoomId, msgs) {
       return true;
     });
     if (!ok) continue;
+    await completeQuestionTask(id, q);
     await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: roomQuestion(done) }, { merge: true });
     try { await setLater(q.account, [q.roomId], false); } catch (e) {}
     // 要対応に戻す（「未対応に戻す」と同じ）
@@ -1884,6 +1927,7 @@ async function closeQuestion(account, roomId, no) {
   if (!snap.exists) throw new Error("質問が見つかりません");
   const q = snap.data();
   if (q.status === "open") await ref.set({ status: "cancelled", cancelledAt: nowSec() }, { merge: true });
+  await completeQuestionTask("Q" + n, q);   // ChatworkのAPIではタスクを消せないので、完了にしておく
   await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: null }, { merge: true });
   return { ok: true };
 }
