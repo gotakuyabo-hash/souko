@@ -33,6 +33,7 @@
  *
  * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
  *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
+ *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / other=その他）
  *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
  *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
@@ -203,6 +204,8 @@ async function handleRequest(p) {
         result = { latest: await fetchLatest(token, p.room_ids) };
       } else if (action === "get_members") {
         result = { members: await getMembersCached(token, p.room_id) };
+      } else if (action === "fix_triage") {
+        result = await fixTriage(p);
       } else if (action === "mark_read_batch") {
         result = await markReadBatch(token, p.room_ids);
       } else if (action === "get_rooms") {
@@ -1506,10 +1509,12 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
       if (String(st.tm || "") === meta.lastMsgId) {
         newState[rid].tm = st.tm;   // 判定済み（前回の結果がFirestoreに残っている）
       } else {
-        triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meta, msgDoc, prevM: st.m || 0 });
+        triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meId, isMineMsg, meta, msgDoc, prevM: st.m || 0 });
       }
     } else {
       meta.triage = "";
+      meta.triageSub = "";
+      meta.triageFixed = false;
       meta.triageFor = "";
       newState[rid].tm = meta.lastMsgId || "empty";   // 判定不要（最後が自社・メッセージなし）
     }
@@ -1526,6 +1531,8 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
       const res = results[t.rid];
       if (res) {
         t.meta.triage = res.cat;
+        t.meta.triageSub = res.sub;
+        t.meta.triageFixed = false;
         t.meta.triageFor = t.meta.lastMsgId;
         t.msgDoc.triagePoint = res.point;
         t.msgDoc.triageFor = t.meta.lastMsgId;
@@ -1964,16 +1971,22 @@ async function qaForPrompt(roomId) {
 //   check … 返信の前に確認が必要
 //   迷ったときは check にする（返信が必要な連絡を「返信不要」にしないため）
 // ==============================
-const TRIAGE_PER_CALL = 15;          // 1回のAI呼び出しで判定するルーム数
+const TRIAGE_PER_CALL = 5;           // 1回のAI呼び出しで判定するルーム数（少ないほど1件ずつ丁寧に読む）
+const TRIAGE_MSGS = 10;              // 1ルームあたりAIに渡す直近のメッセージ数
+const TRIAGE_CHARS = 600;            // 1メッセージあたりAIに渡す文字数
+const TRIAGE_FIX_EXAMPLES = 30;      // 手で直した仕分けを、お手本として何件渡すか
 const TRIAGE_CATS = ["none", "easy", "check"];
+// 要確認（check）の2次仕分け
+const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "other"];
 
 async function triageRooms(targets) {
   const out = {};
+  const examples = await loadTriageExamples();
   const chunks = [];
   for (let i = 0; i < targets.length; i += TRIAGE_PER_CALL) chunks.push(targets.slice(i, i + TRIAGE_PER_CALL));
   await Promise.all(chunks.map(async list => {
     try {
-      Object.assign(out, await triageChunk(list));
+      Object.assign(out, await triageChunk(list, examples));
     } catch (e) {
       console.error("仕分けに失敗（次の同期でやり直します）: " + e.message);
     }
@@ -1981,29 +1994,97 @@ async function triageRooms(targets) {
   return out;
 }
 
-async function triageChunk(list) {
+// 手で直した仕分け（cw_triage_fixes）を、AIへのお手本として読む
+async function loadTriageExamples() {
+  try {
+    const qs = await db.collection("cw_triage_fixes").orderBy("at", "desc").limit(TRIAGE_FIX_EXAMPLES).get();
+    const lines = [];
+    qs.forEach(d => {
+      const x = d.data();
+      const text = String(x.text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+      if (!text || TRIAGE_CATS.indexOf(x.cat) === -1) return;
+      lines.push("・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + x.sub + "）" : "")
+        + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + x.beforeSub + "）" : "") + " と誤判定" : ""));
+    });
+    return lines.join("\n");
+  } catch (e) {
+    console.error("仕分けのお手本を読めませんでした: " + e.message);
+    return "";
+  }
+}
+
+// 画面で仕分けを直した時：cw_rooms を直して、お手本として記録する
+async function fixTriage(p) {
+  const acc = String(p.account || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const rid = String(p.room_id || "").replace(/[^0-9]/g, "");
+  const cat = String(p.cat || "");
+  let sub = String(p.sub || "");
+  if (!acc || !rid || TRIAGE_CATS.indexOf(cat) === -1) throw new Error("仕分けの指定が正しくありません");
+  if (cat !== "check") sub = "";
+  else if (TRIAGE_SUBS.indexOf(sub) === -1) sub = "other";
+  const ref = db.collection("cw_rooms").doc(acc + "_" + rid);
+  const snap = await ref.get();
+  const cur = snap.exists ? snap.data() : {};
+  await ref.set({ triage: cat, triageSub: sub, triageFixed: true }, { merge: true });
+  await db.collection("cw_triage_fixes").add({
+    account: acc, roomId: rid, roomName: String(p.room_name || cur.name || "").slice(0, 80),
+    text: String(p.text || "").slice(0, 600),
+    cat, sub, before: String(cur.triage || ""), beforeSub: String(cur.triageSub || ""),
+    msgId: String(cur.lastMsgId || ""), by: String(p.by || "").slice(0, 40),
+    at: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return { ok: true };
+}
+
+async function triageChunk(list, examples) {
   const fmt = t => new Date((t || 0) * 1000).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const blocks = list.map(t => {
-    const lines = t.msgs.slice(-6).map(m => {
-      const mine = t.mineIds.indexOf(String(m.account && m.account.account_id)) !== -1;
-      return "[" + fmt(m.send_time) + "] " + (mine ? "【自社】" : "") + ((m.account && m.account.name) || "") + "：" + stripTags(m.body).slice(0, 400);
+    const msgs = t.msgs.slice(-TRIAGE_MSGS);
+    const isMine = t.isMineMsg || (m => t.mineIds.indexOf(String(m.account && m.account.account_id)) !== -1);
+    let lastMineIdx = -1;
+    msgs.forEach((m, i) => { if (isMine(m)) lastMineIdx = i; });
+    const lines = msgs.map((m, i) => {
+      const mine = isMine(m);
+      const body = String(m.body || "");
+      // 宛先のしるし（[To:]・返信）から、だれ宛てかを書き添える
+      let to = "";
+      if (!mine) {
+        if (t.meId && (body.indexOf("[To:" + t.meId + "]") !== -1 || body.indexOf("[rp aid=" + t.meId + " ") !== -1)) to = "（宛先：自社）";
+        else if (/\[toall\]/i.test(body)) to = "（宛先：全員）";
+        else if (/\[To:\d+\]|\[rp aid=\d+ /.test(body)) to = "（宛先：自社以外の人）";
+      }
+      const tag = mine ? "【自社】" : (i > lastMineIdx ? "【未返信】" : "");
+      return "[" + fmt(m.send_time) + "] " + tag + ((m.account && m.account.name) || "") + to + "：" + stripTags(body).slice(0, TRIAGE_CHARS);
     }).join("\n");
     return "■ルームID:" + t.rid + "（" + t.name.slice(0, 40) + "）\n" + lines;
   }).join("\n\n");
 
   const system = "あなたは物流倉庫（発送代行）のカスタマーサポートで、届いたチャットを仕分ける担当です。"
-    + "各ルームの最後の、自社ではない相手の発言に対して、こちらが何をすべきかを判定します。\n\n"
+    + "各ルームの【未返信】の発言（自社が最後に発言した後に届いた、相手の発言すべて）をまとめて読み、こちらが何をすべきかを判定します。"
+    + "最後の1件だけで判断しないこと（例：質問の後に「よろしくお願いします」が来ていても、質問が残っていれば返信が必要）。\n\n"
     + "【分類】\n"
-    + "none：返信しなくてよい。お礼・了解・承知・挨拶だけ、こちらの連絡への「確認しました」だけ、スタンプだけなど。"
-    + "質問・依頼・報告・相談・期限のある連絡が少しでも含まれていれば none にしない\n"
-    + "easy：倉庫や社内で調べなくても返信できる。受け取りのお礼、日程や依頼の承諾、決まっている手順の案内など\n"
-    + "check：返信の前に確認や判断が必要。在庫・入荷・出荷状況・追跡番号・料金・請求・破損・誤出荷・現物の確認、社内での相談が必要なもの\n"
+    + "none：返信しなくてよい。次のどれかに当てはまる\n"
+    + "　・【未返信】がすべて、お礼・了解・承知・挨拶・スタンプだけ、こちらの連絡への「確認しました」だけ\n"
+    + "　・自社以外の人どうしのやり取りで、自社に何も求めていない（宛先：自社以外の人 で、自社への依頼がない）\n"
+    + "　・システムの自動通知、定型のお知らせ、全員向けの周知で、自社がすることがない\n"
+    + "　【未返信】に質問・依頼・報告・相談・期限のある連絡が1つでも含まれていれば none にしない\n"
+    + "easy：倉庫や社内で調べなくても返信できる。受け取りのお礼、日程の承諾、決まっている手順の案内など（出荷・発送の依頼は easy にしない）\n"
+    + "check：返信の前に確認や判断が必要。出荷・発送の依頼、在庫・入荷・出荷状況・追跡番号・料金・請求・破損・誤出荷・現物の確認、社内での相談が必要なもの\n"
     + "迷ったときは check にする。\n\n"
+    + "【sub】check のときだけ、確認の種類を1つ選ぶ（check 以外は空文字）\n"
+    + "order：出荷・発送の依頼（No.や注文番号を挙げて「出荷してください」「発送お願いします」、再発送・追加発送の依頼など）\n"
+    + "ship：すでに出した荷物についての、出荷状況・発送日・追跡番号・配送状況・届かない（未着）の問い合わせ\n"
+    + "bill：請求・料金・見積・支払い・請求書の問い合わせ\n"
+    + "trouble：破損・誤出荷・数量違い・紛失・返品・クレームなどのトラブル\n"
+    + "system：システム・ツール・ログイン・API・ショップとの連携・設定などの問い合わせ\n"
+    + "other：上のどれにも当てはまらないもの（在庫・入荷の確認、相談など）\n"
+    + "複数に当てはまるときは trouble ＞ order ＞ bill ＞ ship ＞ system の順で優先する。\n\n"
     + "【point】相手が求めていることを40文字以内で。check のときは、確認すべきことを入れる（例：「入荷予定日の確認。在庫数を確認して回答」）。none のときは空でよい。\n\n"
     + "【出力】次のJSONだけを返す\n"
-    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"point\": \"...\"}]}";
+    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|other|\", \"point\": \"...\"}]}";
 
-  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system, json: true, timeoutMs: 45000, tries: 2 });
+  const sys = system + (examples ? "\n\n【お手本：以前スタッフが手で直した仕分け（同じような連絡は同じように分ける）】\n" + examples : "");
+  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system: sys, json: true, timeoutMs: 60000, tries: 2 });
   let data;
   try { data = JSON.parse(String(text).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch (e) { throw new Error("仕分け結果を読み取れませんでした"); }
   const ids = new Set(list.map(t => t.rid));
@@ -2012,7 +2093,10 @@ async function triageChunk(list) {
     const id = String((x && x.id) || "").replace(/[^0-9]/g, "");
     const cat = String((x && x.cat) || "").trim();
     if (!ids.has(id) || TRIAGE_CATS.indexOf(cat) === -1) return;
-    res[id] = { cat, point: String(x.point || "").replace(/\s+/g, " ").trim().slice(0, 60) };
+    let sub = String((x && x.sub) || "").trim();
+    if (cat !== "check") sub = "";
+    else if (TRIAGE_SUBS.indexOf(sub) === -1) sub = "other";
+    res[id] = { cat, sub, point: String(x.point || "").replace(/\s+/g, " ").trim().slice(0, 60) };
   });
   return res;
 }
