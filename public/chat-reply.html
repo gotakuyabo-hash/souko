@@ -1411,6 +1411,7 @@
                     : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
                 sheetBtn('🎮', 'Discordでエンジニアに聞く', `askDiscord('${key}')`) +
                 sheetBtn('📦', 'USアプリに出荷依頼（No.を送る）', `openUsRequest('${key}')`) +
+                (isUsRoom(rid) ? sheetBtn('🚫', 'このルームでは「USアプリ」ボタンを出さない', `toggleUsRoom('${rid}')`) : '') +
                 sheetBtn('🔗', 'ほかのサイトを開く（Robot-in など）', `openLinkSheet('', '')`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
@@ -2877,6 +2878,21 @@
             (plain.match(/(?<!\d)\d{5,6}(?!\d)/g) || []).forEach(n => { const k = String(Number(n)); if (out.indexOf(k) < 0) out.push(k); });
             return out;
         }
+        // USアプリを使うルーム（USアプリに一度でも送ったルーム。この端末に保存）
+        const US_ROOMS_KEY = "cw_us_rooms_v1";
+        function getUsRooms() { try { return JSON.parse(localStorage.getItem(US_ROOMS_KEY) || '[]') || []; } catch (e) { return []; } }
+        function isUsRoom(rid) { return getUsRooms().indexOf(String(rid)) !== -1; }
+        function setUsRoom(rid, on) {
+            const list = getUsRooms().filter(x => x !== String(rid));
+            if (on) list.push(String(rid));
+            try { localStorage.setItem(US_ROOMS_KEY, JSON.stringify(list)); } catch (e) {}
+        }
+        window.toggleUsRoom = function(rid) {
+            const on = !isUsRoom(rid);
+            setUsRoom(rid, on);
+            closeAllModals();
+            showToast(on ? 'このルームの出荷依頼に「USアプリ」ボタンを出します' : 'このルームでは「USアプリ」ボタンを出しません');
+        };
         window.openUsRequest = function(key) {
             const m = window.messageStore[key] || {};
             const src = m.rawBody || m.body || '';
@@ -2906,6 +2922,7 @@
                     nos: nos, room_id: m.roomId, room_name: m.roomName || '',
                     text: String(m.body || '').slice(0, 1000), memo: document.getElementById('usr_memo').value.trim(), by: getStaffName()
                 });
+                setUsRoom(m.roomId, true);   // 次から、このルームの出荷依頼にはボタンを出す
                 closeAllModals();
                 showToast(d.existed ? 'このNo.はすでにUSアプリに届いています' : `USアプリに ${d.nos.length} 件のNo.を送りました`);
             } catch (e) {
@@ -3037,7 +3054,11 @@
         function subActionsHtml(sub, cardKey) {
             const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub flex-1">${label}</button>`;
             let html = '';
-            if (sub === 'order') html = b('📦 USアプリに出荷依頼', `openUsRequest('${cardKey}')`);
+            if (sub === 'order') {
+                // USアプリのボタンは、前にUSアプリへ送ったことのあるルームだけに出す
+                const st = window.messageStore[cardKey] || {};
+                if (isUsRoom(st.roomId)) html = b('📦 USアプリに出荷依頼', `openUsRequest('${cardKey}')`);
+            }
             else if (sub === 'ship') html = b('🔗 Robot-in・追跡', `openLinkSheet('', '')`) + b('🚚 送り状を探す', `switchMode('ship')`);
             else if (sub === 'bill') html = b('🧾 請求に記録', `openBillingForm('${cardKey}')`) + b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'trouble') html = b('🚨 誤出荷に記録', `openMisshipForm('${cardKey}')`) + b('🧾 補填を記録', `openBillingForm('${cardKey}')`);
