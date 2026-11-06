@@ -951,11 +951,13 @@ async function printSheets(){
   if (!state.selected.size) { toast('印刷する注文を選んでください'); return; }
   const today = todayStr();
   const pages = [];
-  state.groups.forEach(g => {
+  // ページもNo.順（各ページの一番小さいNo.の順）
+  const groups = state.groups.slice().sort((x,y) => Math.min(...x.rows) - Math.min(...y.rows));
+  groups.forEach(g => {
     const rows = g.rows.filter(no => state.selected.has(no)).map(no => state.rows[no]);
     if (!rows.length) return;
-    // 同じ注文番号を並べて同梱が分かるようにする
-    rows.sort((a,b) => String(a.orderId).localeCompare(String(b.orderId)) || a.no - b.no);
+    // シートと同じNo.順に並べる（同梱は行の色で分かる）
+    rows.sort((a,b) => Number(a.no) - Number(b.no));
     const oidCount = {};
     rows.forEach(r => { const o=String(r.orderId).trim(); if (o && o!=='有在庫用') oidCount[o]=(oidCount[o]||0)+1; });
     const shops = [...new Set(rows.map(r=>r.shop).filter(Boolean))].join('、');
