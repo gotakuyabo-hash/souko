@@ -64,6 +64,14 @@
         .tri-none { background: #ecfdf5; color: #047857; }
         .tri-easy { background: #eef2ff; color: #4338ca; }
         .tri-check { background: #fffbeb; color: #b45309; }
+        .tri-order { background: #dcfce7; color: #15803d; }
+        .tri-ship { background: #e0f2fe; color: #0369a1; }
+        .tri-bill { background: #fef3c7; color: #92400e; }
+        .tri-trouble { background: #fee2e2; color: #b91c1c; }
+        .tri-system { background: #ede9fe; color: #6d28d9; }
+        .tri-other { background: #f1f5f9; color: #475569; }
+        .sub-chip { height: 36px; border-radius: 10px; font-size: 12px; font-weight: 700; background: #fffbeb; color: #92400e; padding: 0 10px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+        .sub-chip.on { background: #b45309; color: #fff; }
         .tri-wait { background: #f1f5f9; color: #64748b; font-weight: 600; }
         .tri-line { margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: #334155; }
         .tri-line:empty { display: none; }
@@ -1300,7 +1308,7 @@
             const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
             const triHtml = (tri ? `<div class="tri-line">${tri.html || ''}</div>` : '') + questionBoxHtml(rid);
             const wrap = (inner, extraCls, cardKey) =>
-                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}">${head}${triHtml}${inner}</div>`;
+                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}" data-sub="${tri ? esc(tri.sub || '') : ''}">${head}${triHtml}${inner}</div>`;
 
             if (!entry) return wrap('<div class="mt-3 text-sm text-slate-400">読込中…</div>');
             if (entry.error) return wrap(`<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`);
@@ -1364,6 +1372,7 @@
                     <button onclick="markDone('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 対応済み</button>
                     <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
                 </div>
+                ${tri && tri.sub ? subActionsHtml(tri.sub, cardKey) : ''}
                 ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
             return wrap(inner, (lastIsMine && unreplied === 0) ? 'opacity-75' : '', cardKey);
         }
@@ -1400,6 +1409,7 @@
                 (roomQuestionOf(rid) && roomQuestionOf(rid).status === 'open'
                     ? sheetBtn('👤', `渡辺さんへの質問を取り下げる（${esc(roomQuestionOf(rid).label || '')}）`, `cancelQuestion(${Number(roomQuestionOf(rid).no) || 0})`)
                     : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
+                sheetBtn('🎮', 'Discordでエンジニアに聞く', `askDiscord('${key}')`) +
                 sheetBtn('📦', 'USアプリに出荷依頼（No.を送る）', `openUsRequest('${key}')`) +
                 sheetBtn('🔗', 'ほかのサイトを開く（Robot-in など）', `openLinkSheet('', '')`) +
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
@@ -1409,6 +1419,7 @@
                 (m.mine ? sheetBtn('✏️', 'このメッセージを編集', `openEditMsg('${key}')`) + sheetBtn('🗑️', 'このメッセージを削除', `deleteMsg('${key}')`) : '') +
                 sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
                 sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
+                sheetBtn('⚙️', 'Discordの開く先を変更', `setDiscordUrl()`) +
                 sheetBtn('👤', `担当者名を変更（今：${esc(localStorage.getItem(STAFF_NAME_KEY) || '未設定')}）`, `changeStaffName()`) +
                 `<a href="https://www.chatwork.com/#!rid${rid}" target="_blank" rel="noopener" class="sheet-row"><span class="text-xl w-7 text-center">🌐</span><span>Chatworkで開く</span></a>`;
             openSheet('sheetActions');
@@ -1479,6 +1490,43 @@
             } catch (e) {
                 alert('削除できませんでした：' + e.message);
             }
+        };
+
+        // ===== Discordでエンジニアに聞く =====
+        //   質問用の文章をコピーして、Discordのチャンネルを開く（開く先はこの端末に保存）
+        const DISCORD_URL_KEY = "cw_discord_url_v1";
+        const DISCORD_DEFAULT_URL = "https://discord.com/channels/1356214612969918616/1397234757934514268";   // エンジニアに聞くチャンネル（全端末共通）
+        function getDiscordUrl() { try { return localStorage.getItem(DISCORD_URL_KEY) || DISCORD_DEFAULT_URL; } catch (e) { return DISCORD_DEFAULT_URL; } }
+        window.setDiscordUrl = function() {
+            const cur = getDiscordUrl();
+            const v = prompt('エンジニアに聞くDiscordのチャンネルのリンクを貼ってください\n（Discordでチャンネルを右クリック／長押し →「リンクをコピー」）', cur || 'https://discord.com/channels/');
+            if (v === null) return false;
+            const url = v.trim();
+            if (!/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\//.test(url)) { alert('Discordのリンク（https://discord.com/…）を入れてください'); return false; }
+            try { localStorage.setItem(DISCORD_URL_KEY, url); } catch (e) {}
+            closeAllModals();
+            showToast('Discordの開く先を保存しました');
+            return true;
+        };
+        window.askDiscord = function(key) {
+            const st = window.messageStore[key] || {};
+            if (!getDiscordUrl() && !setDiscordUrl()) return;
+            const c = msgCache[st.roomId];
+            const point = (c && c.point) ? c.point : '';
+            const body = String(st.body || '').slice(0, 1500);
+            const text = `【Chatworkのお問い合わせ・システム関係】\nルーム：${st.roomName || ''}\n` +
+                (point ? `確認したいこと：${point}\n` : '') +
+                `\n--- お客様からの連絡 ---\n${body}\n\nご確認をお願いします🙏`;
+            // スマホでは、ボタンを押した流れのままでないと別アプリが開けないため、コピーを始めてすぐ開く
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text)
+                    .then(() => showToast('質問文をコピーしました。Discordで貼り付けて送ってください'))
+                    .catch(() => {});
+            } else {
+                prompt('コピーしてください', text);
+            }
+            closeAllModals();
+            window.open(getDiscordUrl(), '_blank', 'noopener');
         };
 
         window.copyMessageText = function(key) {
@@ -2508,7 +2556,7 @@
                 c.pointTried = true;
                 needBodies.add(it.rid);
             }
-            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, html: triageLineHtml(it.rid) });
+            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, sub: triageSub(it.rid), html: triageLineHtml(it.rid) });
         }
 
         // ===== 返信先の表示（どのメッセージへの返信かを、本文の上に小さく出す） =====
@@ -2968,7 +3016,35 @@
         // ===== 要対応の仕分け（サーバーの同期のときにAIが判定 → cw_rooms の triage） =====
         //   none=返信不要 / easy=すぐ返せる / check=要確認。判定したメッセージが最新の時だけ使う
         const TRIAGE_LABELS = { none: '✓ 返信不要', easy: '💬 すぐ返せる', check: '🔍 要確認' };
+        // 要確認の2次仕分け（サーバーが triageSub に入れる。古い判定で種類がない時は「その他」）
+        const TRIAGE_SUBS = {
+            order: { icon: '🚚', label: '出荷依頼' },
+            ship: { icon: '📦', label: '出荷・追跡' },
+            bill: { icon: '💴', label: '請求・料金' },
+            trouble: { icon: '⚠️', label: 'トラブル' },
+            system: { icon: '💻', label: 'システム' },
+            other: { icon: '📝', label: 'その他' }
+        };
+        const TRIAGE_SUB_ORDER = ['trouble', 'order', 'ship', 'bill', 'system', 'other'];
         let triageFilter = 'all';
+        let subFilter = 'all';
+        function triageSub(rid) {
+            if (triageCat(rid) !== 'check') return '';
+            const s = (roomsMeta[rid] || {}).triageSub;
+            return TRIAGE_SUBS[s] ? s : 'other';
+        }
+        // 種類ごとに、よく使う操作へのボタン（カードの中に出す）
+        function subActionsHtml(sub, cardKey) {
+            const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub flex-1">${label}</button>`;
+            let html = '';
+            if (sub === 'order') html = b('📦 USアプリに出荷依頼', `openUsRequest('${cardKey}')`);
+            else if (sub === 'ship') html = b('🔗 Robot-in・追跡', `openLinkSheet('', '')`) + b('🚚 送り状を探す', `switchMode('ship')`);
+            else if (sub === 'bill') html = b('🧾 請求に記録', `openBillingForm('${cardKey}')`) + b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
+            else if (sub === 'trouble') html = b('🚨 誤出荷に記録', `openMisshipForm('${cardKey}')`) + b('🧾 補填を記録', `openBillingForm('${cardKey}')`);
+            else if (sub === 'system') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
+            else if (sub === 'other') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
+            return html ? `<div class="flex gap-2 mt-2">${html}</div>` : '';
+        }
         function triageCat(rid) {
             const d = roomsMeta[rid];
             if (!d || !d.triage || !TRIAGE_LABELS[d.triage]) return '';
@@ -2984,7 +3060,11 @@
             }
             const c = msgCache[rid];
             const point = (c && c.pointFor && c.pointFor === String((roomsMeta[rid] || {}).triageFor || '')) ? c.point : '';
-            return `<span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
+            const sub = triageSub(rid);
+            const subTag = sub ? `<span class="tri-tag tri-${sub}">${TRIAGE_SUBS[sub].icon} ${TRIAGE_SUBS[sub].label}</span>` : '';
+            const fixed = (roomsMeta[rid] || {}).triageFixed ? '<span class="text-[11px] text-slate-400">✎</span>' : '<span class="text-[11px] text-slate-400">▾</span>';
+            // タグを押すと仕分けを直せる
+            return `<button onclick="openTriageFix('${safeId(rid)}')" class="flex items-center gap-1 shrink-0 cursor-pointer" aria-label="仕分けを直す"><span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${subTag}${fixed}</button>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
         }
         // 書きかけの返信を消さないように、仕分けの1行だけ差し替える
         function updateTriageLine(rid) {
@@ -2993,6 +3073,7 @@
             const line = el.querySelector('.tri-line');
             if (line) line.innerHTML = triageLineHtml(rid);
             el.setAttribute('data-tri', triageCat(rid));
+            el.setAttribute('data-sub', triageSub(rid));
             updateTriageBar();
         }
         function updateTriageBar() {
@@ -3004,21 +3085,76 @@
             if (!n.check && !n.easy && !n.none) { bar.innerHTML = ''; bar.style.display = 'none'; triageFilter = 'all'; applyTriageFilter(); return; }
             bar.style.display = '';
             if (triageFilter !== 'all' && !n[triageFilter]) triageFilter = 'all';   // 0件になった分類は「すべて」に戻す
+            // 要確認の中の種類ごとの件数
+            const ns = {};
+            cards.forEach(c => { if (c.getAttribute('data-tri') === 'check') { const s = c.getAttribute('data-sub') || 'other'; ns[s] = (ns[s] || 0) + 1; } });
+            if (triageFilter !== 'check' || (subFilter !== 'all' && !ns[subFilter])) subFilter = 'all';
             const chip = (f, label) => `<button onclick="setTriageFilter('${f}')" class="tri-chip ${triageFilter === f ? 'on' : ''}"><b>${n[f]}</b>${label}</button>`;
+            const subChip = (f, label, cnt) => `<button onclick="setSubFilter('${f}')" class="sub-chip ${subFilter === f ? 'on' : ''}">${label} <b>${cnt}</b></button>`;
+            const subRow = (triageFilter === 'check' && n.check)
+                ? `<div class="flex flex-wrap gap-2 mt-2">${subChip('all', '要確認すべて', n.check)}${TRIAGE_SUB_ORDER.filter(s => ns[s]).map(s => subChip(s, `${TRIAGE_SUBS[s].icon} ${TRIAGE_SUBS[s].label}`, ns[s])).join('')}</div>`
+                : '';
             bar.innerHTML = `
                 <div class="grid grid-cols-4 gap-2">
                     ${chip('all', 'すべて')}${chip('check', '🔍 要確認')}${chip('easy', '💬 すぐ返せる')}${chip('none', '✓ 返信不要')}
                 </div>
+                ${subRow}
                 ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
             applyTriageFilter();
         }
         function applyTriageFilter() {
             document.querySelectorAll('#burstModeContainer .burst-card').forEach(c => {
-                c.style.display = (triageFilter === 'all' || c.getAttribute('data-tri') === triageFilter) ? '' : 'none';
+                const okCat = triageFilter === 'all' || c.getAttribute('data-tri') === triageFilter;
+                const okSub = triageFilter !== 'check' || subFilter === 'all' || c.getAttribute('data-sub') === subFilter;
+                c.style.display = (okCat && okSub) ? '' : 'none';
             });
         }
+        // ===== 仕分けを手で直す（直した結果は、次からAIのお手本になる） =====
+        window.openTriageFix = function(rid) {
+            const cur = triageCat(rid), curSub = triageSub(rid);
+            const opt = (cat, sub, label) => {
+                const on = cat === cur && (cat !== 'check' || sub === curSub);
+                return sheetBtn(on ? '✅' : '　', label, `fixTriage('${rid}', '${cat}', '${sub}')`);
+            };
+            document.getElementById('sheetActionsTitle').textContent = '仕分けを直す：' + ((roomsMeta[rid] || {}).name || '');
+            document.getElementById('sheetActionsBody').innerHTML =
+                `<div class="px-4 pt-3 pb-2 text-xs text-slate-500">正しい分類を選んでください。直した内容は、次からAIが仕分けるときのお手本になります。</div>` +
+                opt('none', '', '✓ 返信不要') + opt('easy', '', '💬 すぐ返せる') +
+                TRIAGE_SUB_ORDER.map(s => opt('check', s, `🔍 要確認・${TRIAGE_SUBS[s].icon} ${TRIAGE_SUBS[s].label}`)).join('');
+            openSheet('sheetActions');
+        };
+        window.fixTriage = async function(rid, cat, sub) {
+            closeAllModals();
+            const d = roomsMeta[rid];
+            if (!d) return;
+            if (cat === triageCat(rid) && (cat !== 'check' || sub === triageSub(rid))) return;
+            const card = document.querySelector(`#burstModeContainer .burst-card[data-room-id="${safeId(rid)}"]`);
+            const st = card ? (window.messageStore[card.getAttribute('data-card-key')] || {}) : {};
+            const before = { triage: d.triage, triageSub: d.triageSub, triageFixed: d.triageFixed };
+            // 画面にはすぐ反映
+            Object.assign(d, { triage: cat, triageSub: cat === 'check' ? sub : '', triageFixed: true });
+            updateTriageLine(rid);
+            try {
+                await callApi('fix_triage', { room_id: rid, cat, sub, text: String(st.body || '').slice(0, 600), room_name: d.name || '', by: getStaffName() });
+                showToast('仕分けを直しました（次からAIのお手本になります）');
+            } catch (e) {
+                Object.assign(d, before);
+                updateTriageLine(rid);
+                alert('仕分けを直せませんでした: ' + e.message);
+            }
+        };
+
+        window.setSubFilter = function(f) {
+            subFilter = f;
+            document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('selectAllCheckbox').checked = false;
+            updateSelectionBar();
+            updateTriageBar();
+            window.scrollTo(0, 0);
+        };
         window.setTriageFilter = function(f) {
             triageFilter = f;
+            subFilter = 'all';
             // 隠れるカードに選択が残らないように、選択はいったん外す
             document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
             document.getElementById('selectAllCheckbox').checked = false;
