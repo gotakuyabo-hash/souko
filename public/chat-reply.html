@@ -13,6 +13,8 @@
         .btn-sub  { background: #f1f5f9; color: #334155; }
         .btn-main { background: #4f46e5; color: #fff; }
         .btn-ok   { background: #059669; color: #fff; }
+        .btn-s    { height: 36px; font-size: 13px; border-radius: 10px; }
+        .replied-tag { display: inline-block; font-size: 11px; font-weight: 700; color: #047857; background: #d1fae5; border-radius: 6px; padding: 1px 6px; }
         .btn-ai   { background: linear-gradient(90deg, #7c3aed, #4f46e5); color: #fff; }
         .inp { width: 100%; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fff; }
         .inp:focus { outline: 2px solid #818cf8; outline-offset: 0; border-color: transparent; }
@@ -1230,7 +1232,8 @@
             const panel = document.getElementById(`reply_panel_${key}`);
             const open = panel.style.display === 'none';
             panel.style.display = open ? 'block' : 'none';
-            btn.textContent = open ? '✕ 閉じる' : '💬 返信';
+            if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+            btn.textContent = open ? '✕ 閉じる' : btn.dataset.label;
             if (open) {
                 ensureMembers(key);
                 setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
@@ -1254,6 +1257,29 @@
                 }
             }
             sel.innerHTML = memberOptionsHtml(members);
+        }
+
+        // ===== メッセージごとの返信済み記録（要対応カードで複数メッセージに個別返信した時用） =====
+        //   この端末に {アカウント_メッセージID: 送信時刻} を保存（7日で消す）
+        const REPLIED_KEY = "cw_replied_mids_v1";
+        function loadReplied() {
+            try { return JSON.parse(localStorage.getItem(REPLIED_KEY) || '{}') || {}; } catch (e) { return {}; }
+        }
+        function isReplied(mid) { return !!loadReplied()[`${getAccount()}_${mid}`]; }
+        function markReplied(mid) {
+            const d = loadReplied();
+            const now = Date.now();
+            Object.keys(d).forEach(k => { if (now - d[k] > 7 * 86400 * 1000) delete d[k]; });
+            d[`${getAccount()}_${mid}`] = now;
+            try { localStorage.setItem(REPLIED_KEY, JSON.stringify(d)); } catch (e) {}
+        }
+        // カード内で、まだ返信していないお客様のメッセージの数
+        function unrepliedInCard(card, exceptMid) {
+            if (!card) return 0;
+            return Array.from(card.querySelectorAll('[data-msg-mid]')).filter(el => {
+                const mid = el.getAttribute('data-msg-mid');
+                return mid !== exceptMid && !isReplied(mid);
+            }).length;
         }
 
         // ===== 未読・後でのカード =====
@@ -1298,22 +1324,48 @@
             };
 
             const more = Number(unreadNum) > MAX_SHOW ? `<div class="text-xs text-slate-400 mt-2">※ 未読はほかに ${Number(unreadNum) - MAX_SHOW} 件あります（「ルーム」タブで確認できます）</div>` : '';
-            const notice = lastIsMine ? `<div class="mt-3 text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">✅ 最後の発言は自社です（返信済みかもしれません）</div>` : '';
+
+            // お客様のメッセージが2件以上ある時は、1件ずつにも返信ボタンをつける
+            const custShown = shown.filter(m => !isMine(m, rid));
+            const perMsg = custShown.length >= 2;
+            const unreplied = perMsg ? custShown.filter(m => !isReplied(safeId(m.message_id))).length : 0;
+            const notice = (lastIsMine && unreplied > 0)
+                ? `<div class="mt-3 text-sm font-bold text-amber-800 bg-amber-50 rounded-xl px-3 py-2">↩ 一部に返信済みです（未返信 ${unreplied} 件）</div>`
+                : lastIsMine ? `<div class="mt-3 text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">✅ 最後の発言は自社です（返信済みかもしれません）</div>` : '';
             const items = shown.map((m, i) => {
                 const k = storeMessage(rid, roomName, m);
-                return `<div class="${i > 0 ? 'mt-3 pt-3 border-t border-slate-100' : ''}">${messageHtml(k, m, { small: i < shown.length - 1 })}</div>`;
+                const sep = i > 0 ? 'mt-3 pt-3 border-t border-slate-100' : '';
+                if (!perMsg || isMine(m, rid)) {
+                    return `<div class="${sep}">${messageHtml(k, m, { small: i < shown.length - 1 })}</div>`;
+                }
+                // このメッセージまでの流れをAIに渡す
+                const st = window.messageStore[k];
+                const absIdx = msgs.indexOf(m);
+                st.context = msgs.slice(0, absIdx + 1).map(x => lineFor(x, rid)).join('\n\n');
+                st.inCard = true;
+                const mid = safeId(m.message_id);
+                const replied = isReplied(mid);
+                return `<div class="${sep}" data-msg-mid="${mid}">
+                    ${messageHtml(k, m, { small: i < shown.length - 1 })}
+                    <div class="flex items-center gap-2 mt-2">
+                        <span id="replied_tag_${k}" class="replied-tag" ${replied ? '' : 'style="display:none"'}>✅ 返信済み</span>
+                        <button onclick="toggleReply('${k}', this)" class="btn btn-s ${replied ? 'btn-sub' : 'btn-main'} flex-1">${replied ? '💬 もう一度返信' : '💬 これに返信'}</button>
+                        <button onclick="openMsgActions('${k}')" class="btn btn-s btn-sub w-12 shrink-0" aria-label="その他">⋯</button>
+                    </div>
+                    ${replyPanelHtml(k, null, '📤 送信')}
+                </div>`;
             }).join('');
 
             const inner = `
                 ${notice}
                 <div class="mt-3">${items}${more}</div>
                 <div class="flex gap-2 mt-3">
-                    <button onclick="toggleReply('${cardKey}', this)" class="btn ${lastIsMine ? 'btn-sub' : 'btn-main'} flex-1">💬 返信</button>
+                    <button onclick="toggleReply('${cardKey}', this)" class="btn ${(lastIsMine || perMsg) ? 'btn-sub' : 'btn-main'} flex-1">${perMsg ? '💬 まとめて返信' : '💬 返信'}</button>
                     <button onclick="markDone('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 対応済み</button>
                     <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
                 </div>
                 ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
-            return wrap(inner, lastIsMine ? 'opacity-75' : '', cardKey);
+            return wrap(inner, (lastIsMine && unreplied === 0) ? 'opacity-75' : '', cardKey);
         }
 
         // 送信・既読のあと、カードを片付ける
@@ -2174,7 +2226,7 @@
             roomIds.map(String).forEach(rid => {
                 const data = { account: acc, roomId: rid, handledAt: opts.reopen ? 0 : (opts.at || now), reopen: !!opts.reopen, by: by, auto: false, updatedAt: f.serverTimestamp() };
                 batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), data);
-                batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.reopen ? 'reopen' : 'done', by: by, at: f.serverTimestamp() });
+                batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.logAction || (opts.reopen ? 'reopen' : 'done'), by: by, at: f.serverTimestamp() });
                 handledMap[rid] = Object.assign({}, data, { updatedAt: null });   // 画面にはすぐ反映
             });
             saveHandledCache();
@@ -3451,6 +3503,7 @@
         function draftId(key) {
             const m = window.messageStore[key];
             if (!m || !m.roomId) return null;
+            if (m.inCard && m.replyTo && m.replyTo.mid) return `${getAccount()}_${m.roomId}_reply_${m.replyTo.mid}`;   // 要対応カード内の、メッセージごとの返信欄
             return `${getAccount()}_${m.roomId}_${key.startsWith('compose_') ? 'compose' : 'reply'}`;
         }
         function clearDraft(key) {
@@ -3605,6 +3658,42 @@
             const fileNote = files.length ? `\n\n📎 添付 ${files.length}件：${files.map(f => f.name).join('、').slice(0, 80)}` : '';
             if (!confirm(`「${m.roomName}」に送信しますか？\n\n${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}${fileNote}`)) return;
 
+            // 要対応カードでメッセージごとに返信した時：ほかに未返信が残っていれば、カードは残して完了にしない
+            const card = btn.closest('.burst-card');
+            const myMid = m.inCard && m.replyTo ? m.replyTo.mid : '';
+            const remain = m.inCard ? unrepliedInCard(card, myMid) : 0;
+            const partial = m.inCard && remain > 0 && currentMode !== 'normal';
+            if (partial) {
+                const label = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = "送信中…";
+                try {
+                    if (files.length) await uploadFiles(m.roomId, files, finalMsg, false, btn);
+                    else await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: false });
+                    attachStore[key] = [];
+                    renderAttach(key);
+                    clearDraft(key);
+                    if (preview) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'reply'); }
+                    markReplied(myMid);
+                    // 自社の発言が最後になっても要対応に残るようにする
+                    setHandled([m.roomId], { reopen: true, logAction: 'partial' }).catch(e => console.error(e));
+                    // 返信欄を閉じて「返信済み」にする
+                    textarea.value = '';
+                    const panel = document.getElementById(`reply_panel_${key}`);
+                    if (panel) panel.style.display = 'none';
+                    const tBtn = card && card.querySelector(`[onclick^="toggleReply('${key}'"]`);
+                    if (tBtn) { tBtn.dataset.label = '💬 もう一度返信'; tBtn.textContent = '💬 もう一度返信'; tBtn.classList.remove('btn-main'); tBtn.classList.add('btn-sub'); }
+                    const tag = document.getElementById(`replied_tag_${key}`);
+                    if (tag) tag.style.display = '';
+                    showToast(`送信しました（未返信あと ${remain} 件）`);
+                } catch (e) {
+                    alert("送信失敗: " + e.message);
+                }
+                btn.disabled = false;
+                btn.textContent = label;
+                return;
+            }
+
             const done = currentMode !== 'normal';
             btn.disabled = true;
             btn.textContent = "送信中…";
@@ -3613,6 +3702,7 @@
                 else await callApi("send_message", { room_id: m.roomId, body: finalMsg, done: true });
                 attachStore[key] = [];
                 clearDraft(key);
+                if (myMid) markReplied(myMid);
                 if (preview) { rememberLastSent(m, finalMsg); saveSendLog(m, finalMsg, 'reply'); }
                 setHandled([m.roomId], { reopen: false, at: Math.floor(Date.now() / 1000) + 5 }).catch(e => console.error(e));
                 markReadInCache([m.roomId]);
@@ -3622,7 +3712,7 @@
             } catch (e) {
                 alert("送信失敗: " + e.message);
                 btn.disabled = false;
-                btn.textContent = done ? "📤 送信して完了" : "📤 送信";
+                btn.textContent = (done && !m.inCard) ? "📤 送信して完了" : "📤 送信";
             }
         };
     </script>
