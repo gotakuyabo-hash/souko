@@ -84,6 +84,12 @@
             ここにファイルをドラッグ＆ドロップ、またはクリックして選択
             <div id="importFileName" style="margin-top:6px; font-weight:bold; color:#0b4f9c;"></div>
         </div>
+        <div class="import-row" style="margin-top:12px;">
+            <label>または Googleスプレッドシートから:
+                <input type="text" id="sheetUrlInput" placeholder="スプレッドシートのURLを貼り付け" style="width:460px;">
+            </label>
+            <button class="btn" id="sheetLoadBtn" onclick="loadFromSheetUrl()" style="padding:6px 14px;">シートから読み込む</button>
+        </div>
         <input type="file" id="importFile" accept=".xlsx,.xls,.csv,.tsv,.txt" style="display:none" onchange="handleImportFile(this.files[0]); this.value='';">
 
         <div id="mappingArea" style="display:none;">
@@ -757,6 +763,12 @@ const MAP_FIELDS = [
 
 const EXCLUDE_RE = /ご依頼主|依頼人|送り主|発送元|差出人|請求|メール|mail/i;
 
+// ▼ GAS（シート読み取り用）の設定 ― デプロイ後にURLと合言葉を入れてください
+const GAS_URL   = 'ここにGASのウェブアプリURL（https://script.google.com/macros/s/.../exec）';
+const GAS_TOKEN = 'ここにGASと同じ合言葉';
+
+let importSource = 'file';  // 'file' = Excel/CSV, 'gsheet' = スプレッドシート
+let gsheetId = '';
 let importWorkbook = null;
 let importHeaders = [];
 let importRows = [];
@@ -778,6 +790,7 @@ async function handleImportFile(file) {
     if (typeof XLSX === 'undefined') { alert('読み込み用ライブラリが読み込めていません。ネット接続を確認して再読み込みしてください。'); return; }
     try {
         const buf = await file.arrayBuffer();
+        importSource = 'file';
         if (/\.(csv|tsv|txt)$/i.test(file.name)) {
             // 文字コード自動判定（UTF-8で化けたらShift_JIS）
             let text = new TextDecoder('utf-8').decode(buf);
@@ -799,9 +812,24 @@ async function handleImportFile(file) {
     }
 }
 
-function loadSheet(name) {
-    const ws = importWorkbook.Sheets[name];
-    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+async function loadSheet(name) {
+    let aoa;
+    if (importSource === 'gsheet') {
+        if (!importWorkbook.Sheets[name]) {
+            showImportMsg('ok', `「${name}」を読み込んでいます…`);
+            try {
+                const r = await gasGet({ action: 'values', id: gsheetId, sheet: name });
+                importWorkbook.Sheets[name] = r.values || [];
+            } catch (e) {
+                showImportMsg('warn', `シートを読み込めませんでした：${e.message}`);
+                return;
+            }
+        }
+        aoa = importWorkbook.Sheets[name];
+    } else {
+        const ws = importWorkbook.Sheets[name];
+        aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    }
 
     // 見出し行を探す（上から10行のうち、項目名らしい単語が一番多い行）
     const KEY = /氏名|名前|住所|郵便|電話|都道府県|注文|支援|数量|品名|商品|番地/;
@@ -826,6 +854,56 @@ function loadSheet(name) {
         document.getElementById('templateSelect').value = '';
         applyAutoDetect();
         showImportMsg('ok', `${importRows.length} 行を読み込みました。列の割り当ては自動判定です。違っていればプルダウンで直してください。`);
+    }
+}
+
+// スプレッドシートのURLからIDとgidを取り出す（IDだけ貼っても可）
+function parseSheetUrl(text) {
+    const t = String(text || '').trim();
+    const m = t.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    const id = m ? m[1] : (/^[a-zA-Z0-9_-]{25,}$/.test(t) ? t : '');
+    const g = t.match(/[#&?]gid=(\d+)/);
+    return { id, gid: g ? g[1] : '' };
+}
+
+async function gasGet(params) {
+    if (!/^https:\/\/script\.google\.com\//.test(GAS_URL)) throw new Error('GAS_URL が設定されていません');
+    const q = new URLSearchParams({ ...params, token: GAS_TOKEN });
+    const res = await fetch(`${GAS_URL}?${q.toString()}`);
+    if (!res.ok) throw new Error(`通信エラー（${res.status}）`);
+    let json;
+    try { json = await res.json(); } catch (e) { throw new Error('GASの公開設定（アクセス：全員）を確認してください'); }
+    if (!json.ok) throw new Error(json.error || '不明なエラー');
+    return json;
+}
+
+async function loadFromSheetUrl() {
+    const { id, gid } = parseSheetUrl(document.getElementById('sheetUrlInput').value);
+    if (!id) { alert('スプレッドシートのURLを貼り付けてください。'); return; }
+    const btn = document.getElementById('sheetLoadBtn');
+    btn.disabled = true; btn.textContent = '読み込み中…';
+    try {
+        const info = await gasGet({ action: 'sheets', id });
+        importSource = 'gsheet';
+        gsheetId = id;
+        importWorkbook = { SheetNames: info.sheets.map(s => s.name), Sheets: {} };
+        document.getElementById('importFileName').textContent = `読み込み中のシート：${info.title}`;
+
+        const sheetSel = document.getElementById('sheetSelect');
+        sheetSel.innerHTML = importWorkbook.SheetNames.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
+        document.getElementById('sheetSelectWrap').style.display = importWorkbook.SheetNames.length > 1 ? '' : 'none';
+
+        // URLのgidのタブを優先して開く（なければ先頭）
+        const hit = info.sheets.find(s => String(s.gid) === gid);
+        const first = hit ? hit.name : importWorkbook.SheetNames[0];
+        sheetSel.value = first;
+        document.getElementById('mappingArea').style.display = 'block';
+        await loadSheet(first);
+    } catch (e) {
+        console.error(e);
+        alert(`シートを読み込めませんでした。\n${e.message}`);
+    } finally {
+        btn.disabled = false; btn.textContent = 'シートから読み込む';
     }
 }
 
