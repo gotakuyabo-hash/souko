@@ -1645,17 +1645,32 @@ let zaicoInv = [];
 let zaicoInvLoadedAt = null;
 let zaicoInvLoading = null;
 
+let zaicoInvProgress = null; // 読み込み中の件数を画面に出すための関数
 async function loadZaicoInventories(force = false) {
   if (zaicoInvLoadedAt && !force) return zaicoInv;
   if (zaicoInvLoading) return zaicoInvLoading;
   zaicoInvLoading = (async () => {
-    const res = await fetch(URL_LIST_ZAICO_INVENTORIES + (force ? '?refresh=1' : ''));
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
-    zaicoInv = (data.items || []).map(x => ({
-      id: x.id, title: String(x.title || ''), code: String(x.code || '').trim(),
-      place: String(x.place || '').trim(), quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || ''
-    }));
+    const all = [];
+    let page = 1;
+    for (let guard = 0; page && guard < 200; guard++) {
+      let res;
+      try {
+        res = await fetch(`${URL_LIST_ZAICO_INVENTORIES}?page=${page}&pages=10`);
+      } catch (err) {
+        throw new Error('zaico在庫一覧の関数につながりませんでした（Failed to fetch）。関数がデプロイされているか、外から呼び出せる設定になっているか確認してください。');
+      }
+      let data;
+      try { data = await res.json(); }
+      catch (e) { throw new Error(`zaico在庫一覧の関数から正しい返事がありませんでした（${res.status}）`); }
+      if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+      (data.items || []).forEach(x => all.push({
+        id: x.id, title: String(x.title || ''), code: String(x.code || '').trim(),
+        place: String(x.place || '').trim(), quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || ''
+      }));
+      if (zaicoInvProgress) zaicoInvProgress(all.length);
+      page = data.nextPage || null;
+    }
+    zaicoInv = all;
     zaicoInvLoadedAt = new Date();
     return zaicoInv;
   })();
@@ -1685,6 +1700,7 @@ window.openZaicoPicker = async ({ title = '', query = '', onPick, onSkip = null 
   const list = document.getElementById('zpList');
   if (!zaicoInvLoadedAt) {
     list.innerHTML = '<p class="empty">zaicoの在庫一覧を読み込んでいます…</p>';
+    zaicoInvProgress = n => { list.innerHTML = `<p class="empty">zaicoの在庫一覧を読み込んでいます…（${n.toLocaleString()}件）</p>`; };
     try { await loadZaicoInventories(); }
     catch (err) { list.innerHTML = `<div class="notice warn">読み込めませんでした：${escapeHtml(err.message)}</div>`; return; }
   }
@@ -1694,7 +1710,9 @@ window.openZaicoPicker = async ({ title = '', query = '', onPick, onSkip = null 
 window.closeZaicoPicker = () => { document.getElementById('zaicoPicker').classList.remove('open'); zpOnPick = null; zpOnSkip = null; };
 window.skipZaicoPicker = () => { const cb = zpOnSkip; closeZaicoPicker(); if (cb) cb(); };
 window.reloadZaicoPicker = async () => {
-  document.getElementById('zpList').innerHTML = '<p class="empty">読み込んでいます…</p>';
+  const list = document.getElementById('zpList');
+  list.innerHTML = '<p class="empty">読み込んでいます…</p>';
+  zaicoInvProgress = n => { list.innerHTML = `<p class="empty">読み込んでいます…（${n.toLocaleString()}件）</p>`; };
   try { await loadZaicoInventories(true); renderZaicoPicker(); }
   catch (err) { document.getElementById('zpList').innerHTML = `<div class="notice warn">読み込めませんでした：${escapeHtml(err.message)}</div>`; }
 };
@@ -1868,6 +1886,7 @@ let zaicoInvMasters = [];
 window.loadZaicoInvForMaster = async (force = false) => {
   const area = document.getElementById('zaicoInvArea');
   area.innerHTML = '<p class="empty">zaicoの在庫一覧と商品マスタを読み込んでいます…</p>';
+  zaicoInvProgress = n => { area.innerHTML = `<p class="empty">zaicoの在庫一覧を読み込んでいます…（${n.toLocaleString()}件）</p>`; };
   try {
     const [, snap] = await Promise.all([loadZaicoInventories(force), getDocs(collection(db, 'product_masters'))]);
     zaicoInvMasters = [];
