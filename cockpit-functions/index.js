@@ -33,7 +33,7 @@
  *
  * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
  *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
- *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / other=その他）
+ *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / request=依頼 / share=共有 / other=その他）
  *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
  *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
@@ -1351,7 +1351,7 @@ const wDel = (col, id) => ({ ref: db.collection(col).doc(id), del: true });
 let syncRunning = false;
 
 exports.syncChatworkToFirestore = onSchedule(
-  { schedule: "every 1 minutes", timeZone: "Asia/Tokyo", region: REGION, secrets: ALL_SECRETS, timeoutSeconds: 120, memory: "512MiB", retryCount: 0, maxInstances: 1, concurrency: 1 },
+  { schedule: "every 1 minutes", timeZone: "Asia/Tokyo", region: REGION, secrets: ALL_SECRETS, timeoutSeconds: 240, memory: "512MiB", retryCount: 0, maxInstances: 1, concurrency: 1 },
   async () => {
     if (syncRunning) return;
     syncRunning = true;
@@ -1512,10 +1512,13 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
         triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meId, isMineMsg, meta, msgDoc, prevM: st.m || 0 });
       }
     } else {
-      meta.triage = "";
-      meta.triageSub = "";
-      meta.triageFixed = false;
-      meta.triageFor = "";
+      // 最後が自社の時は、前回の仕分けを残す（一部だけ返信して要対応に残したカードの分類が消えないように）
+      if (!msgs.length) {
+        meta.triage = "";
+        meta.triageSub = "";
+        meta.triageFixed = false;
+        meta.triageFor = "";
+      }
       newState[rid].tm = meta.lastMsgId || "empty";   // 判定不要（最後が自社・メッセージなし）
     }
     writes.push(wPatch("cw_rooms", acc + "_" + rid, meta));
@@ -1526,8 +1529,13 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
 
   // 仕分け（AI）。失敗したルームは「未取得」に戻して、次の同期でもう一度判定する
   if (triageTargets.length) {
-    const results = await triageRooms(triageTargets);
-    triageTargets.forEach(t => {
+    // 1回の同期で仕分けるのは新しいものから TRIAGE_MAX_PER_SYNC 件まで（残りは次の同期で）。
+    //   同期が時間切れで止まると、全体の更新が止まって画面から仕分けが消えるため
+    triageTargets.sort((a, b) => (b.meta.lastMsgTime || 0) - (a.meta.lastMsgTime || 0));
+    triageTargets.slice(TRIAGE_MAX_PER_SYNC).forEach(t => { newState[t.rid].m = t.prevM; });
+    const now_ = triageTargets.slice(0, TRIAGE_MAX_PER_SYNC);
+    const results = await triageRooms(now_);
+    now_.forEach(t => {
       const res = results[t.rid];
       if (res) {
         t.meta.triage = res.cat;
@@ -1974,10 +1982,11 @@ async function qaForPrompt(roomId) {
 const TRIAGE_PER_CALL = 5;           // 1回のAI呼び出しで判定するルーム数（少ないほど1件ずつ丁寧に読む）
 const TRIAGE_MSGS = 10;              // 1ルームあたりAIに渡す直近のメッセージ数
 const TRIAGE_CHARS = 600;            // 1メッセージあたりAIに渡す文字数
-const TRIAGE_FIX_EXAMPLES = 30;      // 手で直した仕分けを、お手本として何件渡すか
+const TRIAGE_FIX_EXAMPLES = 30;
+const TRIAGE_MAX_PER_SYNC = 15;      // 1回の同期で仕分ける最大ルーム数（3回分を同時に）      // 手で直した仕分けを、お手本として何件渡すか
 const TRIAGE_CATS = ["none", "easy", "check"];
 // 要確認（check）の2次仕分け
-const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "other"];
+const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "request", "share", "other"];
 
 async function triageRooms(targets) {
   const out = {};
@@ -2072,19 +2081,26 @@ async function triageChunk(list, examples) {
     + "check：返信の前に確認や判断が必要。出荷・発送の依頼、在庫・入荷・出荷状況・追跡番号・料金・請求・破損・誤出荷・現物の確認、社内での相談が必要なもの\n"
     + "迷ったときは check にする。\n\n"
     + "【sub】check のときだけ、確認の種類を1つ選ぶ（check 以外は空文字）\n"
-    + "order：出荷・発送の依頼（No.や注文番号を挙げて「出荷してください」「発送お願いします」、再発送・追加発送の依頼など）\n"
+    + "order：出荷・発送の依頼（No.や注文番号を挙げて「出荷してください」「発送お願いします」、再発送・追加発送の依頼など）。はっきり出荷・発送を頼む言葉があるものだけ\n"
     + "ship：すでに出した荷物についての、出荷状況・発送日・追跡番号・配送状況・届かない（未着）の問い合わせ\n"
     + "bill：請求・料金・見積・支払い・請求書の問い合わせ\n"
     + "trouble：破損・誤出荷・数量違い・紛失・返品・クレームなどのトラブル\n"
     + "system：システム・ツール・ログイン・API・ショップとの連携・設定などの問い合わせ\n"
+    + "request：出荷以外の作業の依頼（検品・ラベル貼り・同梱物・梱包方法の指定・返送・FBA納品・在庫の移動や廃棄など、倉庫や自社に何かをしてほしいもの）\n"
+    + "share：セラーからの情報の共有。特に多いのは次の2つ\n"
+    + "　・注文の詳細の連絡（注文番号・商品・数量・お届け先などを送ってくるだけで、「出荷してください」などの依頼の言葉がないもの）\n"
+    + "　・納品の連絡（倉庫あてに商品を送った・送る予定、入荷予定、納品書や数量の連絡）\n"
+    + "　ほかに、休業日や運用の変更のお知らせ、作業結果の報告など、内容を確認して社内に伝えたり記録したりする必要があるもの\n"
+    + "　注文の詳細と納品の連絡は、短い文でも none にせず share にする（倉庫での確認・記録が必要なため）\n"
     + "other：上のどれにも当てはまらないもの（在庫・入荷の確認、相談など）\n"
-    + "複数に当てはまるときは trouble ＞ order ＞ bill ＞ ship ＞ system の順で優先する。\n\n"
+    + "複数に当てはまるときは trouble ＞ order ＞ request ＞ bill ＞ ship ＞ system ＞ share の順で優先する。ただし、注文の詳細や納品の連絡で、依頼の言葉がないものは order や request にせず share にする。\n"
+    + "共有・お知らせでも、自社がすることも伝えることも何もないもの（全員向けの周知など）は check にせず none にする。\n\n"
     + "【point】相手が求めていることを40文字以内で。check のときは、確認すべきことを入れる（例：「入荷予定日の確認。在庫数を確認して回答」）。none のときは空でよい。\n\n"
     + "【出力】次のJSONだけを返す\n"
-    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|other|\", \"point\": \"...\"}]}";
+    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|request|share|other|\", \"point\": \"...\"}]}";
 
   const sys = system + (examples ? "\n\n【お手本：以前スタッフが手で直した仕分け（同じような連絡は同じように分ける）】\n" + examples : "");
-  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system: sys, json: true, timeoutMs: 60000, tries: 2 });
+  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system: sys, json: true, timeoutMs: 40000, tries: 1 });
   let data;
   try { data = JSON.parse(String(text).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch (e) { throw new Error("仕分け結果を読み取れませんでした"); }
   const ids = new Set(list.map(t => t.rid));
