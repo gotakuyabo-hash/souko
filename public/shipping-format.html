@@ -135,6 +135,28 @@ tr.dragging{opacity:.4}
 tr.drag-over td{border-top:2px solid var(--accent)}
 .notice{padding:10px 12px;border-radius:6px;background:#f4f6f7;border:1px solid var(--line-soft);font-size:13px}
 .notice.warn{background:var(--tape-soft);border-color:#ecd27a}
+.zaico-next{margin-top:10px;padding:10px 12px;border-radius:6px;font-size:13px;line-height:1.7;background:#eef7f0;border:1px solid #b9dcc2}
+.zaico-next.has-problem{background:var(--tape-soft);border-color:#ecd27a}
+.zaico-next b{font-weight:700}
+.todo-steps{margin:4px 0 8px;padding:8px 12px;border-radius:6px;background:#f4f6f7;font-size:12.5px;line-height:1.8}
+.todo-steps ol{margin:0;padding-left:20px}
+.zp-overlay{position:fixed;inset:0;background:rgba(20,30,40,.45);display:none;align-items:flex-start;justify-content:center;z-index:1000;padding:40px 12px}
+.zp-overlay.open{display:flex}
+.zp-box{background:var(--panel);border-radius:10px;width:min(820px,100%);max-height:calc(100vh - 80px);display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.zp-head{padding:14px 16px;border-bottom:1px solid var(--line-soft);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.zp-head h3{margin:0;font-size:15px;flex:1 1 100%}
+.zp-head .zp-target{font-size:12.5px;color:var(--muted);flex:1 1 100%}
+.zp-body{overflow:auto;padding:8px 16px 16px}
+.zp-body table{width:100%}
+.zaico-reg-ok{color:var(--muted);font-size:12px}
+.badge-set{background:#6b4fa3;color:#fff}
+.set-form{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-bottom:10px}
+@media (max-width:640px){.set-form{grid-template-columns:1fr}}
+.set-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.set-card{border:1px solid var(--line-soft);border-radius:8px;padding:10px 12px;font-size:13px}
+.set-card .set-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.set-card .set-head b{font-size:14px}
+.set-card ul{margin:6px 0 0;padding-left:18px;line-height:1.7}
 /* 商品マスタ一括登録 */
 .bulk-grid{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px}
 .bulk-grid .dropzone{padding:20px 12px;min-height:150px}
@@ -288,6 +310,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
             <button id="calcPickBtn" class="btn btn-primary" onclick="processOrderPickCalculation()" disabled>ピック数を算出 <span class="hint" id="calcHint"></span></button>
             <button id="zaicoBtn" class="btn btn-yamato" onclick="sendToZaico()" disabled>zaicoに出庫指示を送信 <span class="hint" id="zaicoHint"></span></button>
           </div>
+          <div id="zaicoNextNote"></div>
         </div>
       </div>
     </section>
@@ -304,6 +327,44 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 
   <!-- ===== 商品マスタタブ ===== -->
   <div id="masterTab" class="tab-content">
+    <section class="step" id="setSection">
+      <div class="step-head">
+        <h2 class="step-title">セット品の登録</h2>
+        <span class="step-sub">1つのSKUで、違う商品を組み合わせて出す商品（例：A×1＋B×2）を登録します。ピック数とzaico出庫は中身の商品ごとに計算されます</span>
+      </div>
+      <div class="step-body">
+        <div class="set-form">
+          <input type="text" id="setSku" placeholder="セットのSKUコード（受注CSVのSKU）">
+          <input type="text" id="setName" placeholder="セット名（例：お試し3点セット）">
+        </div>
+        <div id="setCompArea"></div>
+        <div class="toolbar" style="margin-top:8px;margin-bottom:0">
+          <button class="btn btn-ghost btn-sm" onclick="addSetComponentFromZaico()">＋ zaicoから中身の商品を追加</button>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" onclick="clearSetForm()">クリア</button>
+          <button class="btn btn-primary" onclick="saveSetMaster()">セット品を保存</button>
+        </div>
+        <h3 style="font-size:14px;margin:18px 0 4px">登録済みのセット品</h3>
+        <input type="text" id="setSearch" placeholder="セット名・SKU・中身の商品名で検索" oninput="renderSetList()" style="width:100%;max-width:420px">
+        <div id="setListArea"><p class="empty">読み込んでいます…</p></div>
+      </div>
+    </section>
+
+    <section class="step">
+      <div class="step-head">
+        <h2 class="step-title">zaicoの在庫一覧から登録</h2>
+        <span class="step-sub">zaicoにある商品を選んで、SKUコードを入れるだけで商品マスタに登録できます（バーコードはzaicoのものをそのまま使います）</span>
+      </div>
+      <div class="step-body">
+        <div class="toolbar">
+          <input type="text" id="zaicoInvSearch" placeholder="zaicoの商品名・バーコード・保管場所で検索" oninput="renderZaicoInvTable()" style="flex:2;min-width:220px">
+          <label class="check" style="font-weight:400"><input type="checkbox" id="zaicoInvUnlinkedOnly" checked onchange="renderZaicoInvTable()"> マスタ未登録のみ</label>
+          <button class="btn btn-ghost btn-sm" onclick="loadZaicoInvForMaster(true)">zaicoから読み込む</button>
+        </div>
+        <div id="zaicoInvArea"><p class="empty">「zaicoから読み込む」を押すと、zaicoの在庫一覧が表示されます。</p></div>
+      </div>
+    </section>
+
     <section class="step">
       <div class="step-head">
         <h2 class="step-title">商品マスタ一括登録</h2>
@@ -540,6 +601,7 @@ async function registerShukka(orderNos) {
   }
 }
 const URL_CREATE_SHIPMENT = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment";
+const URL_LIST_ZAICO_INVENTORIES = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories";
 
 // 受注CSVの列番号（0始まり）
 const COL = { SHOP: 3, ORDER: 5, KOBAN: 6, NAME_ALT: 14, MEMO: 27, SKU: 30, ITEM: 31, QTY: 34, NAME: 40, PREF: 43 /* AR列 */ };
@@ -984,7 +1046,39 @@ window.processOrderPickCalculation = async () => {
     const masterMap = new Map();
     snap.forEach(d => masterMap.set(d.id, d.data()));
 
+    // バーコード → 棚番（セットの中身の棚番が空のとき、単品マスタから拾う）
+    const shelfByBc = new Map();
+    masterMap.forEach(m => {
+      const bc = String(m.barcode || '').trim();
+      const sh = String(m.shelfNumber || m.shelf_number || '').trim();
+      if (bc && sh && !m.isSet && !shelfByBc.has(bc)) shelfByBc.set(bc, sh);
+    });
+
+    // セット品は中身の商品に分解する
+    const expanded = [];
     skuItems.forEach(s => {
+      const m = s.skuCode ? masterMap.get(s.skuCode) : null;
+      if (m && m.isSet && Array.isArray(m.components) && m.components.length) {
+        m.components.forEach((c, ci) => {
+          const bc = String(c.barcode || '').trim();
+          expanded.push({
+            skuCode: s.skuCode, csvName: s.csvName, orderQty: s.orderQty, extractedBarcode: '',
+            fromSet: true, setCode: s.skuCode, setName: m.productName || s.skuCode,
+            setComponents: m.components, compIndex: ci,
+            status: 'REGISTERED',
+            multiplier: Number(c.qty) || 1,
+            shelfNumber: String(c.shelfNumber || '').trim() || shelfByBc.get(bc) || '',
+            productName: c.productName || bc,
+            barcode: bc
+          });
+        });
+      } else expanded.push(s);
+    });
+    skuItems.length = 0;
+    expanded.forEach(x => skuItems.push(x));
+
+    skuItems.forEach(s => {
+      if (s.fromSet) return;
       const m = s.skuCode ? masterMap.get(s.skuCode) : null;
       s.status = m ? 'REGISTERED' : 'UNREGISTERED';
       s.multiplier = m ? (Number(m.multiplier) || 1) : 1;
@@ -1086,6 +1180,12 @@ function renderPickSection() {
     <button class="btn btn-ghost btn-sm ${pickFilterIssues ? 'on' : ''}" onclick="togglePickFilter()">要対応のみ表示（${issues}）</button>
     <button class="btn btn-primary btn-sm" onclick="saveAllOrderPickItems()">入力内容をまとめて保存</button>
   </div>`;
+  if (unreg) html += `<div class="zaico-next has-problem" style="margin:0 0 12px">
+    <b>マスタ未登録が ${unreg} 件あります。</b>ここからzaicoの商品を選んで登録できます。<br>
+    <div class="toolbar" style="margin:8px 0 0">
+      <button class="btn btn-primary btn-sm" onclick="startZaicoRegisterFlow()">未登録を1件ずつzaicoから登録する</button>
+      <button class="btn btn-ghost btn-sm" onclick="autoLinkByBarcode()">バーコードがzaicoと一致するものをまとめて登録</button>
+    </div></div>`;
 
   html += `<div class="table-wrap tall"><table><thead><tr>
       <th></th>
@@ -1106,12 +1206,14 @@ function renderPickSection() {
     if (g.unregistered) badges.push(`<span class="badge badge-warn">マスタ未登録</span>`);
     if (g.shelfConflict) badges.push(`<span class="badge badge-okinawa">棚番が食い違い</span>`);
 
-    const skuLines = g.skus.map(s =>
-      `<div><code>${escapeHtml(s.skuCode || '（SKUなし）')}</code> ${isMerged ? `注文 ${s.orderQty}${s.shelfNumber && g.shelfConflict ? `・棚 ${escapeHtml(s.shelfNumber)}` : ''}` : ''}${isMerged && s.productName !== g.productName ? `<br>${escapeHtml(s.productName)}` : ''}</div>`
+    if (g.skus.some(s => s.fromSet)) badges.push(`<span class="badge badge-set">セットの中身</span>`);
+    const skuLines = g.skus.map(s => s.fromSet
+      ? `<div><code>${escapeHtml(s.setCode)}</code> <span class="badge badge-set">セット</span> ${escapeHtml(s.setName)}・注文 ${s.orderQty}×${s.multiplier}</div>`
+      : `<div><code>${escapeHtml(s.skuCode || '（SKUなし）')}</code> ${isMerged ? `注文 ${s.orderQty}${s.shelfNumber && g.shelfConflict ? `・棚 ${escapeHtml(s.shelfNumber)}` : ''}` : ''}${isMerged && s.productName !== g.productName ? `<br>${escapeHtml(s.productName)}` : ''}</div>`
     ).join('');
 
     const multInputs = g.skus.map((s, j) =>
-      `<label class="mult-item">${isMerged ? `<span title="${escapeHtml(s.skuCode)}">${escapeHtml(s.skuCode || 'SKUなし')}</span>` : ''}<input type="number" min="1" id="mult_${i}_${j}" value="${s.multiplier || 1}" onkeydown="handleKeydown(event, ${i})" onchange="recalcRow(${i})"></label>`
+      `<label class="mult-item">${isMerged || s.fromSet ? `<span title="${escapeHtml(s.skuCode)}">${s.fromSet ? 'セット内個数' : escapeHtml(s.skuCode || 'SKUなし')}</span>` : ''}<input type="number" min="1" id="mult_${i}_${j}" value="${s.multiplier || 1}" onkeydown="handleKeydown(event, ${i})" onchange="recalcRow(${i})"></label>`
     ).join('');
 
     html += `<tr id="row_${i}" class="${groupHasIssue(g) ? 'row-issue' : ''}" draggable="true"
@@ -1125,7 +1227,7 @@ function renderPickSection() {
       <td class="num">${g.orderQty}</td>
       <td><div class="mult-stack">${multInputs}</div></td>
       <td class="num"><span class="pick-count" id="pick_cell_${i}">${g.pickCount}</span></td>
-      <td><button class="btn btn-ghost btn-sm" onclick="saveGroup(${i})">保存</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="saveGroup(${i})">保存</button>${(g.unregistered || !g.barcode) ? `<br><button class="btn btn-ghost btn-sm" style="margin-top:4px;white-space:nowrap" onclick="pickFromZaicoForRow(${i})">zaicoから選ぶ</button>` : ''}${g.unregistered && g.skus.length === 1 && g.skus[0].skuCode ? `<br><button class="btn btn-ghost btn-sm" style="margin-top:4px;white-space:nowrap" onclick="startSetFromRow(${i})">セット品として登録</button>` : ''}</td>
     </tr>`;
   });
   html += `</tbody></table></div>`;
@@ -1165,6 +1267,13 @@ window.handleKeydown = (event, i) => {
 };
 
 async function saveSkuMaster(s) {
+  if (s.fromSet) {
+    const comps = s.setComponents.map((c, k) => k === s.compIndex
+      ? { ...c, barcode: s.barcode || c.barcode || '', shelfNumber: s.shelfNumber || '', qty: s.multiplier || 1 } : c);
+    s.setComponents.splice(0, s.setComponents.length, ...comps);
+    await setDoc(doc(db, "product_masters", s.setCode), { components: comps, updatedAt: new Date() }, { merge: true });
+    return;
+  }
   await setDoc(doc(db, "product_masters", s.skuCode), {
     skuCode: s.skuCode, barcode: s.barcode || '', productName: s.productName,
     multiplier: s.multiplier || 1, shelfNumber: s.shelfNumber, updatedAt: new Date()
@@ -1400,16 +1509,16 @@ const RESULT_LABEL = { registered: '登録OK', failed: '登録できず', notSen
 const RESULT_BADGE = { registered: 'badge-ok', failed: 'badge-fail', notSent: 'badge-warn', check: 'badge-upd' };
 const RESULT_ROW = { registered: '', failed: 'row-fail', notSent: 'row-notsent', check: 'row-check' };
 
-function logItemTable(items, withReason = true) {
+function logItemTable(items, withReason = true, actionFn = null) {
   return `<div class="table-wrap tall"><table><thead><tr>
-    <th>結果</th><th>商品名</th><th>バーコード</th><th>棚番</th><th class="num">ピック数</th>${withReason ? '<th>理由・やること</th>' : ''}
+    <th>結果</th><th>商品名</th><th>バーコード</th><th>棚番</th><th class="num">ピック数</th>${withReason ? '<th>理由・やること</th>' : ''}${actionFn ? '<th></th>' : ''}
   </tr></thead><tbody>${items.map(it => `<tr class="${RESULT_ROW[it.result] || ''}">
     <td><span class="badge ${RESULT_BADGE[it.result] || 'badge-muted'}">${RESULT_LABEL[it.result] || escapeHtml(it.result)}</span></td>
     <td class="prod-name">${escapeHtml(it.productName)}</td>
     <td>${it.barcode ? `<code>${escapeHtml(it.barcode)}</code>` : '<span class="empty">なし</span>'}</td>
     <td>${escapeHtml(it.shelfNumber) || '<span class="empty">なし</span>'}</td>
     <td class="num">${escapeHtml(it.pickCount)}</td>
-    ${withReason ? `<td>${escapeHtml(it.reason)}</td>` : ''}
+    ${withReason ? `<td>${escapeHtml(it.reason)}</td>` : ''}${actionFn ? `<td>${actionFn(it)}</td>` : ''}
   </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1449,9 +1558,9 @@ function renderZaicoLogs() {
       <td>${escapeHtml(it.shelfNumber)}</td>
       <td class="num">${escapeHtml(it.pickCount)}</td>
       <td>${escapeHtml(it.reason)}</td>
-      <td>${l.handled ? '<span class="badge badge-done">対応済み</span>' : `<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button>`}</td>
+      <td>${l.handled ? '<span class="badge badge-done">対応済み</span>' : `${(it.result === 'failed' || it.result === 'notSent') ? `<button class="btn btn-primary btn-sm" onclick="resendZaicoProblems('${escapeHtml(l.id)}')">未登録分を送る</button> ` : ''}<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button>`}</td>
     </tr>`).join('')}</tbody></table></div>
-    <p class="bulk-help">「対応済みにする」は、その回（同じ送信）の商品すべてに付きます。</p>`;
+    <p class="bulk-help">「未登録分を送る」「対応済みにする」は、その回（同じ送信）の未登録商品すべてが対象です。</p>`;
     return;
   }
 
@@ -1482,14 +1591,16 @@ function renderZaicoLogs() {
       </summary>
       <div class="log-body">
         ${l.errorMessage ? `<div class="log-msg">${escapeHtml(l.errorMessage)}</div>` : ''}
-        ${failed.length ? `<div class="log-sub danger">登録できなかった商品 ${failed.length}件 <span class="empty" style="font-weight:400">手作業で出庫するか、zaicoに商品を登録してから送り直してください</span></div>${logItemTable(failed)}` : ''}
+        ${failed.length ? `<div class="log-sub danger">登録できなかった商品 ${failed.length}件</div>${l.handled ? '' : `<div class="todo-steps">やること<ol><li>zaicoに、このバーコードの商品を登録する（すでにあればバーコードが合っているか確認）</li><li>下の「この回の未登録分だけzaicoに送る」を押す</li></ol>※登録OKだった商品は送られないので、二重出庫にはなりません</div>`}${logItemTable(failed)}` : ''}
         ${check.length ? `<div class="log-sub">要確認 ${check.length}件</div>${logItemTable(check)}` : ''}
-        ${notSent.length ? `<div class="log-sub warn">送信しなかった行 ${notSent.length}件 <span class="empty" style="font-weight:400">商品マスタにバーコード・棚番を入れてください</span></div>${logItemTable(notSent)}` : ''}
+        ${notSent.length ? `<div class="log-sub warn">送信しなかった行 ${notSent.length}件</div>${l.handled ? '' : `<div class="todo-steps">やること<ol><li>右の「zaicoから選ぶ」でzaicoの商品を選ぶ（商品マスタに自動で登録されます）</li><li>下の「この回の未登録分だけzaicoに送る」を押す</li></ol></div>`}${logItemTable(notSent, true, l.handled ? null : it => (it.skuCodes && it.skuCodes.length) ? `<button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="linkNotSentFromZaico('${escapeHtml(l.id)}', ${(l.items || []).indexOf(it)})">zaicoから選ぶ</button>` : '<span class="empty">商品マスタタブで登録</span>')}` : ''}
         ${okItems.length ? `<details class="log-ok-items" ${problem ? '' : 'open'}><summary>登録できた商品 ${okItems.length}件を表示</summary>${logItemTable(okItems, false)}</details>` : ''}
         <div class="log-actions">
           ${problem ? (l.handled
             ? `<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', false)">未対応に戻す</button><span class="muted">${l.handledAt ? escapeHtml(fmtLogTime(l.handledAt)) + ' に対応済み' : ''}</span>`
-            : `<button class="btn btn-primary btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button><span class="muted">手作業での出庫などが終わったら押してください</span>`) : ''}
+            : `${(failed.length || notSent.length) ? `<button class="btn btn-primary btn-sm" onclick="resendZaicoProblems('${escapeHtml(l.id)}')">この回の未登録分だけzaicoに送る</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="setZaicoLogHandled('${escapeHtml(l.id)}', true)">対応済みにする</button><span class="muted">${check.length ? '要確認の商品はzaicoの伝票を見て、足りない分を手で出庫してから押してください' : '手で出庫した場合はこちらを押してください'}</span>`) : ''}
+          ${l.handledNote ? `<span class="muted">${escapeHtml(l.handledNote)}</span>` : ''}
+          ${l.resendOf ? '<span class="badge badge-muted">送り直し分</span>' : ''}
           ${l.sourceFiles && l.sourceFiles.length ? `<span class="muted">受注CSV：${escapeHtml(l.sourceFiles.join('、'))}</span>` : ''}
         </div>
       </div>
@@ -1528,6 +1639,565 @@ window.exportZaicoLogCsv = () => {
   downloadUtf8Csv(rows, `zaico出庫履歴_${localDateStr(new Date())}.csv`);
 };
 
+/* ---------- zaicoの在庫一覧（マスタ登録用） ---------- */
+// サーバー（apiListZaicoInventories）が zaico API の在庫一覧を全ページ取ってきて返す
+let zaicoInv = [];
+let zaicoInvLoadedAt = null;
+let zaicoInvLoading = null;
+
+async function loadZaicoInventories(force = false) {
+  if (zaicoInvLoadedAt && !force) return zaicoInv;
+  if (zaicoInvLoading) return zaicoInvLoading;
+  zaicoInvLoading = (async () => {
+    const res = await fetch(URL_LIST_ZAICO_INVENTORIES + (force ? '?refresh=1' : ''));
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+    zaicoInv = (data.items || []).map(x => ({
+      id: x.id, title: String(x.title || ''), code: String(x.code || '').trim(),
+      place: String(x.place || '').trim(), quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || ''
+    }));
+    zaicoInvLoadedAt = new Date();
+    return zaicoInv;
+  })();
+  try { return await zaicoInvLoading; } finally { zaicoInvLoading = null; }
+}
+
+const normKey = v => toHalf(String(v || '')).toLowerCase().replace(/\s+/g, '');
+function searchZaicoInv(q, list = zaicoInv) {
+  const words = toHalf(String(q || '')).toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return list;
+  return list.filter(x => {
+    const hay = normKey(`${x.title} ${x.code} ${x.place} ${x.category}`);
+    return words.every(w => hay.includes(w.replace(/\s+/g, '')));
+  });
+}
+
+// ---- 選択ダイアログ ----
+let zpOnPick = null;
+let zpOnSkip = null;
+window.openZaicoPicker = async ({ title = '', query = '', onPick, onSkip = null }) => {
+  zpOnPick = onPick;
+  zpOnSkip = onSkip;
+  document.getElementById('zpSkip').classList.toggle('hidden', !onSkip);
+  document.getElementById('zpTarget').textContent = title;
+  document.getElementById('zpSearch').value = query;
+  document.getElementById('zaicoPicker').classList.add('open');
+  const list = document.getElementById('zpList');
+  if (!zaicoInvLoadedAt) {
+    list.innerHTML = '<p class="empty">zaicoの在庫一覧を読み込んでいます…</p>';
+    try { await loadZaicoInventories(); }
+    catch (err) { list.innerHTML = `<div class="notice warn">読み込めませんでした：${escapeHtml(err.message)}</div>`; return; }
+  }
+  renderZaicoPicker();
+  setTimeout(() => document.getElementById('zpSearch').focus(), 50);
+};
+window.closeZaicoPicker = () => { document.getElementById('zaicoPicker').classList.remove('open'); zpOnPick = null; zpOnSkip = null; };
+window.skipZaicoPicker = () => { const cb = zpOnSkip; closeZaicoPicker(); if (cb) cb(); };
+window.reloadZaicoPicker = async () => {
+  document.getElementById('zpList').innerHTML = '<p class="empty">読み込んでいます…</p>';
+  try { await loadZaicoInventories(true); renderZaicoPicker(); }
+  catch (err) { document.getElementById('zpList').innerHTML = `<div class="notice warn">読み込めませんでした：${escapeHtml(err.message)}</div>`; }
+};
+let zpShown = [];
+window.renderZaicoPicker = () => {
+  const q = document.getElementById('zpSearch').value;
+  let hits = searchZaicoInv(q);
+  // 商品名で見つからないときは、最初の単語だけで探し直す
+  if (!hits.length && q.trim()) hits = searchZaicoInv(q.trim().split(/\s+/)[0]);
+  zpShown = hits.slice(0, 100);
+  const area = document.getElementById('zpList');
+  if (!zpShown.length) { area.innerHTML = '<p class="empty">見つかりません。検索する言葉を短くしてみてください。zaicoに商品がない場合は、先にzaicoで登録してください。</p>'; return; }
+  area.innerHTML = `<p class="empty" style="margin:4px 0 8px">${hits.length}件${hits.length > 100 ? '（上位100件を表示）' : ''}・${escapeHtml(fmtLogTime(zaicoInvLoadedAt.toISOString()))} 時点</p>
+  <div class="table-wrap"><table><thead><tr><th>zaicoの商品名</th><th>バーコード</th><th>保管場所</th><th class="num">在庫</th><th></th></tr></thead><tbody>
+  ${zpShown.map((x, k) => `<tr>
+    <td class="prod-name">${escapeHtml(x.title)}</td>
+    <td>${x.code ? `<code>${escapeHtml(x.code)}</code>` : '<span class="empty">なし</span>'}</td>
+    <td>${escapeHtml(x.place) || '<span class="empty">なし</span>'}</td>
+    <td class="num">${escapeHtml(x.quantity)}${escapeHtml(x.unit)}</td>
+    <td>${x.code ? `<button class="btn btn-primary btn-sm" onclick="chooseZaicoItem(${k})">これにする</button>` : '<span class="empty" title="zaicoでバーコードを登録してください">バーコードなし</span>'}</td>
+  </tr>`).join('')}</tbody></table></div>`;
+};
+window.chooseZaicoItem = async (k) => {
+  const x = zpShown[k];
+  const cb = zpOnPick;
+  closeZaicoPicker();
+  if (x && cb) await cb(x);
+};
+
+// 棚番：今の棚番 → zaicoの保管場所 → 手入力 の順で決める
+function askShelf(current, place, label) {
+  if (current) return current;
+  const v = prompt(`${label}\n棚番を入力してください${place ? '（zaicoの保管場所を入れています）' : ''}`, place || '');
+  return v === null ? null : toHalf(v).trim();
+}
+
+// ---- 出荷処理タブ：ピック表の行から ----
+window.pickFromZaicoForRow = (i, extra = {}) => {
+  syncInputs();
+  const g = pickGroups[i];
+  if (!g) return;
+  openZaicoPicker({
+    title: `${extra.prefix || ''}対象：${g.productName}（SKU ${g.skus.map(s => s.skuCode).filter(Boolean).join('、') || 'なし'}）`,
+    query: g.productName,
+    onSkip: extra.onSkip,
+    onPick: async (x) => {
+      await applyZaicoToGroup(g, x, true);
+      if (extra.onDone) extra.onDone();
+    }
+  });
+};
+
+// zaicoの商品をピック行に当てはめて保存（棚番がなければ聞く）
+async function applyZaicoToGroup(g, x, ask) {
+  const shelf = ask ? askShelf(g.shelfNumber, x.place, `「${x.title}」を選びました。`) : (g.shelfNumber || x.place || '');
+  if (shelf === null) return false;
+  if (!shelf) { if (ask) toast('棚番がないため保存していません。棚番を入れて「保存」を押してください'); return false; }
+  const targets = g.skus.filter(s => s.skuCode);
+  if (!targets.length) { if (ask) alert('SKUコードがない商品はマスタに保存できません。'); return false; }
+  try {
+    g.barcode = x.code;
+    g.shelfNumber = shelf;
+    for (const s of targets) {
+      s.barcode = x.code;
+      s.shelfNumber = shelf;
+      await saveSkuMaster(s);
+      s.status = 'REGISTERED';
+    }
+    regroup();
+    renderPickSection();
+    updateButtons();
+    toast('商品マスタに登録しました');
+    return true;
+  } catch (err) {
+    console.error(err);
+    alert('保存できませんでした：' + err.message);
+    return false;
+  }
+}
+
+// 未登録の行を1件ずつ、zaicoの選択画面で登録していく
+window.startZaicoRegisterFlow = () => {
+  syncInputs();
+  const queue = pickGroups.filter(g => g.unregistered).map(g => g.key);
+  if (!queue.length) { toast('未登録の行はありません'); return; }
+  let pos = 0;
+  const next = () => {
+    while (pos < queue.length) {
+      const i = pickGroups.findIndex(g => g.key === queue[pos] && g.unregistered);
+      pos++;
+      if (i >= 0) {
+        pickFromZaicoForRow(i, { prefix: `（${pos}/${queue.length}件目）`, onSkip: next, onDone: next });
+        return;
+      }
+    }
+    const left = pickGroups.filter(g => g.unregistered).length;
+    alert(left ? `最後まで確認しました。\nまだ未登録が ${left} 件あります（飛ばした商品・セット品など）。` : 'すべて登録できました。');
+  };
+  next();
+};
+
+// 受注CSVの商品名などから取ったバーコードがzaicoと一致する行を、まとめて登録
+window.autoLinkByBarcode = async () => {
+  syncInputs();
+  const area = document.getElementById('pickResultArea');
+  let inv;
+  try { toast('zaicoの在庫一覧を読み込んでいます…'); inv = await loadZaicoInventories(); }
+  catch (err) { alert('zaicoの在庫一覧を読み込めませんでした：' + err.message); return; }
+  const byCode = new Map(inv.filter(x => x.code).map(x => [x.code, x]));
+  const hits = pickGroups.filter(g => g.unregistered && g.barcode && byCode.has(g.barcode) && g.skus.some(s => s.skuCode));
+  if (!hits.length) { alert('バーコードがzaicoと一致する未登録の行はありませんでした。\n「未登録を1件ずつzaicoから登録する」で選んでください。'); return; }
+  const noShelf = hits.filter(g => !g.shelfNumber && !byCode.get(g.barcode).place);
+  const ok = hits.filter(g => !noShelf.includes(g));
+  if (!ok.length) { alert(`一致した ${hits.length} 件は、棚番もzaicoの保管場所も空のため登録できません。\n棚番を入れて「保存」を押してください。`); return; }
+  if (!confirm(`zaicoとバーコードが一致した ${ok.length} 件を商品マスタに登録します。\n棚番が空の行は、zaicoの保管場所を棚番として入れます。\n\n${ok.map(g => `・${g.productName}（${g.barcode}／棚番 ${g.shelfNumber || byCode.get(g.barcode).place}）`).join('\n')}${noShelf.length ? `\n\n※棚番が決められない ${noShelf.length} 件は登録しません` : ''}`)) return;
+  let done = 0;
+  for (const g of ok) {
+    const x = byCode.get(g.barcode);
+    const shelf = g.shelfNumber || x.place;
+    try {
+      for (const s of g.skus.filter(s => s.skuCode)) {
+        s.barcode = x.code; s.shelfNumber = shelf;
+        await saveSkuMaster(s);
+        s.status = 'REGISTERED';
+      }
+      done++;
+    } catch (err) { console.error(err); }
+  }
+  regroup();
+  renderPickSection();
+  updateButtons();
+  alert(`${done} 件を登録しました。${pickGroups.filter(g => g.unregistered).length ? '\n残りは「未登録を1件ずつzaicoから登録する」で選んでください。' : ''}`);
+};
+
+// ---- 履歴タブ：送信しなかった商品から ----
+window.linkNotSentFromZaico = (logId, idx) => {
+  const log = zaicoLogs.find(l => l.id === logId);
+  const it = log && (log.items || [])[idx];
+  if (!it) return;
+  openZaicoPicker({
+    title: `対象：${it.productName}（SKU ${(it.skuCodes || []).join('、')}）`,
+    query: it.productName,
+    onPick: async (x) => {
+      const shelf = askShelf(it.shelfNumber, x.place, `「${x.title}」を選びました。`);
+      if (!shelf) { if (shelf !== null) alert('棚番がないと登録できません。'); return; }
+      try {
+        const exSnap = await getDocs(collection(db, 'product_masters'));
+        const setSkus = [];
+        exSnap.forEach(d => { if (d.data().isSet) setSkus.push(d.id); });
+        if (it.skuCodes.some(c => setSkus.includes(c))) { alert('この商品はセット品です。商品マスタタブの「セット品の登録」で中身を設定してください。'); return; }
+        for (const sku of it.skuCodes) {
+          await setDoc(doc(db, 'product_masters', sku), {
+            skuCode: sku, barcode: x.code, shelfNumber: shelf,
+            productName: it.productName || x.title, zaicoItemId: x.id, updatedAt: new Date()
+          }, { merge: true });
+        }
+        const items = log.items.map((y, k) => k === idx ? { ...y, barcode: x.code, shelfNumber: shelf, reason: 'zaicoから商品マスタに登録済み。「未登録分だけzaicoに送る」で送れます' } : y);
+        await patchZaicoLog(logId, { items });
+        renderZaicoLogs();
+        toast('商品マスタに登録しました');
+      } catch (err) {
+        console.error(err);
+        alert('登録できませんでした：' + err.message);
+      }
+    }
+  });
+};
+
+// ---- 商品マスタタブ：zaicoの在庫一覧から登録 ----
+let zaicoInvMasters = [];
+window.loadZaicoInvForMaster = async (force = false) => {
+  const area = document.getElementById('zaicoInvArea');
+  area.innerHTML = '<p class="empty">zaicoの在庫一覧と商品マスタを読み込んでいます…</p>';
+  try {
+    const [, snap] = await Promise.all([loadZaicoInventories(force), getDocs(collection(db, 'product_masters'))]);
+    zaicoInvMasters = [];
+    snap.forEach(d => zaicoInvMasters.push({ id: d.id, ...d.data() }));
+    renderZaicoInvTable();
+  } catch (err) {
+    area.innerHTML = `<div class="notice warn">読み込めませんでした：${escapeHtml(err.message)}</div>`;
+  }
+};
+let zaicoInvShown = [];
+window.renderZaicoInvTable = () => {
+  const area = document.getElementById('zaicoInvArea');
+  if (!zaicoInvLoadedAt) return;
+  const skusByBc = new Map();
+  zaicoInvMasters.forEach(m => {
+    const bc = String(m.barcode || '').trim();
+    if (!bc) return;
+    if (!skusByBc.has(bc)) skusByBc.set(bc, []);
+    skusByBc.get(bc).push(m.skuCode || m.id);
+  });
+  zaicoInvMasters.filter(m => m.isSet).forEach(m => (m.components || []).forEach(c => {
+    const bc = String(c.barcode || '').trim();
+    if (!bc) return;
+    if (!skusByBc.has(bc)) skusByBc.set(bc, []);
+    skusByBc.get(bc).push(`${m.skuCode || m.id}（セット）`);
+  }));
+  const unlinkedOnly = document.getElementById('zaicoInvUnlinkedOnly').checked;
+  const all = searchZaicoInv(document.getElementById('zaicoInvSearch').value);
+  const list = all.filter(x => !unlinkedOnly || !skusByBc.has(x.code));
+  zaicoInvShown = list.slice(0, 200);
+  const noCode = zaicoInv.filter(x => !x.code).length;
+  if (!zaicoInvShown.length) { area.innerHTML = `<div class="notice">${unlinkedOnly ? 'マスタ未登録のzaico商品はありません。' : '条件に合う商品がありません。'}</div>`; return; }
+  area.innerHTML = `<p class="empty" style="margin:0 0 8px">${list.length}件${list.length > 200 ? '（上位200件を表示。検索で絞り込んでください）' : ''}・zaico ${zaicoInv.length}件中${noCode ? `（バーコードなし ${noCode}件は登録できません）` : ''}</p>
+  <div class="table-wrap tall"><table><thead><tr>
+    <th>zaicoの商品名</th><th>バーコード</th><th>保管場所</th><th class="num">在庫</th><th>登録済みSKU</th><th>SKUコード</th><th>倍率</th><th>棚番</th><th></th>
+  </tr></thead><tbody>${zaicoInvShown.map((x, k) => {
+    const linked = skusByBc.get(x.code) || [];
+    return `<tr>
+      <td class="prod-name">${escapeHtml(x.title)}</td>
+      <td>${x.code ? `<code>${escapeHtml(x.code)}</code>` : '<span class="empty">なし</span>'}</td>
+      <td>${escapeHtml(x.place)}</td>
+      <td class="num">${escapeHtml(x.quantity)}${escapeHtml(x.unit)}</td>
+      <td>${linked.length ? `<span class="zaico-reg-ok">${linked.map(escapeHtml).join('<br>')}</span>` : '<span class="badge badge-warn">未登録</span>'}</td>
+      ${x.code ? `<td style="width:150px"><input type="text" id="zi_sku_${k}" placeholder="SKUコード" onkeydown="if(event.key==='Enter'){event.preventDefault();registerFromZaicoInv(${k})}"></td>
+      <td style="width:70px"><input type="number" min="1" id="zi_mult_${k}" value="1"></td>
+      <td style="width:110px"><input type="text" id="zi_shelf_${k}" value="${escapeHtml(x.place)}" placeholder="棚番"></td>
+      <td><button class="btn btn-primary btn-sm" onclick="registerFromZaicoInv(${k})">登録</button></td>`
+      : '<td colspan="4"><span class="empty">zaicoでバーコードを登録すると使えます</span></td>'}
+    </tr>`;
+  }).join('')}</tbody></table></div>
+  <p class="bulk-help">同じ商品を複数のSKU（2個セットなど）で売っている場合は、SKUごとに登録してください（倍率＝1注文あたりのピック数）。</p>`;
+};
+window.registerFromZaicoInv = async (k) => {
+  const x = zaicoInvShown[k];
+  if (!x) return;
+  const sku = toHalf(document.getElementById(`zi_sku_${k}`).value).trim();
+  const mult = Number(document.getElementById(`zi_mult_${k}`).value) || 1;
+  const shelf = toHalf(document.getElementById(`zi_shelf_${k}`).value).trim();
+  if (!sku) { alert('SKUコードを入力してください。'); return; }
+  if (!shelf) { alert('棚番を入力してください。'); return; }
+  const exist = zaicoInvMasters.find(m => (m.skuCode || m.id) === sku);
+  if (exist && exist.isSet) { alert(`SKU「${sku}」はセット品として登録されています。\n「セット品の登録」で編集してください。`); return; }
+  if (exist && String(exist.barcode || '') && String(exist.barcode) !== x.code &&
+      !confirm(`SKU「${sku}」はすでに別のバーコード（${exist.barcode}）で登録されています。\nzaicoのバーコード（${x.code}）に置き換えますか？`)) return;
+  try {
+    const data = { skuCode: sku, barcode: x.code, productName: (exist && (exist.productName || exist.product_name)) || x.title, multiplier: mult, shelfNumber: shelf, zaicoItemId: x.id, updatedAt: new Date() };
+    await setDoc(doc(db, 'product_masters', sku), data, { merge: true });
+    zaicoInvMasters = [...zaicoInvMasters.filter(m => (m.skuCode || m.id) !== sku), { id: sku, ...data }];
+    renderZaicoInvTable();
+    toast(`SKU ${sku} を登録しました`);
+  } catch (err) {
+    console.error(err);
+    alert('登録できませんでした：' + err.message);
+  }
+};
+
+/* ---------- セット品（1SKU＝違う商品の組み合わせ） ---------- */
+// product_masters/{セットSKU} に { isSet: true, productName, components: [{ barcode, productName, qty, shelfNumber, zaicoItemId }] } で保存
+let setComps = [];
+let setEditingSku = '';
+
+function renderSetComps() {
+  const area = document.getElementById('setCompArea');
+  if (!area) return;
+  if (!setComps.length) { area.innerHTML = '<p class="empty">中身の商品がまだありません。「zaicoから中身の商品を追加」で選んでください。</p>'; return; }
+  area.innerHTML = `<div class="table-wrap"><table><thead><tr><th>中身の商品</th><th>バーコード</th><th>1セットあたりの個数</th><th>棚番</th><th></th></tr></thead><tbody>
+  ${setComps.map((c, k) => `<tr>
+    <td class="prod-name">${escapeHtml(c.productName)}</td>
+    <td><code>${escapeHtml(c.barcode)}</code></td>
+    <td style="width:110px"><input type="number" min="1" value="${c.qty}" onchange="setComps[${k}].qty = Math.max(1, Number(this.value) || 1)"></td>
+    <td style="width:120px"><input type="text" value="${escapeHtml(c.shelfNumber)}" placeholder="棚番" onchange="setComps[${k}].shelfNumber = toHalfPub(this.value).trim()"></td>
+    <td><button class="btn btn-ghost btn-sm" onclick="removeSetComponent(${k})">外す</button></td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+window.setComps = setComps;
+window.toHalfPub = v => toHalf(v);
+window.removeSetComponent = k => { setComps.splice(k, 1); renderSetComps(); };
+
+window.addSetComponentFromZaico = () => {
+  openZaicoPicker({
+    title: `セット「${document.getElementById('setName').value || document.getElementById('setSku').value || '（未入力）'}」に入れる商品を選んでください`,
+    query: '',
+    onPick: async (x) => {
+      const same = setComps.find(c => c.barcode === x.code);
+      if (same) { same.qty += 1; renderSetComps(); toast('同じ商品があったので、個数を1増やしました'); return; }
+      // 棚番：単品マスタにあればそれ、なければzaicoの保管場所
+      let shelf = '';
+      const m = masterItemsCache.find(it => !it.isSet && String(it.barcode || '').trim() === x.code && (it.shelfNumber || it.shelf_number));
+      if (m) shelf = String(m.shelfNumber || m.shelf_number).trim();
+      setComps.push({ barcode: x.code, productName: x.title, qty: 1, shelfNumber: shelf || x.place || '', zaicoItemId: x.id });
+      renderSetComps();
+    }
+  });
+};
+
+window.clearSetForm = () => {
+  setEditingSku = '';
+  document.getElementById('setSku').value = '';
+  document.getElementById('setName').value = '';
+  setComps.splice(0, setComps.length);
+  renderSetComps();
+};
+
+window.saveSetMaster = async () => {
+  const sku = toHalf(document.getElementById('setSku').value).trim();
+  const name = document.getElementById('setName').value.trim();
+  if (!sku) { alert('セットのSKUコードを入力してください。'); return; }
+  if (sku.includes('/')) { alert('SKUコードに「/」は使えません。'); return; }
+  if (!setComps.length) { alert('中身の商品を1つ以上追加してください。'); return; }
+  const noShelf = setComps.filter(c => !c.shelfNumber);
+  if (noShelf.length) { alert('棚番が空の商品があります：\n' + noShelf.map(c => '・' + c.productName).join('\n')); return; }
+  if (setComps.length === 1 && !confirm('中身が1種類だけです。\n同じ商品の2個セットなどは、ふつうの商品マスタで「倍率」を使う方法でも登録できます。\nこのままセット品として保存しますか？')) return;
+
+  const exist = masterItemsCache.find(it => (it.skuCode || it.id) === sku);
+  if (exist && !exist.isSet && !confirm(`SKU「${sku}」はふつうの商品として登録されています。\nセット品に切り替えますか？（バーコード・棚番の設定はなくなります）`)) return;
+  if (exist && exist.isSet && setEditingSku !== sku && !confirm(`セット「${sku}」はすでにあります。上書きしますか？`)) return;
+
+  const data = {
+    skuCode: sku, productName: name || sku, isSet: true,
+    components: setComps.map(c => ({ barcode: c.barcode, productName: c.productName, qty: Number(c.qty) || 1, shelfNumber: c.shelfNumber, zaicoItemId: c.zaicoItemId ?? null })),
+    barcode: '', shelfNumber: '', multiplier: 1, updatedAt: new Date()
+  };
+  try {
+    await setDoc(doc(db, 'product_masters', sku), data);
+    masterItemsCache = [...masterItemsCache.filter(it => (it.skuCode || it.id) !== sku), { id: sku, ...data }];
+    if (pickGroups.length) pickStale = true; // 計算済みのピックは算出し直しが必要
+    updateButtons();
+    clearSetForm();
+    renderSetList();
+    renderMasterTable(masterItemsCache);
+    toast(`セット品「${data.productName}」を保存しました`);
+    if (pickGroups.length) alert('保存しました。\n出荷処理タブでは「ピック数を算出」をもう一度押してください（セットの中身で計算し直します）。');
+  } catch (err) {
+    console.error(err);
+    alert('保存できませんでした：' + err.message);
+  }
+};
+
+window.editSetMaster = (sku) => {
+  const m = masterItemsCache.find(it => (it.skuCode || it.id) === sku && it.isSet);
+  if (!m) return;
+  setEditingSku = sku;
+  document.getElementById('setSku').value = sku;
+  document.getElementById('setName').value = m.productName || '';
+  setComps.splice(0, setComps.length, ...(m.components || []).map(c => ({ ...c, qty: Number(c.qty) || 1, shelfNumber: c.shelfNumber || '' })));
+  renderSetComps();
+  document.getElementById('setSection').scrollIntoView({ behavior: 'smooth' });
+};
+
+window.deleteSetMaster = async (sku) => {
+  if (!confirm(`セット品「${sku}」を削除しますか？`)) return;
+  try {
+    await deleteDoc(doc(db, 'product_masters', sku));
+    masterItemsCache = masterItemsCache.filter(it => (it.skuCode || it.id) !== sku);
+    renderSetList();
+    toast('削除しました');
+  } catch (err) { alert('削除できませんでした：' + err.message); }
+};
+
+window.renderSetList = () => {
+  const area = document.getElementById('setListArea');
+  if (!area) return;
+  renderSetComps();
+  const q = normKey(document.getElementById('setSearch').value);
+  const sets = masterItemsCache.filter(it => it.isSet).filter(m => !q || normKey(`${m.skuCode || m.id} ${m.productName} ${(m.components || []).map(c => c.productName + ' ' + c.barcode).join(' ')}`).includes(q))
+    .sort((a, b) => String(a.skuCode || a.id).localeCompare(String(b.skuCode || b.id)));
+  if (!sets.length) { area.innerHTML = `<p class="empty">${q ? '見つかりません。' : 'まだセット品はありません。'}</p>`; return; }
+  area.innerHTML = `<div class="set-list">${sets.map(m => {
+    const sku = m.skuCode || m.id;
+    return `<div class="set-card">
+      <div class="set-head"><span class="badge badge-set">セット</span><b>${escapeHtml(m.productName)}</b><code>${escapeHtml(sku)}</code><span class="spacer" style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" onclick="editSetMaster('${escapeHtml(sku)}')">編集</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteSetMaster('${escapeHtml(sku)}')">削除</button></div>
+      <ul>${(m.components || []).map(c => `<li>${escapeHtml(c.productName)} ×${escapeHtml(c.qty)}　<span class="zaico-reg-ok">${escapeHtml(c.barcode)}・棚 ${escapeHtml(c.shelfNumber) || 'なし'}</span></li>`).join('')}</ul>
+    </div>`;
+  }).join('')}</div>`;
+};
+
+// ピック表の「マスタ未登録」行から、セット品の登録を始める
+window.startSetFromRow = (i) => {
+  const g = pickGroups[i];
+  if (!g) return;
+  const s = g.skus[0];
+  switchTab('masterTab');
+  clearSetForm();
+  document.getElementById('setSku').value = s.skuCode;
+  document.getElementById('setName').value = s.csvName || s.productName || '';
+  setTimeout(() => document.getElementById('setSection').scrollIntoView({ behavior: 'smooth' }), 100);
+  toast('中身の商品をzaicoから追加して、保存してください');
+};
+
+// 送信後に、ボタンの下へ「このあとどうするか」を出す（スタッフが止まらないように）
+function showZaicoNextNote({ ok, slipNum = '', problems = 0, unknownGap = 0, network = false, saved = true }) {
+  const el = document.getElementById('zaicoNextNote');
+  if (!el) return;
+  const link = `<button class="btn btn-ghost btn-sm" onclick="switchTab('zaicoLogTab')">zaico出庫履歴を開く</button>`;
+  if (ok && !problems && !unknownGap) {
+    el.innerHTML = `<div class="zaico-next"><b>✅ zaico送信完了</b>（伝票番号 ${escapeHtml(slipNum)}）<br>そのまま出荷作業を続けてください。</div>`;
+  } else if (ok) {
+    el.innerHTML = `<div class="zaico-next has-problem"><b>⚠ zaicoに登録できなかった商品が ${problems || unknownGap} 件あります</b>（伝票番号 ${escapeHtml(slipNum)}）<br>
+      ▶ <b>出荷作業はこのまま続けてOK</b>です。送り直し・手での出庫はしないでください。<br>
+      ▶ ${saved ? '履歴に「未対応」で残しました。あとで担当者がその商品だけ送ります。' : '履歴の保存に失敗しました。担当者に声をかけてください。'} ${link}</div>`;
+  } else {
+    el.innerHTML = `<div class="zaico-next has-problem"><b>⚠ zaicoへの送信がうまくいきませんでした</b><br>
+      ▶ ${network ? '<b>もう一度押さないでください</b>（二重に出庫される可能性があります）。' : '出荷作業はこのまま続けてOKです。'}担当者に声をかけてください。 ${saved ? link : ''}</div>`;
+  }
+}
+
+// 履歴の1回分から「登録できなかった／送信しなかった商品」だけを zaico に送り直す
+let resendBusy = false;
+window.resendZaicoProblems = async (id) => {
+  if (resendBusy) return;
+  const log = zaicoLogs.find(l => l.id === id);
+  if (!log) return;
+  const targets = (log.items || []).filter(it => it.result === 'failed' || it.result === 'notSent');
+  if (!targets.length) { alert('送り直す商品がありません。'); return; }
+
+  // 商品マスタを読み直して、あとから入れたバーコード・棚番を拾う
+  let masters = [];
+  try {
+    const snap = await getDocs(collection(db, 'product_masters'));
+    snap.forEach(d => masters.push({ sku: d.id, ...d.data() }));
+  } catch (err) {
+    console.warn('商品マスタを読めませんでした', err);
+  }
+  const bySku = new Map(masters.map(m => [String(m.sku), m]));
+  const shelfOf = m => String((m && (m.shelfNumber || m.shelf_number)) || '').trim();
+  const barcodeOf = m => String((m && m.barcode) || '').trim();
+
+  const merged = new Map();
+  const still = [];
+  targets.forEach(it => {
+    let barcode = String(it.barcode || '').trim();
+    let shelf = String(it.shelfNumber || '').trim();
+    let name = it.productName || '';
+    const hits = (it.skuCodes || []).map(c => bySku.get(String(c))).filter(Boolean);
+    if (!barcode) barcode = hits.map(barcodeOf).find(Boolean) || '';
+    if (!shelf) shelf = hits.map(shelfOf).find(Boolean) || '';
+    if (barcode && !shelf) shelf = shelfOf(masters.find(m => barcodeOf(m) === barcode && shelfOf(m))) || '';
+    const qty = Number(it.pickCount) || 0;
+    if (!barcode || !shelf || !qty) {
+      const lack = [!barcode ? 'バーコード' : '', !shelf ? '棚番' : '', !qty ? 'ピック数' : ''].filter(Boolean).join('・');
+      still.push({ barcode, productName: name, shelfNumber: shelf, pickCount: it.pickCount, skuCodes: it.skuCodes || [], reason: `${lack}がないため送信していません` });
+      return;
+    }
+    if (merged.has(barcode)) { const m = merged.get(barcode); m.orderQty += qty; m.pickCount += qty; }
+    else merged.set(barcode, { barcode, productName: name, orderQty: qty, multiplier: 1, shelfNumber: shelf, pickCount: qty, status: 'REGISTERED' });
+  });
+  const validItems = Array.from(merged.values());
+
+  if (!validItems.length) {
+    alert('まだ送れる商品がありません。\n商品マスタにバーコード・棚番を入れてから、もう一度押してください。\n\n' + still.map(s => `・${s.productName}：${s.reason}`).join('\n'));
+    return;
+  }
+  const listTxt = validItems.map(v => `・${v.productName}（バーコード ${v.barcode}／棚番 ${v.shelfNumber}／${v.pickCount}個）`).join('\n');
+  if (!confirm(`取引先「${log.customerName}」として、次の ${validItems.length} 商品だけをzaicoに送ります。\n（前回登録OKだった商品は送りません）\n\n${listTxt}${still.length ? `\n\n※まだ送れない商品 ${still.length} 件は、新しい履歴に引き継ぎます` : ''}\n\nzaicoに商品を登録してから押していますか？`)) return;
+
+  resendBusy = true;
+  let data;
+  try {
+    const res = await fetch(URL_CREATE_SHIPMENT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: validItems, customerName: log.customerName })
+    });
+    data = await res.json();
+  } catch (err) {
+    resendBusy = false;
+    console.error(err);
+    alert('通信エラーが発生しました：' + err.message + '\n\nzaicoに登録されたか分からないため、続けて押さないでください。zaicoの出庫一覧で確認してください。');
+    return;
+  }
+  resendBusy = false;
+
+  if (!data.success) {
+    const failures = pickZaicoFailures(data, validItems);
+    alert('送信できませんでした：' + (data.error || '') + (failures.length ? '\n\n' + failures.map(f => `・${f.productName || f.barcode}${f.reason ? `（${f.reason}）` : ''}`).join('\n') : '') + '\n\nzaicoに商品が登録されているか確認してください。');
+    return;
+  }
+  const failures = pickZaicoFailures(data, validItems);
+  const registered = Number(data.count);
+  const hasCount = !isNaN(registered) && data.count !== undefined && data.count !== null;
+  const unknownGap = !failures.length && hasCount && registered < validItems.length ? validItems.length - registered : 0;
+  const newLog = buildZaicoLog({ kind: 'success', customerName: log.customerName, slipNum: data.slipNum, validItems, notSentItems: still, failures, unknownGap, registered: hasCount ? registered : null });
+  newLog.resendOf = log.id;
+  await saveZaicoLog(newLog);
+
+  // 元の回は「送り直し済み」で閉じる（残った問題は新しい履歴に引き継ぐ）
+  const left = failures.length + still.length + unknownGap;
+  const note = `${fmtLogTime(newLog.createdAt)} に送り直し（伝票番号 ${data.slipNum}）${left ? '・残りは新しい履歴に引き継ぎ' : ''}`;
+  await patchZaicoLog(log.id, { handled: true, handledAt: new Date().toISOString(), handledNote: note });
+  renderZaicoLogs();
+  alert(left
+    ? `送り直しました（伝票番号 ${data.slipNum}）。\nまだ登録できなかった商品が ${left} 件あります。新しい履歴に残したので、そちらを確認してください。`
+    : `送り直しました（伝票番号 ${data.slipNum}）。\nすべて登録できたので、この回は「対応済み」にしました。`);
+};
+
+async function patchZaicoLog(id, patch) {
+  const log = zaicoLogs.find(l => l.id === id);
+  if (!log) return;
+  try {
+    if (log.localOnly) writeLocalLogs(readLocalLogs().map(l => l.id === id ? { ...l, ...patch } : l));
+    else await setDoc(doc(db, ZAICO_LOG_COL, id), patch, { merge: true });
+    Object.assign(log, patch);
+  } catch (err) {
+    console.error(err);
+    alert('履歴の更新に失敗しました：' + err.message);
+  }
+}
+
 window.sendToZaico = async () => {
   if (!pickGroups.length || pickStale) { alert('先に「ピック数を算出」を押してください。'); return; }
   const inputEl = document.getElementById('customerNameInput');
@@ -1541,7 +2211,7 @@ window.sendToZaico = async () => {
     if (!g.barcode || !g.shelfNumber) {
       const lack = [!g.barcode ? 'バーコード' : '', !g.shelfNumber ? '棚番' : ''].filter(Boolean).join('・');
       notSent.push(`・${g.productName || g.skus[0].skuCode || '（名前なし）'}（ピック数 ${g.pickCount}）：${lack}がありません`);
-      notSentItems.push({ barcode: g.barcode || '', productName: g.productName || g.skus[0].skuCode || '（名前なし）', shelfNumber: g.shelfNumber || '', pickCount: g.pickCount, reason: `${lack}がないため送信していません` });
+      notSentItems.push({ barcode: g.barcode || '', productName: g.productName || g.skus[0].skuCode || '（名前なし）', shelfNumber: g.shelfNumber || '', pickCount: g.pickCount, skuCodes: g.skus.filter(s => !s.fromSet).map(s => s.skuCode).filter(Boolean), reason: `${lack}がないため送信していません` });
       return;
     }
     // 倍率がSKUごとに違う合算行は、注文数＝ピック数・倍率1として送る（どちらを使っても数量が合うように）
@@ -1558,7 +2228,7 @@ window.sendToZaico = async () => {
   });
 
   if (!validItems.length) { alert('送信できる明細がありません。\nバーコードと棚番の両方が入っている行だけが送信されます。\n\n' + notSent.join('\n')); return; }
-  if (!confirm(`取引先「${customerName}」として、画面の並び順で ${validItems.length} 明細をzaicoに送信しますか？${notSent.length ? `\n\n※次の ${notSent.length} 行は送信されません：\n${notSent.join('\n')}` : ''}`)) return;
+  if (!confirm(`取引先「${customerName}」として、画面の並び順で ${validItems.length} 明細をzaicoに送信しますか？${notSent.length ? `\n\n※次の ${notSent.length} 行はzaicoに送られませんが、このまま送信してOKです。\n（出荷作業はふだん通り続けてください。あとで「zaico出庫履歴」タブから送れます）\n${notSent.join('\n')}` : ''}`)) return;
 
   const btn = document.getElementById('zaicoBtn');
   btn.disabled = true;
@@ -1578,16 +2248,17 @@ window.sendToZaico = async () => {
 
       let msg = `zaicoに出庫指示を登録しました。\n伝票番号: ${data.slipNum}（${hasCount ? registered : validItems.length}明細）`;
       if (failures.length) {
-        msg += `\n\n【出荷登録できなかった商品 ${failures.length}件】\nzaicoに商品がないなどの理由で登録されていません。手作業で出庫するか、zaicoに商品を登録してから送り直してください。\n`;
+        msg += `\n\n【zaicoに登録できなかった商品 ${failures.length}件】\nzaicoに商品がない（マスタなし）などの理由です。\n▶ 出荷作業はこのまま続けてOKです。この画面で送り直したり、手で出庫したりしないでください。\n▶「zaico出庫履歴」タブに未対応として残したので、あとで担当者がその商品だけ送り直します。\n`;
         msg += failures.map(f => `・${f.productName || '（商品名不明）'}${f.barcode ? `／バーコード ${f.barcode}` : ''}${f.shelfNumber ? `／棚番 ${f.shelfNumber}` : ''}${f.pickCount !== '' ? `／ピック数 ${f.pickCount}` : ''}${f.reason ? `（${f.reason}）` : ''}`).join('\n');
       } else if (unknownGap) {
         msg += `\n\n【注意】送信した ${validItems.length} 明細のうち ${unknownGap} 明細が登録されていません。\nzaicoにない商品がある可能性があります。zaicoの伝票で、登録されていない商品を確認してください。`;
       }
-      if (notSent.length) msg += `\n\n【送信しなかった行 ${notSent.length}件】\n${notSent.join('\n')}`;
+      if (notSent.length) msg += `\n\n【送信しなかった行 ${notSent.length}件】（出荷作業はこのまま続けてOK）\n${notSent.join('\n')}`;
       const saved = await saveZaicoLog(buildZaicoLog({ kind: 'success', customerName, slipNum: data.slipNum, validItems, notSentItems, failures, unknownGap, registered: hasCount ? registered : null }));
       msg += saved ? '\n\n※この送信内容は「zaico出庫履歴」タブで確認できます。' : '\n\n※履歴の保存に失敗しました（送信自体は完了しています）。';
       alert(msg);
-      toast(failures.length || unknownGap ? '登録できなかった商品があります' : 'zaicoに送信しました');
+      showZaicoNextNote({ ok: true, slipNum: data.slipNum, problems: failures.length + notSent.length, unknownGap, saved });
+      toast(failures.length || unknownGap ? '登録できなかった商品があります（出荷は続けてOK）' : 'zaicoに送信しました');
       if (failures.length) console.warn('zaicoに登録できなかった商品', failures);
     } else {
       const failures = pickZaicoFailures(data, validItems);
@@ -1596,11 +2267,13 @@ window.sendToZaico = async () => {
       const saved = await saveZaicoLog(buildZaicoLog({ kind: 'error', customerName, slipNum: data.slipNum || '', validItems, notSentItems, failures, errorMessage: data.error || '送信できませんでした' }));
       if (saved) msg += '\n\n※この内容は「zaico出庫履歴」タブに記録しました。';
       alert(msg);
+      showZaicoNextNote({ ok: false, saved });
     }
   } catch (err) {
     console.error(err);
     await saveZaicoLog(buildZaicoLog({ kind: 'network', customerName, slipNum: '', validItems, notSentItems, failures: [], errorMessage: '通信エラー：' + err.message }));
-    alert('通信エラーが発生しました：' + err.message + '\n\nzaico側に登録されたかどうか分からないため、zaicoの出庫一覧を確認してください。\n（この内容は「zaico出庫履歴」タブに記録しました）');
+    alert('通信エラーが発生しました：' + err.message + '\n\nzaico側に登録されたかどうか分からないため、続けて送り直さないでください（二重に出庫される可能性があります）。\n担当者がzaicoの出庫一覧を確認します。（この内容は「zaico出庫履歴」タブに記録しました）');
+    showZaicoNextNote({ ok: false, network: true, saved: true });
   } finally {
     updateButtons();
   }
@@ -2187,6 +2860,7 @@ window.loadMasterItems = async () => {
     document.getElementById('masterSearch').value = '';
     document.getElementById('shelfFilter').value = '';
     renderMasterTable(masterItemsCache);
+    renderSetList();
   } catch (err) {
     if (area) area.innerHTML = `<div class="notice warn">マスタを取得できませんでした：${escapeHtml(err.message)}</div>`;
   }
@@ -2204,6 +2878,7 @@ function barcodeCounts() {
 function renderMasterTable(items) {
   const area = document.getElementById('masterResultArea');
   if (!area) return;
+  items = items.filter(it => !it.isSet); // セット品は「セット品の登録」で扱う
   masterRendered = items.map(it => ({
     skuCode: it.skuCode || it.id || '',
     name: it.productName || it.product_name || '',
@@ -2416,6 +3091,7 @@ window.previewBulk = (keepScroll = false) => {
     };
     const errors = [];
     if (!inp.skuCode) errors.push('SKUコードが空です');
+    else if (current.get(inp.skuCode) && current.get(inp.skuCode).isSet) errors.push('セット品のSKUです（「セット品の登録」で編集してください）');
     else if (inp.skuCode.includes('/') || inp.skuCode === '.' || inp.skuCode === '..' || /^__.*__$/.test(inp.skuCode)) errors.push('SKUコードに「/」などの使えない文字があります');
     if (/e\+/i.test(inp.barcode)) errors.push('バーコードが「4.9E+12」の形になっています（Excelで列を文字列にしてください）');
     let mult = null;
@@ -2547,7 +3223,7 @@ window.downloadMasterTemplate = () => {
 
 window.exportMasterCsv = () => {
   if (!masterItemsCache.length) { alert('マスタがまだ読み込まれていません。'); return; }
-  const rows = [...masterItemsCache]
+  const rows = [...masterItemsCache].filter(it => !it.isSet)
     .sort((a, b) => String(a.skuCode || a.id).localeCompare(String(b.skuCode || b.id)))
     .map(it => [it.skuCode || it.id, it.productName || it.product_name || '', it.barcode || '', it.multiplier || 1, it.shelfNumber || it.shelf_number || '']);
   downloadUtf8Csv([BULK_COLS.map(c => c.label), ...rows], `商品マスタ_${getTodayString().replace(/\//g, '')}.csv`);
@@ -2636,5 +3312,18 @@ function getTodayString() {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 }
 </script>
+<div class="zp-overlay" id="zaicoPicker" onclick="if(event.target===this) closeZaicoPicker()">
+  <div class="zp-box">
+    <div class="zp-head">
+      <h3>zaicoの在庫一覧から選ぶ</h3>
+      <div class="zp-target" id="zpTarget"></div>
+      <input type="text" id="zpSearch" placeholder="商品名・バーコード・保管場所で検索" oninput="renderZaicoPicker()" style="flex:1;min-width:200px">
+      <button class="btn btn-ghost btn-sm" onclick="reloadZaicoPicker()">zaicoから読み直す</button>
+      <button class="btn btn-ghost btn-sm hidden" id="zpSkip" onclick="skipZaicoPicker()">この商品は飛ばす</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeZaicoPicker()">閉じる</button>
+    </div>
+    <div class="zp-body" id="zpList"></div>
+  </div>
+</div>
 </body>
 </html>
