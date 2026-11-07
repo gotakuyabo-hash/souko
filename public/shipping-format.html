@@ -1069,7 +1069,8 @@ window.processOrderPickCalculation = async () => {
             multiplier: Number(c.qty) || 1,
             shelfNumber: String(c.shelfNumber || '').trim() || shelfByBc.get(bc) || '',
             productName: c.productName || bc,
-            barcode: bc
+            barcode: bc,
+            zaicoItemId: c.zaicoItemId ? String(c.zaicoItemId) : '', zaicoItemIdBarcode: bc
           });
         });
       } else expanded.push(s);
@@ -1085,6 +1086,8 @@ window.processOrderPickCalculation = async () => {
       s.shelfNumber = m ? String(m.shelfNumber || m.shelf_number || '').trim() : '';
       s.productName = m ? (m.productName || m.product_name || s.csvName) : s.csvName;
       s.barcode = (m && m.barcode) ? String(m.barcode).trim() : s.extractedBarcode;
+      s.zaicoItemId = (m && m.zaicoItemId) ? String(m.zaicoItemId) : '';
+      s.zaicoItemIdBarcode = (m && m.barcode) ? String(m.barcode).trim() : '';
     });
 
     pickGroups = groupSkuItems(skuItems);
@@ -1269,15 +1272,56 @@ window.handleKeydown = (event, i) => {
 async function saveSkuMaster(s) {
   if (s.fromSet) {
     const comps = s.setComponents.map((c, k) => k === s.compIndex
-      ? { ...c, barcode: s.barcode || c.barcode || '', shelfNumber: s.shelfNumber || '', qty: s.multiplier || 1 } : c);
+      ? { ...c, barcode: s.barcode || c.barcode || '', shelfNumber: s.shelfNumber || '', qty: s.multiplier || 1, zaicoItemId: validZaicoId(s) || null } : c);
     s.setComponents.splice(0, s.setComponents.length, ...comps);
     await setDoc(doc(db, "product_masters", s.setCode), { components: comps, updatedAt: new Date() }, { merge: true });
     return;
   }
   await setDoc(doc(db, "product_masters", s.skuCode), {
     skuCode: s.skuCode, barcode: s.barcode || '', productName: s.productName,
-    multiplier: s.multiplier || 1, shelfNumber: s.shelfNumber, updatedAt: new Date()
+    multiplier: s.multiplier || 1, shelfNumber: s.shelfNumber, zaicoItemId: validZaicoId(s) || null, updatedAt: new Date()
   }, { merge: true });
+}
+
+// zaicoの商品IDは、そのIDを覚えたときのバーコードと今のバーコードが同じときだけ使う
+function validZaicoId(s) {
+  return (s.zaicoItemId && s.zaicoItemIdBarcode && s.zaicoItemIdBarcode === String(s.barcode || '').trim()) ? s.zaicoItemId : '';
+}
+// 出荷登録の速さのため：バーコード → zaicoの商品ID
+function zaicoIdForGroup(g) {
+  if (zaicoInvLoadedAt) {
+    const x = zaicoInv.find(v => v.code === g.barcode);
+    if (x && x.id) return String(x.id);
+  }
+  const s = g.skus.find(s => validZaicoId(s));
+  return s ? validZaicoId(s) : '';
+}
+// 送信後にサーバーが返した「バーコード → zaicoの商品ID」を商品マスタに覚えさせる（次回から速くなる）
+async function learnZaicoIds(map) {
+  if (!map) return;
+  const done = new Set();
+  const setUpdates = new Map();
+  for (const g of pickGroups) {
+    for (const s of g.skus) {
+      const id = map[String(s.barcode || '').trim()];
+      if (!id || validZaicoId(s) === String(id)) continue;
+      s.zaicoItemId = String(id);
+      s.zaicoItemIdBarcode = String(s.barcode).trim();
+      if (s.fromSet) {
+        const comps = setUpdates.get(s.setCode) || s.setComponents;
+        comps[s.compIndex] = { ...comps[s.compIndex], zaicoItemId: String(id) };
+        setUpdates.set(s.setCode, comps);
+      } else if (s.skuCode && !done.has(s.skuCode)) {
+        done.add(s.skuCode);
+        try { await setDoc(doc(db, 'product_masters', s.skuCode), { zaicoItemId: String(id) }, { merge: true }); }
+        catch (err) { console.warn('zaico商品IDを保存できませんでした', s.skuCode, err); }
+      }
+    }
+  }
+  for (const [code, comps] of setUpdates) {
+    try { await setDoc(doc(db, 'product_masters', code), { components: comps }, { merge: true }); }
+    catch (err) { console.warn('セットのzaico商品IDを保存できませんでした', code, err); }
+  }
 }
 
 window.saveGroup = async (i, silent = false) => {
@@ -1778,6 +1822,7 @@ async function applyZaicoToGroup(g, x, ask) {
     for (const s of targets) {
       s.barcode = x.code;
       s.shelfNumber = shelf;
+      s.zaicoItemId = String(x.id); s.zaicoItemIdBarcode = x.code;
       await saveSkuMaster(s);
       s.status = 'REGISTERED';
     }
@@ -1835,6 +1880,7 @@ window.autoLinkByBarcode = async () => {
     try {
       for (const s of g.skus.filter(s => s.skuCode)) {
         s.barcode = x.code; s.shelfNumber = shelf;
+        s.zaicoItemId = String(x.id); s.zaicoItemIdBarcode = x.code;
         await saveSkuMaster(s);
         s.status = 'REGISTERED';
       }
@@ -2153,7 +2199,10 @@ window.resendZaicoProblems = async (id) => {
       return;
     }
     if (merged.has(barcode)) { const m = merged.get(barcode); m.orderQty += qty; m.pickCount += qty; }
-    else merged.set(barcode, { barcode, productName: name, orderQty: qty, multiplier: 1, shelfNumber: shelf, pickCount: qty, status: 'REGISTERED' });
+    else {
+      const hit = zaicoInvLoadedAt ? zaicoInv.find(v => v.code === barcode) : null;
+      merged.set(barcode, { barcode, productName: name, orderQty: qty, multiplier: 1, shelfNumber: shelf, pickCount: qty, inventoryId: hit ? String(hit.id) : '', status: 'REGISTERED' });
+    }
   });
   const validItems = Array.from(merged.values());
 
@@ -2242,6 +2291,7 @@ window.sendToZaico = async () => {
       multiplier: mult,
       shelfNumber: g.shelfNumber,
       pickCount: g.pickCount,
+      inventoryId: zaicoIdForGroup(g),
       status: "REGISTERED"
     });
   });
@@ -2277,6 +2327,7 @@ window.sendToZaico = async () => {
       msg += saved ? '\n\n※この送信内容は「zaico出庫履歴」タブで確認できます。' : '\n\n※履歴の保存に失敗しました（送信自体は完了しています）。';
       alert(msg);
       showZaicoNextNote({ ok: true, slipNum: data.slipNum, problems: failures.length + notSent.length, unknownGap, saved });
+      learnZaicoIds(data.inventoryIds);
       toast(failures.length || unknownGap ? '登録できなかった商品があります（出荷は続けてOK）' : 'zaicoに送信しました');
       if (failures.length) console.warn('zaicoに登録できなかった商品', failures);
     } else {
