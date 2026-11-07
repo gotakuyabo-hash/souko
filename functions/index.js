@@ -351,22 +351,48 @@ exports.apiCreateZaicoShipment = onRequest(
                 return;
             }
 
-            logger.info(`出荷対象 ${items.length} 件のinventory_idをzaicoからピンポイントで取得します...`);
-
-            const targetBarcodes = new Set(items.map(item => String(item.barcode).trim()));
             const codeToInventoryIdMap = new Map();
+            const zaicoHeaders = { "Authorization": `Bearer ${ZAICO_API_TOKEN}` };
+
+            // ① 画面から zaicoの商品ID（inventoryId）が届いた商品は、IDで1件ずつ確認する（全件を探すより速い）
+            //    念のため、zaico側のバーコードが一致したときだけ使う（違えば②で探し直す）
+            const withId = [];
+            const seen = new Set();
+            for (const item of items) {
+                const bc = String(item.barcode).trim();
+                const id = String(item.inventoryId || "").trim();
+                if (id && bc && !seen.has(bc)) { seen.add(bc); withId.push({ bc, id }); }
+            }
+            let idHits = 0;
+            const CONCURRENCY = 5;
+            for (let i = 0; i < withId.length; i += CONCURRENCY) {
+                await Promise.all(withId.slice(i, i + CONCURRENCY).map(async ({ bc, id }) => {
+                    try {
+                        const r = await fetch(`https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories/${encodeURIComponent(id)}.json`, { method: "GET", headers: zaicoHeaders });
+                        if (!r.ok) return;
+                        const d = await r.json();
+                        const inv = d.inventory || d.data || d;
+                        const invCode = String(inv.code || inv.inventory_code || "").trim();
+                        if (invCode === bc) { codeToInventoryIdMap.set(bc, inv.id || inv.inventory_id || id); idHits++; }
+                    } catch (e) {
+                        logger.warn(`inventory_id ${id} の確認に失敗しました。一覧から探します。`, e.message);
+                    }
+                }));
+            }
+
+            // ② IDがない・確認できなかった商品だけ、在庫一覧をページ順に探す
+            const targetBarcodes = new Set(items.map(item => String(item.barcode).trim()).filter(bc => !codeToInventoryIdMap.has(bc)));
+            logger.info(`出荷対象 ${items.length} 件：IDで確認 ${idHits} 件／一覧から探す ${targetBarcodes.size} 件`);
+            let foundInScan = 0;
 
             let page = 1;
-            let hasMore = true;
+            let hasMore = targetBarcodes.size > 0;
             const perPage = 100;
             const MAX_PAGES = 1000; // 最大10万件まで検索
 
-            while (hasMore && codeToInventoryIdMap.size < targetBarcodes.size) {
+            while (hasMore && foundInScan < targetBarcodes.size) {
                 const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=${perPage}`;
-                const inventoriesRes = await fetch(url, {
-                    method: "GET",
-                    headers: { "Authorization": `Bearer ${ZAICO_API_TOKEN}` }
-                });
+                const inventoriesRes = await fetch(url, { method: "GET", headers: zaicoHeaders });
 
                 if (!inventoriesRes.ok) {
                     const errText = await inventoriesRes.text();
@@ -385,6 +411,7 @@ exports.apiCreateZaicoShipment = onRequest(
                     const invCode = String(inv.code || inv.inventory_code || "").trim();
                     if (targetBarcodes.has(invCode) && !codeToInventoryIdMap.has(invCode)) {
                         codeToInventoryIdMap.set(invCode, inv.id || inv.inventory_id);
+                        foundInScan++;
                     }
                 }
 
@@ -473,6 +500,7 @@ exports.apiCreateZaicoShipment = onRequest(
                 count: deliveries.length,
                 missingCount: missingBarcodes.length,
                 missingBarcodes: missingBarcodes,
+                inventoryIds: Object.fromEntries(codeToInventoryIdMap),
                 zaicoResponse: zaicoData
             });
 
