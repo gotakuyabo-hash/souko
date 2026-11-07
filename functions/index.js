@@ -482,3 +482,64 @@ exports.apiCreateZaicoShipment = onRequest(
         }
     }
 );
+
+// zaico在庫一覧API（まとまるくん「zaicoから選ぶ」・商品マスタ登録用）
+// apiCreateZaicoShipment と同じ v2 API・会社ID・トークンを使う。
+// 全件を1回で読むと時間切れになるため、?page=1 から数ページ分ずつ返し、画面側が nextPage を順に呼ぶ
+const pickText = (v) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "object") return String(v.name || v.title || "");
+    return String(v);
+};
+
+exports.apiListZaicoInventories = onRequest(
+    { region: "asia-northeast1", timeoutSeconds: 120, memory: "512MiB", secrets: [zaicoApiTokenSecret] },
+    async (req, res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') {
+            res.status(204).send('');
+            return;
+        }
+
+        try {
+            const ZAICO_API_TOKEN = zaicoApiTokenSecret.value();
+            const perPage = 100;
+            const startPage = Math.max(1, parseInt(req.query.page, 10) || 1);
+            const pagesPerCall = Math.min(20, Math.max(1, parseInt(req.query.pages, 10) || 10)); // 1回で最大1,000件程度
+            const items = [];
+            let nextPage = null;
+
+            for (let page = startPage; page < startPage + pagesPerCall; page++) {
+                const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=${perPage}`;
+                const r = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${ZAICO_API_TOKEN}` } });
+                if (!r.ok) {
+                    const errText = await r.text();
+                    throw new Error(`zaico在庫一覧の取得に失敗しました (page ${page}, ${r.status}): ${errText.slice(0, 300)}`);
+                }
+                const data = await r.json();
+                const list = data.inventories || data.data || [];
+
+                for (const inv of list) {
+                    items.push({
+                        id: inv.id || inv.inventory_id,
+                        title: pickText(inv.title || inv.name),
+                        code: String(inv.code || inv.inventory_code || "").trim(), // 出庫登録と同じ項目で照合
+                        place: pickText(inv.place || inv.location),
+                        quantity: inv.quantity ?? inv.logical_quantity ?? "",
+                        unit: pickText(inv.unit),
+                        category: pickText(inv.category)
+                    });
+                }
+                if (list.length < perPage) { nextPage = null; break; }
+                nextPage = page + 1;
+            }
+
+            res.json({ success: true, page: startPage, nextPage, count: items.length, items });
+        } catch (error) {
+            logger.error("zaico在庫一覧の取得でエラーが発生しました:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+);
