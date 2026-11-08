@@ -115,6 +115,10 @@ button,input,textarea{font:inherit;color:inherit}
 .field.is-filled > label::after{content:" ✓";color:var(--ok)}
 .bullet{display:flex;gap:6px;padding:12px 14px;border-top:1px solid var(--line)}
 .bullet .dot{color:var(--primary);font-weight:800}
+.frozen-row{display:flex;align-items:center;gap:10px;padding:14px;border-top:1px solid var(--line);min-height:56px}
+.frozen-row .f-title{font-weight:700}
+.frozen-num{font-size:13px;font-weight:800;padding:3px 10px;border-radius:999px;background:#e3f0fb;color:#1f5f99;white-space:nowrap}
+.frozen-none{font-size:13px;font-weight:800;padding:3px 10px;border-radius:999px;background:var(--ok-soft);color:var(--ok);white-space:nowrap}
 .linkrow{padding:10px 14px;border-top:1px solid var(--line)}
 .linkbtn{display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:9px;background:var(--primary);color:var(--primary-ink);font-weight:800;text-decoration:none}
 .req-badge{margin-left:auto;flex:none;font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--muted);white-space:nowrap}
@@ -398,7 +402,6 @@ const DEFAULTS = {
   ],
   evening: [
     { title: "受注反映履歴確認", checked: false, type: "checkbox" },
-    { title: "冷凍の集荷を確認しました", checked: false, type: "checkbox" },
     { title: "ニッシントーアチャット報告確認", checked: false, type: "checkbox" },
     { title: "Amazonバッグ発注確認", checked: false, type: "checkbox" },
     { title: "Amazonバッグ発注サイトを開く T-APO", url: "https://amazonexteu.qualtrics.com/jfe/form/SV_0d1npxtVhWVA6Dc?Q_CHL=qr", type: "link" },
@@ -527,7 +530,7 @@ CL.saver = new Saver('checklist',
   () => CL.state ? JSON.stringify(CL.state) : null,
   async st => {
     await setDoc(doc(db, 'warehouse_reports', st.date), {
-      date: st.date, name: st.name || '未設定', sections: st.sections,
+      date: st.date, name: st.name || '未設定', sections: st.sections, frozenChecked: !!st.frozenChecked,
       updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
     });
     if (st.name) { try { localStorage.setItem('checklist_reporter_name', st.name); } catch (e) {} }
@@ -545,11 +548,13 @@ function normItem(it, key) {
   }
   return o;
 }
+// 冷凍の集荷確認は、件数つきの自動の欄（夕方）に置き換えたので、手で作った同じ項目は外す
+const isOldFrozenItem = it => it?.type === 'checkbox' && /冷凍/.test(String(it?.title || '')) && /集荷/.test(String(it?.title || ''));
 function normSections(src) {
   const out = {};
   for (const s of SECTIONS) {
     const arr = Array.isArray(src?.[s.key]) ? src[s.key] : DEFAULTS[s.key];
-    out[s.key] = arr.map(it => normItem(it, s.key));
+    out[s.key] = arr.filter(it => !isOldFrozenItem(it)).map(it => normItem(it, s.key));
   }
   return out;
 }
@@ -579,7 +584,7 @@ function clLoad(date) {
     if (snap.exists()) {
       const d = snap.data();
       if (CL.state && d.updatedBy === CLIENT_ID) return; // 自分の保存の反映は無視
-      const st = { date, name: (d.name === '未設定' ? '' : d.name) || '', sections: normSections(d.sections) };
+      const st = { date, name: (d.name === '未設定' ? '' : d.name) || '', sections: normSections(d.sections), frozenChecked: !!d.frozenChecked };
       const json = JSON.stringify(st);
       if (!CL.state) { clApply(st, false); return; }
       if (json === CL.saver.savedJSON || json === JSON.stringify(CL.state)) return;
@@ -589,7 +594,7 @@ function clLoad(date) {
     } else if (!CL.state) {
       const sections = await loadTemplate(date);
       if (CL.date !== date || CL.state) return;
-      CL.state = { date, name: savedName(), sections };
+      CL.state = { date, name: savedName(), sections, frozenChecked: false };
       CL.saver.reset(JSON.stringify(CL.state));
       renderChecklist();
     }
@@ -624,7 +629,8 @@ function renderChecklist() {
   for (const sec of SECTIONS) {
     const items = CL.state.sections[sec.key];
     const checks = items.filter(i => i.type === 'checkbox');
-    const done = checks.filter(i => i.checked).length;
+    let done = checks.filter(i => i.checked).length;
+    if (sec.key === FROZEN_SECTION && frozenCount() > 0) { checks.push(null); if (CL.state.frozenChecked) done++; }
     const isNow = sec.key === nowKey;
     const collapsed = !!CL.collapsed[sec.key];
 
@@ -643,6 +649,7 @@ function renderChecklist() {
           p.ship ? h('span', { class: 'req-badge', 'data-ship': '' }) : null),
         p.ship ? h('ul', { class: 'ship-detail', 'data-ship-detail': '' }) : null,
         CL.edit ? h('p', { class: 'small muted', style: 'margin:6px 0 0' }, '※ 毎日自動で表示される固定リンクです（ここでは編集できません）') : null)));
+      if (sec.key === FROZEN_SECTION) body.push(frozenRow());
       const pinnedUrls = pinned.map(p => p.url);
       items.forEach((it, i) => {
         if (!CL.edit && it.type === 'link' && pinnedUrls.includes(it.url)) return; // 同じリンクを手動で追加していても二重に出さない
@@ -730,9 +737,37 @@ function clDelete(key, i) {
   });
 }
 
+/* ---------- 冷凍の件数（まとまるくんで送り状を出力すると settings/frozen_shipments に貯まる） ---------- */
+const FROZEN_SECTION = 'evening';
+const FROZEN = { days: null, error: false };
+function frozenDay() { return FROZEN.days && CL.date ? FROZEN.days[CL.date] : null; }
+function frozenCount() { const d = frozenDay(); return d && Array.isArray(d.orders) ? d.orders.length : 0; }
+function frozenRow() {
+  const n = frozenCount();
+  if (n > 0) {
+    return h('label', { class: 'check' + (CL.state.frozenChecked ? ' is-on' : '') },
+      h('input', { type: 'checkbox', checked: !!CL.state.frozenChecked, onchange: e => { CL.state.frozenChecked = e.target.checked; clTouched(); renderChecklist(); } }),
+      h('span', { class: 'check-title' }, '❄️ 冷凍の集荷を確認しました'),
+      h('span', { class: 'frozen-num', style: 'margin-left:auto' }, `冷凍 ${n}件`));
+  }
+  let badge;
+  if (FROZEN.error) badge = h('span', { class: 'frozen-num', style: 'margin-left:auto' }, '⚠️ 確認できません');
+  else if (FROZEN.days === null) badge = h('span', { class: 'frozen-num', style: 'margin-left:auto' }, '確認中…');
+  else if (!frozenDay()) badge = h('span', { class: 'frozen-num', style: 'margin-left:auto;background:var(--surface);color:var(--muted)' }, '送り状の出力前');
+  else badge = h('span', { class: 'frozen-none', style: 'margin-left:auto' }, '冷凍なし');
+  return h('div', { class: 'frozen-row' }, h('span', { class: 'f-title' }, '❄️ 冷凍'), badge);
+}
+function watchFrozen() {
+  onSnapshot(doc(db, 'settings', 'frozen_shipments'), snap => {
+    FROZEN.days = snap.exists() ? snap.data() : {}; FROZEN.error = false;
+    if (!isTyping('tab-checklist')) renderChecklist(); else updateProgress();
+  }, e => { console.warn('frozen', e); FROZEN.error = true; renderChecklist(); });
+}
+
 function updateProgress() {
   let total = 0, done = 0;
   if (CL.state) for (const k in CL.state.sections) CL.state.sections[k].forEach(it => { if (it.type === 'checkbox') { total++; if (it.checked) done++; } });
+  if (CL.state && frozenCount() > 0) { total++; if (CL.state.frozenChecked) done++; }
   $('clProgressText').textContent = `${done} / ${total}`;
   $('clProgressBar').style.width = total ? (done / total * 100) + '%' : '0%';
   const remain = total - done;
@@ -745,7 +780,7 @@ function updateProgress() {
 $('reporterName').addEventListener('input', e => { if (!CL.state) return; CL.state.name = e.target.value.trim(); clTouched(); });
 $('clEditBtn').onclick = () => { CL.edit = !CL.edit; if (!CL.edit) CL.saver.flush(); renderChecklist(); };
 $('clResetBtn').onclick = () => confirmDialog('この日の項目を初期設定に戻しますか？入力した内容とチェックも消えます（「元に戻す」で取り消せます）。', '初期設定に戻す', () => {
-  CL.state.sections = blankOut(normSections(null)); renderChecklist(); CL.saver.flush();
+  CL.state.sections = blankOut(normSections(null)); CL.state.frozenChecked = false; renderChecklist(); CL.saver.flush();
 });
 
 /* =========================================================
@@ -1432,6 +1467,7 @@ document.addEventListener('visibilitychange', () => {
   await ensureLogin();
   watchStaff();
   watchShip();
+  watchFrozen();
   await watchServices();
   watchAutoSources();
   let tab = 'checklist';
