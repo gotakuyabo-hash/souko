@@ -64,6 +64,8 @@
         .tri-none { background: #ecfdf5; color: #047857; }
         .tri-easy { background: #eef2ff; color: #4338ca; }
         .tri-check { background: #fffbeb; color: #b45309; }
+        .tri-request { background: #ffedd5; color: #c2410c; }
+        .tri-share { background: #cffafe; color: #0e7490; }
         .tri-order { background: #dcfce7; color: #15803d; }
         .tri-ship { background: #e0f2fe; color: #0369a1; }
         .tri-bill { background: #fef3c7; color: #92400e; }
@@ -2949,6 +2951,7 @@
         }
 
         window.openAskForm = function(key) {
+            if (!key) return openAskFormSolo();
             const m = window.messageStore[key] || {};
             document.getElementById('sheetActionsTitle').textContent = '👤 渡辺さんに聞く';
             document.getElementById('sheetActionsBody').innerHTML = `
@@ -2961,6 +2964,39 @@
                     <button onclick="sendQuestion('${key}', this)" class="btn btn-main w-full">👤 渡辺さんに送る</button>
                 </div>`;
             openSheet('sheetActions');
+        };
+
+        // チャットに結びつかない、単独の質問
+        window.openAskFormSolo = function() {
+            document.getElementById('sheetActionsTitle').textContent = '👤 渡辺さんに聞く（単独）';
+            document.getElementById('sheetActionsBody').innerHTML = `
+                <div class="p-5 space-y-3">
+                    <div><label class="field-label">件名（任意。お客様名や案件名など）</label>
+                        <input id="ask_solo_title" class="inp" maxlength="60" placeholder="例：吉田様　年末の出荷スケジュール"></div>
+                    <div><label class="field-label">聞きたいこと</label>
+                        <textarea id="ask_note" rows="5" class="inp" placeholder="例：年末年始の最終出荷日は12/27で案内して大丈夫ですか？"></textarea></div>
+                    <div class="text-xs text-slate-500">社内ルームに質問を送り、渡辺さん担当のタスクも作ります。渡辺さんがChatworkで返信すると、回答は ❓質問リスト に載り、タスクも自動で完了します。</div>
+                    <button onclick="sendQuestionSolo(this)" class="btn btn-main w-full">👤 渡辺さんに送る</button>
+                </div>`;
+            openSheet('sheetActions');
+            setTimeout(() => { const t = document.getElementById('ask_note'); if (t) t.focus(); }, 300);
+        };
+        window.sendQuestionSolo = async function(btn) {
+            const note = document.getElementById('ask_note').value.trim();
+            const title = document.getElementById('ask_solo_title').value.trim();
+            if (!note) { alert('聞きたいことを入力してください'); return; }
+            btn.disabled = true;
+            btn.textContent = '送信中…';
+            try {
+                const d = await callApi("ask_question", { room_id: '', room_name: title, context: '', note: note, by: getStaffName() });
+                closeAllModals();
+                showToast(`${d.label} を渡辺さんに送りました`);
+                if (d.taskError) alert(`質問は送りましたが、タスクは作れませんでした。\n${d.taskError}`);
+            } catch (e) {
+                alert('送信に失敗しました：' + e.message);
+                btn.disabled = false;
+                btn.textContent = '👤 渡辺さんに送る';
+            }
         };
 
         window.sendQuestion = async function(key, btn) {
@@ -3011,7 +3047,7 @@
                         <div class="text-sm mt-1.5 msg-body">${esc(q.question)}</div>
                         <div class="text-xs text-slate-400 mt-1">${esc(q.askedBy || '')}${q.account !== getAccount() ? '（別アカウント）' : ''}</div>
                         <div class="flex gap-2 mt-2">
-                            ${q.account === getAccount() ? `<button onclick="closeAllModals(); switchMode('normal'); openRoomFromList('${safeId(q.roomId)}')" class="btn btn-sub flex-1" style="height:38px">📁 ルームを開く</button>` : ''}
+                            ${(q.roomId && q.account === getAccount()) ? `<button onclick="closeAllModals(); switchMode('normal'); openRoomFromList('${safeId(q.roomId)}')" class="btn btn-sub flex-1" style="height:38px">📁 ルームを開く</button>` : ''}
                             <button onclick="cancelQuestion(${Number(q.no) || 0})" class="btn btn-sub flex-1" style="height:38px">取り下げ</button>
                         </div>
                     </div>`).join('') : '<div class="p-4 text-sm text-slate-500">未回答の質問はありません</div>';
@@ -3022,6 +3058,7 @@
                         <div class="text-sm mt-1 msg-body text-emerald-800"><b>A</b> ${esc(x.a)}</div>
                     </div>`).join('') : '<div class="p-4 text-sm text-slate-500">まだ回答済みのQ&Aはありません</div>';
                 body.innerHTML = `
+                    <div class="px-4 pt-4"><button onclick="openAskFormSolo()" class="btn btn-main w-full">＋ 渡辺さんに新しく聞く</button></div>
                     <div class="px-4 pt-3 text-sm font-bold text-slate-700">未回答 ${open.length}件</div>${openHtml}
                     <div class="px-4 pt-4 text-sm font-bold text-slate-700">回答済みQ&A（最新${done.length}件）</div>${doneHtml}
                     <div class="p-4 text-xs text-slate-500">回答済みのQ&Aは、AIで返信文を作るときに参考として渡されます。</div>`;
@@ -3040,9 +3077,11 @@
             bill: { icon: '💴', label: '請求・料金' },
             trouble: { icon: '⚠️', label: 'トラブル' },
             system: { icon: '💻', label: 'システム' },
+            request: { icon: '🙏', label: '依頼' },
+            share: { icon: '📢', label: '共有' },
             other: { icon: '📝', label: 'その他' }
         };
-        const TRIAGE_SUB_ORDER = ['trouble', 'order', 'ship', 'bill', 'system', 'other'];
+        const TRIAGE_SUB_ORDER = ['trouble', 'order', 'request', 'ship', 'bill', 'system', 'share', 'other'];
         let triageFilter = 'all';
         let subFilter = 'all';
         function triageSub(rid) {
@@ -3063,6 +3102,8 @@
             else if (sub === 'bill') html = b('🧾 請求に記録', `openBillingForm('${cardKey}')`) + b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'trouble') html = b('🚨 誤出荷に記録', `openMisshipForm('${cardKey}')`) + b('🧾 補填を記録', `openBillingForm('${cardKey}')`);
             else if (sub === 'system') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
+            else if (sub === 'request') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('📋 本文をコピー', `copyMessageText('${cardKey}')`);
+            else if (sub === 'share') html = b('📋 本文をコピー', `copyMessageText('${cardKey}')`);
             else if (sub === 'other') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             return html ? `<div class="flex gap-2 mt-2">${html}</div>` : '';
         }
