@@ -212,7 +212,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
       <button data-tab="work" class="on" role="tab">検索・入荷・送り状</button>
       <button data-tab="hist" role="tab">検品書の履歴</button>
       <button data-tab="after" role="tab">出荷後の取り込み</button>
-      <button data-tab="inq" role="tab">問い合わせ中</button>
+      <button data-tab="inq" role="tab">問い合わせ・保留・保管</button>
     </nav>
     <div id="tabWork">
     <div id="cwReq" class="panel" hidden></div>
@@ -247,7 +247,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <div class="search-row"><button id="btnLink" class="primary">紐づけを確認する</button></div>
         <div id="linkResult"></div>
         <div id="linkActions" class="search-row wrap" hidden>
-          <label class="chk"><input type="checkbox" id="excludeInq" checked> 問い合わせ中の注文は出荷通知CSVから外す</label>
+          <label class="chk"><input type="checkbox" id="excludeInq" checked> 問い合わせ中・出荷保留・保管の注文は出荷通知CSVから外す</label>
           <button id="btnLinkWrite" class="primary">シートに反映する</button>
           <button id="btnNotifyCsv" class="secondary">出荷通知CSVを保存</button>
         </div>
@@ -290,7 +290,18 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <div id="tabInq" hidden>
       <div class="panel stack">
         <div class="search-row"><span id="inqCount" class="muted"></span><button id="btnInqReload" class="ghost">再読み込み</button></div>
+        <h2 class="h2">問い合わせ中</h2>
         <div id="inqList"></div>
+        <h2 class="h2" style="margin-top:12px">出荷保留</h2>
+        <p class="muted small">備考欄に「出荷保留」と書かれた注文は、検索したときに自動で記録します（備考欄から消えると自動で解除）。手で登録した保留は「解除」を押すまで残ります。</p>
+        <div id="holdList"></div>
+        <h2 class="h2" style="margin-top:12px">過去シートの出荷保留</h2>
+        <p class="muted small">前の管理シートで出荷保留だった注文です。今のシートに同じ注文番号の注文が出てきたら、検索結果に「出荷保留（過去シート）」と表示して止めます。</p>
+        <div id="pastHoldList"></div>
+        <h2 class="h2" style="margin-top:12px">保管</h2>
+        <div id="storList"></div>
+        <h2 class="h2" style="margin-top:12px">保管品（出荷済み）</h2>
+        <div id="storDoneList"></div>
       </div>
     </div>
   </section>
@@ -390,6 +401,9 @@ const state = {
   dupKeys: [],     // ほかの番号と同じ注文しか出てこなかった番号
   selected: new Set(),
   inq: {},         // No → 問い合わせ中の情報
+  hold: {},        // No → 出荷保留の情報
+  stor: {},        // No → 保管の情報
+  storDone: {},    // No → 保管品として出荷済みの情報
   mism: {},        // No → 処理したときの注文番号（今のシートの注文番号と違うときだけ）
 };
 
@@ -683,6 +697,8 @@ async function doSearch(preselect){
     state.selected = new Set(preselect ? j.rows.map(r=>r.no) : []);
     render();
     const saved = await loadInquiryFlags(j.rows.map(r=>r.no));
+    if (saved) await syncNoteHolds(j.rows);
+    await checkPastHolds(j.rows);
     state.mism = {};
     if (saved) j.rows.forEach(r => {
       const proc = procOf(saved[r.no]);
@@ -806,6 +822,16 @@ function infoOf(r){
   if (r.deliveryDate || r.deliveryTime) badges.push({ t:'日時指定', warn:true });
   const iq = state.inq[r.no];
   if (iq) { badges.unshift({ t:'問い合わせ中', warn:true }); partners.unshift('問い合わせ中'+(iq.memo ? '：'+iq.memo : '')); }
+  const hd = state.hold[r.no], st = state.stor[r.no];
+  if (hd) {
+    badges.unshift({ t: hd.source==='past' ? '出荷保留（過去シート）' : '出荷保留', warn:true });
+    partners.unshift(hd.source==='past'
+      ? '過去シート（'+(hd.pastSheet||'前のシート')+'）のNo.'+hd.pastNo+'で出荷保留：'+String(hd.memo||'').replace(/\s+/g,' ').slice(0,80)
+      : '出荷保留'+(hd.source==='note' ? '（備考欄）' : '')+(hd.memo && hd.source!=='note' ? '：'+hd.memo : ''));
+  }
+  const sd = state.storDone[r.no];
+  if (sd && !st) { badges.unshift({ t:'保管品・出荷済み', warn:false }); partners.unshift('保管品として出荷済み（'+md(sd.shippedAt)+(sd.shippedBy ? ' ／ '+sd.shippedBy : '')+'）'); }
+  if (st) { badges.unshift({ t:'保管', warn:true }); partners.unshift('保管中'+(st.memo ? '：'+st.memo : '')+(st.from==='inquiry' ? '（問い合わせ中から）' : '')); }
   const pm = state.mism[r.no];
   if (pm) { badges.unshift({ t:'注文番号が違う', warn:true }); partners.unshift('処理したときの注文番号：'+pm+'（入荷日・出荷情報はこの注文のものです。シートを確認してください）'); }
   return { badges, partners, highlight: !!(r.deliveryDate || r.deliveryTime || r.note) };
@@ -857,7 +883,7 @@ function rowHtml(r){
     + '<div class="side"><span>'+spec+'</span>'
     + (r.arrivedAt ? '<span class="arr">入荷 '+esc(md(r.arrivedAt))+'</span>' : '<span class="todo">未入荷</span>')
     + '<span>'+(r.shippedAt ? '出荷 '+esc(md(r.shippedAt)) : '未出荷')+'</span>'
-    + '<button type="button" class="ghost mini inqbtn" data-no="'+r.no+'">'+(state.inq[r.no] ? '問い合わせを解除' : '問い合わせ中にする')+'</button></div>'
+    + rowButtons(r.no)+'</div>'
     + (noteText ? '<div class="note">'+esc(noteText)+'</div>' : '')
     + '</label>';
 }
@@ -880,10 +906,10 @@ $('#groups').addEventListener('change', e => {
   }
 });
 $('#groups').addEventListener('click', e => {
-  const b = e.target.closest('.inqbtn');
+  const b = e.target.closest('[data-act]');
   if (!b) return;
   e.preventDefault(); e.stopPropagation();
-  toggleInquiry(Number(b.dataset.no));
+  rowAction(b.dataset.act, Number(b.dataset.no), b);
 });
 $('#selAll').onchange = e => {
   state.groups.forEach(g => g.rows.forEach(no => e.target.checked ? state.selected.add(no) : state.selected.delete(no)));
@@ -1243,6 +1269,11 @@ function makeLabel(rows, key, splitFrom){
   if (dd && !/^\d{4}-\d{2}-\d{2}$/.test(dd)) errors.push('指定日を読み取れません（'+dd+'）');
   if (rows.some(r=>r.shippedAt)) warns.push('出荷日が入っている注文を含みます');
   if (rows.some(r=>state.inq[r.no])) warns.push('問い合わせ中の注文を含みます');
+  const holdNos = rows.filter(r => state.hold[r.no]).map(r => r.no);
+  const storNos = rows.filter(r => state.stor[r.no]).map(r => r.no);
+  const stopNos = holdNos.concat(storNos);
+  if (holdNos.length) errors.push('出荷保留の注文を含みます（No.'+holdNos.join('、')+'）');
+  if (storNos.length) warns.push('保管品を含みます（No.'+storNos.join('、')+'）。出荷するときはチェックを入れてください。出荷後の取り込みで保管は自動で解除されます');
   const mismNos = rows.filter(r => state.mism[r.no]).map(r => r.no);
   if (mismNos.length) errors.push('注文番号が処理したときと違う注文を含みます（No.'+mismNos.join('、')+'）。シートを確認してください');
 
@@ -1267,7 +1298,7 @@ function makeLabel(rows, key, splitFrom){
     key, rows, splitFrom, zip7, tel, name, addr, ya, carrier, okinawa, tm, dd, t, item, edited, errors, warns,
     type: L.types[key] || '0',
     // エラーがあってもCSVに含める（外したいときはチェックを外す）。注文番号が違う注文は、最初は外しておく
-    include: L.include[key] !== undefined ? L.include[key] !== false : !mismNos.length,
+    include: L.include[key] !== undefined ? L.include[key] !== false : !(mismNos.length || stopNos.length),
   };
 }
 
@@ -1576,8 +1607,14 @@ async function loadInquiryFlags(nos){
   try{
     for (const part of chunk([...new Set(nos)].map(String), 30)) {
       const snap = await ordersCol().where(firebase.firestore.FieldPath.documentId(),'in',part).get();
-      part.forEach(id => delete state.inq[Number(id)]);
-      snap.forEach(d => { const v=d.data(); saved[Number(d.id)] = v; const iq=v.inquiry; if (iq && iq.active) state.inq[Number(d.id)] = iq; });
+      part.forEach(id => { const n = Number(id); delete state.inq[n]; delete state.hold[n]; delete state.stor[n]; delete state.storDone[n]; });
+      snap.forEach(d => {
+        const v=d.data(), n=Number(d.id); saved[n] = v;
+        if (v.inquiry && v.inquiry.active) state.inq[n] = v.inquiry;
+        if (v.hold && v.hold.active) state.hold[n] = v.hold;
+        if (v.storage && v.storage.active) state.stor[n] = v.storage;
+        else if (v.storage && v.storage.shipped) state.storDone[n] = v.storage;
+      });
     }
     return saved;
   }catch(e){ console.warn('問い合わせ中の読み込みに失敗', e); return null; }
@@ -1605,6 +1642,158 @@ async function toggleInquiry(no){
   if (!$('#tabInq').hidden) loadInquiryList();
 }
 
+/* ===== 出荷保留・保管 ===== */
+const HOLD_RE = /出荷保留/;
+// 行のボタン（問い合わせ中・出荷保留・保管）
+function rowButtons(no){
+  const b = (act, label) => '<button type="button" class="ghost mini" data-act="'+act+'" data-no="'+no+'">'+label+'</button>';
+  let h = b('inq', state.inq[no] ? '問い合わせを解除' : '問い合わせ中にする');
+  if (state.inq[no]) h += b('toStor', '保管にする');
+  if (state.stor[no]) h += b('storShip', '出荷済みにする') + b('storOff', '保管を解除');
+  else if (state.hold[no]) h += state.hold[no].source==='note' ? '' : state.hold[no].source==='past'
+    ? '<button type="button" class="ghost mini" data-act="pastOff" data-no="'+no+'" data-id="'+esc(state.hold[no].pastId)+'">保留を解除</button>'
+    : b('holdOff', '保留を解除');
+  else h += b('holdOn', '出荷保留にする');
+  return h;
+}
+async function rowAction(act, no, el){
+  if (act==='pastOff') return setPastHold(el && el.dataset.id, false);
+  if (act==='inq') return toggleInquiry(no);
+  if (act==='holdOn') return setHold(no, true);
+  if (act==='holdOff') return setHold(no, false);
+  if (act==='toStor') return toStorage(no);
+  if (act==='storOff') return storageOff(no);
+  if (act==='storShip') return storageShip(no, true);
+  if (act==='storUnship') return storageShip(no, false);
+}
+function afterStatusChange(){
+  if (state.groups.length) render();
+  if (!$('#tabInq').hidden) loadInquiryList();
+}
+// 手で出荷保留にする・解除する
+async function setHold(no, on){
+  const ref = ordersCol().doc(String(no)), email = state.user.email || '';
+  try{
+    if (on) {
+      const memo = prompt('No.'+no+'を出荷保留にします。理由のメモ（空欄でも大丈夫です）', '');
+      if (memo === null) return;
+      const hd = { active:true, memo:memo.trim(), source:'manual', at:new Date().toISOString(), by:email, releasedAt:null, releasedBy:'' };
+      await ref.set({ hold:hd }, { merge:true });
+      state.hold[no] = hd;
+      toast('No.'+no+'を出荷保留にしました');
+    } else {
+      if (!confirm('No.'+no+'の出荷保留を解除しますか？')) return;
+      await ref.set({ hold:{ active:false, releasedAt:new Date().toISOString(), releasedBy:email } }, { merge:true });
+      delete state.hold[no];
+      toast('No.'+no+'の出荷保留を解除しました');
+    }
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
+// 備考欄の「出荷保留」を記録する（書かれていれば登録、消えていれば備考欄由来の保留だけ解除）
+// 過去シートの出荷保留（今のシートとNo.が重なるので、別のコレクションに分けて記録する）
+const pastHoldsCol = () => clientRef().collection('pastHolds');
+// 今のシートの注文番号が、過去シートの出荷保留に入っていれば出荷保留として扱う
+async function checkPastHolds(rows){
+  const byOid = {};
+  rows.forEach(r => { const o = oidOf(r.orderId); if (!NO_OID(o)) (byOid[o] = byOid[o] || []).push(r.no); });
+  const oids = Object.keys(byOid);
+  try{
+    for (const part of chunk(oids, 30)) {
+      const snap = await pastHoldsCol().where('orderId','in',part).get();
+      snap.forEach(d => {
+        const v = d.data();
+        if (!v.hold || !v.hold.active) return;
+        (byOid[v.orderId] || []).forEach(no => {
+          if (!state.hold[no]) state.hold[no] = Object.assign({}, v.hold, { source:'past', pastId:d.id, pastNo:v.no, pastSheet:v.sheetLabel || '' });
+        });
+      });
+    }
+  }catch(e){ console.warn('過去シートの出荷保留の確認に失敗', e); }
+}
+async function setPastHold(id, on){
+  if (!on && !confirm('過去シートの出荷保留を解除しますか？')) return;
+  try{
+    await pastHoldsCol().doc(id).set({ hold:{ active:!!on, releasedAt:on ? null : new Date().toISOString(), releasedBy:on ? '' : (state.user.email || '') } }, { merge:true });
+    Object.keys(state.hold).forEach(no => { if (state.hold[no].pastId === id) delete state.hold[no]; });
+    toast('過去シートの出荷保留を解除しました');
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
+async function syncNoteHolds(rows){
+  const email = (state.user && state.user.email) || '', now = new Date().toISOString();
+  const items = [];
+  rows.forEach(r => {
+    const inNote = HOLD_RE.test(r.note || ''), cur = state.hold[r.no];
+    if (inNote && !cur) {
+      const hd = { active:true, memo:String(r.note).trim().slice(0,300), source:'note', at:now, by:email, releasedAt:null, releasedBy:'' };
+      state.hold[r.no] = hd;
+      items.push([ordersCol().doc(String(r.no)), { hold:hd, orderId:r.orderId || '', shop:r.shop || '', item:r.item || '', name:r.name || '' }]);
+    } else if (!inNote && cur && cur.source === 'note') {
+      delete state.hold[r.no];
+      items.push([ordersCol().doc(String(r.no)), { hold:{ active:false, releasedAt:now, releasedBy:'備考欄から「出荷保留」が消えたため自動解除' } }]);
+    } else if (inNote && cur && cur.source === 'note' && cur.memo !== String(r.note).trim().slice(0,300)) {
+      const hd = Object.assign({}, cur, { memo:String(r.note).trim().slice(0,300) });
+      state.hold[r.no] = hd;
+      items.push([ordersCol().doc(String(r.no)), { hold:hd }]);
+    }
+  });
+  if (!items.length) return;
+  try{ await batchSetAll(items); }catch(e){ console.warn('出荷保留の記録に失敗', e); }
+}
+// 問い合わせ中 → 保管
+async function toStorage(no){
+  const ref = ordersCol().doc(String(no)), email = state.user.email || '';
+  const iq = state.inq[no] || {};
+  const memo = prompt('No.'+no+'を問い合わせ中から保管に変えます。保管のメモ（空欄でも大丈夫です）', iq.memo || '');
+  if (memo === null) return;
+  try{
+    const now = new Date().toISOString();
+    const st = { active:true, memo:memo.trim(), from:'inquiry', inquiryMemo:iq.memo || '', at:now, by:email, releasedAt:null, releasedBy:'' };
+    await ref.set({
+      storage: st,
+      inquiry: { active:false, resolvedAt:serverTs(), resolvedBy:email, resolution:'保管' },
+    }, { merge:true });
+    delete state.inq[no];
+    state.stor[no] = st;
+    toast('No.'+no+'を保管にしました');
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
+// 保管品を出荷済みにする（取り消すと保管に戻す）
+async function storageShip(no, on){
+  const email = state.user.email || '', ref = ordersCol().doc(String(no));
+  try{
+    if (on) {
+      if (!confirm('No.'+no+'の保管品を出荷済みにしますか？')) return;
+      const today = todayStr();
+      await ref.set({ storage:{ active:false, shipped:true, shippedAt:today, shippedBy:email,
+        releasedAt:new Date().toISOString(), releasedBy:email, releaseReason:'出荷' } }, { merge:true });
+      state.storDone[no] = Object.assign({}, state.stor[no] || {}, { active:false, shipped:true, shippedAt:today, shippedBy:email });
+      delete state.stor[no];
+      toast('No.'+no+'を出荷済みにしました');
+    } else {
+      if (!confirm('No.'+no+'の出荷済みを取り消して、保管に戻しますか？')) return;
+      await ref.set({ storage:{ active:true, shipped:false, shippedAt:'', shippedBy:'', releasedAt:null, releasedBy:'', releaseReason:'',
+        unshippedAt:new Date().toISOString(), unshippedBy:email } }, { merge:true });
+      state.stor[no] = Object.assign({}, state.storDone[no] || {}, { active:true, shipped:false });
+      delete state.storDone[no];
+      toast('No.'+no+'を保管に戻しました');
+    }
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
+async function storageOff(no){
+  if (!confirm('No.'+no+'の保管を解除しますか？')) return;
+  const email = state.user.email || '';
+  try{
+    await ordersCol().doc(String(no)).set({ storage:{ active:false, releasedAt:new Date().toISOString(), releasedBy:email } }, { merge:true });
+    delete state.stor[no];
+    toast('No.'+no+'の保管を解除しました');
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
+
 let inqDocs = [];
 async function loadInquiryList(){
   $('#inqList').innerHTML = '<p class="muted">読み込み中…</p>';
@@ -1619,11 +1808,60 @@ async function loadInquiryList(){
       ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>ショップ</th><th>商品</th><th>お届け先</th><th>メモ</th><th>登録</th><th></th></tr></thead><tbody>'
         + inqDocs.map(d => '<tr><td>'+d.no+'</td><td>'+esc(d.shop)+'</td><td>'+esc(d.item)+'</td><td>'+esc(d.name)+'</td><td>'+esc(d.inquiry.memo)+'</td>'
           + '<td>'+esc(String(d.inquiry.at||'').slice(0,10))+'<br><span class="muted">'+esc(d.inquiry.by)+'</span></td>'
-          + '<td><button type="button" class="ghost mini inqoff" data-no="'+d.no+'">解除</button></td></tr>').join('')
+          + '<td><button type="button" class="ghost mini" data-act="toStor" data-no="'+d.no+'">保管にする</button> <button type="button" class="ghost mini inqoff" data-no="'+d.no+'">解除</button></td></tr>').join('')
         + '</tbody></table></div>'
       : '<p class="muted">問い合わせ中の注文はありません。検索結果の各注文にある「問い合わせ中にする」で登録できます。</p>';
   }catch(e){ $('#inqList').innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
+  await loadPastHoldList();
+  await loadStatusList('hold', '#holdList', d => d.hold, x => x.source==='note' ? '備考欄' : '手で登録',
+    d => d.hold.source==='note' ? '<span class="muted small">備考欄から消すと解除</span>' : '<button type="button" class="ghost mini" data-act="holdOff" data-no="'+d.no+'">解除</button>');
+  await loadStatusList('storage', '#storList', d => d.storage, x => x.from==='inquiry' ? '問い合わせ中から' : '',
+    d => '<button type="button" class="ghost mini" data-act="storShip" data-no="'+d.no+'">出荷済みにする</button> <button type="button" class="ghost mini" data-act="storOff" data-no="'+d.no+'">解除</button>');
+  await loadStatusList('storage', '#storDoneList', d => d.storage, x => '出荷済み '+md(x.shippedAt)+(x.shippedTracking ? '（'+x.shippedTracking+'）' : ''),
+    d => '<button type="button" class="ghost mini" data-act="storUnship" data-no="'+d.no+'">取り消す</button>', 'shipped');
+  const c = k => document.querySelectorAll(k+' tbody tr').length;
+  $('#inqCount').textContent = '問い合わせ中 '+inqDocs.length+'件 ／ 出荷保留 '+c('#holdList')+'件（過去シート '+c('#pastHoldList')+'件） ／ 保管 '+c('#storList')+'件 ／ 保管品の出荷済み '+c('#storDoneList')+'件';
 }
+async function loadPastHoldList(){
+  const el = $('#pastHoldList');
+  el.innerHTML = '<p class="muted">読み込み中…</p>';
+  try{
+    const snap = await pastHoldsCol().where('hold.active','==',true).get();
+    const docs = [];
+    snap.forEach(d => docs.push(Object.assign({ id:d.id }, d.data())));
+    docs.sort((a,b) => a.no-b.no);
+    el.innerHTML = docs.length
+      ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.（過去）</th><th>注文番号</th><th>ショップ</th><th>商品</th><th>お届け先</th><th>備考欄</th><th>入荷</th><th></th></tr></thead><tbody>'
+        + docs.map(d => '<tr><td>'+d.no+'<br><span class="muted small">'+esc(d.sheetLabel||'')+'</span></td><td>'+esc(d.orderId)+'</td><td>'+esc(d.shop)+'</td><td>'+esc(d.item)+'</td><td>'+esc(d.name)+'</td>'
+          + '<td class="small">'+esc(String(d.hold.memo||'').slice(0,120))+'</td><td>'+esc(d.arrivedAt||'')+'</td>'
+          + '<td><button type="button" class="ghost mini" data-act="pastOff" data-no="'+d.no+'" data-id="'+esc(d.id)+'">解除</button></td></tr>').join('')
+        + '</tbody></table></div>'
+      : '<p class="muted">ありません。</p>';
+  }catch(e){ el.innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
+}
+async function loadStatusList(field, sel, get, srcText, btn, flag){
+  $(sel).innerHTML = '<p class="muted">読み込み中…</p>';
+  try{
+    const snap = await ordersCol().where(field+'.'+(flag || 'active'),'==',true).get();
+    const docs = [];
+    snap.forEach(d => docs.push(Object.assign({ no:Number(d.id) }, d.data())));
+    // 出荷済みは新しい順、ほかはNo.順
+    docs.sort((a,b) => flag ? String(get(b).shippedAt||'').localeCompare(String(get(a).shippedAt||'')) || b.no-a.no : a.no-b.no);
+    docs.forEach(d => (field==='hold' ? state.hold : flag ? state.storDone : state.stor)[d.no] = get(d));
+    $(sel).innerHTML = docs.length
+      ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>ショップ</th><th>商品</th><th>お届け先</th><th>メモ</th><th>登録</th><th></th></tr></thead><tbody>'
+        + docs.map(d => { const x = get(d); return '<tr><td>'+d.no+'</td><td>'+esc(d.shop)+'</td><td>'+esc(d.item)+'</td><td>'+esc(d.name)+'</td>'
+          + '<td>'+esc(x.memo)+(x.inquiryMemo ? '<br><span class="muted small">問い合わせ時：'+esc(x.inquiryMemo)+'</span>' : '')+'</td>'
+          + '<td>'+esc(String(x.at||'').slice(0,10))+'<br><span class="muted">'+esc(srcText(x))+(x.by ? ' ／ '+esc(x.by) : '')+'</span></td>'
+          + '<td>'+btn(d)+'</td></tr>'; }).join('')
+        + '</tbody></table></div>'
+      : '<p class="muted">ありません。</p>';
+  }catch(e){ $(sel).innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
+}
+$('#tabInq').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (b) rowAction(b.dataset.act, Number(b.dataset.no), b);
+});
 $('#btnInqReload').onclick = loadInquiryList;
 $('#inqList').addEventListener('click', e => { const b=e.target.closest('.inqoff'); if (b) toggleInquiry(Number(b.dataset.no)); });
 
@@ -1745,6 +1983,7 @@ $('#btnLink').onclick = async () => {
       }
     }
 
+    await checkPastHolds(Object.values(cur));
     const plan = nos.map(no => {
       const c = byNo[no], r = cur[no], old = pickNo[no].old, multi = pickNo[no].multi;
       if (!r) return { no, c, old, multi, status:'nf' };
@@ -1753,11 +1992,12 @@ $('#btnLink').onclick = async () => {
       const want = oidOf(rec.procKey || rec.procOrderId) || (c.nos.length === 1 && !NO_OID(oidOf(c.orderNo)) ? oidOf(c.orderNo) : '');
       if (want && !matches(r, want)) return { no, c, r, old, multi, want, status:'oid' };
       if (state.inq[no]) return { no, c, r, old, multi, status:'inq' };
+      if (state.hold[no] || HOLD_RE.test(r.note || '')) return { no, c, r, old, multi, status:'stop', stopT:'出荷保留' };
       if (pickNo[no].unsure) return { no, c, r, old, multi, status:'unsure' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
       const ex = normTracking(r.tracking);
       // シートに古い送り状の番号が入っているだけなら、新しい番号で上書きする
       if (ex && ex !== normTracking(c.tracking) && !old.some(o => normTracking(o.tracking)===ex)) return { no, c, r, old, multi, status:'conflict' };
-      return { no, c, r, old, multi, status: ex===normTracking(c.tracking) ? 'same' : (ex ? 'replace' : 'ok') };
+      return { no, c, r, old, multi, fromStor: !!state.stor[no], status: ex===normTracking(c.tracking) ? 'same' : (ex ? 'replace' : 'ok') };
     });
     linkPlan = { plan, unlinked };
     renderLinkPlan();
@@ -1771,11 +2011,13 @@ function renderLinkPlan(){
   const label = p => {
     if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
     if (p.status==='inq') return '<span class="st-ng">問い合わせ中のため書き込みません</span>';
+    if (p.status==='stop') return '<span class="st-ng">'+p.stopT+'のため書き込みません</span>';
     if (p.status==='oid') return '<span class="st-ng">シートの注文（'+esc(keyLabel(keyOf(p.r)))+'）が送り状の注文（'+esc(keyLabel(p.want))+'）と違うため書き込みません</span>';
     if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
     if (p.status==='unsure') return '<span class="st-ng">送り状が複数あり、どれが新しいか判断できません（アプリで作った記録がありません）。シートに手で入れてください</span>';
     if (p.status==='replace') return '<span class="st-ok">古い追跡番号（'+esc(p.r.tracking)+'）を新しい番号に書き換えます</span>';
-    return '<span class="st-ok">'+(p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます')+'</span>';
+    return '<span class="st-ok">'+(p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます')+'</span>'
+      + (p.fromStor ? '<br><span class="small muted">保管品の出荷：書き込んだあと保管を解除します</span>' : '');
   };
   $('#linkResult').innerHTML = '<p><b>書き込み対象 '+w.length+'件</b><span class="muted"> ／ 書き込まない '+(plan.length-w.length)+'件 ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
     + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
@@ -1814,7 +2056,12 @@ $('#btnLinkWrite').onclick = async () => {
         procOrderId: oidOf(p.r.orderId),
         procKey: keyOf(p.r),
         trackingLinkedAt: serverTs(),
+        // 保管品を出荷したら、保管を解除して出荷の記録を残す
+        ...(p.fromStor ? { storage:{ active:false, releasedAt:new Date().toISOString(), releasedBy:(state.user && state.user.email) || '',
+          releaseReason:'出荷', shipped:true, shippedBy:(state.user && state.user.email) || '',
+          shippedAt:p.c.date || todayStr(), shippedCarrier:p.c.carrier, shippedTracking:p.c.tracking } } : {}),
       }])).catch(e => console.warn(e));
+      part.forEach(p => { if (p.fromStor) { state.storDone[p.no] = Object.assign({}, state.stor[p.no], { shipped:true, shippedAt:p.c.date || todayStr() }); delete state.stor[p.no]; } });
     }
     linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号・出荷日）');
     // 出荷日が変わる注文もあるので、新しい出荷日と元の出荷日の両方を数え直す
@@ -1825,6 +2072,8 @@ $('#btnLinkWrite').onclick = async () => {
     });
     await pushShukkaCounts([...days]);
     logList('問い合わせ中のため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='inq').map(p=>'No.'+p.no));
+    logList('出荷保留のため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='stop').map(p=>'No.'+p.no));
+    logList('✅ 保管品の出荷のため、保管を解除した注文', targets.filter(p=>p.fromStor).map(p=>'No.'+p.no+'（'+p.c.carrier+' '+p.c.tracking+'）'));
     logList('注文番号が違うため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='oid').map(p=>'No.'+p.no+'（シート：'+keyLabel(keyOf(p.r))+' ／ 送り状：'+keyLabel(p.want)+'）'));
     logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
     toast(done+'件をシートに反映しました');
@@ -1949,9 +2198,11 @@ $('#btnNotifyCsv').onclick = async () => {
   let inqOids = new Set();
   if ($('#excludeInq').checked) {
     try{
-      const snap = await ordersCol().where('inquiry.active','==',true).get();
-      snap.forEach(d => { const o=d.data().orderId; if (o) inqOids.add(cleanOrderNoNormalized(o)); });
-    }catch(e){ linkLog('⚠️ 問い合わせ中の注文を読み込めませんでした：'+e.message); }
+      for (const f of ['inquiry.active','hold.active','storage.active']) {
+        const snap = await ordersCol().where(f,'==',true).get();
+        snap.forEach(d => { const o=d.data().orderId; if (o && !NO_OID(oidOf(o))) inqOids.add(cleanOrderNoNormalized(o)); });
+      }
+    }catch(e){ linkLog('⚠️ 問い合わせ中・出荷保留・保管の注文を読み込めませんでした：'+e.message); }
   }
 
   const header = [...files.order[0]];
@@ -1982,7 +2233,7 @@ $('#btnNotifyCsv').onclick = async () => {
   if (cmap.multi) linkLog('- 複数口の注文：'+cmap.multi+'件（1口目の伝票番号で紐づけ）');
   logList('ℹ️ 送り状が作り直されていた注文（新しいほうを使用）', cmap.reissued);
   logList('⚠️ 送り状が複数あり、どれが新しいか判断できないため外した注文（手で確認してください）', cmap.unsure);
-  logList('⚠️ 問い合わせ中のため外した注文', skippedInq);
+  logList('⚠️ 問い合わせ中・出荷保留・保管のため外した注文', skippedInq);
   logList('⚠️ 受注CSVにあるが、追跡番号が見つからなかった注文', unmatched);
   logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号', [...cmap.map.values()].filter(e=>!e.used && e.carrier==='ヤマト運輸').map(e=>e.rawOrderNo));
   logList('⚠️ 佐川CSVにあるが、受注CSVに見当たらない注文番号', [...cmap.map.values()].filter(e=>!e.used && e.carrier==='佐川急便').map(e=>e.rawOrderNo));
