@@ -228,9 +228,9 @@ details.others summary{cursor:pointer;color:var(--muted);font-weight:700;padding
     <!-- 受領 -->
     <section id="recvView">
       <form class="finder" id="recvForm">
-        <label for="recvQ">名前・品名・注文番号</label>
+        <label for="recvQ">返送No.・名前・品名・注文番号</label>
         <div class="finder-row">
-          <input id="recvQ" class="text" autocomplete="off" placeholder="例：山崎宏一">
+          <input id="recvQ" class="text" autocomplete="off" placeholder="例：12　/　山崎宏一">
           <button type="submit" id="recvBtn">検索</button>
         </div>
       </form>
@@ -454,7 +454,7 @@ function receiptHtml(it) {
   return `<div class="receipt"><div class="receipt-label">受け取った荷物の状態を選んでください</div><div class="receipt-grid">${rows}</div></div>`;
 }
 
-const FIELD_LABEL = { name: "名前", title: "品名", orderNo: "注文番号" };
+const FIELD_LABEL = { no: "返送No.", name: "名前", title: "品名", orderNo: "注文番号" };
 
 async function searchRecv() {
   const q = $("recvQ").value.trim();
@@ -475,10 +475,12 @@ $("recvForm").addEventListener("submit", (e) => { e.preventDefault(); searchRecv
 function renderRecv() {
   if (!recv) { $("recvResult").innerHTML = ""; return; }
   if (!recv.items.length) {
-    $("recvResult").innerHTML = `<div class="notice">名前・品名・注文番号のどれでも見つかりませんでした。字を短くして（名字だけ、品名の一部など）もう一度お試しください。</div>`;
+    $("recvResult").innerHTML = `<div class="notice">返送No.・名前・品名・注文番号のどれでも見つかりませんでした。返送No.はシートA列の番号を、名前・品名は字を短くして（名字だけ、品名の一部など）もう一度お試しください。</div>`;
     return;
   }
-  const note = recv.matchedBy === "name"
+  const note = recv.matchedBy === "no"
+    ? `返送No.で ${recv.items.length} 件見つかりました`
+    : recv.matchedBy === "name"
     ? `名前で ${recv.items.length} 件見つかりました`
     : `名前では見つからなかったため、${FIELD_LABEL[recv.matchedBy]}で ${recv.items.length} 件見つかりました`;
   $("recvResult").innerHTML = `<p class="hit-note">${note}</p><div class="list">${
