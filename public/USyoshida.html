@@ -697,7 +697,7 @@ async function doSearch(preselect){
     state.selected = new Set(preselect ? j.rows.map(r=>r.no) : []);
     render();
     const saved = await loadInquiryFlags(j.rows.map(r=>r.no));
-    if (saved) await syncNoteHolds(j.rows);
+    if (saved) await syncNoteHolds(j.rows, saved);
     await checkPastHolds(j.rows);
     state.mism = {};
     if (saved) j.rows.forEach(r => {
@@ -1650,14 +1650,19 @@ function rowButtons(no){
   let h = b('inq', state.inq[no] ? '問い合わせを解除' : '問い合わせ中にする');
   if (state.inq[no]) h += b('toStor', '保管にする');
   if (state.stor[no]) h += b('storShip', '出荷済みにする') + b('storOff', '保管を解除');
-  else if (state.hold[no]) h += state.hold[no].source==='note' ? '' : state.hold[no].source==='past'
-    ? '<button type="button" class="ghost mini" data-act="pastOff" data-no="'+no+'" data-id="'+esc(state.hold[no].pastId)+'">保留を解除</button>'
-    : b('holdOff', '保留を解除');
+  else if (state.hold[no]) {
+    const hd = state.hold[no];
+    h += '<button type="button" class="ghost mini" data-act="holdShip" data-no="'+no+'" data-id="'+esc(hd.pastId||'')+'">出荷済みにする</button>';
+    h += hd.source==='note' ? '' : hd.source==='past'
+      ? '<button type="button" class="ghost mini" data-act="pastOff" data-no="'+no+'" data-id="'+esc(hd.pastId)+'">保留を解除</button>'
+      : b('holdOff', '保留を解除');
+  }
   else h += b('holdOn', '出荷保留にする');
   return h;
 }
 async function rowAction(act, no, el){
   if (act==='pastOff') return setPastHold(el && el.dataset.id, false);
+  if (act==='holdShip') return holdShip(no, el && el.dataset.id);
   if (act==='inq') return toggleInquiry(no);
   if (act==='holdOn') return setHold(no, true);
   if (act==='holdOff') return setHold(no, false);
@@ -1711,6 +1716,29 @@ async function checkPastHolds(rows){
     }
   }catch(e){ console.warn('過去シートの出荷保留の確認に失敗', e); }
 }
+// 出荷保留（保管していたもの）を出荷済みにする。「保管品（出荷済み）」の一覧に移す
+async function holdShip(no, pastId){
+  if (!confirm((no ? 'No.'+no : 'この注文')+'を出荷済みにしますか？（出荷保留から外れます）')) return;
+  const email = state.user.email || '', now = new Date().toISOString(), today = todayStr();
+  const hd = (no && state.hold[no]) || {};
+  const done = { active:false, releasedAt:now, releasedBy:email, releaseReason:'出荷', shipped:true, shippedAt:today, shippedBy:email };
+  try{
+    const items = [];
+    if (pastId) items.push([pastHoldsCol().doc(pastId), { hold:done }]);
+    if (no && hd.source !== 'past') items.push([ordersCol().doc(String(no)), { hold:done }]);
+    if (no) items.push([ordersCol().doc(String(no)), {
+      storage:{ active:false, shipped:true, shippedAt:today, shippedBy:email, from:'hold', memo:String(hd.memo||'').slice(0,300),
+        at:hd.at || now, by:hd.by || email, releasedAt:now, releasedBy:email, releaseReason:'出荷' },
+    }]);
+    await batchSetAll(items);
+    if (no) {
+      state.storDone[no] = { shipped:true, shippedAt:today, shippedBy:email, from:'hold', memo:hd.memo || '' };
+      delete state.hold[no]; delete state.stor[no];
+    }
+    toast((no ? 'No.'+no : '')+'を出荷済みにしました');
+  }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
+  afterStatusChange();
+}
 async function setPastHold(id, on){
   if (!on && !confirm('過去シートの出荷保留を解除しますか？')) return;
   try{
@@ -1720,11 +1748,14 @@ async function setPastHold(id, on){
   }catch(e){ toast('保存できませんでした：'+e.message, 6000); return; }
   afterStatusChange();
 }
-async function syncNoteHolds(rows){
+async function syncNoteHolds(rows, saved){
   const email = (state.user && state.user.email) || '', now = new Date().toISOString();
   const items = [];
   rows.forEach(r => {
     const inNote = HOLD_RE.test(r.note || ''), cur = state.hold[r.no];
+    const prev = saved && saved[r.no] && saved[r.no].hold;
+    // 「出荷済みにする」などで片付けた保留は、備考欄に「出荷保留」が残っていても登録し直さない
+    if (inNote && !cur && prev && prev.releaseReason) return;
     if (inNote && !cur) {
       const hd = { active:true, memo:String(r.note).trim().slice(0,300), source:'note', at:now, by:email, releasedAt:null, releasedBy:'' };
       state.hold[r.no] = hd;
@@ -1814,10 +1845,11 @@ async function loadInquiryList(){
   }catch(e){ $('#inqList').innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
   await loadPastHoldList();
   await loadStatusList('hold', '#holdList', d => d.hold, x => x.source==='note' ? '備考欄' : '手で登録',
-    d => d.hold.source==='note' ? '<span class="muted small">備考欄から消すと解除</span>' : '<button type="button" class="ghost mini" data-act="holdOff" data-no="'+d.no+'">解除</button>');
+    d => '<button type="button" class="ghost mini" data-act="holdShip" data-no="'+d.no+'">出荷済みにする</button> '
+      + (d.hold.source==='note' ? '<span class="muted small">備考欄から消すと解除</span>' : '<button type="button" class="ghost mini" data-act="holdOff" data-no="'+d.no+'">解除</button>'));
   await loadStatusList('storage', '#storList', d => d.storage, x => x.from==='inquiry' ? '問い合わせ中から' : '',
     d => '<button type="button" class="ghost mini" data-act="storShip" data-no="'+d.no+'">出荷済みにする</button> <button type="button" class="ghost mini" data-act="storOff" data-no="'+d.no+'">解除</button>');
-  await loadStatusList('storage', '#storDoneList', d => d.storage, x => '出荷済み '+md(x.shippedAt)+(x.shippedTracking ? '（'+x.shippedTracking+'）' : ''),
+  await loadStatusList('storage', '#storDoneList', d => d.storage, x => '出荷済み '+md(x.shippedAt)+(x.shippedTracking ? '（'+x.shippedTracking+'）' : '')+(x.from==='hold' ? '（出荷保留から）' : ''),
     d => '<button type="button" class="ghost mini" data-act="storUnship" data-no="'+d.no+'">取り消す</button>', 'shipped');
   const c = k => document.querySelectorAll(k+' tbody tr').length;
   $('#inqCount').textContent = '問い合わせ中 '+inqDocs.length+'件 ／ 出荷保留 '+c('#holdList')+'件（過去シート '+c('#pastHoldList')+'件） ／ 保管 '+c('#storList')+'件 ／ 保管品の出荷済み '+c('#storDoneList')+'件';
@@ -1834,7 +1866,7 @@ async function loadPastHoldList(){
       ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.（過去）</th><th>注文番号</th><th>ショップ</th><th>商品</th><th>お届け先</th><th>備考欄</th><th>入荷</th><th></th></tr></thead><tbody>'
         + docs.map(d => '<tr><td>'+d.no+'<br><span class="muted small">'+esc(d.sheetLabel||'')+'</span></td><td>'+esc(d.orderId)+'</td><td>'+esc(d.shop)+'</td><td>'+esc(d.item)+'</td><td>'+esc(d.name)+'</td>'
           + '<td class="small">'+esc(String(d.hold.memo||'').slice(0,120))+'</td><td>'+esc(d.arrivedAt||'')+'</td>'
-          + '<td><button type="button" class="ghost mini" data-act="pastOff" data-no="'+d.no+'" data-id="'+esc(d.id)+'">解除</button></td></tr>').join('')
+          + '<td><button type="button" class="ghost mini" data-act="holdShip" data-no="0" data-id="'+esc(d.id)+'">出荷済みにする</button> <button type="button" class="ghost mini" data-act="pastOff" data-no="'+d.no+'" data-id="'+esc(d.id)+'">解除</button></td></tr>').join('')
         + '</tbody></table></div>'
       : '<p class="muted">ありません。</p>';
   }catch(e){ el.innerHTML = '<p class="st-ng">読み込めませんでした：'+esc(e.message)+'</p>'; }
