@@ -465,16 +465,19 @@ function esc(str) {
 
 /* ==================== ユーザー名・確認済み判定 ==================== */
 const getMe = () => (localStorage.getItem('app_user_name') || '').trim();
-// 名前を初めて設定した時刻より前の投稿は「確認済み」扱い（過去分で未読が溢れないように）
-const getBaseline = () => Number(localStorage.getItem('app_read_baseline') || 0);
+// この日時より前の投稿は「確認済み」扱い（全端末・全員共通。必要に応じて日付を変更）
+const READ_BASELINE = new Date('2026-11-08T00:00:00+09:00').getTime();
+// 名前の表記ゆれ（全角/半角・スペース）を吸収して比較する
+const normName = s => String(s || '').normalize('NFKC').replace(/\s+/g, '');
 
 function isRead(item) {
-  const me = getMe();
+  const me = normName(getMe());
   if (!me) return true;
-  if ((item.readBy || []).includes(me)) return true;
-  if (item.from && item.from === me) return true;
-  if (item.author && item.author === me) return true;
-  return ms(item.createdAt) && ms(item.createdAt) < getBaseline();
+  if ((item.readBy || []).some(n => normName(n) === me)) return true;
+  if (normName(item.from) === me) return true;
+  if (normName(item.author) === me) return true;
+  const t = ms(item.createdAt);
+  return t > 0 && t < READ_BASELINE;
 }
 function splitNames(s) { return String(s || '').split(/[,、，\s・/]+/).filter(Boolean); }
 function isForMe(s) {
@@ -500,7 +503,6 @@ window.saveName = () => {
 };
 function setMe(v) {
   localStorage.setItem('app_user_name', v);
-  if (!localStorage.getItem('app_read_baseline')) localStorage.setItem('app_read_baseline', String(Date.now()));
   renderMe();
   if (!$('staff-edit-id').value && !$('staff-from').value) $('staff-from').value = v;
   renderAll();
