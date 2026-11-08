@@ -541,11 +541,21 @@ exports.henso = onRequest(
         return res.json({ url });
       }
 
-      // 受領：名前 → 品名 → 注文番号 の順に探す
+      // 受領：返送No. → 名前 → 品名 → 注文番号 の順に探す
+      //   「12」「No.12」「返送No.12」のような5桁までの数字は、まず返送No.として探す
       if (action === "search" && req.method === "GET") {
         const q = normText(req.query.q);
-        if (!q) return res.status(400).json({ error: "名前・品名・注文番号のどれかを入れてください" });
+        if (!q) return res.status(400).json({ error: "返送No.・名前・品名・注文番号のどれかを入れてください" });
         const items = await allItems(fresh);
+        const noOnly = /^(返送(管理)?(シート)?)?(no\.?|#|№)\d{1,5}$/.test(q); // 「No.」付きは返送No.だけで探す
+        if (noOnly || /^\d{1,5}$/.test(q)) {
+          const qNo = normNo(q);
+          const hits = items.filter((x) => x.no === qNo);
+          if (hits.length || noOnly) {
+            await fillImages(hits);
+            return res.json({ matchedBy: "no", items: hits });
+          }
+        }
         for (const field of ["name", "title", "orderNo"]) {
           const hits = items.filter((x) => normText(x[field]).includes(q)).sort(byNoDesc).slice(0, 30);
           if (hits.length) {
