@@ -1736,11 +1736,12 @@ async function nextQuestionNo() {
 }
 
 async function askQuestion(token, p) {
-  const rid = safeRid(p.room_id);
+  // room_id が空なら「単独の質問」（チャットに結びつかない質問）
+  const rid = p.room_id ? safeRid(p.room_id) : "";
   const cfg = await getAiConfig();
   const qRoom = questionRoomOf(cfg);
   if (!qRoom) throw new Error("質問を送る社内ルームが設定されていません（⚙️で設定できます）");
-  const roomName = String(p.room_name || "").slice(0, 80);
+  const roomName = String(p.room_name || "").slice(0, 80) || (rid ? "" : "単独の質問");
   const context = String(p.context || "").slice(0, 3000);
   const by = String(p.by || "").slice(0, 40);
   let question = String(p.note || "").trim().slice(0, 1000);
@@ -1811,8 +1812,11 @@ async function askQuestion(token, p) {
     answer: "", answeredBy: "", answeredAt: 0
   };
   await db.collection("cw_questions").doc("Q" + no).set(data);
-  await db.collection("cw_rooms").doc(p.account + "_" + rid).set({ question: roomQuestion(data) }, { merge: true });
-  const later = await setLater(p.account, [rid], true);
+  let later = null;
+  if (rid) {
+    await db.collection("cw_rooms").doc(p.account + "_" + rid).set({ question: roomQuestion(data) }, { merge: true });
+    later = await setLater(p.account, [rid], true);
+  }
   return { no, label, question, later, taskId, taskError };
 }
 
@@ -1882,17 +1886,19 @@ async function detectAnswers(qRoomId, msgs) {
     });
     if (!ok) continue;
     await completeQuestionTask(id, q);
-    await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: roomQuestion(done) }, { merge: true });
-    try { await setLater(q.account, [q.roomId], false); } catch (e) {}
-    // 要対応に戻す（「未対応に戻す」と同じ）
-    await db.collection("cw_handled").doc(q.account + "_" + q.roomId).set({
-      account: q.account, roomId: q.roomId, handledAt: 0, reopen: true, by: "渡辺さん回答", auto: false,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    await db.collection("cw_handled_log").add({
-      account: q.account, roomId: q.roomId, roomName: q.roomName || "", action: "reopen", by: "渡辺さん回答 " + q.label,
-      at: admin.firestore.FieldValue.serverTimestamp()
-    });
+    if (q.roomId) {   // 単独の質問（ルームなし）は、質問リストに回答が載るだけ
+      await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: roomQuestion(done) }, { merge: true });
+      try { await setLater(q.account, [q.roomId], false); } catch (e) {}
+      // 要対応に戻す（「未対応に戻す」と同じ）
+      await db.collection("cw_handled").doc(q.account + "_" + q.roomId).set({
+        account: q.account, roomId: q.roomId, handledAt: 0, reopen: true, by: "渡辺さん回答", auto: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      await db.collection("cw_handled_log").add({
+        account: q.account, roomId: q.roomId, roomName: q.roomName || "", action: "reopen", by: "渡辺さん回答 " + q.label,
+        at: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
     // Q&Aの蓄積（AI返信の参考用）
     const ref = db.collection("cw_server").doc("qa_recent");
     await db.runTransaction(async tx => {
@@ -1943,7 +1949,7 @@ async function closeQuestion(account, roomId, no) {
   const q = snap.data();
   if (q.status === "open") await ref.set({ status: "cancelled", cancelledAt: nowSec() }, { merge: true });
   await completeQuestionTask("Q" + n, q);   // ChatworkのAPIではタスクを消せないので、完了にしておく
-  await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: null }, { merge: true });
+  if (q.roomId) await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: null }, { merge: true });
   return { ok: true };
 }
 
