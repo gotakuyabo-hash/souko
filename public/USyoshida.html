@@ -686,7 +686,7 @@ async function doSearch(preselect){
     state.mism = {};
     if (saved) j.rows.forEach(r => {
       const proc = procOf(saved[r.no]);
-      if (proc && hasProc(r) && proc !== oidOf(r.orderId)) state.mism[r.no] = proc;
+      if (proc && hasProc(r) && !matches(r, proc)) state.mism[r.no] = keyLabel(proc);
     });
     render();
     const mn = Object.keys(state.mism).length;
@@ -913,7 +913,7 @@ async function setArrived(clear){
   const btns = [$('#btnArrive'), $('#btnUnarrive')]; btns.forEach(b=>b.disabled=true);
   try{
     // 画面に出してから今までに、シートの注文が変わっていないか確かめる
-    const expect = {}; nos.forEach(no => expect[no] = state.rows[no].orderId);
+    const expect = {}; nos.forEach(no => expect[no] = keyOf(state.rows[no]));
     const v = await verifyOrders(expect);
     if (v.ng.length) { toast('シートの注文番号が画面と違うため、入荷登録を止めました。検索し直してください：'+ngText(v.ng).join('、'), 10000); return; }
     const updates = nos.filter(no => v.ok[no]).map(no => ({ no, rowNumber: v.ok[no].rowNumber, fields: { arrivedAt: clear ? '' : date } }));
@@ -935,7 +935,26 @@ async function setArrived(clear){
 const oidOf = s => String(s == null ? '' : s).trim();
 const hasProc = r => !!(r && (r.arrivedAt || r.shippedAt || r.tracking));
 // Firestoreの記録から「処理したときの注文番号」を取り出す（昔の記録は orderId を使う）
-function procOf(s){ return s ? oidOf(s.procOrderId || (hasProc(s) ? s.orderId : '')) : ''; }
+// 注文番号で見分けられない行（有在庫用・空欄）は、名前とASIN（なければ商品名）を合わせて見分ける
+const NO_OID = o => !o || o === '有在庫用';
+const squash = s => String(s == null ? '' : s).replace(/\s+/g, '').slice(0, 60);
+function keyOf(r){
+  const o = oidOf(r && r.orderId);
+  return NO_OID(o) ? (o || '空欄') + '|' + squash(r && r.name) + '|' + squash((r && r.asin) || (r && r.item)) : o;
+}
+// 期待する値（注文番号、または有在庫用などの「|」入りの見分け用の値）と行が合っているか
+function matches(r, want){
+  want = oidOf(want);
+  if (!want) return true;
+  return want.indexOf('|') >= 0 ? keyOf(r) === want : oidOf(r && r.orderId) === want;
+}
+// 画面に出すとき用
+function keyLabel(k){
+  const a = oidOf(k).split('|');
+  return a.length < 3 ? a[0] : a[0] + '（名前：' + (a[1] || '空欄') + ' ／ ASIN・商品：' + (a[2] || '空欄') + '）';
+}
+// Firestoreの記録から「処理したときの注文」を取り出す（昔の記録は注文番号などから作る）
+function procOf(s){ return s ? oidOf(s.procKey || s.procOrderId || (hasProc(s) ? keyOf(s) : '')) : ''; }
 // 書き込む直前にシートを読み直し、各No.の注文番号が期待どおりか確かめる
 // expect：{ No: 期待する注文番号 }。返り値：{ ok:{No:行}, ng:[{no, sheet, expect}] , nf:[No] }
 async function verifyOrders(expect){
@@ -950,7 +969,7 @@ async function verifyOrders(expect){
     const r = cur[no];
     if (!r) { nf.push(no); return; }
     const want = oidOf(expect[no]);
-    if (want && oidOf(r.orderId) !== want) ng.push({ no, sheet:oidOf(r.orderId), expect:want });
+    if (!matches(r, want)) ng.push({ no, sheet:keyLabel(keyOf(r)), expect:keyLabel(want) });
     else ok[no] = r;
   });
   return { ok, ng, nf };
@@ -977,7 +996,7 @@ async function saveOrders(rows, saved){
     const items = rows.filter(r => !saved || rowChanged(r, saved[r.no])).map(r => {
       const s = saved && saved[r.no];
       // 処理済みの昔の記録で procOrderId がなければ、上書きされる前の注文番号を残しておく
-      const keep = (s && !s.procOrderId && hasProc(s) && hasProc(r)) ? { procOrderId: oidOf(s.orderId) } : {};
+      const keep = (s && !s.procKey && !s.procOrderId && hasProc(s) && hasProc(r)) ? { procKey: keyOf(s), procOrderId: oidOf(s.orderId) } : {};
       return [col.doc(String(r.no)), Object.assign({}, r, keep, {
         lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
       })];
@@ -990,8 +1009,11 @@ async function logArrival(nos, date){
     const col = clientRef().collection('orders');
     await batchSetAll(nos.map(no => [col.doc(String(no)), {
       // 入荷登録した注文番号を残す（入荷日を消したときは、出荷情報がなければ消す）
-      procOrderId: date ? oidOf(state.rows[no] && state.rows[no].orderId)
-        : (state.rows[no] && (state.rows[no].shippedAt || state.rows[no].tracking) ? oidOf(state.rows[no].orderId) : ''),
+      ...(() => {
+        const r = state.rows[no];
+        const keepIt = date || (r && (r.shippedAt || r.tracking));
+        return { procOrderId: keepIt ? oidOf(r && r.orderId) : '', procKey: keepIt && r ? keyOf(r) : '' };
+      })(),
       arrivedAt: date,
       arrivedLoggedAt: firebase.firestore.FieldValue.serverTimestamp(),
       arrivedBy: state.user.email || '',
@@ -1488,6 +1510,7 @@ async function logLabels(list){
     const items = [];
     list.forEach(l => l.rows.forEach(r => items.push([col.doc(String(r.no)), {
       procOrderId: oidOf(r.orderId),   // 送り状を作った注文番号
+      procKey: keyOf(r),               // 有在庫用なども見分けられる値
       bundleNos: l.rows.map(x=>x.no),
       labelCarrier: l.carrier,
       labelType: l.carrier==='yamato' ? l.type : '',
@@ -1524,7 +1547,8 @@ function chunk(arr, n){ const out=[]; for (let i=0;i<arr.length;i+=n) out.push(a
 // 受注番号 → アプリに記録済みの注文 [{no,rowNumber}]
 async function ordersByOrderIds(ids){
   const map = {};
-  for (const part of chunk([...new Set(ids.filter(Boolean))], 30)) {
+  // 有在庫用・空欄は同じ値の行がたくさんあるので、注文番号では探さない
+  for (const part of chunk([...new Set(ids.map(oidOf).filter(o => !NO_OID(o)))], 30)) {
     const snap = await ordersCol().where('orderId','in',part).get();
     snap.forEach(d => { const v=d.data(); (map[v.orderId] = map[v.orderId] || []).push({ no:Number(d.id), rowNumber:v.rowNumber }); });
   }
@@ -1534,7 +1558,7 @@ async function ordersByOrderIds(ids){
 // 注文番号 → このアプリで最後に作った送り状の記録（業者・種類）
 async function labelRecsByOrderIds(ids){
   const map = {};
-  for (const part of chunk([...new Set(ids.filter(Boolean))], 30)) {
+  for (const part of chunk([...new Set(ids.map(oidOf).filter(o => !NO_OID(o)))], 30)) {
     const snap = await ordersCol().where('orderId','in',part).get();
     snap.forEach(d => {
       const v = d.data(); if (!v.labelCarrier) return;
@@ -1725,8 +1749,9 @@ $('#btnLink').onclick = async () => {
       const c = byNo[no], r = cur[no], old = pickNo[no].old, multi = pickNo[no].multi;
       if (!r) return { no, c, old, multi, status:'nf' };
       // 送り状を作った注文番号（なければ、1件だけの送り状は送り状の注文番号）と、今のシートの注文番号を比べる
-      const want = oidOf(recs[no] && recs[no].procOrderId) || (c.nos.length === 1 ? oidOf(c.orderNo) : '');
-      if (want && oidOf(r.orderId) !== want) return { no, c, r, old, multi, want, status:'oid' };
+      const rec = recs[no] || {};
+      const want = oidOf(rec.procKey || rec.procOrderId) || (c.nos.length === 1 && !NO_OID(oidOf(c.orderNo)) ? oidOf(c.orderNo) : '');
+      if (want && !matches(r, want)) return { no, c, r, old, multi, want, status:'oid' };
       if (state.inq[no]) return { no, c, r, old, multi, status:'inq' };
       if (pickNo[no].unsure) return { no, c, r, old, multi, status:'unsure' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
       const ex = normTracking(r.tracking);
@@ -1746,7 +1771,7 @@ function renderLinkPlan(){
   const label = p => {
     if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
     if (p.status==='inq') return '<span class="st-ng">問い合わせ中のため書き込みません</span>';
-    if (p.status==='oid') return '<span class="st-ng">シートの注文番号（'+esc(oidOf(p.r.orderId)||'空欄')+'）が送り状の注文番号（'+esc(p.want)+'）と違うため書き込みません</span>';
+    if (p.status==='oid') return '<span class="st-ng">シートの注文（'+esc(keyLabel(keyOf(p.r)))+'）が送り状の注文（'+esc(keyLabel(p.want))+'）と違うため書き込みません</span>';
     if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
     if (p.status==='unsure') return '<span class="st-ng">送り状が複数あり、どれが新しいか判断できません（アプリで作った記録がありません）。シートに手で入れてください</span>';
     if (p.status==='replace') return '<span class="st-ok">古い追跡番号（'+esc(p.r.tracking)+'）を新しい番号に書き換えます</span>';
@@ -1772,7 +1797,7 @@ $('#btnLinkWrite').onclick = async () => {
   linkLog('──────── シートへの反映 ────────', true);
   try{
     // 確認してから今までに、シートの注文が変わっていないか確かめる
-    const expect = {}; targets.forEach(p => expect[p.no] = p.r.orderId);
+    const expect = {}; targets.forEach(p => expect[p.no] = keyOf(p.r));
     const v = await verifyOrders(expect);
     if (v.ng.length) logList('⚠️ 確認後にシートの注文番号が変わったため書き込まなかった注文', ngText(v.ng));
     targets = targets.filter(p => v.ok[p.no]).map(p => Object.assign(p, { r: v.ok[p.no] }));
@@ -1787,6 +1812,7 @@ $('#btnLinkWrite').onclick = async () => {
         carrier:p.c.carrier, tracking:p.c.tracking,
         shippedAt: p.c.date || todayStr(),
         procOrderId: oidOf(p.r.orderId),
+        procKey: keyOf(p.r),
         trackingLinkedAt: serverTs(),
       }])).catch(e => console.warn(e));
     }
@@ -1799,7 +1825,7 @@ $('#btnLinkWrite').onclick = async () => {
     });
     await pushShukkaCounts([...days]);
     logList('問い合わせ中のため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='inq').map(p=>'No.'+p.no));
-    logList('注文番号が違うため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='oid').map(p=>'No.'+p.no+'（シート：'+(oidOf(p.r.orderId)||'空欄')+' ／ 送り状：'+p.want+'）'));
+    logList('注文番号が違うため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='oid').map(p=>'No.'+p.no+'（シート：'+keyLabel(keyOf(p.r))+' ／ 送り状：'+keyLabel(p.want)+'）'));
     logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
     toast(done+'件をシートに反映しました');
   }catch(e){ linkLog('❌ '+e.message); toast(e.message, 6000); }
@@ -2004,7 +2030,7 @@ $('#btnRobotRead').onclick = async () => {
     const v = Object.keys(expect).length ? await verifyOrders(expect) : { ok:{}, ng:[], nf:[] };
     items.forEach(x => {
       const all = map[x.orderNo] || [];
-      x.orders = all.filter(o => v.ok[o.no]).map(o => ({ no:o.no, rowNumber:v.ok[o.no].rowNumber }));
+      x.orders = all.filter(o => v.ok[o.no]).map(o => ({ no:o.no, rowNumber:v.ok[o.no].rowNumber, key:keyOf(v.ok[o.no]) }));
       x.skipped = all.filter(o => !v.ok[o.no]).map(o => o.no);
     });
     robotPlan = items;
@@ -2025,7 +2051,7 @@ $('#btnRobotWrite').onclick = async () => {
   const updates = [];
   robotPlan.forEach(x => x.orders.forEach(o => {
     const fields = { note2:x.status, statusUpdate:'更新済' }; // V列は空白＝連携不可、反映したら成功・失敗とも更新済
-    updates.push({ no:o.no, rowNumber:o.rowNumber, fields, _x:x });
+    updates.push({ no:o.no, rowNumber:o.rowNumber, fields, _x:x, _key:o.key });
   }));
   if (!updates.length) return;
   if (!confirm(updates.length+'件をシートに反映します。よろしいですか？')) return;
@@ -2035,7 +2061,7 @@ $('#btnRobotWrite').onclick = async () => {
     for (const part of chunk(updates, 100)) {
       const j = await gas('write', { updates: part.map(u => ({ no:u.no, rowNumber:u.rowNumber, fields:u.fields })) });
       done += j.updated; nf.push(...j.notFound);
-      await batchSetAll(part.map(u => [ordersCol().doc(String(u.no)), { robotStatus:u._x.status, robotMessage:u._x.msg, robotAt:serverTs(), procOrderId:oidOf(u._x.orderNo) }])).catch(e => console.warn(e));
+      await batchSetAll(part.map(u => [ordersCol().doc(String(u.no)), { robotStatus:u._x.status, robotMessage:u._x.msg, robotAt:serverTs(), procOrderId:oidOf(u._x.orderNo), procKey:u._key || oidOf(u._x.orderNo) }])).catch(e => console.warn(e));
     }
     toast(done+'件をシートに反映しました'+(nf.length ? ' ／ シートで見つからなかったNo.：'+nf.join('、') : ''), nf.length ? 8000 : 3200);
   }catch(e){ toast(e.message, 6000); }
