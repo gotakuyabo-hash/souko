@@ -1427,9 +1427,8 @@
             document.getElementById('sheetActionsBody').innerHTML =
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
-                (roomQuestionOf(rid) && roomQuestionOf(rid).status === 'open'
-                    ? sheetBtn('👤', `渡辺さんへの質問を取り下げる（${esc(roomQuestionOf(rid).label || '')}）`, `cancelQuestion(${Number(roomQuestionOf(rid).no) || 0})`)
-                    : sheetBtn('👤', '渡辺さんに聞く', `openAskForm('${key}')`)) +
+                sheetBtn('👤', roomOpenQuestions(rid).length ? '渡辺さんに別の質問をする' : '渡辺さんに聞く', `openAskForm('${key}')`) +
+                roomOpenQuestions(rid).map(q => sheetBtn('✖️', `渡辺さんへの質問を取り下げる（${esc(q.label || '')}）`, `cancelQuestion(${Number(q.no) || 0})`)).join('') +
                 sheetBtn('🎮', 'Discordでエンジニアに聞く', `askDiscord('${key}')`) +
                 sheetBtn('📦', 'USアプリに出荷依頼（No.を送る）', `openUsRequest('${key}')`) +
                 (isUsRoom(rid) ? sheetBtn('🚫', 'このルームでは「USアプリ」ボタンを出さない', `toggleUsRoom('${rid}')`) : '') +
@@ -2956,17 +2955,23 @@
         // ===== 渡辺さんへの質問リスト =====
         //   カードの ⋯ →「👤 渡辺さんに聞く」で社内ルームに質問を送り、ルームは「後で対応」へ
         //   渡辺さんがChatworkで返信すると、同期のときに読み取って要対応に戻る（カードに回答が出る）
-        function roomQuestionOf(rid) {
+        // ルームの質問（複数可）を古い順に
+        function roomQuestionsOf(rid) {
             const d = roomsMeta[safeId(rid)];
-            return d && d.question && d.question.status ? d.question : null;
+            if (!d) return [];
+            const map = {};
+            if (d.question && d.question.status) map[String(d.question.no)] = d.question;   // 古い形（1件だけ）
+            Object.keys(d.questions || {}).forEach(k => { const q = d.questions[k]; if (q && q.status) map[k] = q; });
+            return Object.values(map).sort((a, b) => (a.askedAt || 0) - (b.askedAt || 0));
         }
+        function roomOpenQuestions(rid) { return roomQuestionsOf(rid).filter(q => q.status === 'open'); }
         function questionBoxHtml(rid) {
-            const q = roomQuestionOf(rid);
-            if (!q) return '';
-            if (q.status === 'answered') {
-                return `<div class="q-box q-answered"><b>👤 ${esc(q.answeredBy || '渡辺さん')}の回答（${esc(q.label || '')}）</b>\n${esc(q.answer || '')}<div class="text-xs opacity-75 mt-1">質問：${esc(q.question || '')}</div></div>`;
-            }
-            return `<div class="q-box q-open"><b>👤 渡辺さんに質問中（${esc(q.label || '')}・${esc(waitLabel(q.askedAt || 0).replace('待ち', '前'))}）</b>\n${esc(q.question || '')}</div>`;
+            return roomQuestionsOf(rid).map(q => {
+                if (q.status === 'answered') {
+                    return `<div class="q-box q-answered"><b>👤 ${esc(q.answeredBy || '渡辺さん')}の回答（${esc(q.label || '')}）</b>\n${esc(q.answer || '')}<div class="text-xs opacity-75 mt-1">質問：${esc(q.question || '')}</div></div>`;
+                }
+                return `<div class="q-box q-open"><b>👤 渡辺さんに質問中（${esc(q.label || '')}・${esc(waitLabel(q.askedAt || 0).replace('待ち', '前'))}）</b>\n${esc(q.question || '')}</div>`;
+            }).join('');
         }
 
         window.openAskForm = function(key) {
