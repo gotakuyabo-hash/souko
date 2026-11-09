@@ -1235,8 +1235,7 @@ async function openLabels(){
     .map(r => digits(r.zip)).filter(z => z.length===7 && !(z in L.zipInfo));
   if (need.length) {
     toast('郵便番号の住所を調べています…');
-    try { const j = await gas('zip', { zips:[...new Set(need)] }); Object.assign(L.zipInfo, j.zips); }
-    catch(e){ toast(e.message, 6000); }
+    await lookupZips([...new Set(need)]);
   }
   renderLabels();
   $('#dlgLabels').showModal();
@@ -1556,11 +1555,41 @@ function focusEdit(){
 $('#labList').addEventListener('input', e => {
   const box = e.target.closest('.lab-edit'); if (box) updateEditCounts(box);
 });
+// ===== 郵便番号から住所を調べる（GASを使わず、zipcloudをブラウザから直接呼ぶ） =====
+function zipcloudLookup(z7){
+  return new Promise(resolve => {
+    const cb = '__zipcloud_' + z7 + '_' + Date.now();
+    const sc = document.createElement('script');
+    const done = v => { clearTimeout(timer); try { delete window[cb]; } catch(e){} sc.remove(); resolve(v); };
+    const timer = setTimeout(() => done(undefined), 8000);
+    window[cb] = j => {
+      const r = j && j.results;
+      if (!r || !r.length) { done(null); return; }   // 見つからない郵便番号
+      const towns = r.filter(x => x.address2 === r[0].address2).map(x => ({ town: x.address3, townKana: x.kana3 }));
+      done({ pref: r[0].address1, prefKana: r[0].kana1, city: r[0].address2, cityKana: r[0].kana2,
+             town: towns[0].town, townKana: towns[0].townKana, towns });
+    };
+    sc.onerror = () => done(undefined);               // 通信できなかった
+    sc.src = 'https://zipcloud.ibsnet.co.jp/api/search?zipcode=' + z7 + '&callback=' + cb;
+    document.head.appendChild(sc);
+  });
+}
+// まとめて調べて L.zipInfo に入れる。調べられなかった番号は、念のため連携GASでもう一度調べる
+async function lookupZips(zips){
+  const failed = [];
+  await Promise.all(zips.map(async z => {
+    const v = await zipcloudLookup(z);
+    if (v === undefined) failed.push(z); else L.zipInfo[z] = v;
+  }));
+  if (failed.length) {
+    try { const j = await gas('zip', { zips: failed }); Object.assign(L.zipInfo, j.zips); }
+    catch(e){ toast('郵便番号の住所を調べられないものがありました（'+failed.join('、')+'）', 6000); }
+  }
+}
 // 郵便番号の住所を調べる（まだ調べていない番号だけ）
 async function ensureZip(z){
   if (z.length===7 && !(z in L.zipInfo)) {
-    try { const j = await gas('zip', { zips:[z] }); Object.assign(L.zipInfo, j.zips); }
-    catch(e){ toast(e.message, 6000); }
+    await lookupZips([z]);
   }
   return L.zipInfo[z] || null;
 }
@@ -2656,7 +2685,7 @@ $('#btnReportSend').onclick = async () => {
 };
 
 /* ===== 英語住所 → 日本語（郵便番号の読みとローマ字を突き合わせて、重なる英語を外す） ===== */
-const KANA_ROMA = {ア:'a',イ:'i',ウ:'u',エ:'e',オ:'o',カ:'ka',キ:'ki',ク:'ku',ケ:'ke',コ:'ko',サ:'sa',シ:'si',ス:'su',セ:'se',ソ:'so',タ:'ta',チ:'ti',ツ:'tu',テ:'te',ト:'to',ナ:'na',ニ:'ni',ヌ:'nu',ネ:'ne',ノ:'no',ハ:'ha',ヒ:'hi',フ:'hu',ヘ:'he',ホ:'ho',マ:'ma',ミ:'mi',ム:'mu',メ:'me',モ:'mo',ヤ:'ya',ユ:'yu',ヨ:'yo',ラ:'ra',リ:'ri',ル:'ru',レ:'re',ロ:'ro',ワ:'wa',ヲ:'o',ン:'n',ガ:'ga',ギ:'gi',グ:'gu',ゲ:'ge',ゴ:'go',ザ:'za',ジ:'zi',ズ:'zu',ゼ:'ze',ゾ:'zo',ダ:'da',ヂ:'zi',ヅ:'zu',デ:'de',ド:'do',バ:'ba',ビ:'bi',ブ:'bu',ベ:'be',ボ:'bo',パ:'pa',ピ:'pi',プ:'pu',ペ:'pe',ポ:'po',ヴ:'bu',ァ:'a',ィ:'i',ゥ:'u',ェ:'e',ォ:'o'};
+const EN_KANA_ROMA = {ア:'a',イ:'i',ウ:'u',エ:'e',オ:'o',カ:'ka',キ:'ki',ク:'ku',ケ:'ke',コ:'ko',サ:'sa',シ:'si',ス:'su',セ:'se',ソ:'so',タ:'ta',チ:'ti',ツ:'tu',テ:'te',ト:'to',ナ:'na',ニ:'ni',ヌ:'nu',ネ:'ne',ノ:'no',ハ:'ha',ヒ:'hi',フ:'hu',ヘ:'he',ホ:'ho',マ:'ma',ミ:'mi',ム:'mu',メ:'me',モ:'mo',ヤ:'ya',ユ:'yu',ヨ:'yo',ラ:'ra',リ:'ri',ル:'ru',レ:'re',ロ:'ro',ワ:'wa',ヲ:'o',ン:'n',ガ:'ga',ギ:'gi',グ:'gu',ゲ:'ge',ゴ:'go',ザ:'za',ジ:'zi',ズ:'zu',ゼ:'ze',ゾ:'zo',ダ:'da',ヂ:'zi',ヅ:'zu',デ:'de',ド:'do',バ:'ba',ビ:'bi',ブ:'bu',ベ:'be',ボ:'bo',パ:'pa',ピ:'pi',プ:'pu',ペ:'pe',ポ:'po',ヴ:'bu',ァ:'a',ィ:'i',ゥ:'u',ェ:'e',ォ:'o'};
 function normRoma(s){
   return String(s||'').toLowerCase().replace(/[^a-z]/g,'')
     .replace(/tch/g,'tt').replace(/sh/g,'sy').replace(/ch/g,'ty').replace(/ts/g,'t').replace(/j/g,'zy').replace(/f/g,'h')
@@ -2668,8 +2697,8 @@ function kanaToRoma(kana){
   let out = '';
   for (let i=0; i<s.length; i++) {
     const c = s[i], n = s[i+1];
-    if (c === 'ッ') { out += (KANA_ROMA[n]||'').charAt(0); continue; }
-    let r = KANA_ROMA[c];
+    if (c === 'ッ') { out += (EN_KANA_ROMA[n]||'').charAt(0); continue; }
+    let r = EN_KANA_ROMA[c];
     if (r === undefined) continue;
     if (n && 'ャュョ'.includes(n)) { r = r.replace(/i$/,'') + 'y' + ({ャ:'a',ュ:'u',ョ:'o'})[n]; i++; }
     out += r;
@@ -2685,8 +2714,15 @@ function romaTargets(z){
   c.split('gun').forEach((x, i, arr) => { if (i < arr.length-1) { pieces.push(x, x+'gun'); } else pieces.push(x); });
   pieces.slice().forEach(x => { const m = x.match(/^(.+si)(.+ku)$/); if (m) pieces.push(m[1], m[2]); });
   pieces.forEach(x => { add(city, x); add(city, x.replace(/(si|ku|tyo|mati|son|mura)$/,'')); });
-  if (z.town && !/[（(]|以下/.test(z.town)) { const t = kanaToRoma(z.townKana); add(town, t); add(town, t.replace(/(tyo|mati)$/,'')); }
-  return { pref, city, town };
+  // 町名：郵便番号に町名が複数あるときは、住所に書かれているものを使う
+  const townOf = {};
+  const towns = (z.towns && z.towns.length) ? z.towns : [{ town: z.town, townKana: z.townKana }];
+  towns.forEach(x => {
+    if (!x.town || /[（(]|以下/.test(x.town)) return;
+    const t = kanaToRoma(x.townKana);
+    [t, t.replace(/(tyo|mati)$/,'')].forEach(r => { if (r && r.length >= 2) { town.add(r); townOf[r] = x.town; } });
+  });
+  return { pref, city, town, townOf };
 }
 // 英語住所によく付く語：国名は消す。市・区・県などの英語は、地名のすぐ後ろにあるときだけ消す
 const EN_COUNTRY = /^(japan|jpn|jp|nippon)\.?$/i;
@@ -2697,7 +2733,7 @@ function convertEnglishAddressEx(en, z, zip7){
   const base = z.pref + z.city, notes = [];
   let s = String(en||'').normalize('NFKC');
   // 住所の中に書かれた郵便番号は消す
-  s = s.replace(/〒?\s*\d{3}\s*-?\s*\d{4}(?!\d)/g, m => (!zip7 || digits(m)===zip7) ? ' ' : m);
+  s = s.replace(/〒?\s*\d{3}\s*-?\s*\d{4}(?!\d)/g, m => (!zip7 || m.replace(/\D/g,'')===zip7) ? ' ' : m);
   // 「2 Chome-8-1」「2-chome 8-1」「8-ban 1-go」→「2-8-1」の形に
   s = s.replace(/(\d+)\s*-?\s*chome\b\s*-?\s*/gi, '$1-')
        .replace(/(\d+)\s*-?\s*banchi\b\s*-?\s*/gi, '$1-')
@@ -2708,7 +2744,7 @@ function convertEnglishAddressEx(en, z, zip7){
   const T = romaTargets(z);
   const tk = s.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([A-Za-z])(\d)/g,'$1 $2').replace(/#\s*/g,'# ')
               .split(/[\s,]+/).filter(Boolean);
-  const keep = []; let removed = 0, townHit = false;
+  const keep = []; let removed = 0, townHit = false, townJa = '';
   for (let i = 0; i < tk.length; ) {
     if (EN_COUNTRY.test(tk[i])) { i++; continue; }
     let hit = 0;
@@ -2719,7 +2755,7 @@ function convertEnglishAddressEx(en, z, zip7){
       const r = normRoma(seg.join(''));
       if (r.length < 2) continue;
       if (T.pref.has(r) || T.city.has(r)) { hit = n; break; }
-      if (T.town.has(r)) { hit = n; townHit = true; break; }
+      if (T.town.has(r)) { hit = n; townHit = true; townJa = T.townOf[r]; break; }
     }
     if (hit) {
       i += hit; removed += hit;
@@ -2727,7 +2763,10 @@ function convertEnglishAddressEx(en, z, zip7){
     } else { keep.push(tk[i]); i++; }
   }
   if (!removed) return { addr: base + ' ' + s.replace(/\s+/g,' ').trim(), notes:['地名が読み取れず、前に付けただけ'] };
-  if (!townHit && z.town && !/[（(]|以下/.test(z.town)) notes.push('町名（'+z.town+'）が見つからない');
+  if (!townHit) {
+    const ts = ((z.towns && z.towns.length) ? z.towns.map(x => x.town) : [z.town]).filter(t => t && !/[（(]|以下/.test(t));
+    if (ts.length) notes.push('町名（'+ts.slice(0,3).join('・')+(ts.length>3?'など':'')+'）が見つからない');
+  }
 
   // 残った語を「番地」「建物名」「部屋番号」に分けて、日本の順番に並べ直す
   const isBan = x => /^\d+(-\d+)+$/.test(x);
@@ -2736,7 +2775,7 @@ function convertEnglishAddressEx(en, z, zip7){
   if (banIdx < 0) {
     // ハイフン付きの番地が無いときは並べ替えない
     if (keep.some(x => /^\d+$/.test(x))) notes.push('番地の区切りが分からない');
-    const jp = base + (townHit ? z.town : '');
+    const jp = base + townJa;
     return { addr: keep.length ? jp + (/^\d/.test(keep[0]) ? '' : ' ') + keep.join(' ') : jp, notes };
   }
   ban = keep[banIdx];
@@ -2749,7 +2788,7 @@ function convertEnglishAddressEx(en, z, zip7){
   }
   if (bld.length && bld.every(x => EN_SUFFIX.test(x))) bld = [];
   const tail = [bld.join(' '), room].filter(Boolean).join(' ');
-  const jp = base + (townHit ? z.town : '') + ban;
+  const jp = base + townJa + ban;
   return { addr: tail ? jp + ' ' + tail : jp, notes };
 }
 function convertEnglishAddress(en, z, zip7){ return convertEnglishAddressEx(en, z, zip7).addr; }
