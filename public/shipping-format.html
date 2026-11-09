@@ -206,6 +206,21 @@ tr.drag-over td{border-top:2px solid var(--accent)}
 .set-card .set-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .set-card .set-head b{font-size:14px}
 .set-card ul{margin:6px 0 0;padding-left:18px;line-height:1.7}
+.set-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 0}
+.set-add input{flex:1;min-width:220px;font-size:15px}
+.qty-step{display:inline-flex;align-items:center;gap:4px}
+.qty-step button{width:30px;height:30px;border:1px solid var(--line-soft);border-radius:6px;background:#fff;font-size:16px;cursor:pointer;line-height:1}
+.qty-step input{width:56px;text-align:center}
+.set-comp-shelf.empty-shelf{background:#fdecec;border-color:#d9534f}
+.set-total{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+.zp-card.added{border-color:#6b4fa3;background:#f5f1fb}
+.zp-card .tag.tag-added{background:#6b4fa3;color:#fff}
+.zp-basket{position:sticky;top:0;z-index:2;background:#f5f1fb;border:2px solid #6b4fa3;border-radius:8px;padding:8px 12px;margin:6px 0 10px;font-size:13px}
+.zp-basket .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.zp-basket .items{display:flex;flex-wrap:wrap;gap:4px 6px;margin:6px 0 0}
+.zp-basket .chip{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid #d6cbe8;border-radius:12px;padding:2px 4px 2px 9px;font-size:12px;max-width:100%}
+.zp-basket .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px}
+.zp-basket .chip button{border:0;background:none;cursor:pointer;color:#888;font-size:14px;padding:0 4px}
 /* 商品マスタ一括登録 */
 .bulk-grid{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px}
 .bulk-grid .dropzone{padding:20px 12px;min-height:150px}
@@ -401,8 +416,12 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
           <input type="text" id="setName" placeholder="セット名（例：お試し3点セット）">
         </div>
         <div id="setCompArea"></div>
+        <div class="set-add">
+          <input type="text" id="setJanInput" placeholder="中身のJANをスキャン／入力してEnter（複数まとめて貼り付けもOK）" onkeydown="if(event.key==='Enter'){event.preventDefault();addSetComponentsByJan()}">
+          <button class="btn btn-ghost btn-sm" onclick="addSetComponentsByJan()">JANで追加</button>
+        </div>
         <div class="toolbar" style="margin-top:8px;margin-bottom:0">
-          <button class="btn btn-ghost btn-sm" onclick="addSetComponentFromZaico()">＋ zaicoから中身の商品を追加</button>
+          <button class="btn btn-ghost btn-sm" onclick="addSetComponentFromZaico()">＋ zaicoから中身の商品を選ぶ（続けて何個でも選べます）</button>
           <span class="spacer"></span>
           <button class="btn btn-ghost btn-sm" onclick="clearSetForm()">クリア</button>
           <button class="btn btn-primary" onclick="saveSetMaster()">セット品を保存</button>
@@ -1871,8 +1890,8 @@ function scoreZaicoItem(x, t) {
 }
 
 let zp = null; // 今開いているダイアログの設定
-window.openZaicoPicker = async ({ title = '', hint = {}, needShelf = false, shelfFor = null, onPick, onSkip = null }) => {
-  zp = { hint, tokens: hintTokens(hint), needShelf, shelfFor: shelfFor || (x => x.place || ''), onPick, onSkip, selected: null };
+window.openZaicoPicker = async ({ title = '', hint = {}, needShelf = false, shelfFor = null, onPick, onSkip = null, multi = false, addedQty = null, basket = null, onClose = null }) => {
+  zp = { hint, tokens: hintTokens(hint), needShelf, shelfFor: shelfFor || (x => x.place || ''), onPick, onSkip, selected: null, multi, addedQty, basket, onClose };
   document.getElementById('zpSkip').classList.toggle('hidden', !onSkip);
   document.getElementById('zpTarget').textContent = title;
   document.getElementById('zpSearch').value = '';
@@ -1887,7 +1906,7 @@ window.openZaicoPicker = async ({ title = '', hint = {}, needShelf = false, shel
   }
   renderZaicoPicker();
 };
-window.closeZaicoPicker = () => { document.getElementById('zaicoPicker').classList.remove('open'); zp = null; };
+window.closeZaicoPicker = () => { const cb = zp && zp.onClose; document.getElementById('zaicoPicker').classList.remove('open'); zp = null; if (cb) cb(); };
 window.skipZaicoPicker = () => { const cb = zp && zp.onSkip; closeZaicoPicker(); if (cb) cb(); };
 window.reloadZaicoPicker = async () => {
   const list = document.getElementById('zpList');
@@ -1908,7 +1927,8 @@ window.renderZaicoPicker = () => {
   zpShown = shown.slice(0, 60).map(o => o.x);
   const area = document.getElementById('zpList');
   const age = `<div class="zp-age">zaicoの在庫 ${zaicoInv.length.toLocaleString()}件・${escapeHtml(fmtLogTime(zaicoInvLoadedAt.toISOString()))} 時点（新しく登録した商品が出ないときは「zaicoから読み直す」）</div>`;
-  const sel = zp.selected;
+  const sel = zp.multi ? null : zp.selected;
+  const basketHtml = zp.multi && zp.basket ? zp.basket() : '';
   const selHtml = sel ? `<div class="zp-sel">
       <div class="t">${escapeHtml(sel.title)}</div>
       <div class="m">バーコード <code>${escapeHtml(sel.code)}</code>${sel.place ? `・保管場所 ${escapeHtml(sel.place)}` : ''}</div>
@@ -1922,19 +1942,27 @@ window.renderZaicoPicker = () => {
     body = q ? '<p class="empty">見つかりません。言葉を短くするか、型番やJANの一部で探してください。zaicoにない商品は、先にzaicoで登録してください。</p>'
              : '<p class="empty">候補が見つかりませんでした。上の欄に商品名・型番・JANの一部を入れて探してください。</p>';
   } else {
-    body = `<p class="empty" style="margin:0 0 6px">${q ? `「${escapeHtml(q)}」で ${shown.length}件` : 'この商品に近い候補'}${shown.length > 60 ? '（上位60件）' : ''}　※タップして選んでください</p>
+    body = `<p class="empty" style="margin:0 0 6px">${q ? `「${escapeHtml(q)}」で ${shown.length}件` : 'この商品に近い候補'}${shown.length > 60 ? '（上位60件）' : ''}　※${zp.multi ? 'タップするたびに1個ずつ追加されます' : 'タップして選んでください'}</p>
     <div class="zp-cards">${zpShown.map((x, k) => {
       const exact = x.code && zp.tokens.codes.includes(normKey(x.code));
-      return `<button type="button" class="zp-card ${x.code ? '' : 'disabled'}" ${x.code ? `onclick="zpSelect(${k})"` : 'disabled'}>
-        <div class="t">${escapeHtml(x.title)}${exact ? '<span class="tag">バーコード一致</span>' : ''}</div>
+      const added = zp.multi && zp.addedQty ? zp.addedQty(x) : 0;
+      return `<button type="button" class="zp-card ${x.code ? '' : 'disabled'} ${added ? 'added' : ''}" ${x.code ? `onclick="zpSelect(${k})"` : 'disabled'}>
+        <div class="t">${escapeHtml(x.title)}${exact ? '<span class="tag">バーコード一致</span>' : ''}${added ? `<span class="tag tag-added">✓ 追加済み ×${added}</span>` : ''}</div>
         <div class="m"><span>${x.code ? `JAN <code>${escapeHtml(x.code)}</code>` : 'バーコードなし（zaicoで登録が必要）'}</span>${x.place ? `<span>保管場所 ${escapeHtml(x.place)}</span>` : ''}<span>在庫 ${escapeHtml(x.quantity)}${escapeHtml(x.unit)}</span></div>
       </button>`;
     }).join('')}</div>`;
   }
-  area.innerHTML = selHtml + age + body;
+  const keepTop = area.scrollTop;
+  area.innerHTML = basketHtml + selHtml + age + body;
+  if (zp.multi) area.scrollTop = keepTop;
   if (sel) { area.scrollTop = 0; const el = document.getElementById('zpShelf'); if (el && !el.value) el.focus(); }
 };
-window.zpSelect = (k) => { if (!zp) return; zp.selected = zpShown[k]; renderZaicoPicker(); };
+window.zpSelect = async (k) => {
+  if (!zp) return;
+  const x = zpShown[k];
+  if (zp.multi) { await zp.onPick(x, zp.shelfFor(x)); if (zp) renderZaicoPicker(); return; }
+  zp.selected = x; renderZaicoPicker();
+};
 window.zpClearSel = () => { if (!zp) return; zp.selected = null; renderZaicoPicker(); };
 window.confirmZaicoPick = async () => {
   if (!zp || !zp.selected) return;
@@ -2169,37 +2197,88 @@ let setEditingSku = '';
 function renderSetComps() {
   const area = document.getElementById('setCompArea');
   if (!area) return;
-  if (!setComps.length) { area.innerHTML = '<p class="empty">中身の商品がまだありません。「zaicoから中身の商品を追加」で選んでください。</p>'; return; }
+  if (!setComps.length) { area.innerHTML = '<p class="empty">中身の商品がまだありません。下の欄でJANをスキャンするか、「zaicoから中身の商品を選ぶ」で追加してください。</p>'; return; }
+  const total = setComps.reduce((a, c) => a + (Number(c.qty) || 0), 0);
+  const noShelf = setComps.filter(c => !c.shelfNumber).length;
   area.innerHTML = `<div class="table-wrap"><table><thead><tr><th>中身の商品</th><th>バーコード</th><th>1セットあたりの個数</th><th>棚番</th><th></th></tr></thead><tbody>
   ${setComps.map((c, k) => `<tr>
     <td class="prod-name">${escapeHtml(c.productName)}</td>
     <td><code>${escapeHtml(c.barcode)}</code></td>
-    <td style="width:110px"><input type="number" min="1" value="${c.qty}" onchange="setComps[${k}].qty = Math.max(1, Number(this.value) || 1)"></td>
-    <td style="width:120px"><input type="text" value="${escapeHtml(c.shelfNumber)}" placeholder="棚番" onchange="setComps[${k}].shelfNumber = toHalfPub(this.value).trim()"></td>
+    <td style="width:140px"><span class="qty-step"><button type="button" onclick="stepSetQty(${k},-1)" aria-label="1つ減らす">−</button><input type="number" min="1" value="${c.qty}" onchange="setComps[${k}].qty = Math.max(1, Number(this.value) || 1); renderSetComps()"><button type="button" onclick="stepSetQty(${k},1)" aria-label="1つ増やす">＋</button></span></td>
+    <td style="width:120px"><input type="text" class="set-comp-shelf ${c.shelfNumber ? '' : 'empty-shelf'}" value="${escapeHtml(c.shelfNumber)}" placeholder="棚番を入力" onchange="setComps[${k}].shelfNumber = toHalfPub(this.value).trim(); renderSetComps()"></td>
     <td><button class="btn btn-ghost btn-sm" onclick="removeSetComponent(${k})">外す</button></td>
-  </tr>`).join('')}</tbody></table></div>`;
+  </tr>`).join('')}</tbody></table></div>
+  <p class="set-total">中身 ${setComps.length}種類・1セットで合計 ${total}個${noShelf ? `　<b style="color:#d9534f">棚番が空の商品が ${noShelf}件あります（赤い欄）</b>` : ''}</p>`;
 }
+window.renderSetComps = renderSetComps;
+window.stepSetQty = (k, d) => { const c = setComps[k]; if (!c) return; c.qty = Math.max(1, (Number(c.qty) || 1) + d); renderSetComps(); };
+
+// 中身の商品を1個追加（同じ商品があれば個数を+1）
+function setShelfFor(x) {
+  const m = masterItemsCache.find(it => !it.isSet && String(it.barcode || '').trim() === x.code && (it.shelfNumber || it.shelf_number));
+  return m ? String(m.shelfNumber || m.shelf_number).trim() : (x.place || '');
+}
+function addSetComp(x, shelf) {
+  const same = setComps.find(c => c.barcode === x.code);
+  if (same) { same.qty += 1; if (!same.shelfNumber && shelf) same.shelfNumber = shelf; }
+  else setComps.push({ barcode: x.code, productName: x.title, qty: 1, shelfNumber: shelf || '', zaicoItemId: x.id });
+  renderSetComps();
+}
+function setBasketHtml() {
+  const name = document.getElementById('setName').value || document.getElementById('setSku').value || 'セット';
+  return `<div class="zp-basket"><div class="row"><b>「${escapeHtml(name)}」の中身：${setComps.length}種類・${setComps.reduce((a, c) => a + (Number(c.qty) || 0), 0)}個</b>
+    <span class="spacer" style="flex:1"></span><button class="btn btn-primary btn-sm" onclick="closeZaicoPicker()">選び終わった</button></div>
+    ${setComps.length ? `<div class="items">${setComps.map((c, k) => `<span class="chip"><span title="${escapeHtml(c.productName)}">${escapeHtml(c.productName)} ×${c.qty}</span><button type="button" onclick="setBasketMinus(${k})" aria-label="1つ減らす">−</button></span>`).join('')}</div>` : '<div style="color:var(--muted);margin-top:4px">下の候補をタップすると追加されます。同じ商品をもう一度タップすると個数が増えます。</div>'}
+  </div>`;
+}
+window.setBasketMinus = k => {
+  const c = setComps[k]; if (!c) return;
+  if (c.qty > 1) c.qty -= 1; else setComps.splice(k, 1);
+  renderSetComps(); renderZaicoPicker();
+};
+
+// JANをスキャン／入力して追加（スペース・改行・カンマ区切りでまとめてもOK）
+window.addSetComponentsByJan = async () => {
+  const el = document.getElementById('setJanInput');
+  const codes = toHalf(el.value).split(/[\s,、]+/).map(v => v.trim()).filter(Boolean);
+  if (!codes.length) { el.focus(); return; }
+  if (!zaicoInvLoadedAt) readZaicoInvCache();
+  if (!zaicoInvLoadedAt) {
+    toast('zaicoの在庫一覧を読み込んでいます…');
+    try { await loadZaicoInventories(); } catch (err) { alert('zaicoの在庫一覧を読み込めませんでした：' + err.message); return; }
+  }
+  const notFound = [], many = [];
+  codes.forEach(code => {
+    const hits = zaicoInv.filter(x => x.code && normKey(x.code) === normKey(code));
+    if (hits.length === 1) addSetComp(hits[0], setShelfFor(hits[0]));
+    else if (hits.length > 1) many.push(code);
+    else notFound.push(code);
+  });
+  el.value = '';
+  el.focus();
+  if (many.length) {
+    addSetComponentFromZaico(many[0]);
+    toast(`JAN ${many[0]} はzaicoに複数あります。一覧から選んでください`);
+  }
+  if (notFound.length) alert(`zaicoで見つからないJANがありました：\n${notFound.join('\n')}\n\nzaicoに登録されているか確認してください（最近登録した商品は「zaicoから読み直す」で出てきます）。`);
+};
 window.setComps = setComps;
 window.toHalfPub = v => toHalf(v);
-window.removeSetComponent = k => { setComps.splice(k, 1); renderSetComps(); };
+window.removeSetComponent = k => { setComps.splice(k, 1); renderSetComps(); if (zp && zp.multi) renderZaicoPicker(); };
 
-window.addSetComponentFromZaico = () => {
-  openZaicoPicker({
-    title: `セット「${document.getElementById('setName').value || document.getElementById('setSku').value || '（未入力）'}」に入れる商品を選んでください`,
+window.addSetComponentFromZaico = async (search = '') => {
+  await openZaicoPicker({
+    title: `セット「${document.getElementById('setName').value || document.getElementById('setSku').value || '（未入力）'}」に入れる商品をタップしてください。続けて何個でも選べます`,
     hint: { name: document.getElementById('setName').value, codes: [document.getElementById('setSku').value] },
-    needShelf: true,
-    // 棚番：単品マスタにあればそれ、なければzaicoの保管場所
-    shelfFor: x => {
-      const m = masterItemsCache.find(it => !it.isSet && String(it.barcode || '').trim() === x.code && (it.shelfNumber || it.shelf_number));
-      return m ? String(m.shelfNumber || m.shelf_number).trim() : (x.place || '');
-    },
-    onPick: async (x, shelf) => {
-      const same = setComps.find(c => c.barcode === x.code);
-      if (same) { same.qty += 1; renderSetComps(); toast('同じ商品があったので、個数を1増やしました'); return; }
-      setComps.push({ barcode: x.code, productName: x.title, qty: 1, shelfNumber: shelf, zaicoItemId: x.id });
-      renderSetComps();
-    }
+    multi: true,
+    // 棚番：単品マスタにあればそれ、なければzaicoの保管場所（あとで表で直せます）
+    shelfFor: setShelfFor,
+    addedQty: x => { const c = setComps.find(c => c.barcode === x.code); return c ? c.qty : 0; },
+    basket: setBasketHtml,
+    onPick: async (x, shelf) => addSetComp(x, shelf),
+    onClose: () => { const el = document.getElementById('setCompArea'); if (el && setComps.length) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   });
+  if (search) { document.getElementById('zpSearch').value = search; renderZaicoPicker(); }
 };
 
 window.clearSetForm = () => {
@@ -2217,7 +2296,7 @@ window.saveSetMaster = async () => {
   if (sku.includes('/')) { alert('SKUコードに「/」は使えません。'); return; }
   if (!setComps.length) { alert('中身の商品を1つ以上追加してください。'); return; }
   const noShelf = setComps.filter(c => !c.shelfNumber);
-  if (noShelf.length) { alert('棚番が空の商品があります：\n' + noShelf.map(c => '・' + c.productName).join('\n')); return; }
+  if (noShelf.length) { renderSetComps(); alert('棚番が空の商品があります（赤い欄に入れてください）：\n' + noShelf.map(c => '・' + c.productName).join('\n')); const el = document.querySelector('.set-comp-shelf.empty-shelf'); if (el) el.focus(); return; }
   if (setComps.length === 1 && !confirm('中身が1種類だけです。\n同じ商品の2個セットなどは、ふつうの商品マスタで「倍率」を使う方法でも登録できます。\nこのままセット品として保存しますか？')) return;
 
   const exist = masterItemsCache.find(it => (it.skuCode || it.id) === sku);
@@ -2294,8 +2373,10 @@ window.startSetFromRow = (i) => {
   clearSetForm();
   document.getElementById('setSku').value = s.skuCode;
   document.getElementById('setName').value = s.csvName || s.productName || '';
-  setTimeout(() => document.getElementById('setSection').scrollIntoView({ behavior: 'smooth' }), 100);
-  toast('中身の商品をzaicoから追加して、保存してください');
+  setTimeout(() => {
+    document.getElementById('setSection').scrollIntoView({ behavior: 'smooth' });
+    addSetComponentFromZaico();
+  }, 100);
 };
 
 // 送信後に、ボタンの下へ「このあとどうするか」を出す（スタッフが止まらないように）
