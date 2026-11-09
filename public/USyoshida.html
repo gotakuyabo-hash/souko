@@ -129,6 +129,24 @@ dialog.wide[open]{display:flex}
 .lab-opts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .lab-opts select{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--surface)}
 .msgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.lab .orig{font-size:11px;color:var(--muted);opacity:.85}
+.en-box{border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:8px}
+.en-box:empty{display:none}
+.en-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.en-head b{font-size:14px}
+.en-head .ghost{margin-left:auto}
+.en-list{display:flex;flex-direction:column;max-height:50vh;overflow:auto;border-top:1px solid var(--line)}
+.en-row{display:grid;grid-template-columns:110px 1fr auto;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line);align-items:start}
+.en-row.is-need{background:color-mix(in srgb,var(--danger) 7%,transparent)}
+.en-row.is-ok{opacity:.6}
+.en-row .who{font-size:13px;line-height:1.4}
+.en-row .src{font-size:12px;color:var(--muted);word-break:break-all}
+.en-row .hint{font-size:12px;color:var(--muted)}
+.en-row input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--surface);color:var(--ink);font-size:15px;margin:3px 0}
+.en-row .split{font-size:12px;color:var(--muted)}
+.en-row .split.over{color:var(--danger);font-weight:700}
+.en-row .ops{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+@media (max-width:640px){.en-row{grid-template-columns:1fr}.en-row .ops{flex-direction:row}}
 .lab-edit{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;padding:12px;border:1px solid var(--primary);border-radius:8px;background:var(--surface)}
 .lab-edit label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 .lab-edit label.wide{grid-column:1/-1}
@@ -369,7 +387,14 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     </div>
     <label>出荷日 <input type="date" id="shipDate"></label>
   </div>
+  <div class="lab-ctrl">
+    <span class="muted">ヤマトの送り状種類をまとめて変更</span>
+    <button type="button" class="ghost" id="bulkNeko">ネコポスにする</button>
+    <button type="button" class="ghost" id="bulkTakkyu">宅急便にする</button>
+    <label class="muted" style="font-size:13px"><input type="checkbox" id="bulkSelOnly" checked> CSVに含める送り状だけ</label>
+  </div>
   <div id="labSummary" class="muted"></div>
+  <div id="enBox" class="en-box"></div>
   <div id="labList"></div>
   <div class="lab-foot">
     <button id="dlYamato" type="button" class="primary">ヤマトB2のCSVを保存</button>
@@ -1134,7 +1159,8 @@ const TIME_MAP = {
 };
 function normTime(t){ return String(t||'').replace(/\s/g,'').replace(/[〜~ー－\-−]/g,'～').replace(/：/g,':').replace(/(^|～)(\d):/g,'$10$2:'); }
 
-const L = { mode:'auto', shipDate:'', overrides:{}, types:{}, include:{}, splits:new Set(), zipInfo:{}, labels:[], edits:{}, editing:null };
+const L = { mode:'auto', shipDate:'', overrides:{}, types:{}, include:{}, splits:new Set(), zipInfo:{}, labels:[], edits:{}, editing:null, checked:{}, enOpen:false };
+
 
 function hasJa(s){ return /[\u3040-\u30ff\u3400-\u9fff]/.test(s); }
 function blen(s){ let n=0; for (const ch of String(s||'')) { const c=ch.codePointAt(0); n += (c<=0x7e || (c>=0xff61 && c<=0xff9f)) ? 1 : 2; } return n; }
@@ -1201,7 +1227,7 @@ $('#btnCloseLabels').onclick = () => $('#dlgLabels').close();
 
 async function openLabels(){
   if (!state.selected.size) { toast('送り状を作る注文を選んでください'); return; }
-  L.overrides = {}; L.types = {}; L.include = {}; L.splits = new Set(); L.edits = {}; L.editing = null;
+  L.overrides = {}; L.types = {}; L.include = {}; L.splits = new Set(); L.edits = {}; L.editing = null; L.checked = {}; L.enOpen = false;
   if (!L.shipDate) L.shipDate = todayStr();
   $('#shipDate').value = L.shipDate;
   // 郵便番号の住所をまとめて調べる（英語住所の変換と、ヤマトの住所分割に使う）
@@ -1222,6 +1248,18 @@ document.querySelectorAll('#carrierMode button').forEach(b => b.onclick = () => 
   renderLabels();
 });
 $('#shipDate').onchange = e => { L.shipDate = e.target.value; };
+// ヤマトの送り状をまとめてネコポス／宅急便に（佐川の送り状は対象外）
+function bulkType(type){
+  const onlyInc = $('#bulkSelOnly').checked;
+  const targets = L.labels.filter(l => l.carrier==='yamato' && (!onlyInc || l.include));
+  const sagawa = L.labels.filter(l => l.carrier==='sagawa' && (!onlyInc || l.include)).length;
+  if (!targets.length) { toast('対象のヤマトの送り状がありません（上の「すべてヤマト」でヤマトに切り替えられます）', 5000); return; }
+  targets.forEach(l => { L.types[l.key] = type; });
+  renderLabels();
+  toast(targets.length+'件を'+(type==='A' ? 'ネコポス' : '宅急便')+'にしました'+(sagawa ? '（佐川の'+sagawa+'件はそのままです）' : ''), 4500);
+}
+$('#bulkNeko').onclick = () => bulkType('A');
+$('#bulkTakkyu').onclick = () => bulkType('0');
 
 // 同梱グループ：同じ注文番号、または備考欄で「同梱」とNoが書かれている注文をまとめる
 function buildLabels(){
@@ -1261,9 +1299,16 @@ function makeLabel(rows, key, splitFrom){
   if (!tel) errors.push('電話番号が空欄です');
   if (!addr) errors.push('住所が空欄です');
   if (!name) errors.push('お届け先名が空欄です');
+  // 英語住所：郵便番号から日本語にする
+  const baseAddr = String(base.address||'').replace(/\s+/g,' ').trim();
+  const orig = (baseAddr && !hasJa(baseAddr)) ? baseAddr : '';
+  let convNotes = [];
   if (addr && !hasJa(addr) && !has('addr')) {
     const z = L.zipInfo[zip7];
-    if (z) { addr = convertEnglishAddress(addr, z); warns.push('英語住所を変換'); }
+    if (z) {
+      const c = convertEnglishAddressEx(addr, z, zip7); addr = c.addr; convNotes = c.notes;
+      warns.push(c.notes.length ? '英語住所を変換（要確認：'+c.notes.join('、')+'）' : '英語住所を変換');
+    }
     else if (zip7.length===7) errors.push('郵便番号から住所が見つかりません');
   }
 
@@ -1298,6 +1343,7 @@ function makeLabel(rows, key, splitFrom){
     errors.push(...ya.errors);
     if (ya.moved && !ya.errors.length) warns.push('住所の後半を建物名の欄に回しました');
     if (blen(name)>32) warns.push('お届け先名を16文字で切ります');
+    if ((L.types[key] || '0')==='A' && (dd || tm)) warns.push('ネコポスは日時指定できないため、指定日・時間帯は空欄で出します');
     if (!cfg.yamatoBillCode) errors.push('ヤマトの請求先顧客コードが未登録です');
   } else {
     if (splitB(toZen(addr),[32,32,32]).overflow) errors.push('住所が長すぎます');
@@ -1306,7 +1352,7 @@ function makeLabel(rows, key, splitFrom){
   if (!cfg.senderTel || !cfg.senderZip || !cfg.senderAddr) errors.push('ご依頼主の住所・電話が未登録です');
 
   return {
-    key, rows, splitFrom, zip7, tel, name, addr, ya, carrier, okinawa, tm, dd, t, item, edited, errors, warns,
+    key, rows, splitFrom, zip7, tel, name, addr, ya, carrier, okinawa, tm, dd, t, item, edited, errors, warns, orig, convNotes,
     type: L.types[key] || '0',
     // エラーがあってもCSVに含める（外したいときはチェックを外す）。注文番号が違う注文は、最初は外しておく
     include: L.include[key] !== undefined ? L.include[key] !== false : !(mismNos.length || stopNos.length),
@@ -1317,8 +1363,9 @@ function renderLabels(){
   L.labels = buildLabels();
   const inc = L.labels.filter(l=>l.include);
   const y = inc.filter(l=>l.carrier==='yamato').length, s = inc.filter(l=>l.carrier==='sagawa').length;
+  const nk = inc.filter(l=>l.carrier==='yamato' && l.type==='A').length;
   const err = L.labels.filter(l=>l.errors.length).length;
-  $('#labSummary').textContent = '送り状 '+L.labels.length+'枚（ヤマト '+y+'枚 ／ 佐川 '+s+'枚）'+(err ? ' ／ エラーあり '+err+'枚（そのままCSVに含めます。取込後に確認してください）' : '');
+  $('#labSummary').textContent = '送り状 '+L.labels.length+'枚（ヤマト '+y+'枚'+(nk ? '〔うちネコポス '+nk+'枚〕' : '')+' ／ 佐川 '+s+'枚）'+(err ? ' ／ エラーあり '+err+'枚（そのままCSVに含めます。取込後に確認してください）' : '');
   $('#dlYamato').textContent = 'ヤマトB2のCSVを保存（'+y+'件）';
   $('#dlSagawa').textContent = '佐川e飛伝のCSVを保存（'+s+'件）';
   $('#dlYamato').disabled = !y; $('#dlSagawa').disabled = !s;
@@ -1349,11 +1396,101 @@ function renderLabels(){
           + '<div class="lmeta">'+(l.rows.length>1 ? 'No.'+r.no+'　' : '')+'注文番号 '+esc(r.orderId || '空欄')+(Number(r.qty)>1 ? '　<b>×'+esc(r.qty)+'</b>' : '')+'</div></div>'
           + '</div>').join('')+'</div>'
       + '<div>'+esc(l.name)+'　〒'+esc(l.zip7)+'</div><div class="addr">'+(l.ya ? esc(l.ya.line1)+(l.ya.line2 ? '<br>建物名欄：'+esc(l.ya.line2) : '') : esc(l.addr))+'</div>'
+      + (l.orig ? '<div class="orig">元の住所：'+esc(l.orig)+'</div>' : '')
       + (msgs ? '<div class="msgs">'+msgs+'</div>' : '') + '</div>'
       + '<div class="lab-opts">'+opts+'</div>'
       + (L.editing===l.key ? editFormHtml(l) : '') + '</div>';
   }).join('');
+  renderEnBox();
 }
+
+// ===== 英語住所をまとめて確認・修正（元の英語と変換結果を横に並べ、Enterで次へ） =====
+function enNeedsCheck(l){ return !L.checked[l.key] && (l.convNotes.length > 0 || l.errors.some(m => /住所|市区郡町村/.test(m))); }
+function renderEnBox(){
+  const box = $('#enBox');
+  const list = L.labels.filter(l => l.orig);
+  if (!list.length) { box.innerHTML = ''; return; }
+  const need = list.filter(enNeedsCheck).length;
+  const done = list.filter(l => L.checked[l.key]).length;
+  let html = '<div class="en-head"><b>英語住所 '+list.length+'件</b>'
+    + (need ? '<span class="badge warn">要確認 '+need+'件</span>' : '<span class="badge">要確認なし</span>')
+    + '<span class="muted">確認済み '+done+'／'+list.length+'</span>'
+    + '<button type="button" class="ghost" id="enToggle">'+(L.enOpen ? '一覧を閉じる' : 'まとめて確認する')+'</button></div>';
+  if (L.enOpen) {
+    html += '<div class="muted" style="font-size:12px">住所欄を直してEnterで次へ進みます。英語のまま入れても日本語にし直します。</div>'
+      + '<div class="en-list">' + list.map(l => {
+        const z = L.zipInfo[l.zip7];
+        const hint = z ? '〒'+l.zip7+'　'+z.pref+z.city+(z.town && !/以下/.test(z.town) ? z.town : '') : '〒'+l.zip7+'（住所が見つかりません）';
+        const split = l.ya
+          ? 'ヤマト：'+esc(l.ya.line1)+(l.ya.line2 ? '　／　建物名欄：'+esc(l.ya.line2) : '')
+          : '佐川：全角'+(blen(toZen(l.addr))/2)+'／48文字';
+        const over = (l.ya && l.ya.errors.length) || (!l.ya && blen(toZen(l.addr)) > 96);
+        const tags = l.convNotes.map(m => '<span class="msg-err">'+esc(m)+'</span>').join('')
+          + (L.checked[l.key] ? '<span class="badge">確認済み</span>' : '');
+        const cls = 'en-row' + (enNeedsCheck(l) ? ' is-need' : '') + (L.checked[l.key] ? ' is-ok' : '');
+        const canReset = (L.edits[l.key] && L.edits[l.key].addr !== undefined);
+        return '<div class="'+cls+'" data-k="'+esc(l.key)+'">'
+          + '<div class="who"><b>'+esc(l.rows.map(r=>'No.'+r.no).join('、'))+'</b><br>'+esc(l.name)+'</div>'
+          + '<div><div class="src">元：'+esc(l.orig)+'</div><div class="hint">'+esc(hint)+'</div>'
+          + '<input class="en-in" data-k="'+esc(l.key)+'" value="'+esc(l.addr)+'" enterkeyhint="next" aria-label="お届け先住所">'
+          + '<div class="split'+(over ? ' over' : '')+'">'+split+(l.ya && l.ya.errors.length ? '　'+esc(l.ya.errors.join('、')) : '')+'</div>'
+          + (tags ? '<div class="msgs">'+tags+'</div>' : '') + '</div>'
+          + '<div class="ops"><button type="button" class="'+(L.checked[l.key] ? 'ghost' : 'primary')+' en-ok" data-k="'+esc(l.key)+'">'+(L.checked[l.key] ? '確認を外す' : 'OK')+'</button>'
+          + (canReset ? '<button type="button" class="ghost en-reset" data-k="'+esc(l.key)+'">自動変換に戻す</button>' : '') + '</div>'
+          + '</div>';
+      }).join('') + '</div>';
+  }
+  box.innerHTML = html;
+}
+function enFocus(key){
+  const el = key && document.querySelector('#enBox .en-in[data-k="'+CSS.escape(key)+'"]');
+  if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); el.scrollIntoView({ block:'nearest' }); }
+}
+function enNextKey(key){
+  const keys = L.labels.filter(l => l.orig).map(l => l.key), i = keys.indexOf(key);
+  return keys.slice(i+1).find(k => !L.checked[k]) || keys.find(k => !L.checked[k]) || null;
+}
+async function enApply(key, value, moveNext){
+  const l = L.labels.find(x => x.key===key); if (!l) return;
+  let v = String(value||'').replace(/\s+/g,' ').trim();
+  const changed = v !== l.addr;
+  if (changed && v) {
+    if (!hasJa(v)) { const z = await ensureZip(l.zip7); if (z) v = convertEnglishAddressEx(v, z, l.zip7).addr; }
+    const e = Object.assign({}, L.edits[key] || {}); e.addr = v; delete e.y1; delete e.y2;
+    L.edits[key] = e;
+  }
+  L.checked[key] = true;
+  renderLabels();
+  if (moveNext) enFocus(enNextKey(key));
+}
+$('#enBox').addEventListener('click', e => {
+  const t = e.target;
+  if (t.id === 'enToggle') { L.enOpen = !L.enOpen; renderEnBox(); if (L.enOpen) enFocus((L.labels.find(l => l.orig && enNeedsCheck(l)) || {}).key); return; }
+  const k = t.dataset.k; if (!k) return;
+  if (t.classList.contains('en-ok')) {
+    if (L.checked[k]) { delete L.checked[k]; renderLabels(); return; }
+    const inp = document.querySelector('#enBox .en-in[data-k="'+CSS.escape(k)+'"]');
+    enApply(k, inp ? inp.value : '', true);
+  } else if (t.classList.contains('en-reset')) {
+    if (L.edits[k]) { delete L.edits[k].addr; delete L.edits[k].y1; delete L.edits[k].y2; if (!Object.keys(L.edits[k]).length) delete L.edits[k]; }
+    delete L.checked[k];
+    renderLabels(); enFocus(k); toast('自動変換に戻しました');
+  }
+});
+$('#enBox').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('en-in') && !e.isComposing) {
+    e.preventDefault(); enApply(e.target.dataset.k, e.target.value, true);
+  }
+});
+$('#enBox').addEventListener('change', e => {
+  // Enter以外（タップで他へ移ったとき）も反映。確認済みにはしない
+  const t = e.target; if (!t.classList.contains('en-in')) return;
+  const l = L.labels.find(x => x.key===t.dataset.k);
+  if (l && t.value.replace(/\s+/g,' ').trim() !== l.addr) {
+    const was = L.checked[t.dataset.k];
+    enApply(t.dataset.k, t.value, false).then(() => { if (!was) { delete L.checked[t.dataset.k]; renderLabels(); } });
+  }
+});
 
 $('#labList').addEventListener('change', e => {
   const t = e.target, k = t.dataset.k;
@@ -1438,10 +1575,10 @@ async function applyEdit(key){
   if (val('y1') !== undefined) {
     e.y1 = val('y1'); e.y2 = val('y2'); e.addr = (e.y1 + (e.y2 ? ' ' + e.y2 : '')).trim();
     // 英語のまま反映したときは日本語にして、ヤマトの欄に分け直す
-    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z); delete e.y1; delete e.y2; conv = true; }
+    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z, zip); delete e.y1; delete e.y2; conv = true; }
   } else {
     e.addr = val('addr');
-    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z); conv = true; }
+    if (e.addr && !hasJa(e.addr) && z) { e.addr = convertEnglishAddress(e.addr, z, zip); conv = true; }
   }
   L.edits[key] = e; L.editing = null;
   renderLabels();
@@ -1456,8 +1593,9 @@ function yamatoRow(l, cfg){
   v['送り状種類'] = l.type;
   v['クール区分'] = '0';
   v['出荷予定日'] = slashDate(L.shipDate);
-  v['お届け予定（指定）日'] = slashDate(l.dd);
-  v['配達時間帯'] = l.tm ? l.tm.y : '';
+  const neko = l.type==='A';  // ネコポスは日時指定できない
+  v['お届け予定（指定）日'] = neko ? '' : slashDate(l.dd);
+  v['配達時間帯'] = (!neko && l.tm) ? l.tm.y : '';
   v['お届け先電話番号'] = l.tel;
   v['お届け先郵便番号'] = l.zip7;
   v['お届け先住所'] = a[0];
@@ -2550,29 +2688,71 @@ function romaTargets(z){
   if (z.town && !/[（(]|以下/.test(z.town)) { const t = kanaToRoma(z.townKana); add(town, t); add(town, t.replace(/(tyo|mati)$/,'')); }
   return { pref, city, town };
 }
-function convertEnglishAddress(en, z){
-  const base = z.pref + z.city;
-  if (!z.prefKana) return base + ' ' + en; // 読みが取れないときは前に付けるだけ
+// 英語住所によく付く語：国名は消す。市・区・県などの英語は、地名のすぐ後ろにあるときだけ消す
+const EN_COUNTRY = /^(japan|jpn|jp|nippon)\.?$/i;
+const EN_SUFFIX  = /^(city|ward|town|village|prefecture|pref|ken|shi|ku|cho|chou|machi|mura|son|gun|county|district|to|fu|do)\.?$/i;
+const EN_ROOM    = /^(apt|apartment|room|rm|unit|no|#)\.?$/i;
+// 戻り値：{ addr:日本語にした住所, notes:[確認してほしい点] }
+function convertEnglishAddressEx(en, z, zip7){
+  const base = z.pref + z.city, notes = [];
+  let s = String(en||'').normalize('NFKC');
+  // 住所の中に書かれた郵便番号は消す
+  s = s.replace(/〒?\s*\d{3}\s*-?\s*\d{4}(?!\d)/g, m => (!zip7 || digits(m)===zip7) ? ' ' : m);
+  // 「2 Chome-8-1」「2-chome 8-1」「8-ban 1-go」→「2-8-1」の形に
+  s = s.replace(/(\d+)\s*-?\s*chome\b\s*-?\s*/gi, '$1-')
+       .replace(/(\d+)\s*-?\s*banchi\b\s*-?\s*/gi, '$1-')
+       .replace(/(\d+)\s*-?\s*ban\b\s*-?\s*/gi, '$1-')
+       .replace(/(\d+)\s*-?\s*go\b/gi, '$1')
+       .replace(/(\d)\s*-\s*(?=\d)/g, '$1-').replace(/(\d)-(?=[\s,]|$)/g, '$1');
+  if (!z.prefKana) return { addr: base + ' ' + s.replace(/\s+/g,' ').trim(), notes:['読みが取れないため前に付けただけ'] };
   const T = romaTargets(z);
-  const tk = String(en).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([A-Za-z])(\d)/g,'$1 $2').split(/[\s,]+/).filter(Boolean);
+  const tk = s.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([A-Za-z])(\d)/g,'$1 $2').replace(/#\s*/g,'# ')
+              .split(/[\s,]+/).filter(Boolean);
   const keep = []; let removed = 0, townHit = false;
   for (let i = 0; i < tk.length; ) {
+    if (EN_COUNTRY.test(tk[i])) { i++; continue; }
     let hit = 0;
     for (const n of [3,2,1]) {
       if (i+n > tk.length) continue;
       const seg = tk.slice(i, i+n);
-      if (seg.some(s => /\d/.test(s))) continue;
+      if (seg.some(x => /\d/.test(x))) continue;
       const r = normRoma(seg.join(''));
       if (r.length < 2) continue;
       if (T.pref.has(r) || T.city.has(r)) { hit = n; break; }
       if (T.town.has(r)) { hit = n; townHit = true; break; }
     }
-    if (hit) { i += hit; removed += hit; } else { keep.push(tk[i]); i++; }
+    if (hit) {
+      i += hit; removed += hit;
+      while (i < tk.length && EN_SUFFIX.test(tk[i])) i++;   // 「Shinjuku City」の City など
+    } else { keep.push(tk[i]); i++; }
   }
-  if (!removed) return base + ' ' + en;
-  const jp = base + (townHit ? z.town : '');
-  return keep.length ? jp + ' ' + keep.join(' ') : jp;
+  if (!removed) return { addr: base + ' ' + s.replace(/\s+/g,' ').trim(), notes:['地名が読み取れず、前に付けただけ'] };
+  if (!townHit && z.town && !/[（(]|以下/.test(z.town)) notes.push('町名（'+z.town+'）が見つからない');
+
+  // 残った語を「番地」「建物名」「部屋番号」に分けて、日本の順番に並べ直す
+  const isBan = x => /^\d+(-\d+)+$/.test(x);
+  let ban = '', room = '', bld = [];
+  const banIdx = keep.findIndex(isBan);
+  if (banIdx < 0) {
+    // ハイフン付きの番地が無いときは並べ替えない
+    if (keep.some(x => /^\d+$/.test(x))) notes.push('番地の区切りが分からない');
+    const jp = base + (townHit ? z.town : '');
+    return { addr: keep.length ? jp + (/^\d/.test(keep[0]) ? '' : ' ') + keep.join(' ') : jp, notes };
+  }
+  ban = keep[banIdx];
+  const rest = keep.filter((_, i) => i !== banIdx);
+  for (let i = 0; i < rest.length; i++) {
+    const x = rest[i];
+    if (EN_ROOM.test(x) && rest[i+1] && /^\d+[A-Za-z]?$/.test(rest[i+1])) { room = rest[i+1]; i++; continue; }
+    if (/^\d+[A-Za-z]?$/.test(x) && !room) { room = x; continue; }
+    bld.push(x);
+  }
+  if (bld.length && bld.every(x => EN_SUFFIX.test(x))) bld = [];
+  const tail = [bld.join(' '), room].filter(Boolean).join(' ');
+  const jp = base + (townHit ? z.town : '') + ban;
+  return { addr: tail ? jp + ' ' + tail : jp, notes };
 }
+function convertEnglishAddress(en, z, zip7){ return convertEnglishAddressEx(en, z, zip7).addr; }
 </script>
 </body>
 </html>
