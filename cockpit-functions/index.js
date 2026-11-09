@@ -1814,7 +1814,7 @@ async function askQuestion(token, p) {
   await db.collection("cw_questions").doc("Q" + no).set(data);
   let later = null;
   if (rid) {
-    await db.collection("cw_rooms").doc(p.account + "_" + rid).set({ question: roomQuestion(data) }, { merge: true });
+    await putRoomQuestion(p.account, rid, data);
     later = await setLater(p.account, [rid], true);
   }
   return { no, label, question, later, taskId, taskError };
@@ -1841,6 +1841,28 @@ async function completeQuestionTask(id, q) {
   const msg = lastErr ? lastErr.message : "トークンがありません";
   console.error("質問タスク（" + (q.label || id) + "）を完了にできませんでした: " + msg);
   try { await db.collection("cw_questions").doc(id).set({ taskError: msg.slice(0, 300) }, { merge: true }); } catch (e) {}
+}
+
+// カード表示用：cw_rooms の questions.{番号} に1件ずつ入れる（1つのルームで複数の質問ができるように）
+//   古い形（question に1件だけ）も、同じ番号なら一緒に書き換える
+async function putRoomQuestion(account, roomId, q) {
+  if (!roomId) return;
+  const ref = db.collection("cw_rooms").doc(account + "_" + roomId);
+  const data = { questions: { [String(q.no)]: roomQuestion(q) } };
+  const snap = await ref.get();
+  const old = snap.exists ? snap.get("question") : null;
+  if (old && Number(old.no) === Number(q.no)) data.question = null;
+  await ref.set(data, { merge: true });
+}
+async function removeRoomQuestion(account, roomId, no) {
+  if (!roomId) return;
+  const ref = db.collection("cw_rooms").doc(account + "_" + roomId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const upd = { ["questions." + String(no)]: admin.firestore.FieldValue.delete() };
+  const old = snap.get("question");
+  if (old && Number(old.no) === Number(no)) upd.question = null;
+  await ref.update(upd);
 }
 
 // カード表示用（cw_rooms に入れる分）
@@ -1887,7 +1909,7 @@ async function detectAnswers(qRoomId, msgs) {
     if (!ok) continue;
     await completeQuestionTask(id, q);
     if (q.roomId) {   // 単独の質問（ルームなし）は、質問リストに回答が載るだけ
-      await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: roomQuestion(done) }, { merge: true });
+      await putRoomQuestion(q.account, q.roomId, done);
       try { await setLater(q.account, [q.roomId], false); } catch (e) {}
       // 要対応に戻す（「未対応に戻す」と同じ）
       await db.collection("cw_handled").doc(q.account + "_" + q.roomId).set({
@@ -1920,8 +1942,13 @@ async function clearAnsweredQuestion(account, roomId) {
     if (!rid || !ACCOUNTS[account]) return;
     const ref = db.collection("cw_rooms").doc(account + "_" + rid);
     const snap = await ref.get();
-    const q = snap.exists ? snap.get("question") : null;
-    if (q && q.status === "answered") await ref.set({ question: null }, { merge: true });
+    if (!snap.exists) return;
+    const upd = {};
+    const q = snap.get("question");
+    if (q && q.status === "answered") upd.question = null;
+    const qs = snap.get("questions") || {};
+    Object.keys(qs).forEach(k => { if (qs[k] && qs[k].status === "answered") upd["questions." + k] = admin.firestore.FieldValue.delete(); });
+    if (Object.keys(upd).length) await ref.update(upd);
   } catch (e) {
     console.error("質問の表示を外せませんでした: " + e.message);
   }
@@ -1949,7 +1976,7 @@ async function closeQuestion(account, roomId, no) {
   const q = snap.data();
   if (q.status === "open") await ref.set({ status: "cancelled", cancelledAt: nowSec() }, { merge: true });
   await completeQuestionTask("Q" + n, q);   // ChatworkのAPIではタスクを消せないので、完了にしておく
-  if (q.roomId) await db.collection("cw_rooms").doc(q.account + "_" + q.roomId).set({ question: null }, { merge: true });
+  if (q.roomId) await removeRoomQuestion(q.account, q.roomId, n);
   return { ok: true };
 }
 
