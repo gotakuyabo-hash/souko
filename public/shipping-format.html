@@ -44,6 +44,20 @@ main{max-width:1240px;margin:0 auto;padding:20px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media (max-width:860px){.grid2{grid-template-columns:1fr}}
 
+/* コックピットからの送り状依頼 */
+.cw-req{border:1px solid var(--line);border-left:5px solid var(--tape);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff}
+.cw-req-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.cw-req-head b{font-size:14px}
+.cw-req-meta{color:var(--muted);font-size:12px}
+.cw-req-addr{margin:6px 0;font-size:13px}
+.cw-req table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+.cw-req td,.cw-req th{border-bottom:1px solid var(--line-soft);padding:4px 6px;text-align:left}
+.cw-req input{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;padding:4px 6px;width:100%}
+.cw-req .cw-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.cw-sender{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.cw-sender input{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;padding:5px 7px;width:100%}
+@media (max-width:860px){.cw-sender{grid-template-columns:1fr}}
+
 /* 読み込み */
 .dropzone{border:2px dashed #9fb4c2;border-radius:8px;background:#f7fafb;padding:30px 16px;text-align:center;cursor:pointer;display:flex;flex-direction:column;justify-content:center;min-height:100%}
 .dropzone:hover,.dropzone.is-over{background:#e6f0f6;border-color:var(--accent)}
@@ -288,6 +302,27 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 <main>
   <!-- ===== 出荷処理タブ ===== -->
   <div id="allInOneTab" class="tab-content active">
+
+    <section class="step hidden" id="cwInboxSection">
+      <div class="step-head">
+        <span class="step-no">📮</span>
+        <h2 class="step-title">コックピットからの送り状依頼</h2>
+        <span class="step-sub">チャットから読み取った宛先・商品です。「取り込む」で、受注CSV＋送り状CSVを読み込んだのと同じように一覧に入ります</span>
+      </div>
+      <div class="step-body">
+        <div id="cwInboxArea"></div>
+        <details style="margin-top:6px">
+          <summary style="cursor:pointer;font-size:12px;font-weight:700">ご依頼主（送り状の差出人）の設定</summary>
+          <div class="cw-sender">
+            <input id="cwSenderTel" placeholder="電話番号（必須）">
+            <input id="cwSenderZip" placeholder="郵便番号（必須）">
+            <input id="cwSenderAddr" placeholder="住所（必須）" style="grid-column:1/-1">
+            <input id="cwSenderName" placeholder="ご依頼主名（依頼のショップ名が空のときに使います）" style="grid-column:1/-1">
+          </div>
+          <p class="note" style="font-size:12px;color:var(--muted);margin:6px 0 0">このブラウザに保存されます。ご依頼主名には、依頼のショップ名が入ります。</p>
+        </details>
+      </div>
+    </section>
 
     <section class="step">
       <div class="step-head">
@@ -547,7 +582,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -724,7 +759,8 @@ window.addEventListener('DOMContentLoaded', () => {
   initOkiSettings();
   initAddrSetting();
   updateAccumulatedData(false);
-  loadMasterItems();
+  loadMasterItems().then(() => loadCwRequests());
+  initCwSender();
 });
 
 /* ---------- 共通 ---------- */
@@ -4057,6 +4093,210 @@ function exportCsvGeneric(dataRows, filename, labelOf) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   return warns;
 }
+
+/* =========================================================
+   コックピットからの送り状依頼（matomaru_requests）
+   - コックピットでチャットから読み取った宛先・商品名・数量が届く
+   - 「取り込む」で、受注CSVの行と送り状CSV（ヤマトB2／佐川e飛伝）の行を作って一覧に入れる
+     → 検品シート・送り状CSV・ピック・zaico出庫は、いつもの手順のまま
+   ========================================================= */
+let cwRequests = [];
+const CW_SENDER_KEY = 'cw_sender_v1';
+function initCwSender() {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(CW_SENDER_KEY) || '{}') || {}; } catch (e) {}
+  [['cwSenderTel', 'tel'], ['cwSenderZip', 'zip'], ['cwSenderAddr', 'addr'], ['cwSenderName', 'name']].forEach(([id, k]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = v[k] || '';
+    el.addEventListener('input', () => {
+      const cur = getCwSender();
+      try { localStorage.setItem(CW_SENDER_KEY, JSON.stringify(cur)); } catch (e) {}
+    });
+  });
+}
+function getCwSender() {
+  const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  return { tel: g('cwSenderTel'), zip: g('cwSenderZip').replace(/[^0-9]/g, ''), addr: g('cwSenderAddr'), name: g('cwSenderName') };
+}
+window.loadCwRequests = async function loadCwRequests() {
+  try {
+    const snap = await getDocs(query(collection(db, 'matomaru_requests'), where('status', '==', 'open')));
+    cwRequests = [];
+    snap.forEach(d => cwRequests.push(d.data()));
+    cwRequests.sort((a, b) => (a.createdAtSec || 0) - (b.createdAtSec || 0));
+  } catch (e) {
+    console.warn(e);
+    cwRequests = [];
+  }
+  renderCwRequests();
+};
+// 商品名からSKUを推測（商品マスタの商品名・SKUと照合。見つからなければ空）
+function guessSku(name) {
+  const n = normText(name).toLowerCase();
+  if (!n) return '';
+  const exact = masterItemsCache.find(m => normText(m.productName || m.product_name).toLowerCase() === n || String(m.id).toLowerCase() === n);
+  if (exact) return exact.id;
+  const part = masterItemsCache.filter(m => { const pn = normText(m.productName || m.product_name).toLowerCase(); return pn && (pn.includes(n) || n.includes(pn)); });
+  return part.length === 1 ? part[0].id : '';
+}
+function renderCwRequests() {
+  const sec = document.getElementById('cwInboxSection');
+  const area = document.getElementById('cwInboxArea');
+  if (!sec || !area) return;
+  sec.classList.toggle('hidden', !cwRequests.length);
+  if (!cwRequests.length) { area.innerHTML = ''; return; }
+  const imported = new Set(uploadedFiles.filter(f => f.cwId).map(f => f.cwId));
+  const opts = masterItemsCache.slice(0, 3000).map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.productName || m.product_name || '')}</option>`).join('');
+  area.innerHTML = `<datalist id="cwSkuList">${opts}</datalist>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button class="btn btn-ghost btn-sm" onclick="loadCwRequests()">🔄 最新にする</button></div>` +
+    cwRequests.map((r, i) => {
+      const rc = r.recipient || {};
+      const items = (r.items && r.items.length) ? r.items : [];
+      const chaku = r.payment === 'chaku' || r.invoiceType === '5';
+      const carrier = (r.carrier === 'sagawa' ? '佐川・' + (chaku ? '着払い' : '元払い')
+        : 'ヤマト・' + (chaku ? '着払い' : ({ '0': '発払い', '8': 'コンパクト', 'A': 'ネコポス' }[r.invoiceType] || '発払い')));
+      return `<div class="cw-req" ${chaku ? 'style="border-left-color:var(--danger)"' : ''}>
+        <div class="cw-req-head">${chaku ? '<span class="badge" style="background:var(--danger);color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700">着払い</span>' : ''}<b>${escapeHtml(rc.name || '')}${rc.company ? '（' + escapeHtml(rc.company) + '）' : ''}</b>
+          <code>${escapeHtml(r.id)}</code><span class="cw-req-meta">${escapeHtml(carrier)}・${escapeHtml(r.shop || '')}・${escapeHtml(r.roomName || '')}・${escapeHtml(r.by || '')}</span></div>
+        <div class="cw-req-addr">〒${escapeHtml(rc.zip || '')} ${escapeHtml(rc.address || '')} ${escapeHtml(rc.building || '')}　TEL ${escapeHtml(rc.tel || '（なし）')}</div>
+        ${r.memo ? `<div class="cw-req-meta">メモ：${escapeHtml(r.memo)}</div>` : ''}
+        ${items.length ? `<table><thead><tr><th>商品名（チャット）</th><th style="width:40%">SKU（商品マスタ）</th><th style="width:60px">数量</th></tr></thead><tbody>
+          ${items.map((it, j) => `<tr><td>${escapeHtml(it.name)}</td>
+            <td><input id="cwsku_${i}_${j}" list="cwSkuList" value="${escapeHtml(guessSku(it.name))}" placeholder="SKUを選ぶ（空欄は未登録扱い）"></td>
+            <td><input id="cwqty_${i}_${j}" type="number" min="1" value="${Number(it.qty) || 1}"></td></tr>`).join('')}
+          </tbody></table>` : '<div class="cw-req-meta">商品の指定なし</div>'}
+        <div class="cw-btns">
+          <button class="btn btn-ghost btn-sm" onclick="cancelCwRequest(${i})">削除</button>
+          <button class="btn btn-primary btn-sm" onclick="importCwRequest(${i})" ${imported.has(r.id) ? 'disabled' : ''}>${imported.has(r.id) ? '取り込み済み' : '取り込む'}</button>
+        </div>
+      </div>`;
+    }).join('');
+}
+function prefOf(addr) {
+  const m = normText(addr).match(/^(東京都|北海道|(?:京都|大阪)府|.{2,3}県)/);
+  return m ? m[1] : '';
+}
+window.importCwRequest = async function (i) {
+  const r = cwRequests[i];
+  if (!r) return;
+  const rc = r.recipient || {};
+  const sender = getCwSender();
+  const shop = normText(r.shop) || sender.name;
+  if (!sender.tel || !sender.zip || !sender.addr) {
+    alert('ご依頼主（差出人）の電話番号・郵便番号・住所を、下の「ご依頼主の設定」に入れてください。');
+    document.querySelector('#cwInboxSection details').open = true;
+    return;
+  }
+  const orderNo = r.id;
+  const items = (r.items || []).map((it, j) => ({
+    name: it.name,
+    sku: (document.getElementById(`cwsku_${i}_${j}`) || {}).value || '',
+    qty: Math.max(1, parseInt((document.getElementById(`cwqty_${i}_${j}`) || {}).value, 10) || 1)
+  }));
+  const label = normText(r.itemLabel) || (items[0] ? items[0].name : '');
+
+  // 受注CSVの行（商品ごと）
+  const mkOrderRow = (it, j) => {
+    const row = Array(46).fill('');
+    row[COL.SHOP] = shop;
+    row[COL.ORDER] = orderNo;
+    row[COL.KOBAN] = `${j + 1}-0`;
+    row[COL.NAME_ALT] = rc.name || '';
+    row[COL.MEMO] = r.memo || '';
+    row[COL.SKU] = it ? it.sku.trim() : '';
+    row[COL.ITEM] = it ? it.name : '';
+    row[COL.QTY] = it ? String(it.qty) : '';
+    row[COL.NAME] = rc.name || '';
+    row[COL.PREF] = prefOf(rc.address);
+    return row;
+  };
+  const orderRows = items.length ? items.map(mkOrderRow) : [mkOrderRow(null, 0)];
+
+  // 送り状CSVの行
+  let shipFile;
+  if (r.carrier === 'sagawa') {
+    const sFile = uploadedFiles.find(f => f.type === 'sagawa' && !f.cwId);
+    const tpl = getAllSagawaRows().find(x => !x.__cw) || null;
+    if (!tpl) { alert('佐川で出すには、先にいつもの佐川CSVを1つ読み込んでください（e飛伝の設定値を合わせるために使います）。'); return; }
+    const row = [...tpl];
+    // お届け先・品名・クール・日時はいったん空に（荷姿・個数・便種などの設定値は見本のまま）
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, SG.COOL, SG.DATE, SG.TIME].forEach(c => { if (c < row.length) row[c] = ''; });
+    row[SG.TEL] = cleanPhone(rc.tel);
+    row[SG.ZIP] = String(rc.zip || '').replace(/[^0-9]/g, '');
+    const a = fitAddressFields([rc.address, rc.building].filter(Boolean).join(' '), [32, 32, 32]);
+    [row[SG.ADDR1], row[SG.ADDR2], row[SG.ADDR3]] = a.fields;
+    row[SG.NAME1] = cutByWidth(normText(rc.name), 32);
+    row[SG.NAME2] = cutByWidth(normText(rc.company), 32);
+    row[SG.MGMT] = orderNo;
+    row[SG.S_TEL] = cleanPhone(sender.tel);
+    row[SG.S_ZIP] = sender.zip;
+    const sa = splitIntoFields(sender.addr, [32, 32]);
+    [row[SG.S_ADDR1], row[SG.S_ADDR2]] = sa.fields;
+    row[SG.S_NAME1] = cutByWidth(shop, 32);
+    row[SG.ITEM1] = cutByChars(label, SAGAWA_ITEM_MAX);
+    row[SG.ITEM2] = 'No:' + orderNo;
+    // 元着区分（1=元払い／2=着払い）。列の位置は読み込んだ佐川CSVの見出しから探す
+    const hdr = sFile ? sFile.header : [];
+    const payIdx = hdr.findIndex(h => String(h).includes('元着区分'));
+    if (r.payment === 'chaku') {
+      if (payIdx === -1) { alert('佐川CSVの見出しに「元着区分」の列が見つからないため、着払いにできませんでした。e飛伝で着払いに直してください。'); }
+      else { while (row.length <= payIdx) row.push(''); row[payIdx] = '2'; }
+    } else if (payIdx !== -1 && String(row[payIdx] || '').trim() === '2') row[payIdx] = '1';   // 見本が着払いだった時は元払いに戻す
+    row.__cw = true;
+    shipFile = { type: 'sagawa', header: sFile ? sFile.header : [], rows: [row] };
+  } else {
+    const tpl = getAllYamatoRows().find(x => /^[0-9A-Z]$/.test(String(x[1] || '').trim())) || null;
+    const tv = c => tpl && tpl[c] !== undefined ? String(tpl[c]).trim() : '';
+    const row = Array(Math.max(42, tpl ? tpl.length : 0)).fill('');
+    row[B2.MGMT] = orderNo;
+    row[B2.TYPE] = (r.payment === 'chaku' || r.invoiceType === '5') ? '5' : (r.invoiceType || '0');   // 5＝着払い
+    row[B2.COOL] = '0';
+    row[B2.SHIP_DATE] = getTodayString();
+    row[B2.TEL] = cleanPhone(rc.tel);
+    row[B2.ZIP] = String(rc.zip || '').replace(/[^0-9]/g, '');
+    if (widthOf(normText(rc.address)) <= 64) {
+      row[B2.ADDR] = normText(rc.address);
+      const rest = fitAddressFields([rc.building, rc.company].filter(Boolean).join(' '), [32, 50, 50]);
+      [row[B2.APT], row[B2.CO1], row[B2.CO2]] = rest.fields;
+    } else {
+      const all = fitAddressFields([rc.address, rc.building, rc.company].filter(Boolean).join(' '), [64, 32, 50, 50]);
+      [row[B2.ADDR], row[B2.APT], row[B2.CO1], row[B2.CO2]] = all.fields;
+    }
+    row[B2.NAME] = cutByWidth(normText(rc.name), 32);
+    row[B2.S_TEL] = cleanPhone(sender.tel);
+    row[B2.S_ZIP] = sender.zip;
+    const sa = splitIntoFields(sender.addr, [64, 32]);
+    [row[B2.S_ADDR], row[B2.S_APT]] = sa.fields;
+    row[B2.S_NAME] = cutByWidth(shop, 32);
+    row[B2.ITEM1] = cutByWidth(label, 50);
+    row[B2.ITEM2] = 'No:' + orderNo;
+    row[B2.BILL_CODE] = '09050540672';
+    row[B2.BILL_CLASS] = tv(B2.BILL_CLASS);
+    row[B2.FARE_NO] = tv(B2.FARE_NO) || '01';
+    shipFile = { type: 'yamato', header: [], rows: [row] };
+  }
+
+  const stamp = Date.now().toString(36);
+  uploadedFiles.push({ id: 'cwo_' + stamp, cwId: r.id, name: `コックピット依頼 ${r.id}（受注）`, type: 'order', header: [], rows: orderRows });
+  uploadedFiles.push({ id: 'cws_' + stamp, cwId: r.id, name: `コックピット依頼 ${r.id}（${r.carrier === 'sagawa' ? '佐川' : 'ヤマト'}）`, type: shipFile.type, header: shipFile.header, rows: shipFile.rows });
+  updateAccumulatedData(true);
+  try {
+    await setDoc(doc(db, 'matomaru_requests', r.id), { status: 'imported', importedAt: new Date().toISOString(), importedSkus: items.map(it => it.sku) }, { merge: true });
+  } catch (e) { console.warn(e); toast('取り込みましたが、依頼の状態を更新できませんでした'); }
+  cwRequests.splice(i, 1);
+  renderCwRequests();
+  toast(`${r.id} を取り込みました（下の一覧に入りました）`);
+};
+window.cancelCwRequest = async function (i) {
+  const r = cwRequests[i];
+  if (!r || !confirm(`${r.id}（${(r.recipient || {}).name || ''}）の依頼を削除しますか？`)) return;
+  try {
+    await setDoc(doc(db, 'matomaru_requests', r.id), { status: 'cancelled', cancelledAt: new Date().toISOString() }, { merge: true });
+    cwRequests.splice(i, 1);
+    renderCwRequests();
+  } catch (e) { alert('削除できませんでした：' + e.message); }
+};
 
 function getTodayString() {
   const d = new Date();
