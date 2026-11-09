@@ -521,6 +521,8 @@ class Saver {
 /* =========================================================
    チェックリスト
    ========================================================= */
+// チェックリストが最初に表示できたら知らせる（後回しにした読み込みを始める合図）
+let markFirstLoaded; const firstLoaded = new Promise(r => { markFirstLoaded = r; });
 const CL = { date: null, state: null, edit: false, unsub: null, pendingRemote: null, collapsed: {} };
 CL.saver = new Saver('checklist',
   () => CL.state ? JSON.stringify(CL.state) : null,
@@ -617,6 +619,7 @@ function renderChecklist() {
   $('clEditNote').hidden = !CL.edit;
   $('clResetWrap').hidden = !CL.edit || !CL.state;
   if (!CL.state) { root.append(h('p', { class: 'empty' }, '読み込み中…')); updateProgress(); return; }
+  markFirstLoaded();
 
   const nowKey = currentSectionKey();
   for (const sec of SECTIONS) {
@@ -1184,12 +1187,15 @@ function updateDateNote(date) {
   note.className = 'date-note' + (date === today ? ' is-today' : '');
   $('todayBtn').disabled = date === today;
 }
+// 出荷件数のサービス設定の読み込み（チェックリストはこれを待たずに表示する）
+let servicesReady = Promise.resolve();
 async function goDate(date) {
   if (!date) return;
   await Promise.all([CL.saver.flush(), SK.saver.flush()]); // 前の日の入力を先に保存
   $('dateInput').value = date;
   updateDateNote(date);
-  clLoad(date); skLoad(date);
+  clLoad(date);
+  servicesReady.then(() => { if (CL.date === date) skLoad(date); });
   renderStatus();
 }
 $('dateInput').addEventListener('change', e => goDate(e.target.value));
@@ -1457,15 +1463,18 @@ document.addEventListener('visibilitychange', () => {
    ========================================================= */
 (async () => {
   await ensureLogin();
-  watchStaff();
-  watchShip();
+  // まずは画面に必要なものだけ読み込む（チェックリストとサービス設定を同時に）
+  servicesReady = watchServices();
   watchFrozen();
-  await watchServices();
-  watchAutoSources();
   let tab = 'checklist';
   try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
   switchTab(tab);
   goDate(todayJST());
+  servicesReady.then(watchAutoSources);
+  // 件数バッジ用の大きめのデータは、チェックリストが表示されてから読み込む（最長4秒待ち）
+  await Promise.race([firstLoaded, new Promise(r => setTimeout(r, 4000))]);
+  watchStaff();
+  watchShip();
   watchIraiSummary();
   watchIraiLive();
 })();
