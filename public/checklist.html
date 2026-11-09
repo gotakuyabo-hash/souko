@@ -238,11 +238,7 @@ button,input,textarea{font:inherit;color:inherit}
   <!-- ===== チェックリスト ===== -->
   <section id="tab-checklist">
     <div class="panel panel-pad overview">
-      <div class="ov-row">
-        <div>
-          <label class="lbl" for="reporterName">管理者名</label>
-          <input type="text" id="reporterName" class="text-in" placeholder="氏名を入力" autocomplete="name">
-        </div>
+      <div class="ov-row" style="justify-content:flex-end">
         <button type="button" class="btn" id="clEditBtn">✏️ 項目を編集</button>
       </div>
       <div>
@@ -530,10 +526,9 @@ CL.saver = new Saver('checklist',
   () => CL.state ? JSON.stringify(CL.state) : null,
   async st => {
     await setDoc(doc(db, 'warehouse_reports', st.date), {
-      date: st.date, name: st.name || '未設定', sections: st.sections, frozenChecked: !!st.frozenChecked,
+      date: st.date, sections: st.sections, frozenChecked: !!st.frozenChecked,
       updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
     });
-    if (st.name) { try { localStorage.setItem('checklist_reporter_name', st.name); } catch (e) {} }
   });
 
 function normItem(it, key) {
@@ -563,7 +558,6 @@ function blankOut(secs) {
   for (const k in c) c[k].forEach(it => { if ('value' in it) it.value = ''; if ('checked' in it) it.checked = false; });
   return c;
 }
-function savedName() { try { return localStorage.getItem('checklist_reporter_name') || ''; } catch (e) { return ''; } }
 
 // 記録がない日は「直前の記録日の項目構成」を引き継ぐ（入力内容とチェックは空にする）
 async function loadTemplate(date) {
@@ -584,7 +578,7 @@ function clLoad(date) {
     if (snap.exists()) {
       const d = snap.data();
       if (CL.state && d.updatedBy === CLIENT_ID) return; // 自分の保存の反映は無視
-      const st = { date, name: (d.name === '未設定' ? '' : d.name) || '', sections: normSections(d.sections), frozenChecked: !!d.frozenChecked };
+      const st = { date, sections: normSections(d.sections), frozenChecked: !!d.frozenChecked };
       const json = JSON.stringify(st);
       if (!CL.state) { clApply(st, false); return; }
       if (json === CL.saver.savedJSON || json === JSON.stringify(CL.state)) return;
@@ -594,7 +588,7 @@ function clLoad(date) {
     } else if (!CL.state) {
       const sections = await loadTemplate(date);
       if (CL.date !== date || CL.state) return;
-      CL.state = { date, name: savedName(), sections, frozenChecked: false };
+      CL.state = { date, sections, frozenChecked: false };
       CL.saver.reset(JSON.stringify(CL.state));
       renderChecklist();
     }
@@ -622,7 +616,6 @@ function renderChecklist() {
   $('clEditBtn').className = CL.edit ? 'btn btn-primary' : 'btn';
   $('clEditNote').hidden = !CL.edit;
   $('clResetWrap').hidden = !CL.edit || !CL.state;
-  if (document.activeElement !== $('reporterName')) $('reporterName').value = CL.state?.name ?? '';
   if (!CL.state) { root.append(h('p', { class: 'empty' }, '読み込み中…')); updateProgress(); return; }
 
   const nowKey = currentSectionKey();
@@ -777,7 +770,6 @@ function updateProgress() {
   $('tabSub-checklist').textContent = !CL.state ? '読み込み中…' : (total === 0 ? 'チェック項目なし' : remain === 0 ? 'すべて完了' : `残り ${remain}件`);
 }
 
-$('reporterName').addEventListener('input', e => { if (!CL.state) return; CL.state.name = e.target.value.trim(); clTouched(); });
 $('clEditBtn').onclick = () => { CL.edit = !CL.edit; if (!CL.edit) CL.saver.flush(); renderChecklist(); };
 $('clResetBtn').onclick = () => confirmDialog('この日の項目を初期設定に戻しますか？入力した内容とチェックも消えます（「元に戻す」で取り消せます）。', '初期設定に戻す', () => {
   CL.state.sections = blankOut(normSections(null)); CL.state.frozenChecked = false; renderChecklist(); CL.saver.flush();
