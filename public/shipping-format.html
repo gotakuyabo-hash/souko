@@ -2738,6 +2738,47 @@ function splitIntoFields(text, limits) {
   return { fields: out, overflow };
 }
 
+// 住所を欄に入れる：①単語で区切って入れる → 入りきらなければ ②単語の途中でも詰めて入れる
+// → それでも入りきらなければ ③英語の住所を短く書き換えて（Apartment→Apt など）もう一度。末尾が切れるのは③でも無理なときだけ
+function charFill(text, limits) {
+  const out = limits.map(() => '');
+  let fi = 0, w = 0;
+  for (const ch of normText(text)) {
+    if (fi >= limits.length) return { fields: out, overflow: true };
+    if (ch === ' ' && !out[fi]) continue;
+    const cw = charWidth(ch);
+    if (w + cw > limits[fi]) { out[fi] = out[fi].trimEnd(); fi++; w = 0; if (fi >= limits.length) return { fields: out, overflow: true }; if (ch === ' ') continue; }
+    out[fi] += ch; w += cw;
+  }
+  out[fi] = (out[fi] || '').trimEnd();
+  return { fields: out, overflow: false };
+}
+const ADDR_ABBR = [
+  [/\bapartments?\b/gi, m => /s$/i.test(m) ? 'Apts' : 'Apt'], [/\bbuilding\b/gi, 'Bldg'], [/\broom\b/gi, 'Rm'],
+  [/\bheights\b/gi, 'Hts'], [/\bresidence\b/gi, 'Res'], [/\bmansion\b/gi, 'Mans'], [/\bfloor\b/gi, 'F'],
+  [/\bnumber\b/gi, 'No'], [/\bprefecture\b/gi, ''], [/[,，]\s*/g, ','], [/\s*-\s*/g, '-'], [/\b(japan|nihon|nippon)\b/gi, '']
+];
+function shortenAddress(text) {
+  let t = normText(text);
+  ADDR_ABBR.forEach(([re, to]) => { t = t.replace(re, to); });
+  return normText(t.replace(/,{2,}/g, ',').replace(/^,|,$/g, ''));
+}
+function fitAddressFields(text, limits) {
+  let r = splitIntoFields(text, limits);
+  if (!r.overflow) return { ...r, shortened: false };
+  r = charFill(text, limits);
+  if (!r.overflow) return { ...r, shortened: false };
+  const short = shortenAddress(text);
+  r = splitIntoFields(short, limits);
+  if (r.overflow) r = charFill(short, limits);
+  return { ...r, shortened: true };
+}
+function addrWarn(split, who, label = '住所') {
+  if (split.overflow) return `・${who}：${label}が長く、短く書き換えても末尾が入りきりませんでした（送り状を確認してください）`;
+  if (split.shortened) return `・${who}：${label}が長いため、Apartment→Apt などに短くして入れました`;
+  return '';
+}
+
 function convertSagawaRowToB2(s, template, settings) {
   const len = Math.max(42, template ? template.length : 0);
   const row = Array(len).fill('');
@@ -2763,9 +2804,10 @@ function convertSagawaRowToB2(s, template, settings) {
     addrText = loc.text;
     if (loc.warn) warns.push(loc.warn);
   }
-  const addr = splitIntoFields(addrText, [64, 32, 50, 50]);
+  const addr = fitAddressFields(addrText, [64, 32, 50, 50]);
   [row[B2.ADDR], row[B2.APT], row[B2.CO1], row[B2.CO2]] = addr.fields;
-  if (addr.overflow) warns.push('住所が長く、末尾が入りきりませんでした');
+  if (addr.overflow) warns.push('住所が長く、短く書き換えても末尾が入りきりませんでした');
+  else if (addr.shortened) warns.push('住所が長いため、Apartment→Apt などに短くしました');
   row[B2.NAME] = cutByWidth(normText(s[SG.NAME1]), 32);
   if (widthOf(normText(s[SG.NAME1])) > 32) warns.push('お届け先名を16文字で切りました');
   const name2 = normText(s[SG.NAME2]);
@@ -2831,14 +2873,14 @@ window.exportYamatoCsv = () => {
       // L列は全角32文字、M列（建物名）は全角16文字（半角は0.5文字）。超えたら、はみ出した分をM列→N列→O列の順に送る
       if (widthOf(normText(newRow[B2.ADDR])) > 64) {
         const combined = [newRow[B2.ADDR], newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]].map(normText).filter(Boolean).join(' ');
-        const split = splitIntoFields(combined, [64, 32, 50, 50]);
+        const split = fitAddressFields(combined, [64, 32, 50, 50]);
         [newRow[B2.ADDR], newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]] = split.fields;
-        if (split.overflow) warnLines.push(`・${who}：住所が長く、末尾が入りきりませんでした`);
+        const w = addrWarn(split, who); if (w) warnLines.push(w);
       } else if (widthOf(normText(newRow[B2.APT])) > 32) {
         const combined = [newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]].map(normText).filter(Boolean).join(' ');
-        const split = splitIntoFields(combined, [32, 50, 50]);
+        const split = fitAddressFields(combined, [32, 50, 50]);
         [newRow[B2.APT], newRow[B2.CO1], newRow[B2.CO2]] = split.fields;
-        if (split.overflow) warnLines.push(`・${who}：建物名・会社名が長く、末尾が入りきりませんでした`);
+        const w = addrWarn(split, who, '建物名・会社名'); if (w) warnLines.push(w);
       }
       const itemStr = String(newRow[B2.ITEM1] || '');
       if (widthOf(itemStr) > 50) newRow[B2.ITEM1] = cutByWidth(itemStr, 50);
@@ -2919,12 +2961,19 @@ window.exportEhidenCsv = () => {
       const who = normText(newRow[SG.NAME1]) || oNum;
       const loc = localizeAddress([newRow[SG.ADDR1], newRow[SG.ADDR2], newRow[SG.ADDR3]].map(v => v || '').join(''), newRow[SG.ZIP]);
       if (loc.changed) {
-        const split = splitIntoFields(loc.text, [32, 32, 32]);
+        const split = fitAddressFields(loc.text, [32, 32, 32]);
         [newRow[SG.ADDR1], newRow[SG.ADDR2], newRow[SG.ADDR3]] = split.fields;
         addrChanged++;
-        if (split.overflow) warnLines.push(`・${who}：住所が長く、末尾が入りきりませんでした`);
+        const w = addrWarn(split, who); if (w) warnLines.push(w);
       }
       if (loc.warn) warnLines.push(`・${who}：${loc.warn}`);
+    }
+    // 住所1〜3のどれかが全角16文字（半角32）を超えていたら、3欄に詰め直す（e飛伝で切られないように）
+    if ([SG.ADDR1, SG.ADDR2, SG.ADDR3].some(i => widthOf(normText(newRow[i])) > 32)) {
+      const who = normText(newRow[SG.NAME1]) || oNum;
+      const split = fitAddressFields([newRow[SG.ADDR1], newRow[SG.ADDR2], newRow[SG.ADDR3]].map(normText).filter(Boolean).join(' '), [32, 32, 32]);
+      [newRow[SG.ADDR1], newRow[SG.ADDR2], newRow[SG.ADDR3]] = split.fields;
+      const w = addrWarn(split, who); if (w) warnLines.push(w);
     }
     outputRows.push(newRow);
     shippedNos.push(oNum);
