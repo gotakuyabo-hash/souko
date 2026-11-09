@@ -33,7 +33,7 @@
  *
  * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
  *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
- *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / request=依頼 / share=共有 / other=その他）
+ *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / shopee=Shopee連携 / request=依頼 / share=共有 / other=その他）
  *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
  *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
@@ -180,6 +180,10 @@ async function handleRequest(p) {
       result = await findShipments(p.q);
     } else if (action === "us_request") {
       result = await createUsRequest(p);
+    } else if (action === "extract_shipments") {
+      result = await extractShipments(p);
+    } else if (action === "matomaru_request") {
+      result = await createMatomaruRequests(p);
     } else if (action === "get_questions") {
       result = await getQuestions();
     } else if (action === "close_question") {
@@ -206,6 +210,11 @@ async function handleRequest(p) {
         result = { members: await getMembersCached(token, p.room_id) };
       } else if (action === "fix_triage") {
         result = await fixTriage(p);
+      } else if (action === "fix_who") {
+        result = await fixWho(p);
+      } else if (action === "log_who") {
+        await logWho(p.account, p.room_id, p.who, p.text, "discord");
+        result = { ok: true };
       } else if (action === "mark_read_batch") {
         result = await markReadBatch(token, p.room_ids);
       } else if (action === "get_rooms") {
@@ -220,6 +229,8 @@ async function handleRequest(p) {
         result = await sendChatworkMessage(token, p.room_id, p.body);
         await markSentFromCockpit(p.room_id, p.body);
         if (p.done) {
+          // 渡辺さんに聞かずに返して完了した要確認 →「スタッフで対応できた例」として記録
+          try { await logStaffAnswered(p.account, p.room_id, p.learn_text); } catch (e) { console.error(e); }
           await clearAnsweredQuestion(p.account, p.room_id);
           // 送信と同時に「既読」＋「後で対応から外す」
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
@@ -252,6 +263,8 @@ async function handleRequest(p) {
         result = await uploadChatworkFile(token, p.room_id, p.file_data, p.file_name, p.mime_type, p.message);
         if (p.message) await markSentFromCockpit(p.room_id, p.message);
         if (p.done) {
+          // 渡辺さんに聞かずに返して完了した要確認 →「スタッフで対応できた例」として記録
+          try { await logStaffAnswered(p.account, p.room_id, p.learn_text); } catch (e) { console.error(e); }
           await clearAnsweredQuestion(p.account, p.room_id);
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
           result.later = await setLater(p.account, [p.room_id], false);
@@ -634,7 +647,7 @@ async function callAI(prompt, opt = {}) {
   const messages = [];
   if (opt.system) messages.push({ role: "system", content: opt.system });
   messages.push({ role: "user", content: prompt });
-  const reqBody = { model: OPENAI_MODEL, messages };
+  const reqBody = { model: opt.model || OPENAI_MODEL, messages };
   if (opt.json) reqBody.response_format = { type: "json_object" };
 
   // 混雑時（429/500/502/503）や空の結果のときは、少し待って最大2回までやり直す
@@ -670,6 +683,52 @@ async function callAI(prompt, opt = {}) {
 //   ルールを増やしすぎると、軽いモデルは文章が硬く・雑になりやすいので、最小限にしている
 const AI_BASE_NOTE = "【指示】は担当者の走り書きのメモです。そのまま写さず、意味をくみ取って、取引先に送る丁寧なビジネス敬語の文章に整えてください。\n\n";
 
+// 指示なしで返信を作る時の、仕分けごとの書き方
+const NO_PROMPT_HINTS = {
+  none: "お礼・了承などの短い返事で十分です。",
+  easy: "会話の内容だけで答えられる返信にしてください。",
+  order: "出荷の依頼を承った旨を伝えてください。出荷日や完了は約束しないでください。",
+  request: "作業の依頼を承った旨を伝えてください。対応日や完了は約束しないでください。",
+  share: "共有（注文の詳細・納品の連絡など）を受け取ったお礼と、確認する旨を伝えてください。",
+  trouble: "ご迷惑へのお詫びと、すぐに状況を確認してご連絡する旨を伝えてください。原因や補償には触れないでください。",
+  ship: "出荷状況を確認してご連絡する旨を伝えてください。",
+  bill: "請求・料金について確認してご連絡する旨を伝えてください。金額は書かないでください。",
+  system: "確認してご連絡する旨を伝えてください。",
+  shopee: "Shopee連携の件を確認してご連絡する旨を伝えてください。",
+  other: "確認してご連絡する旨を伝えてください。"
+};
+const TRIAGE_JA = { none: "返信不要", easy: "すぐ返せる", check: "要確認",
+  order: "出荷依頼", request: "依頼", share: "共有", trouble: "トラブル", ship: "出荷・追跡", bill: "請求・料金", system: "システム", shopee: "Shopee連携", other: "その他" };
+
+// ルームの仕分け・確認ポイント・渡辺さんの回答を集める（返信作成の材料）
+async function roomFacts(account, roomId) {
+  const out = { cat: "", sub: "", point: "", answers: [] };
+  const rid = String(roomId || "").replace(/[^0-9]/g, "");
+  if (!rid || !ACCOUNTS[account]) return out;
+  try {
+    const [rs, ms] = await Promise.all([
+      db.collection("cw_rooms").doc(account + "_" + rid).get(),
+      db.collection(msgCollection()).doc(account + "_" + rid).get()
+    ]);
+    if (rs.exists) {
+      const d = rs.data();
+      if (d.triage && (d.lastMine || String(d.triageFor || "") === String(d.lastMsgId || ""))) {
+        out.cat = d.triage;
+        out.sub = d.triage === "check" ? (d.triageSub || "other") : "";
+      }
+      const qs = Object.values(d.questions || {});
+      if (d.question && d.question.status) qs.push(d.question);
+      const seen = {};
+      qs.filter(q => q && q.status === "answered" && q.answer).sort((a, b) => (a.answeredAt || 0) - (b.answeredAt || 0))
+        .forEach(q => { if (!seen[q.no]) { seen[q.no] = 1; out.answers.push("質問：" + String(q.question || "").slice(0, 200) + "\n回答：" + String(q.answer).slice(0, 600)); } });
+    }
+    if (ms.exists) out.point = String(ms.get("triagePoint") || "");
+  } catch (e) {
+    console.error("返信の材料を読めませんでした: " + e.message);
+  }
+  return out;
+}
+
 // 返信案・新規発信の文章を作成
 async function generateAiReply(params) {
   const roomName = params.room_name || "ルーム";
@@ -680,6 +739,11 @@ async function generateAiReply(params) {
   const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
   const note = params.room_id ? (await getRoomNote(params.room_id)).summary : "";
   const qa = await qaForPrompt(params.room_id);
+  const facts = params.mode === "compose" ? null : await roomFacts(params.account, params.room_id);
+  const answerBlock = facts && facts.answers.length
+    ? "【このルームの件で、渡辺さん（責任者）が答えた内容】\n" + facts.answers.slice(-3).join("\n\n") + "\n"
+      + "返信は、この回答の内容に沿って書いてください（回答の文をそのまま写さず、取引先向けに整える）。\n\n"
+    : "";
   const noteBlock = note
     ? "【このルームの状況（担当者が整理したもの）】\n" + note.trim() + "\n\n"
       + "この状況をふまえ、内容と食い違わない文章にしてください。状況の文をそのまま書き写したり、相手が聞いていないことまで持ち出したりはしないでください。\n\n"
@@ -690,6 +754,7 @@ async function generateAiReply(params) {
   const system = "あなたは物流倉庫のカスタマーサポート担当です。取引先とのチャットで送るメッセージを作成します。宛名・自己紹介は不要です。丁寧かつ簡潔にしてください。\n\n"
     + rules
     + noteBlock
+    + answerBlock
     + (qa ? "【参考：過去に渡辺さん（責任者）が答えたQ&A】\n" + qa + "\n"
       + "今回の内容に関係するQ&Aがあれば、その答えに沿って書いてください。関係しないQ&Aは使わないでください。\n\n" : "")
     + "出力は送信するメッセージ本文のみとし、記号（*や#）は使わないでください。";
@@ -705,6 +770,15 @@ async function generateAiReply(params) {
     prompt = "以下のチャットで、相手の最後のメッセージに対する返信文を作成してください。\n\n";
     if (customPrompt) {
       prompt += "【指示（返信で伝える内容）】\n" + customPrompt + "\n\n" + AI_BASE_NOTE;
+    } else {
+      // 指示なし：仕分けの結果と、わかっている事実だけで書く
+      const key = facts && (facts.sub || facts.cat);
+      prompt += "【担当者からの指示はありません】\n"
+        + (key ? "この連絡の分類：" + (TRIAGE_JA[facts.cat] || "") + (facts.sub ? "・" + (TRIAGE_JA[facts.sub] || "") : "") + "\n" : "")
+        + (facts && facts.point ? "確認が必要なこと：" + facts.point + "\n" : "")
+        + (key && NO_PROMPT_HINTS[key] && !(facts.answers.length) ? "書き方：" + NO_PROMPT_HINTS[key] + "\n" : "")
+        + "出荷日・追跡番号・在庫数・金額・対応の可否などの事実は、会話・状況メモ・渡辺さんの回答に書かれているものだけを使い、推測で書かないでください。"
+        + "事実がわからず答えられないときは、受け取った旨と「確認してご連絡いたします」の一次返信にしてください。\n\n";
     }
     prompt += "【これまでのメッセージ】\n" + contextText;
   }
@@ -1509,7 +1583,8 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
       if (String(st.tm || "") === meta.lastMsgId) {
         newState[rid].tm = st.tm;   // 判定済み（前回の結果がFirestoreに残っている）
       } else {
-        triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meId, isMineMsg, meta, msgDoc, prevM: st.m || 0 });
+        const internal = !!(learn && learn.internal && learn.internal.indexOf(String(rid)) !== -1);
+        triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meId, isMineMsg, meta, msgDoc, prevM: st.m || 0, internal });
       }
     } else {
       // 最後が自社の時は、前回の仕分けを残す（一部だけ返信して要対応に残したカードの分類が消えないように）
@@ -1540,6 +1615,9 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
       if (res) {
         t.meta.triage = res.cat;
         t.meta.triageSub = res.sub;
+        t.meta.triageConf = res.conf;
+        t.meta.triageWho = res.who;
+        t.meta.triageWhoFixed = false;
         t.meta.triageFixed = false;
         t.meta.triageFor = t.meta.lastMsgId;
         t.msgDoc.triagePoint = res.point;
@@ -1708,6 +1786,87 @@ async function createUsRequest(p) {
 }
 
 // ==============================
+// まとまるくん（出荷処理ツール）への送り状依頼
+//   チャットに書かれたお届け先・商品名・数量をAIで読み取り → コックピットで確認 →
+//   matomaru_requests/{依頼番号} に保存。まとまるくんの「コックピットからの依頼」で取り込むと、
+//   受注CSV＋送り状CSVを読み込んだのと同じ形で一覧に入る（検品シート・送り状CSV・ピック・zaico出庫までそのまま）
+// ==============================
+async function extractShipments(p) {
+  const text = String(p.text || "").slice(0, 6000);
+  if (!text.trim()) throw new Error("読み取るメッセージがありません");
+  const system = "あなたは物流倉庫の出荷担当です。チャットのメッセージから、送り状を作るための情報を読み取ります。"
+    + "書かれていないことは推測せず空欄にしてください。出力はJSONのみ。";
+  const prompt = "次のメッセージから、お届け先ごとに情報を読み取ってください。お届け先が複数あれば複数件にします。\n"
+    + "商品は、そのお届け先に送る商品名と数量（数量が書かれていなければ1）。商品が書かれていなければ空の配列。\n"
+    + "郵便番号は数字7桁（ハイフンなし）。住所は都道府県から番地まで（address）と、建物名・部屋番号（building）に分ける。\n"
+    + "電話番号は数字とハイフンのみ。会社名・部署名があれば company に入れる。\n"
+    + "配送会社や送り方（ネコポス・コンパクト・宅急便・佐川など）、日付・時間指定、その他の注意があれば memo に短く書く。\n\n"
+    + "形式：{\"shipments\": [{\"name\": \"\", \"company\": \"\", \"zip\": \"\", \"address\": \"\", \"building\": \"\", \"tel\": \"\", "
+    + "\"items\": [{\"name\": \"\", \"qty\": 1}], \"memo\": \"\"}]}\n\n"
+    + "【メッセージ】\n" + text;
+  const out = await callAI(prompt, { system, json: true, timeoutMs: 45000 });
+  let data;
+  try { data = JSON.parse(String(out).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch (e) { throw new Error("読み取り結果を解析できませんでした"); }
+  const str = (v, n) => String(v === undefined || v === null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const list = (Array.isArray(data.shipments) ? data.shipments : []).slice(0, 30).map(x => ({
+    name: str(x.name, 60), company: str(x.company, 60),
+    zip: str(x.zip, 10).replace(/[^0-9]/g, "").slice(0, 7),
+    address: str(x.address, 120), building: str(x.building, 80),
+    tel: str(x.tel, 20).replace(/[^0-9\-]/g, ""),
+    items: (Array.isArray(x.items) ? x.items : []).slice(0, 30)
+      .map(it => ({ name: str(it && it.name, 80), qty: Math.max(1, parseInt(it && it.qty, 10) || 1) }))
+      .filter(it => it.name),
+    memo: str(x.memo, 200)
+  }));
+  return { shipments: list };
+}
+
+async function nextMatomaruNo() {
+  const ref = db.collection("cw_server").doc("matomaru_seq");
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const n = (snap.exists ? Number(snap.get("n")) || 0 : 0) + 1;
+    tx.set(ref, { n, updatedAt: nowSec() });
+    return n;
+  });
+}
+
+async function createMatomaruRequests(p) {
+  const list = Array.isArray(p.shipments) ? p.shipments.slice(0, 30) : [];
+  if (!list.length) throw new Error("送るお届け先がありません");
+  const str = (v, n) => String(v === undefined || v === null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const carrier = p.carrier === "sagawa" ? "sagawa" : "yamato";
+  const payment = p.payment === "chaku" ? "chaku" : "moto";   // moto=元払い（発払い） / chaku=着払い
+  let invoiceType = ["0", "8", "A"].indexOf(String(p.invoice_type)) !== -1 ? String(p.invoice_type) : "0";
+  if (carrier === "yamato" && payment === "chaku") invoiceType = "5";   // ヤマトB2の着払い
+  const d = new Date(Date.now() + 9 * 3600 * 1000);   // 日本時間
+  const ymd = String(d.getUTCFullYear()).slice(2) + String(d.getUTCMonth() + 1).padStart(2, "0") + String(d.getUTCDate()).padStart(2, "0");
+  const ids = [];
+  for (const x of list) {
+    const items = (Array.isArray(x.items) ? x.items : []).slice(0, 30)
+      .map(it => ({ name: str(it && it.name, 80), qty: Math.max(1, parseInt(it && it.qty, 10) || 1) })).filter(it => it.name);
+    const rec = {
+      name: str(x.name, 60), company: str(x.company, 60), zip: str(x.zip, 10).replace(/[^0-9]/g, ""),
+      address: str(x.address, 120), building: str(x.building, 80), tel: str(x.tel, 20).replace(/[^0-9\-]/g, "")
+    };
+    if (!rec.name || !rec.zip || !rec.address) throw new Error("お届け先の名前・郵便番号・住所は必須です");
+    const no = await nextMatomaruNo();
+    const id = "CW" + ymd + "-" + String(no).padStart(4, "0");
+    await db.collection("matomaru_requests").doc(id).set({
+      id, status: "open", carrier, invoiceType, payment,
+      shop: str(p.shop, 60), recipient: rec, items, itemLabel: str(p.item_label, 40) || (items[0] ? items[0].name : ""),
+      memo: str(x.memo, 200),
+      roomId: String(p.room_id || "").replace(/[^0-9]/g, ""), roomName: str(p.room_name, 100),
+      text: String(p.text || "").slice(0, 1500), account: String(p.account || ""), by: str(p.by, 40),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(), createdAtSec: nowSec(),
+      importedAt: null, importedBy: ""
+    });
+    ids.push(id);
+  }
+  return { ids };
+}
+
+// ==============================
 // 渡辺さんへの質問リスト
 //   ① カードの「👤 渡辺さんに聞く」→ 質問ルーム（社内ルーム）に投稿し、同じルームに渡辺さん担当のタスクも作る。
 //      cw_questions/Q{番号} に保存（taskId も）。ルームは「後で対応」へ
@@ -1814,6 +1973,7 @@ async function askQuestion(token, p) {
   await db.collection("cw_questions").doc("Q" + no).set(data);
   let later = null;
   if (rid) {
+    try { await logWho(p.account, rid, "watanabe", lastCust, "ask"); } catch (e) { console.error(e); }
     await putRoomQuestion(p.account, rid, data);
     later = await setLater(p.account, [rid], true);
   }
@@ -2016,14 +2176,91 @@ const TRIAGE_PER_CALL = 5;           // 1回のAI呼び出しで判定するル�
 const TRIAGE_MSGS = 10;              // 1ルームあたりAIに渡す直近のメッセージ数
 const TRIAGE_CHARS = 600;            // 1メッセージあたりAIに渡す文字数
 const TRIAGE_FIX_EXAMPLES = 30;
-const TRIAGE_MAX_PER_SYNC = 15;      // 1回の同期で仕分ける最大ルーム数（3回分を同時に）      // 手で直した仕分けを、お手本として何件渡すか
+const TRIAGE_MAX_PER_SYNC = 15;
+// 仕分けに使うモデル。精度をもっと上げたい時は "gpt-6-sol" に変える（料金は上がる）
+const TRIAGE_MODEL = OPENAI_MODEL;
+const TRIAGE_ROOM_EXAMPLES = 3;      // ルームごとに、そのルームで手で直した例を何件まで渡すか      // 1回の同期で仕分ける最大ルーム数（3回分を同時に）      // 手で直した仕分けを、お手本として何件渡すか
 const TRIAGE_CATS = ["none", "easy", "check"];
 // 要確認（check）の2次仕分け
-const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "request", "share", "other"];
+const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "shopee", "request", "share", "other"];
+
+// ===== 誰が答えられそうか（who）=====
+//   staff=スタッフで対応可 / watanabe=渡辺さん判断 / engineer=エンジニア（要確認のときだけ）
+//   線引きは決め打ちせず、実際の動き（渡辺さんに聞いた・聞かずに返した・Discordで聞いた・手で直した）を
+//   cw_who_log に記録して、AIのお手本にする
+const TRIAGE_WHO = ["staff", "watanabe", "engineer"];
+const WHO_EXAMPLES = 25;
+async function logWho(account, roomId, who, text, source) {
+  const rid = String(roomId || "").replace(/[^0-9]/g, "");
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!rid || TRIAGE_WHO.indexOf(who) === -1 || !t) return;
+  let sub = "";
+  try {
+    const snap = await db.collection("cw_rooms").doc(String(account) + "_" + rid).get();
+    if (snap.exists) sub = snap.get("triage") === "check" ? (snap.get("triageSub") || "") : (snap.get("triage") || "");
+  } catch (e) {}
+  await db.collection("cw_who_log").add({
+    account: String(account || ""), roomId: rid, who, text: t.slice(0, 400), sub, source: String(source || ""),
+    at: admin.firestore.FieldValue.serverTimestamp()
+  });
+  whoCache.at = 0;
+}
+async function logStaffAnswered(account, roomId, text) {
+  const rid = String(roomId || "").replace(/[^0-9]/g, "");
+  if (!rid || !ACCOUNTS[account] || !String(text || "").trim()) return;
+  const snap = await db.collection("cw_rooms").doc(account + "_" + rid).get();
+  if (!snap.exists || snap.get("triage") !== "check") return;
+  // このルームで渡辺さんに聞いた質問があれば、スタッフだけで答えた例にはしない
+  const qs = Object.values(snap.get("questions") || {});
+  const old = snap.get("question");
+  if (qs.length || (old && old.status)) return;
+  await logWho(account, rid, "staff", text, "sent");
+}
+async function fixWho(p) {
+  const acc = String(p.account || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const rid = String(p.room_id || "").replace(/[^0-9]/g, "");
+  const who = String(p.who || "");
+  if (!acc || !rid || TRIAGE_WHO.indexOf(who) === -1) throw new Error("担当の指定が正しくありません");
+  await db.collection("cw_rooms").doc(acc + "_" + rid).set({ triageWho: who, triageWhoFixed: true }, { merge: true });
+  await logWho(acc, rid, who, p.text, "fix");
+  return { ok: true };
+}
+let whoCache = { at: 0, docs: null };
+async function loadWhoExamples(roomIds) {
+  const res = { global: "", byRoom: {} };
+  try {
+    if (!whoCache.docs || Date.now() - whoCache.at > 5 * 60 * 1000) {
+      const snap = await db.collection("cw_who_log").orderBy("at", "desc").limit(300).get();
+      whoCache = { at: Date.now(), docs: snap.docs.map(d => d.data()) };
+    }
+    const want = {};
+    (roomIds || []).forEach(r => { want[r] = true; });
+    const g = [];
+    whoCache.docs.forEach(x => {
+      const line = "・「" + String(x.text || "").slice(0, 120) + "」" + (x.sub ? "（" + x.sub + "）" : "") + " → " + x.who
+        + (x.source === "fix" ? "（スタッフが手で指定）" : x.source ? "（" + x.source + "）" : "");
+      if (g.length < WHO_EXAMPLES) g.push(line);
+      const rid = String(x.roomId || "");
+      if (want[rid]) {
+        res.byRoom[rid] = res.byRoom[rid] || [];
+        if (res.byRoom[rid].length < 3) res.byRoom[rid].push(line);
+      }
+    });
+    res.global = g.join("\n");
+  } catch (e) {
+    console.error("担当のお手本を読めませんでした: " + e.message);
+  }
+  return res;
+}
 
 async function triageRooms(targets) {
   const out = {};
-  const examples = await loadTriageExamples();
+  const examples = await loadTriageExamples(targets.map(t => String(t.rid)));
+  examples.who = await loadWhoExamples(targets.map(t => String(t.rid)));
+  try {
+    const qa = await loadQaRecent();
+    examples.qa = qa.slice(0, QA_KEEP).map(x => "・" + String(x.q || "").replace(/\s+/g, " ").slice(0, 100)).join("\n");
+  } catch (e) { examples.qa = ""; }
   const chunks = [];
   for (let i = 0; i < targets.length; i += TRIAGE_PER_CALL) chunks.push(targets.slice(i, i + TRIAGE_PER_CALL));
   await Promise.all(chunks.map(async list => {
@@ -2037,22 +2274,42 @@ async function triageRooms(targets) {
 }
 
 // 手で直した仕分け（cw_triage_fixes）を、AIへのお手本として読む
-async function loadTriageExamples() {
+//   全体のお手本（新しいものから TRIAGE_FIX_EXAMPLES 件）と、ルームごとのお手本（そのルームで直した例）
+function fixLine(x) {
+  const text = String(x.text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  if (!text || TRIAGE_CATS.indexOf(x.cat) === -1) return "";
+  return "・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + x.sub + "）" : "")
+    + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + x.beforeSub + "）" : "") + " と誤判定" : "");
+}
+// 読み込み回数を抑えるため、直した例は5分だけ使い回す（直した時はすぐ読み直す）
+let fixCache = { at: 0, docs: null };
+async function loadTriageExamples(roomIds) {
+  const res = { global: "", byRoom: {} };
   try {
-    const qs = await db.collection("cw_triage_fixes").orderBy("at", "desc").limit(TRIAGE_FIX_EXAMPLES).get();
-    const lines = [];
+    if (!fixCache.docs || Date.now() - fixCache.at > 5 * 60 * 1000) {
+      const snap = await db.collection("cw_triage_fixes").orderBy("at", "desc").limit(300).get();
+      fixCache = { at: Date.now(), docs: snap.docs.map(d => d.data()) };
+    }
+    const qs = { forEach: fn => fixCache.docs.forEach(x => fn({ data: () => x })) };
+    const want = {};
+    (roomIds || []).forEach(r => { want[r] = true; });
+    const global = [];
     qs.forEach(d => {
       const x = d.data();
-      const text = String(x.text || "").replace(/\s+/g, " ").trim().slice(0, 160);
-      if (!text || TRIAGE_CATS.indexOf(x.cat) === -1) return;
-      lines.push("・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + x.sub + "）" : "")
-        + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + x.beforeSub + "）" : "") + " と誤判定" : ""));
+      const line = fixLine(x);
+      if (!line) return;
+      if (global.length < TRIAGE_FIX_EXAMPLES) global.push(line);
+      const rid = String(x.roomId || "");
+      if (want[rid]) {
+        res.byRoom[rid] = res.byRoom[rid] || [];
+        if (res.byRoom[rid].length < TRIAGE_ROOM_EXAMPLES) res.byRoom[rid].push(line);
+      }
     });
-    return lines.join("\n");
+    res.global = global.join("\n");
   } catch (e) {
     console.error("仕分けのお手本を読めませんでした: " + e.message);
-    return "";
   }
+  return res;
 }
 
 // 画面で仕分けを直した時：cw_rooms を直して、お手本として記録する
@@ -2067,7 +2324,7 @@ async function fixTriage(p) {
   const ref = db.collection("cw_rooms").doc(acc + "_" + rid);
   const snap = await ref.get();
   const cur = snap.exists ? snap.data() : {};
-  await ref.set({ triage: cat, triageSub: sub, triageFixed: true }, { merge: true });
+  await ref.set({ triage: cat, triageSub: sub, triageFixed: true, triageConf: "" }, { merge: true });
   await db.collection("cw_triage_fixes").add({
     account: acc, roomId: rid, roomName: String(p.room_name || cur.name || "").slice(0, 80),
     text: String(p.text || "").slice(0, 600),
@@ -2075,6 +2332,7 @@ async function fixTriage(p) {
     msgId: String(cur.lastMsgId || ""), by: String(p.by || "").slice(0, 40),
     at: admin.firestore.FieldValue.serverTimestamp()
   });
+  fixCache.at = 0;   // 次の仕分けで読み直す
   return { ok: true };
 }
 
@@ -2098,7 +2356,11 @@ async function triageChunk(list, examples) {
       const tag = mine ? "【自社】" : (i > lastMineIdx ? "【未返信】" : "");
       return "[" + fmt(m.send_time) + "] " + tag + ((m.account && m.account.name) || "") + to + "：" + stripTags(body).slice(0, TRIAGE_CHARS);
     }).join("\n");
-    return "■ルームID:" + t.rid + "（" + t.name.slice(0, 40) + "）\n" + lines;
+    const roomEx = (examples && examples.byRoom && examples.byRoom[String(t.rid)]) || [];
+    return "■ルームID:" + t.rid + "（" + t.name.slice(0, 40) + "）" + (t.internal ? "【社内ルーム】" : "") + "\n"
+      + (roomEx.length ? "（このルームで以前スタッフが直した仕分け）\n" + roomEx.join("\n") + "\n" : "")
+      + (examples && examples.who && examples.who.byRoom[String(t.rid)] ? "（このルームで、実際に誰が対応したか）\n" + examples.who.byRoom[String(t.rid)].join("\n") + "\n" : "")
+      + lines;
   }).join("\n\n");
 
   const system = "あなたは物流倉庫（発送代行）のカスタマーサポートで、届いたチャットを仕分ける担当です。"
@@ -2118,7 +2380,8 @@ async function triageChunk(list, examples) {
     + "ship：すでに出した荷物についての、出荷状況・発送日・追跡番号・配送状況・届かない（未着）の問い合わせ\n"
     + "bill：請求・料金・見積・支払い・請求書の問い合わせ\n"
     + "trouble：破損・誤出荷・数量違い・紛失・返品・クレームなどのトラブル\n"
-    + "system：システム・ツール・ログイン・API・ショップとの連携・設定などの問い合わせ\n"
+    + "shopee：Shopeeの連携手続き（新規セラーのShopeeショップ連携・認証・連携のための設定や情報のやり取り、連携の手順についての質問や「連携できました／できません」の連絡など）\n"
+    + "system：システム・ツール・ログイン・API・設定などの問い合わせ（Shopeeの連携手続きは shopee にする）\n"
     + "request：出荷以外の作業の依頼（検品・ラベル貼り・同梱物・梱包方法の指定・返送・FBA納品・在庫の移動や廃棄など、倉庫や自社に何かをしてほしいもの）\n"
     + "share：セラーからの情報の共有。特に多いのは次の2つ\n"
     + "　・注文の詳細の連絡（注文番号・商品・数量・お届け先などを送ってくるだけで、「出荷してください」などの依頼の言葉がないもの）\n"
@@ -2126,26 +2389,47 @@ async function triageChunk(list, examples) {
     + "　ほかに、休業日や運用の変更のお知らせ、作業結果の報告など、内容を確認して社内に伝えたり記録したりする必要があるもの\n"
     + "　注文の詳細と納品の連絡は、短い文でも none にせず share にする（倉庫での確認・記録が必要なため）\n"
     + "other：上のどれにも当てはまらないもの（在庫・入荷の確認、相談など）\n"
-    + "複数に当てはまるときは trouble ＞ order ＞ request ＞ bill ＞ ship ＞ system ＞ share の順で優先する。ただし、注文の詳細や納品の連絡で、依頼の言葉がないものは order や request にせず share にする。\n"
+    + "【社内ルーム】と書かれたルームは社内のスタッフどうしのルーム。社内の雑談・作業報告・連絡で自社（このアカウント）に何も求めていないものは none。自社あての依頼・質問は check か easy\n"
+    + "ルームの中に「このルームで以前スタッフが直した仕分け」があれば、そのルームの傾向として強く参考にする\n"
+    + "複数に当てはまるときは trouble ＞ shopee ＞ order ＞ request ＞ bill ＞ ship ＞ system ＞ share の順で優先する。ただし、注文の詳細や納品の連絡で、依頼の言葉がないものは order や request にせず share にする。\n"
     + "共有・お知らせでも、自社がすることも伝えることも何もないもの（全員向けの周知など）は check にせず none にする。\n\n"
     + "【point】相手が求めていることを40文字以内で。check のときは、確認すべきことを入れる（例：「入荷予定日の確認。在庫数を確認して回答」）。none のときは空でよい。\n\n"
     + "【出力】次のJSONだけを返す\n"
-    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|request|share|other|\", \"point\": \"...\"}]}";
+    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|shopee|request|share|other|\", \"who\": \"staff|watanabe|engineer|\", \"conf\": \"high|low\", \"point\": \"...\"}]}\n"
+    + "conf：判定に自信があれば high、文が短い・意図があいまい・どちらとも取れるときは low";
 
-  const sys = system + (examples ? "\n\n【お手本：以前スタッフが手で直した仕分け（同じような連絡は同じように分ける）】\n" + examples : "");
-  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system: sys, json: true, timeoutMs: 40000, tries: 1 });
+  const g = examples && examples.global;
+  const wg = examples && examples.who && examples.who.global;
+  const qa = examples && examples.qa;
+  const sys = system
+    + "\n\n【who】check のときだけ、誰が答えられそうかを1つ選ぶ（check 以外は空文字）\n"
+    + "staff：スタッフだけで返信できる。決まった手順の案内、受付・受領の返事、調べれば事実がわかるもの、"
+    + "または下の「渡辺さんが過去に答えた質問」と同じような内容のもの\n"
+    + "watanabe：責任者の渡辺さんの判断が要る。料金・請求・補償・お断り・例外対応・新しい条件・約束が必要なもの。迷ったら watanabe\n"
+    + "engineer：システムの不具合・仕様・連携のエラーなど、エンジニアに聞く必要があるもの\n"
+    + "「実際に誰が対応したか」のお手本があれば、それを最優先で参考にする（ask=渡辺さんに聞いた / sent=聞かずに返した / discord=エンジニアに聞いた）"
+    + (qa ? "\n\n【渡辺さんが過去に答えた質問（同じような質問は staff で答えられる）】\n" + qa : "")
+    + (wg ? "\n\n【お手本：実際に誰が対応したか】\n" + wg : "")
+    + (g ? "\n\n【お手本：以前スタッフが手で直した仕分け（同じような連絡は同じように分ける）】\n" + g : "");
+  const text = await callAI("次のルームを仕分けてください。\n\n" + blocks, { system: sys, json: true, timeoutMs: 40000, tries: 1, model: TRIAGE_MODEL });
   let data;
   try { data = JSON.parse(String(text).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch (e) { throw new Error("仕分け結果を読み取れませんでした"); }
   const ids = new Set(list.map(t => t.rid));
   const res = {};
   (Array.isArray(data.rooms) ? data.rooms : []).forEach(x => {
     const id = String((x && x.id) || "").replace(/[^0-9]/g, "");
-    const cat = String((x && x.cat) || "").trim();
+    let cat = String((x && x.cat) || "").trim();
     if (!ids.has(id) || TRIAGE_CATS.indexOf(cat) === -1) return;
     let sub = String((x && x.sub) || "").trim();
+    const conf = String((x && x.conf) || "").trim() === "low" ? "low" : "high";
+    // 自信のない「返信不要」は、見落とし防止のため要確認に上げる
+    if (cat === "none" && conf === "low") { cat = "check"; sub = "other"; }
     if (cat !== "check") sub = "";
     else if (TRIAGE_SUBS.indexOf(sub) === -1) sub = "other";
-    res[id] = { cat, sub, point: String(x.point || "").replace(/\s+/g, " ").trim().slice(0, 60) };
+    let who = String((x && x.who) || "").trim();
+    if (cat !== "check") who = "";
+    else if (TRIAGE_WHO.indexOf(who) === -1) who = "watanabe";
+    res[id] = { cat, sub, conf, who, point: String(x.point || "").replace(/\s+/g, " ").trim().slice(0, 60) };
   });
   return res;
 }
