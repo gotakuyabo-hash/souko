@@ -42,6 +42,11 @@
         html.pc .app-w { max-width: 1100px; }
         /* 要対応・後で：カードは常に2列（ウィンドウを狭めても2列のまま） */
         html.pc #burstModeContainer, html.pc #laterModeContainer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+        /* 3列表示（PCで、広い画面の時は自動。ヘッダーの ▥ ボタンで2列⇔3列を切替） */
+        html.pc.cols3 .app-w { max-width: 1640px; }
+        html.pc.cols3 #burstModeContainer, html.pc.cols3 #laterModeContainer { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        #colsBtn { display: none; }
+        html.pc #colsBtn { display: block; }
         html.pc #burstModeContainer > *, html.pc #laterModeContainer > * { margin-top: 0 !important; }
         html.pc #burstModeContainer > :not(.burst-card), html.pc #laterModeContainer > :not(.burst-card) { grid-column: 1 / -1; }
         /* ルーム：読みやすい幅で中央に */
@@ -102,7 +107,20 @@
                 root.classList.toggle('layout-manual', p !== 'auto');
                 var b = document.getElementById('layoutBtn');
                 if (b) { b.textContent = pc ? '📱' : '🖥️'; b.title = pc ? 'スマホ表示にする' : 'PC表示にする'; }
+                // 列の数（auto：ウィンドウ幅1400px以上なら3列）
+                var c = cols();
+                var three = pc && (c === '3' || (c === 'auto' && w >= 1400));
+                root.classList.toggle('cols3', three);
+                var cb = document.getElementById('colsBtn');
+                if (cb) { cb.textContent = three ? '▥2' : '▥3'; cb.title = three ? '2列表示にする' : '3列表示にする'; }
             }
+            var COLS_KEY = 'cw_cols_v1';
+            function cols() { try { return localStorage.getItem(COLS_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+            window.toggleCols = function () {
+                var three = document.documentElement.classList.contains('cols3');
+                try { localStorage.setItem(COLS_KEY, three ? '2' : '3'); } catch (e) {}
+                apply();
+            };
             window.applyLayout = apply;
             window.toggleLayout = function () {
                 var pc = document.documentElement.classList.contains('pc');
@@ -128,6 +146,7 @@
             </select>
             <span id="loadStatus" class="shrink-0 text-xs font-bold bg-indigo-500 px-2.5 py-1 rounded-full">読込中</span>
             <button id="layoutBtn" onclick="toggleLayout()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="表示の切替">🖥️</button>
+            <button id="colsBtn" onclick="toggleCols()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-sm font-bold cursor-pointer" aria-label="列の数の切替">▥3</button>
             <button onclick="openQuestions()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="渡辺さんへの質問リスト">❓</button>
             <button onclick="openAiRules()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="AI文章ルール">⚙️</button>
             <button onclick="refreshCurrentView(true)" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="更新">🔄</button>
