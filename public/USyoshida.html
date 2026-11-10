@@ -210,7 +210,8 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .ptable .pnoimg{color:#b00;font-weight:700}
 .ptable tr.hl td{background:#fff3c4}
 .ptable tr.bundle td:first-child{border-left:4px solid #000}
-.ptable tr td.pqty2{background:#ffc9d2;font-weight:700;font-size:10pt}  /* 数量2個以上 */
+/* 数量2個以上：黄色い行（備考・日時指定あり）の中でも目立つように、濃い色＋太枠＋大きい字 */
+.ptable td.pqty2{background:#ff9fb0 !important;font-weight:700;font-size:13pt;text-align:center;box-shadow:inset 0 0 0 2px #c0002a}
 .ptable .pnote{white-space:pre-wrap}
 .ptable .pbadge{display:block;font-weight:700}
 </style>
@@ -1085,6 +1086,8 @@ async function logArrival(nos, date){
 }
 
 /* ===== 検品書の印刷 ===== */
+// 数量欄の最初の数字だけを読む（「1/1」「1個(12/3)」などで数字がつながって大きくならないように）
+function qtyNum(v){ const m = String(v==null?'':v).normalize('NFKC').match(/\d+(?:\.\d+)?/); return m ? Number(m[0]) : 0; }
 $('#btnPrint').onclick = printSheets;
 
 async function printSheets(){
@@ -1111,7 +1114,7 @@ async function printSheets(){
         + '<td>'+r.no+'</td>'
         + '<td>'+esc(r.name)+'</td>'
         + '<td>'+esc(r.item)+'</td><td>'+img+'</td><td>'+esc(r.inboundTracking)+'</td><td>'+esc(r.pkgId)+'</td>'
-        + '<td'+(Number(String(r.qty).normalize('NFKC').replace(/[^\d.]/g,''))>=2 ? ' class="pqty2"' : '')+'>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
+        + '<td'+(qtyNum(r.qty)>=2 ? ' class="pqty2"' : '')+'>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
         + '<td class="pnote">'+note+'</td></tr>';
     }).join('');
 
