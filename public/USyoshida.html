@@ -265,7 +265,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <div id="tabAfter" hidden>
       <div class="panel stack">
         <h2 class="h2">発行済みデータの取り込み・出荷通知</h2>
-        <p class="muted small">ヤマト・佐川の発行済みCSVを読み込むと、品名2の「(No.○○)」でシートと紐づけて、配送業者・追跡番号・出荷日を入れます。受注CSVも読み込むと、出荷通知用のCSV（ステータス120）を作れます。</p>
+        <p class="muted small">ヤマト・佐川の発行済みCSVを読み込むと、品名2の「(No.○○)」でシートと紐づけて、配送業者・追跡番号と、紐づけた日（今日）を出荷日として入れます。受注CSVも読み込むと、出荷通知用のCSV（ステータス120）を作れます。</p>
         <div class="files">
           <label>ヤマトの発行済みCSV<input type="file" id="fYamato" accept=".csv"></label>
           <label>佐川の発行済みCSV<input type="file" id="fSagawa" accept=".csv"></label>
@@ -341,7 +341,6 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 <div id="actionBar" class="actionbar" hidden>
   <label class="chk"><input type="checkbox" id="selAll"> 表示中をすべて選択</label>
   <span id="selCount">0件選択</span>
-  <label>入荷日 <input type="date" id="arrDate"></label>
   <button id="btnArrive" class="primary">入荷済みにする</button>
   <button id="btnUnarrive" class="ghost">入荷日を消す</button>
   <button id="btnPrint" class="secondary">検品書を印刷</button>
@@ -899,7 +898,6 @@ function render(){
   }).join('');
 
   $('#actionBar').hidden = !state.groups.length || $('#tabWork').hidden;
-  if (!$('#arrDate').value) $('#arrDate').value = todayStr();
   updateSel();
 }
 
@@ -966,8 +964,7 @@ $('#btnUnarrive').onclick = () => setArrived(true);
 async function setArrived(clear){
   const nos = [...state.selected];
   if (!nos.length) { toast('入荷登録する注文を選んでください'); return; }
-  const date = $('#arrDate').value;
-  if (!clear && !date) { toast('入荷日を選んでください'); return; }
+  const date = todayStr();   // 入荷日＝シートに入れる日（今日）
   if (clear && !confirm(nos.length+'件の入荷日を消します。よろしいですか？')) return;
 
   if (!clear) {
@@ -2244,6 +2241,12 @@ $('#btnLink').onclick = async () => {
   finally{ btn.disabled = false; btn.textContent = '紐づけを確認する'; }
 };
 
+// 出荷日＝紐づけた日（今日）。すでに同じ追跡番号で反映済みの注文は、シートの出荷日をそのまま使う
+function linkShipDate(p, today){
+  if (p.status==='same') { const od = normDate(p.r && p.r.shippedAt); if (od) return od; }
+  return today || todayStr();
+}
+
 function renderLinkPlan(){
   const { unlinked } = linkPlan;
   const plan = linkPlan.plan.slice().sort((a,b) => (a.status==='outside') - (b.status==='outside') || a.no-b.no);
@@ -2266,7 +2269,7 @@ function renderLinkPlan(){
     + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
       + plan.map(p => '<tr><td>'+p.no+'</td><td>'+esc(p.c.carrier)+'</td><td>'+esc(p.c.tracking)
         + (p.multi ? '<br><span class="muted small">複数口（1口目）</span>' : '')
-        + (p.old && p.old.length ? '<br><span class="muted small">使わない古い送り状：'+esc(p.old.map(o=>o.tracking).join('、'))+'</span>' : '')+'</td><td>'+esc(md(p.c.date || todayStr()))+'</td><td>'+label(p)+'</td></tr>').join('')
+        + (p.old && p.old.length ? '<br><span class="muted small">使わない古い送り状：'+esc(p.old.map(o=>o.tracking).join('、'))+'</span>' : '')+'</td><td>'+(p.r ? esc(md(linkShipDate(p))) : '')+'</td><td>'+label(p)+'</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (unlinked.length ? '<p class="st-ng small" style="margin-top:8px">No.も受注番号も見つからなかった送り状：'+esc(unlinked.join('、'))+'</p>' : '');
   $('#linkActions').hidden = false;
@@ -2288,29 +2291,31 @@ $('#btnLinkWrite').onclick = async () => {
     targets = targets.filter(p => v.ok[p.no]).map(p => Object.assign(p, { r: v.ok[p.no] }));
     if (!targets.length) { linkLog('❌ 書き込める注文がありませんでした'); return; }
     let done = 0; const notFound = [];
+    const today = todayStr();                 // 紐づけた日を出荷日にする
+    targets.forEach(p => { p.shipDate = linkShipDate(p, today); });
     for (const part of chunk(targets, 100)) {
       const updates = part.map(p => ({ no:p.no, rowNumber:p.r.rowNumber,
-        fields:{ carrier:p.c.carrier, tracking:p.c.tracking, shippedAt:p.c.date || todayStr() } }));
+        fields:{ carrier:p.c.carrier, tracking:p.c.tracking, shippedAt:p.shipDate } }));
       const j = await gas('write', { updates });
       done += j.updated; notFound.push(...j.notFound);
       await batchSetAll(part.map(p => [ordersCol().doc(String(p.no)), {
         carrier:p.c.carrier, tracking:p.c.tracking,
-        shippedAt: p.c.date || todayStr(),
+        shippedAt: p.shipDate,
         procOrderId: oidOf(p.r.orderId),
         procKey: keyOf(p.r),
         trackingLinkedAt: serverTs(),
         // 保管品を出荷したら、保管を解除して出荷の記録を残す
         ...(p.fromStor ? { storage:{ active:false, releasedAt:new Date().toISOString(), releasedBy:(state.user && state.user.email) || '',
           releaseReason:'出荷', shipped:true, shippedBy:(state.user && state.user.email) || '',
-          shippedAt:p.c.date || todayStr(), shippedCarrier:p.c.carrier, shippedTracking:p.c.tracking } } : {}),
+          shippedAt:p.shipDate, shippedCarrier:p.c.carrier, shippedTracking:p.c.tracking } } : {}),
       }])).catch(e => console.warn(e));
-      part.forEach(p => { if (p.fromStor) { state.storDone[p.no] = Object.assign({}, state.stor[p.no], { shipped:true, shippedAt:p.c.date || todayStr() }); delete state.stor[p.no]; } });
+      part.forEach(p => { if (p.fromStor) { state.storDone[p.no] = Object.assign({}, state.stor[p.no], { shipped:true, shippedAt:p.shipDate }); delete state.stor[p.no]; } });
     }
     linkLog('✅ '+done+'件を反映しました（配送業者・追跡番号・出荷日）');
     // 出荷日が変わる注文もあるので、新しい出荷日と元の出荷日の両方を数え直す
     const days = new Set();
     targets.forEach(p => {
-      days.add(p.c.date || todayStr());
+      days.add(p.shipDate);
       const od = normDate(p.r && p.r.shippedAt); if (od) days.add(od);
     });
     await pushShukkaCounts([...days]);
@@ -2623,7 +2628,7 @@ $('#histList').addEventListener('click', async e => {
   updateCount();
   switchTab('work');
   await doSearch(true);
-  toast('検品書（'+fmtTs(d.printedAt)+'）の注文を全件選択しました。入荷日を確認して「入荷済みにする」を押してください', 6000);
+  toast('検品書（'+fmtTs(d.printedAt)+'）の注文を全件選択しました。「入荷済みにする」を押すと今日の日付で入荷日が入ります', 6000);
 });
 
 /* ===== チャットでの報告 ===== */
