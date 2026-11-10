@@ -283,6 +283,7 @@ const shukkaAuto = (() => {
                         <button onclick="openSheetCopyModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paste mr-1"></i>シート用データコピー</button>
                         <button onclick="openInspectionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-print mr-1"></i>検品書(100×150)印刷</button>
                         <button onclick="openTotalPickingModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-clipboard-list mr-1"></i>トータルピック</button>
+                        <button onclick="registerShukkaMedi(true)" class="bg-teal-600 hover:bg-teal-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-truck-fast mr-1"></i>出荷件数に登録</button>
                         <button onclick="downloadExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-excel mr-1"></i>Excel保存</button>
                         <button onclick="sendPackingListsToChatwork()" id="chatworkSendBtn" class="bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paper-plane mr-1"></i>Chatworkに送る</button>
                     </div>
@@ -1219,16 +1220,45 @@ const shukkaAuto = (() => {
             registerShukkaMedi();
         }
 
-        // 検品書を印刷した注文（Order SN）を、今日の出荷としてチェックリストの出荷件数に足す
-        // （同じ注文は何回印刷しても1件）
-        async function registerShukkaMedi() {
-            if (!window.shukkaAuto || !processedDataRows.length) return;
+        // Chatwork送信・Excel保存・ピック印刷・検品書印刷・「出荷件数に登録」ボタンのときに、注文（Order SN）を今日の出荷としてチェックリストの出荷件数に足す
+        // （同じ注文は何回印刷・登録しても1件）
+        async function registerShukkaMedi(manual) {
+            if (!processedDataRows.length) { if (manual) showShukkaNotice('先にパッキングリストを読み込んでください', 'error'); return; }
+            if (!window.shukkaAuto) { showShukkaNotice('出荷件数の登録機能の準備ができていません。ページを再読み込みしてください', 'error'); return; }
             const d = new Date();
             const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             try {
                 const res = await window.shukkaAuto.addOrders('medicarry', '分割くん Medicarry', date, processedDataRows.map(r => r.orderSn));
-                console.info(window.shukkaAuto.describe(res));
-            } catch (e) { console.warn('チェックリストの出荷件数を更新できませんでした', e); }
+                const msg = window.shukkaAuto.describe(res);
+                if (!res.length) showShukkaNotice('Order SNが見つからず、出荷件数に登録できませんでした', 'error');
+                else showShukkaNotice(msg, res.some(r => !r.to) ? 'warn' : 'ok');
+            } catch (e) {
+                console.warn('チェックリストの出荷件数を更新できませんでした', e);
+                showShukkaNotice('チェックリストの出荷件数を更新できませんでした：' + (e && (e.code || e.message) || e), 'error');
+            }
+        }
+
+        // 画面右下に結果を表示（スタッフが登録できたか見てわかるように）
+        function showShukkaNotice(text, kind) {
+            let el = document.getElementById('shukkaNotice');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'shukkaNotice';
+                el.className = 'no-print';
+                el.style.cssText = 'position:fixed;right:16px;bottom:16px;max-width:420px;z-index:9999;padding:12px 36px 12px 14px;border-radius:12px;font-size:13px;line-height:1.6;white-space:pre-line;box-shadow:0 6px 20px rgba(0,0,0,.18)';
+                const x = document.createElement('button');
+                x.textContent = '×'; x.setAttribute('aria-label', '閉じる');
+                x.style.cssText = 'position:absolute;top:6px;right:10px;font-size:16px;opacity:.7';
+                x.onclick = () => { el.style.display = 'none'; };
+                el.appendChild(x);
+                el.appendChild(document.createElement('span'));
+                document.body.appendChild(el);
+            }
+            const colors = { ok: ['#ecfdf5', '#065f46'], warn: ['#fffbeb', '#92400e'], error: ['#fef2f2', '#991b1b'] }[kind] || ['#f1f5f9', '#1e293b'];
+            el.style.background = colors[0]; el.style.color = colors[1]; el.style.display = 'block';
+            el.lastChild.textContent = text;
+            clearTimeout(el._t);
+            if (kind === 'ok') el._t = setTimeout(() => { el.style.display = 'none'; }, 8000);
         }
 
         function openTotalPickingModal() {
@@ -1302,10 +1332,12 @@ const shukkaAuto = (() => {
 
         function printPicking() {
             runPrint('printing-picking', '@page { size: A4 portrait; margin: 10mm; }');
+            registerShukkaMedi();
         }
 
         function downloadExcel() {
             if (!processedDataRows.length) return;
+            registerShukkaMedi();
             let data = [['tracking_number', 'order_sn', 'sku_code', 'product_name_jp', 'original_product_info', 'base_quantity', 'multiplier', 'total_quantity']];
             processedDataRows.forEach(r => data.push([r.trackingNum, r.orderSn, r.sku, r.jpName, r.item, r.baseQty, r.multiplier, r.baseQty*r.multiplier]));
             let ws = XLSX.utils.aoa_to_sheet(data);
@@ -1371,6 +1403,8 @@ const shukkaAuto = (() => {
 
             btn.disabled = false;
             btn.innerHTML = btnHtml;
+
+            if (ok > 0) await registerShukkaMedi();
 
             if (failed.length === 0) {
                 alert(`${ok}件をChatworkに送りました。`);
