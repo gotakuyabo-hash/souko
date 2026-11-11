@@ -732,13 +732,16 @@ function lookupCode(){
   return false;
 }
 
+// 配送業者名をそろえる（「佐川」「佐川急便株式会社」「sagawa」などは「佐川急便」で書き込む）
+const normCarrier = v => { const t = String(v || '').trim(); return /^(佐川|さがわ|サガワ|sagawa)/i.test(t) ? '佐川急便' : t; };
+
 function fillLists(){
   buildCodeMap();
   const names = new Set([...D.inbound.map(b => b.name), ...D.stock.map(s => s.name)].filter(Boolean));
   $('dlNames').innerHTML = [...names].map(n => '<option value="'+esc(n)+'">').join('');
   const staff = new Set(D.inbound.map(b => b.staff).filter(Boolean));
   $('dlStaff').innerHTML = [...staff].map(n => '<option value="'+esc(n)+'">').join('');
-  const car = new Set([...D.carriers, ...D.orders.map(o => o.carrier)].filter(Boolean));
+  const car = new Set(['佐川急便', ...[...D.carriers, ...D.orders.map(o => o.carrier)].map(normCarrier)].filter(Boolean));
   $('dlCarriers').innerHTML = [...car].map(n => '<option value="'+esc(n)+'">').join('');
 }
 
@@ -780,7 +783,7 @@ async function setReceived(rows, val){
 
 function openShip(rows){
   const ids = new Set(rows.map(keyOf));
-  const lastCarrier = store('lastCarrier');
+  const lastCarrier = normCarrier(store('lastCarrier'));
   openDlg(
     '<form><h2>出荷登録（'+ids.size+'件・'+rows.length+'行）</h2>' +
     '<p class="sub">'+summaryOf(rows)+'</p>' +
@@ -791,7 +794,7 @@ function openShip(rows){
     '<label class="opt"><input type="checkbox" name="keepTracking">入力済みの配送番号は残す</label></div>' +
     '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">出荷にする</button></div></form>',
     async fd => {
-      const carrier = fd.get('carrier').trim();
+      const carrier = normCarrier(fd.get('carrier'));
       if (carrier) store('lastCarrier', carrier);
       const keep = fd.get('keepTracking') === 'on';
       const updates = rows.map(o => {
@@ -845,7 +848,7 @@ function openEdit(o){
     async fd => {
       const fields = {
         received: fd.get('received') === 'on', shipped: fd.get('shipped') === 'on',
-        shipDate: fd.get('shipDate'), carrier: fd.get('carrier').trim(), tracking: fd.get('tracking').trim(),
+        shipDate: fd.get('shipDate'), carrier: normCarrier(fd.get('carrier')), tracking: fd.get('tracking').trim(),
         size: o.sizeCheck ? fd.get('size') === 'on' : (fd.get('size') || '').trim(), note: fd.get('note'),
       };
       if (D.hasPacking) fields.packing = fd.get('packing') === 'on';
@@ -1055,9 +1058,11 @@ function yamatoB2Rows(dest, f, lines, day, item){
   return [H, ...rows];
 }
 
-// 佐川 e飛伝（e飛伝Ⅱ 標準レイアウト）
+// 佐川 e飛伝Ⅲ（標準レイアウト）
+// ※e飛伝Ⅲは先頭が「お届け先コード取得区分」「お届け先コード」の2列。
+//   以前のe飛伝Ⅱの並び（先頭が住所録コード1列）だと1列ずつズレて、住所欄に宛名が入ってしまう
 function sagawaRows(dest, f, lines, day, item){
-  const H = ['住所録コード','お届け先電話番号','お届け先郵便番号','お届け先住所１','お届け先住所２','お届け先住所３','お届け先名称１','お届け先名称２','お客様管理番号','お客様コード',
+  const H = ['お届け先コード取得区分','お届け先コード','お届け先電話番号','お届け先郵便番号','お届け先住所１','お届け先住所２','お届け先住所３','お届け先名称１','お届け先名称２','お客様管理番号','お客様コード',
     '部署ご担当者コード取得区分','部署ご担当者コード','部署ご担当者名称','荷送人電話番号','ご依頼主コード取得区分','ご依頼主コード','ご依頼主電話番号','ご依頼主郵便番号','ご依頼主住所１','ご依頼主住所２',
     'ご依頼主名称１','ご依頼主名称２','荷姿','品名１','品名２','品名３','品名４','品名５','荷札荷姿','荷札品名１',
     '荷札品名２','荷札品名３','荷札品名４','荷札品名５','荷札品名６','荷札品名７','荷札品名８','荷札品名９','荷札品名１０','出荷個数',
@@ -1067,7 +1072,7 @@ function sagawaRows(dest, f, lines, day, item){
   const a1 = zen16(dest.addr1, 16), a2 = zen16([...dest.addr1].slice(16).join('') + dest.addr2, 16);
   const fa1 = zen16(f.addr1, 16), fa2 = zen16([...f.addr1].slice(16).join('') + f.addr2, 16);
   const rows = lines.map(l => {
-    const r = new Array(H.length).fill('');
+    const r = new Array(H.length - 1).fill(''); // 下の番号は「お届け先コード」を0番目として数えている
     r[1] = dest.tel; r[2] = dest.zip; r[3] = a1; r[4] = a2;
     r[6] = zen16(dest.company, 16); r[7] = zen16(dest.person, 16);
     r[8] = l.ref; r[9] = f.sagawaCode;
@@ -1076,7 +1081,7 @@ function sagawaRows(dest, f, lines, day, item){
     if ([...nm].length <= 16) r[20] = nm; else { r[20] = zen16(f.name, 16); r[21] = zen16('(' + dest.label + ')', 16); }
     r[23] = zen16(item, 16); r[24] = zen16(l.item2, 16);
     r[39] = String(l.pieces || 1); r[40] = '000'; r[41] = '001'; r[58] = ymdSlash(day);
-    return r;
+    return [''].concat(r.slice(0, H.length - 1)); // 先頭に「お届け先コード取得区分」の空欄を足して、e飛伝Ⅲの並びに合わせる
   });
   return [H, ...rows];
 }
