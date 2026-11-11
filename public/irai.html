@@ -743,7 +743,7 @@ function hokanPanel(r) {
       <button class="mini" id="hkAdd">＋商品を追加</button>
       <label class="field"><span>保管日（入庫した日）</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
       <div class="actions"><button class="primary" id="hkReg">${r.done ? '在庫に登録する' : '在庫に登録して完了'}</button></div>
-      <p class="hint">保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分は、1点あたり月${HOKAN_RATE}円の保管料がかかります。</p></div>`;
+      <p class="hint">保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。</p></div>`;
   }
   const outs = outsOf(r.id);
   if (outs.length) return `<div class="hk"><h3>保管在庫：出庫済み</h3>
@@ -843,7 +843,7 @@ function fillLotSheet(id, force) {
       <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
     <dl>
       <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
-      <dt>保管料</dt><dd>${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円</dd>
+      <dt>保管料</dt><dd>${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）</dd>
       ${l.orderId ? `<dt>Order ID</dt><dd class="copy" data-copy="${esc(l.orderId)}">${esc(l.orderId)}（キャンセル品）</dd>` : ''}
       ${l.memo ? `<dt>メモ</dt><dd>${esc(l.memo)}</dd>` : ''}
       <dt>元の依頼</dt><dd>${req ? `<button class="mini" id="lotReq">${esc(req.type)}を開く</button>` : (l.reqId ? '（表示期間外）' : '手動で入庫')}</dd>
@@ -972,7 +972,7 @@ ${d.mails ? `
 ・シートは1時間ごとに自動で更新されます。
 
 【保管料について】
-・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円の保管料がかかります。
+・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。
 ・毎月末時点の残数で計算し、翌月にご請求いたします。
 ・シートの「状態」が「保管料対象」になっている商品が対象です。
 　「今月の保管料（見込み）」もあわせてご確認ください。
@@ -1059,12 +1059,12 @@ function billData() {
 function renderBill() {
   const { ym, cut, list } = billData();
   if ($('billMonth').value !== ym) $('billMonth').value = ym;
-  $('billRule').textContent = `${cut} 時点で、保管日から${HOKAN_FREE_MONTHS}ヶ月以上たっている在庫の残り点数 × ${HOKAN_RATE}円 で計算しています（月ごとの請求）。`;
+  $('billRule').textContent = `${cut} 時点で、保管日から${HOKAN_FREE_MONTHS}ヶ月以上たっている在庫の残り点数 × ${HOKAN_RATE}円 で計算しています（金額はすべて税抜・月ごとの請求）。`;
   if (S.lotsErr) { $('billBody').innerHTML = `<div class="alert">${esc(S.lotsErr)}</div>`; return; }
   if (!list.length) { $('billBody').innerHTML = `<div class="empty">${esc(ym)} の保管料の対象はありません。</div>`; return; }
   const tq = list.reduce((s, g) => s + g.qty, 0), ta = list.reduce((s, g) => s + g.amount, 0);
   $('billBody').innerHTML = `<div class="tbl"><table class="bill">
-      <thead><tr><th>管理番号</th><th>セラー名</th><th class="n">対象点数</th><th class="n">保管料</th></tr></thead>
+      <thead><tr><th>管理番号</th><th>セラー名</th><th class="n">対象点数</th><th class="n">保管料（税抜）</th></tr></thead>
       <tbody>${list.map(g => `<tr><td>${esc(g.seller)}</td><td>${esc(g.name)}</td><td class="n">${g.qty}点</td><td class="n">${yen(g.amount)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="2">合計（${list.length}セラー）</td><td class="n">${tq}点</td><td class="n">${yen(ta)}</td></tr></tfoot>
     </table></div>
@@ -1075,7 +1075,7 @@ function renderBill() {
 function billCopy() {
   const { ym, list } = billData();
   if (!list.length) { toast('コピーする対象がありません'); return; }
-  const tsv = [['請求月', '管理番号', 'セラー名', '対象点数', '単価', '保管料'].join('\t'),
+  const tsv = [['請求月', '管理番号', 'セラー名', '対象点数', '単価（税抜）', '保管料（税抜）'].join('\t'),
     ...list.map(g => [ym, g.seller, g.name, g.qty, HOKAN_RATE, g.amount].join('\t'))].join('\n');
   copy(tsv);
 }
@@ -1083,7 +1083,7 @@ function billCsv() {
   const { ym, list } = billData();
   if (!list.length) { toast('保存する対象がありません'); return; }
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['請求月', '管理番号', 'セラー名', '商品名', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価', '保管料'].map(q).join(','),
+  const lines = [['請求月', '管理番号', 'セラー名', '商品名', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）'].map(q).join(','),
     ...list.flatMap(g => g.lots.map(x => [ym, g.seller, g.name, x.product, x.orderId, x.inDate, x.rem, HOKAN_RATE, x.amount].map(q).join(',')))];
   const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv' });
   const a = document.createElement('a');
