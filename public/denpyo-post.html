@@ -268,6 +268,11 @@
             <div style="margin-top:6px">伝票スキャナーで以前に記録した着払いを、この台帳に取り込みます。何回押しても二重には入りません。取り込んだ記録は管理番号が空なので、明細の「管理番号を入れる」から設定してください。</div>
             <button class="sub" onclick="migrateInvoices(this)" style="margin-top:8px;width:100%">以前の着払いを取り込む</button>
         </details>
+        <div class="note" style="margin-top:10px;border:1px solid #fed7aa;background:#fff7ed;border-radius:8px;padding:8px 10px">
+            <div style="font-weight:800;color:#c2410c">保管料（依頼まとめ管理の保管在庫から）</div>
+            <div style="margin-top:4px">対象月の月末時点で、保管日から1ヶ月以上たっている在庫の残り点数 × 80円 を、セラーごとに「保管料」として台帳に入れます。何回押しても二重には入らず、最新の在庫で置き換わります（請求済みにした分は変えません）。</div>
+            <button class="sub" onclick="importHokanFees(this)" style="margin-top:8px;width:100%">対象月の保管料を取り込む</button>
+        </div>
         <details class="note" id="fixMinusBox" style="margin-top:10px;display:none">
             <summary>⚠ プラスのままの「補填」があります（マイナスに直す）</summary>
             <div style="margin-top:6px">「補填」「補填・相殺」は請求から差し引く金額なので、マイナスで記録します。以前にプラスで記録した分を、まとめてマイナスに直します。対象は、読み込んだ月の「未請求」の記録だけです（請求済みの記録は変えません）。</div>
@@ -1132,6 +1137,84 @@
                 </div>`).join('') : '<div class="muted">該当する記録はありません</div>';
 
             document.getElementById('msgBox').value = groups.length ? buildMessage(groups, false) : '';
+        };
+
+        // ===== 保管料の取り込み（依頼まとめ管理の保管在庫 hokan_lots から） =====
+        const HOKAN_TYPE = '保管料';
+        const HOKAN_RATE = 80;            // 1点あたりの保管料（円／月）
+        const HOKAN_FREE_MONTHS = 1;      // 保管日からこの月数までは無料
+        const HOKAN_TAX_MODE = '税抜';    // 80円が税込の金額なら '税込' に変える
+        function hkAddMonths(s, n) {
+            const [y, m, d] = s.split('-').map(Number);
+            const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
+            return new Date(Date.UTC(y, m - 1 + n, Math.min(d, last))).toISOString().slice(0, 10);
+        }
+        const hkMonthEnd = ym => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
+        const hkDocId = (ym, key) => 'hokan_' + ym + '_' + String(key).replace(/[\/\s]/g, '_');
+
+        window.importHokanFees = async function (btn) {
+            const ym = document.getElementById('month').value;
+            const msg = document.getElementById('msg');
+            if (!ym) { msg.textContent = '対象月を選んでください'; return; }
+            const cut = hkMonthEnd(ym);
+            const today = jstYmd(new Date());
+            if (cut > today && !confirm(`${ym} はまだ月末前です。今日時点の在庫で計算して取り込みますか？\n（月末のあとにもう一度押すと、最新の数に置き換わります）`)) return;
+            btn.disabled = true; const label = btn.textContent; btn.textContent = '取り込み中…';
+            try {
+                const lotSnap = await withLogin(() => getDocs(collection(db, 'hokan_lots')));
+                // セラーごとに、月末時点で保管料がかかる残数を数える
+                const by = {};
+                lotSnap.docs.forEach(d => {
+                    const l = d.data();
+                    if (l.deleted || !l.seller || !l.inDate || l.inDate > cut) return;
+                    if (hkAddMonths(l.inDate, HOKAN_FREE_MONTHS) > cut) return;
+                    const rem = (Number(l.qtyIn) || 0) - (l.outs || []).filter(o => o.date <= cut).reduce((n, o) => n + (Number(o.qty) || 0), 0);
+                    if (rem <= 0) return;
+                    const g = by[l.seller] || (by[l.seller] = { seller: l.seller, name: '', qty: 0 });
+                    if (!g.name && l.sellerName) g.name = l.sellerName;
+                    g.qty += rem;
+                });
+
+                const exist = await withLogin(() => getDocs(query(collection(db, 'billing_records'), where('month', '==', ym))));
+                const old = {};
+                exist.docs.forEach(d => { if (d.data().source === 'hokan') old[d.id] = d.data(); });
+
+                const by_ = staffName();
+                const writes = [];
+                let skipped = 0;
+                Object.values(by).forEach(g => {
+                    const id = hkDocId(ym, g.seller);
+                    if (old[id] && old[id].status === 'billed') { skipped++; delete old[id]; return; }
+                    delete old[id];
+                    const k = normalizeKanri(g.seller);
+                    writes.push(['set', id, {
+                        type: HOKAN_TYPE, source: 'hokan', trackingNo: '',
+                        kanriNo: looksLikeKanri(k) ? k : '', shopName: g.name || (looksLikeKanri(k) ? '' : g.seller),
+                        date: cut, month: ym,
+                        unitPrice: HOKAN_RATE, quantity: g.qty, amount: g.qty * HOKAN_RATE, taxMode: HOKAN_TAX_MODE,
+                        memo: `${+ym.slice(5, 7)}月末時点の保管在庫 ${g.qty}点 × ${HOKAN_RATE}円（保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分）`,
+                        status: 'unbilled', by: by_, createdAt: serverTimestamp()
+                    }]);
+                });
+                // 在庫が出庫されて保管料がなくなったセラーの、未請求の保管料は消す
+                Object.keys(old).forEach(id => { if (old[id].status !== 'billed') writes.push(['delete', id]); });
+
+                for (let i = 0; i < writes.length; i += 400) {
+                    const b = writeBatch(db);
+                    writes.slice(i, i + 400).forEach(([op, id, data]) => op === 'set' ? b.set(doc(db, 'billing_records', id), data) : b.delete(doc(db, 'billing_records', id)));
+                    await withLogin(() => b.commit());
+                }
+                const sets = writes.filter(w => w[0] === 'set');
+                const total = sets.reduce((n, w) => n + w[2].amount, 0);
+                await loadMonth();
+                msg.textContent = sets.length
+                    ? `保管料を ${sets.length} セラー分（合計 ${yen(total)}・${HOKAN_TAX_MODE}）取り込みました。` + (skipped ? `請求済みの ${skipped} セラーはそのままです。` : '')
+                    : `${ym} の保管料の対象はありませんでした。` + (skipped ? `（請求済みの ${skipped} セラーはそのままです）` : '');
+            } catch (e) {
+                msg.textContent = '保管料を取り込めませんでした：' + (e.code === 'permission-denied' ? '保管在庫（hokan_lots）を読む許可がありません。Firestoreのルールを確認してください' : e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = label;
+            }
         };
 
         // 請求先（管理番号）を後から設定
