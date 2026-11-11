@@ -165,6 +165,12 @@ details.bd table{margin-top:6px}
 .month{border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:var(--surface)}
 .hist{font-size:13px;margin:6px 0 0;padding:0;list-style:none}
 .hist li{padding:6px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.paste textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;margin-top:6px;resize:vertical}
+.total{font-size:13px;color:var(--sub);margin:4px 0 8px;text-align:right}
+.share{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 12px;border-top:1px solid var(--line);
+  border-left:6px solid var(--shopee);font-size:12px;color:var(--sub);background:#FAFBFC}
+.share a{color:var(--rs);font-weight:700}
+.share .warn{color:#B35C00;font-weight:700}
 </style>
 </head>
 <body>
@@ -218,6 +224,7 @@ details.bd table{margin-top:6px}
         <button data-s="all" aria-pressed="false">すべて</button>
       </div>
       <button class="btn" id="addLot">＋手動で入庫</button>
+      <button class="btn" id="exportNow">セラー用シートを今すぐ更新</button>
     </div>
     <div id="stockAlerts"></div>
     <div id="stockList"></div>
@@ -256,6 +263,9 @@ const firebaseConfig = {
 };
 // =========================================
 // ===== GASのウェブアプリURL（「今すぐ更新」ボタン用） =====
+// ===== 保管在庫シート書き出しGASのウェブアプリURL（「セラー用シートを今すぐ更新」ボタン用） =====
+const EXPORT_URL = "";
+// =========================================
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbyStZxpa5W-3pPABmJXTxQKEaWhOfAqarjnLOGXxRGhHhF9E3XOys-MRBFgluzxty2i1A/exec";
 // =========================================
 
@@ -273,7 +283,7 @@ const isHokanOut = r => HOKAN_FORMS.includes(r.form) && /保管/.test(r.type || 
 // =========================================
 
 const FORM_ORDER = [['shopee', 'Shopee'], ['domestic', '国内EC'], ['rs', '注文配送']];
-const S = { lots: new Map(), skip: {}, lotsErr: '', view: 'req', sq: '', sfilter: 'have', billMonth: '', reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
+const S = { sellers: new Map(), lots: new Map(), skip: {}, lotsErr: '', view: 'req', sq: '', sfilter: 'have', billMonth: '', reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DAY = 86400000;
@@ -298,8 +308,19 @@ const remain = l => remainAt(l);
 const sellerKey = r => String(r.user || r.name || '').trim();
 const liveLots = () => [...S.lots.values()].filter(l => !l.deleted);
 const lotsOf = seller => liveLots().filter(l => l.seller === seller).sort((a, b) => a.inDate.localeCompare(b.inDate));
-const lotsIn = reqId => liveLots().filter(l => l.reqId === reqId);
-const outsOf = reqId => liveLots().flatMap(l => (l.outs || []).filter(o => o.reqId === reqId).map(o => ({ ...o, lot: l })));
+// 在庫が多くても速く引けるよう、依頼IDごとの索引を作っておく（在庫が変わったら作り直し）
+let IDX = null;
+function idx() {
+  if (IDX) return IDX;
+  const ins = new Map(), outs = new Map();
+  liveLots().forEach(l => {
+    if (l.reqId) (ins.get(l.reqId) || ins.set(l.reqId, []).get(l.reqId)).push(l);
+    (l.outs || []).forEach(o => { if (o.reqId) (outs.get(o.reqId) || outs.set(o.reqId, []).get(o.reqId)).push({ ...o, lot: l }); });
+  });
+  return IDX = { ins, outs };
+}
+const lotsIn = reqId => idx().ins.get(reqId) || [];
+const outsOf = reqId => idx().outs.get(reqId) || [];
 
 // 依頼の項目から「商品名と数量」を読み取る（読み取れない分は画面で入力）
 function parseItems(r) {
@@ -344,13 +365,60 @@ function planOut(r, items) {
 
 // ---------- 保管在庫の書き込み ----------
 async function addLots(r, items, inDate) {
-  const b = writeBatch(db);
-  items.forEach(it => b.set(doc(collection(db, 'hokan_lots')), {
-    seller: r ? sellerKey(r) : it.seller, sellerName: r ? (r.name || '') : (it.sellerName || ''),
-    product: it.product, qtyIn: it.qty, inDate, reqId: r ? r.id : '', outs: [], memo: '',
-    by: S.user.email, at: serverTimestamp()
-  }));
-  await b.commit();
+  // Firestoreは1回にまとめて書ける件数に上限があるので、400件ずつに分けて保存
+  for (let i = 0; i < items.length; i += 400) {
+    const b = writeBatch(db);
+    items.slice(i, i + 400).forEach(it => b.set(doc(collection(db, 'hokan_lots')), {
+      seller: r ? sellerKey(r) : it.seller, sellerName: r ? (r.name || '') : (it.sellerName || ''),
+      product: it.product, qtyIn: it.qty, inDate, reqId: r ? r.id : '', outs: [], memo: '',
+      by: S.user.email, at: serverTimestamp()
+    }));
+    await b.commit();
+    if (items.length > 400) toast(`登録中… ${Math.min(i + 400, items.length)}／${items.length}件`);
+  }
+}
+
+// Excel・スプレッドシートからコピーした表を読み取る（商品名と数量。見出し行や数量のない行は飛ばす）
+function parsePaste(text) {
+  const merged = new Map();
+  String(text).split(/\r?\n/).forEach(line => {
+    const cols = (line.includes('\t') ? line.split('\t') : line.split(/[,，]/)).map(c => c.trim()).filter(Boolean);
+    if (cols.length < 2) return;
+    let qi = -1;
+    for (let i = cols.length - 1; i >= 1; i--) if (/^[0-9０-９,，]+\s*(個|点|枚|本|セット|pcs)?$/i.test(cols[i])) { qi = i; break; }
+    if (qi < 0) return;
+    const qty = toNum(cols[qi]), product = cols.slice(0, qi).join(' ').trim();
+    if (!qty || !product) return;
+    merged.set(product, (merged.get(product) || 0) + qty);
+  });
+  return [...merged].map(([product, qty]) => ({ product, qty }));
+}
+const pasteBox = () => `<details class="bd paste" style="margin:8px 0"><summary>Excel・スプレッドシートからまとめて貼り付け</summary>
+  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の2列をコピーして、ここに貼り付けてください（見出し行があっても大丈夫です）"></textarea>
+  <div class="actions" style="margin-top:6px"><button class="mini" id="hkPasteGo">下の表に読み込む</button></div></details>`;
+function rowsTotal() {
+  const rows = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ p: x.querySelector('.hk-p').value.trim(), q: toNum(x.querySelector('.hk-q').value) })).filter(x => x.p || x.q);
+  if ($('hkTotal')) $('hkTotal').textContent = rows.length ? `${rows.length}商品・合計${rows.reduce((s, x) => s + x.q, 0)}点` : '';
+}
+function bindRows(onChange) {
+  const sh = $('sheet');
+  if (!$('hkRows')) return;
+  const changed = () => { if (onChange) onChange(); rowsTotal(); };
+  $('hkAdd').onclick = () => { $('hkRows').insertAdjacentHTML('beforeend', itemRow()); changed(); };
+  $('hkRows').onclick = e => { const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); changed(); } };
+  $('hkRows').oninput = rowsTotal;
+  if ($('hkPasteGo')) $('hkPasteGo').onclick = () => {
+    const items = parsePaste($('hkPaste').value);
+    if (!items.length) { toast('商品名と数量を読み取れませんでした。「商品名」「数量」の2列をコピーしてください'); return; }
+    const filled = [...document.querySelectorAll('#hkRows .hk-row')].some(x => x.querySelector('.hk-p').value.trim() || x.querySelector('.hk-q').value.trim());
+    if (filled) $('hkRows').insertAdjacentHTML('beforeend', items.map(itemRow).join(''));
+    else $('hkRows').innerHTML = items.map(itemRow).join('');
+    $('hkPaste').value = '';
+    $('hkPaste').closest('details').open = false;
+    changed();
+    toast(`${items.length}商品を読み込みました。内容を確認して登録してください`);
+  };
+  rowsTotal();
 }
 async function applyOut(plan, info) {
   await runTransaction(db, async tx => {
@@ -371,6 +439,18 @@ async function removeOuts(lotIds, test) {
     for (const id of lotIds) got.push(await tx.get(doc(db, 'hokan_lots', id)));
     for (const s of got) if (s.exists()) tx.update(s.ref, { outs: (s.data().outs || []).filter(o => !test(o)) });
   });
+}
+// セラーの共有設定（hokan_sellers）。ドキュメントIDは管理番号（「/」は「_」に置き換え）
+const sellerDocId = k => String(k).replace(/\//g, '_');
+const sellerInfo = k => S.sellers.get(sellerDocId(k)) || {};
+function shareLine(seller) {
+  const d = sellerInfo(seller);
+  const parts = [];
+  if (d.sheetUrl) parts.push(`<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">セラー用シートを開く</a>${d.updatedAt ? `　更新 ${esc(String(d.updatedAt).slice(5, 16).replace('T', ' '))}` : ''}`);
+  else if (d.mails) parts.push('<span class="warn">次の更新でセラー用シートを作ります</span>');
+  else parts.push('<span class="warn">共有メール未設定</span>');
+  if (d.error) parts.push(`<span class="err">${esc(d.error)}</span>`);
+  return `<div class="share"><span>${parts.join('　')}</span><button class="mini" data-share="${esc(seller)}">共有設定</button></div>`;
 }
 const sumQty = a => a.reduce((s, x) => s + x.qty, 0);
 
@@ -439,9 +519,14 @@ function listen() {
   }, denied));
   S.unsubs.push(onSnapshot(collection(db, 'hokan_lots'), snap => {
     snap.docChanges().forEach(c => c.type === 'removed' ? S.lots.delete(c.doc.id) : S.lots.set(c.doc.id, { id: c.doc.id, ...c.doc.data() }));
+    IDX = null;
     S.lotsErr = '';
     render();
   }, e => { S.lotsErr = e.code === 'permission-denied' ? '保管在庫（hokan_lots）を読み書きする許可がありません。Firestoreのルールに追加してください。' : '保管在庫を読み込めませんでした：' + e.message; render(); }));
+  S.unsubs.push(onSnapshot(collection(db, 'hokan_sellers'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? S.sellers.delete(c.doc.id) : S.sellers.set(c.doc.id, c.doc.data()));
+    render();
+  }, () => {}));
   S.unsubs.push(onSnapshot(doc(db, 'settings', 'hokan_skip'), d => { S.skip = (d.data() || {}).ids || {}; render(); }, () => {}));
   S.unsubs.push(onSnapshot(doc(db, 'irai_meta', 'status'), d => {
     const m = d.data() || {};
@@ -627,7 +712,9 @@ function hokanPanel(r) {
       <p class="hint">保管日・数量の修正は「保管在庫」画面から行えます。</p></div>`;
     const items = parseItems(r);
     return `<div class="hk lotform-req"><h3>保管在庫に登録（${who}）</h3>
+      ${pasteBox()}
       <div id="hkRows">${(items.length ? items : [{}]).map(itemRow).join('')}</div>
+      <div class="total" id="hkTotal"></div>
       <button class="mini" id="hkAdd">＋商品を追加</button>
       <label class="field"><span>保管日（入庫した日）</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
       <div class="actions"><button class="primary" id="hkReg">${r.done ? '在庫に登録する' : '在庫に登録して完了'}</button></div>
@@ -653,8 +740,7 @@ function hokanPanel(r) {
 
 function bindHokanPanel(r) {
   const sh = $('sheet');
-  if ($('hkAdd')) $('hkAdd').onclick = () => { $('hkRows').insertAdjacentHTML('beforeend', itemRow()); sh.dataset.dirty = '1'; };
-  if ($('hkRows')) $('hkRows').onclick = e => { const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); sh.dataset.dirty = '1'; } };
+  bindRows(() => { sh.dataset.dirty = '1'; });
   if ($('hkReg')) $('hkReg').onclick = async () => {
     const items = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ product: x.querySelector('.hk-p').value.trim(), qty: toNum(x.querySelector('.hk-q').value) }))
       .filter(i => i.product || i.qty);
@@ -708,6 +794,7 @@ function renderStock(recs) {
     const fee = lots.filter(l => feeStart(l) <= today).reduce((s, l) => s + remain(l), 0);
     return `<div class="seller"><div class="seller-h"><span><b>${esc(lots[0].sellerName || seller)}</b>　<span class="sum">${esc(seller)}</span></span>
       <span class="sum">残り ${total}点${fee ? `／保管料対象 ${fee}点` : ''}</span></div>
+      ${shareLine(seller)}
       ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
         return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span><span class="p">${esc(l.product)}</span>
           <span class="d">保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${rem > 0 ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
@@ -782,6 +869,58 @@ function fillLotSheet(id, force) {
   };
 }
 
+function openShareSheet(seller) {
+  const sh = $('sheet'), d = sellerInfo(seller);
+  const name = d.name || (lotsOf(seller)[0] || {}).sellerName || '';
+  sh.dataset.id = 'share'; sh.dataset.kind = 'share'; sh.dataset.dirty = '1'; sh.dataset.f = 'shopee';
+  sh.innerHTML = `
+    <div class="sheet-h"><div><h2>セラー用シートの共有設定</h2><div class="sub">${esc(seller)}</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    <div class="lotform">
+      <label class="field"><span>セラー名（シートに表示されます）</span><input id="shN" value="${esc(name)}"></label>
+      <label class="field"><span>共有するメール（複数は , 区切り）</span><input id="shM" type="email" multiple value="${esc(d.mails || '')}" placeholder="seller@example.com"></label>
+      <p class="hint">保存すると、次の更新でセラー用シートが作られ、閲覧者として共有されます。すぐに反映したいときは「セラー用シートを今すぐ更新」を押してください。</p>
+      <dl>
+        <dt>セラー用シート</dt><dd>${d.sheetUrl ? `<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">開く</a>` : 'まだ作成されていません'}</dd>
+        <dt>シート上の点数</dt><dd>${d.qty ?? '-'}点</dd>
+        <dt>今月の保管料</dt><dd>${d.fee != null ? yen(Number(d.fee)) : '-'}（見込み）</dd>
+        <dt>最終更新</dt><dd>${esc(d.updatedAt || '-')}</dd>
+        ${d.error ? `<dt>エラー</dt><dd class="err">${esc(d.error)}</dd>` : ''}
+      </dl>
+      <div class="actions"><button class="primary" id="shSave">保存する</button></div>
+    </div>`;
+  $('closeSheet').onclick = closeSheet;
+  $('shSave').onclick = async () => {
+    const mails = $('shM').value.split(/[,，、\s]+/).map(m => m.trim()).filter(Boolean);
+    const bad = mails.filter(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m));
+    if (bad.length) { toast('メールアドレスの形を確認してください：' + bad.join(', ')); return; }
+    try {
+      await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)),
+        { seller, name: $('shN').value.trim(), mails: mails.join(', '), by: S.user.email, at: serverTimestamp() }, { merge: true });
+      closeSheet(); toast('共有設定を保存しました');
+    } catch (e) { toast('保存できませんでした：' + e.message); }
+  };
+  showSheet();
+}
+
+async function exportNow() {
+  const b = $('exportNow');
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) {
+    toast('EXPORT_URL（書き出しGASのウェブアプリURL）が設定されていません'); return;
+  }
+  b.disabled = true; b.textContent = '更新中…';
+  try {
+    const idToken = await S.user.getIdToken();
+    const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken }) });
+    const r = await res.json();
+    toast(r.ok ? `セラー用シートを更新しました（${r.updated}件）` : (r.message || '更新できなかったセラーがあります'));
+  } catch (e) {
+    toast('更新できませんでした。少し待ってから、もう一度お試しください。');
+  } finally {
+    b.disabled = false; b.textContent = 'セラー用シートを今すぐ更新';
+  }
+}
+
 function openNewLotSheet() {
   const sh = $('sheet');
   const sellers = new Map();
@@ -795,14 +934,13 @@ function openNewLotSheet() {
       <label class="field"><span>管理番号（セラー）</span><input id="nlS" list="nlSellers" autocomplete="off"></label>
       <datalist id="nlSellers">${[...sellers].map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join('')}</datalist>
       <label class="field"><span>セラー名</span><input id="nlN"></label>
-      <div class="hk" style="margin-top:12px"><div id="hkRows">${itemRow()}</div><button class="mini" id="hkAdd">＋商品を追加</button></div>
+      <div class="hk" style="margin-top:12px">${pasteBox()}<div id="hkRows">${itemRow()}</div><div class="total" id="hkTotal"></div><button class="mini" id="hkAdd">＋商品を追加</button></div>
       <label class="field"><span>保管日（入庫した日）</span><input type="date" id="nlD" value="${todayYmd()}"></label>
       <div class="actions"><button class="primary" id="nlSave">在庫に登録する</button></div>
     </div>`;
   $('closeSheet').onclick = closeSheet;
   $('nlS').oninput = () => { const n = sellers.get($('nlS').value.trim()); if (n && !$('nlN').value) $('nlN').value = n; };
-  $('hkAdd').onclick = () => $('hkRows').insertAdjacentHTML('beforeend', itemRow());
-  $('hkRows').onclick = e => { const b = e.target.closest('.hk-del'); if (b) b.parentElement.remove(); };
+  bindRows();
   $('nlSave').onclick = async () => {
     const seller = $('nlS').value.trim(), sellerName = $('nlN').value.trim(), inDate = $('nlD').value;
     const items = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ seller, sellerName, product: x.querySelector('.hk-p').value.trim(), qty: toNum(x.querySelector('.hk-q').value) }))
@@ -810,8 +948,10 @@ function openNewLotSheet() {
     if (!seller) { toast('管理番号を入れてください'); return; }
     if (!items.length || items.some(i => !i.product || !i.qty)) { toast('商品名と数量（1以上）を入れてください'); return; }
     if (!inDate) { toast('保管日を入れてください'); return; }
+    if (items.length >= 20 && !confirm(`${seller} に ${items.length}商品・合計${sumQty(items)}点を登録します。よろしいですか？`)) return;
+    $('nlSave').disabled = true;
     try { await addLots(null, items, inDate); closeSheet(); toast(`在庫に${sumQty(items)}点登録しました`); }
-    catch (e) { toast('保存できませんでした：' + e.message); }
+    catch (e) { $('nlSave').disabled = false; toast('保存できませんでした：' + e.message); }
   };
   showSheet();
 }
@@ -959,7 +1099,11 @@ $('sq').oninput = e => { S.sq = e.target.value; render(); };
 $('sfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.sfilter = b.dataset.s;
   document.querySelectorAll('#sfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); render(); };
 $('addLot').onclick = openNewLotSheet;
-$('stockList').onclick = e => { const b = e.target.closest('[data-lot]'); if (b) openLotSheet(b.dataset.lot); };
+$('stockList').onclick = e => {
+  const sh = e.target.closest('[data-share]'); if (sh) { openShareSheet(sh.dataset.share); return; }
+  const b = e.target.closest('[data-lot]'); if (b) openLotSheet(b.dataset.lot);
+};
+$('exportNow').onclick = exportNow;
 $('stockAlerts').onclick = async e => {
   const o = e.target.closest('[data-req]'); if (o) { const r = find(o.dataset.req); if (r) openSheet(r); return; }
   const k = e.target.closest('[data-skip]');
