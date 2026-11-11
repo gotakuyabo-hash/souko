@@ -298,7 +298,7 @@ button,input,textarea{font:inherit;color:inherit}
 <div class="modal" id="loginModal" hidden role="dialog" aria-modal="true">
   <div class="modal-box">
     <p class="modal-title">ログインしてください</p>
-    <p class="small muted" style="margin:0">社内のGoogleアカウントでログインすると使えます。<br>ログインすると、Lazadaくんの未出荷件数をシートから直接読んで最新にします。</p>
+    <p class="small muted" style="margin:0">社内のGoogleアカウントでログインすると使えます。</p>
     <p class="small" id="loginErr" style="color:var(--danger)"></p>
     <div class="modal-actions"><button type="button" class="btn btn-primary" id="loginBtn">Googleでログイン</button></div>
   </div>
@@ -314,9 +314,10 @@ import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collect
    設定
    ========================================================= */
 // true にするとGoogleログイン必須になります。
-// ログインすると、Lazada・Shopee配送管理の未出荷件数を各セラーのシートから直接読んで最新にします
-// （配送管理アプリを開かなくても、チェックリストを開くたびに数え直されます）。
-const REQUIRE_LOGIN = true;
+// 未出荷件数・依頼の未対応件数は、どちらもGASがFirestoreに保存した集計を読むので、ログインしなくても最新です。
+// 先にFirebaseコンソールで「Authentication → Google」を有効化し、
+// Firestoreのルールをログイン必須に変更してから切り替えてください。
+const REQUIRE_LOGIN = false;
 
 const FIREBASE_CONFIG = { apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0", authDomain: "souko-2de57.firebaseapp.com", projectId: "souko-2de57" };
 const PORTAL_STORAGE_KEY = 'warehouse_portal_v7_data';
@@ -335,9 +336,9 @@ const SECTIONS = [
 ];
 
 // Lazada・Shopee配送管理（shopeesheet.html）の未出荷件数
-// 配送管理アプリを開くたびにFirestore（deliverySellers）へ件数が保存され、ここに表示されます
+// 配送管理シートのGASが、シートの編集時と10分おきにFirestore（deliverySellers）へ件数を保存し、ここに表示されます
+// （チェックリストはFirestoreを読むだけ。依頼の未対応件数と同じ仕組み）
 const SHIPSHEET_URL = "https://souko-2de57.firebaseapp.com/shopeesheet.html";
-const SHIPSHEET_API_URL = "https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec"; // 配送管理アプリと同じGAS
 const SELLER_COLLECTION = 'deliverySellers';
 
 // 依頼の未対応件数は「依頼まとめ管理」（irai.html）のデータから表示します
@@ -1373,7 +1374,7 @@ async function watchIraiLive() {
 /* =========================================================
    Lazada・Shopee配送管理の未出荷件数
    ========================================================= */
-const SHIP = { sellers: [], loaded: false, error: false, liveAt: 0, liveBusy: false };
+const SHIP = { sellers: [], loaded: false, error: false };
 
 function shipTime(ts) {
   if (!ts?.toDate) return '';
@@ -1396,7 +1397,7 @@ function paintShip() {
   const items = SHIP.error ? [] : SHIP.sellers.map(x => {
     const s = x.shipSummary;
     const name = h('span', { class: 'sd-name' }, x.name + (x.platform ? `（${x.platform}）` : ''));
-    if (!s) return h('li', {}, name, h('span', { class: 'muted' }, '未集計（配送管理アプリで一度開くと表示されます）'));
+    if (!s) return h('li', {}, name, h('span', { class: 'muted' }, '未集計（10分以内に自動で集計されます）'));
     const n = Number(s.pending) || 0;
     return h('li', {}, name,
       h('span', { class: 'sd-num' + (n ? '' : ' is-zero') }, n ? `未出荷 ${n}件` : '未出荷なし'),
@@ -1408,55 +1409,10 @@ function paintShip() {
 function watchShip() {
   onSnapshot(collection(db, SELLER_COLLECTION), snap => {
     SHIP.sellers = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
-    const first = !SHIP.loaded;
     SHIP.loaded = true; SHIP.error = false;
     paintShip();
-    if (first) refreshShipLive();
   }, e => { console.warn('deliverySellers', e); SHIP.error = true; paintShip(); });
 }
-
-// この端末で配送管理アプリにログイン済みなら、シートを直接読んで件数を最新にする
-// （ログインしていなければ何もしない＝最後に保存された件数を表示）
-function countOrders(orders) {
-  const m = new Map();
-  (orders || []).forEach(o => { const k = o.orderId || ('#' + o.row); if (!m.has(k)) m.set(k, []); m.get(k).push(o); });
-  const c = { waiting: 0, ready: 0 };
-  m.forEach(rows => {
-    if (rows.every(r => r.shipped)) return;
-    if (rows.every(r => r.received || r.shipped)) c.ready++; else c.waiting++;
-  });
-  return c;
-}
-async function refreshShipLive() {
-  if (!SHIPSHEET_API_URL || SHIP.liveBusy || !SHIP.sellers.length) return;
-  SHIP.liveBusy = true;
-  try {
-    const user = await signedInUser();
-    if (!user) return;
-    for (const x of SHIP.sellers) {
-      if (!x.sheetId) continue;
-      try {
-        const idToken = await user.getIdToken();
-        const res = await fetch(SHIPSHEET_API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ idToken, sheetId: x.sheetId, fn: 'getData', args: [] }),
-        });
-        const j = await res.json();
-        if (!j.ok) throw new Error(j.error || 'error');
-        const c = countOrders(j.result?.orders);
-        await updateDoc(doc(db, SELLER_COLLECTION, x.id), {
-          shipSummary: { pending: c.waiting + c.ready, waiting: c.waiting, ready: c.ready, at: serverTimestamp(), by: user.email || '' },
-        });
-      } catch (e) { console.warn('未出荷件数の更新に失敗', x.name, e); }
-    }
-  } catch (e) { console.warn('ship live', e); }
-  finally { SHIP.liveBusy = false; SHIP.liveAt = Date.now(); }
-}
-// 別アプリから戻ってきたら確認し直す（5分以内の連続確認はしない）
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && Date.now() - SHIP.liveAt > 5 * 60 * 1000) refreshShipLive();
-});
 
 /* =========================================================
    起動
