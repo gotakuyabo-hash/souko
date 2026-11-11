@@ -224,6 +224,7 @@ details.bd table{margin-top:6px}
         <button data-s="all" aria-pressed="false">すべて</button>
       </div>
       <button class="btn" id="addLot">＋手動で入庫</button>
+      <button class="btn" id="newShare">＋セラー用シートを作る</button>
       <button class="btn" id="exportNow">セラー用シートを今すぐ更新</button>
     </div>
     <div id="stockAlerts"></div>
@@ -887,20 +888,77 @@ function openShareSheet(seller) {
         <dt>最終更新</dt><dd>${esc(d.updatedAt || '-')}</dd>
         ${d.error ? `<dt>エラー</dt><dd class="err">${esc(d.error)}</dd>` : ''}
       </dl>
-      <div class="actions"><button class="primary" id="shSave">保存する</button></div>
+      <div class="actions">
+        <button class="primary" id="shMake">${d.sheetUrl ? '保存してシートを更新' : '保存してシートを作成'}</button>
+        <button class="mini" id="shSave">保存だけする</button>
+      </div>
+      ${d.sheetUrl ? `<div class="actions"><button class="mini" id="shGuide">セラーさんへの案内文をコピー</button></div>` : ''}
     </div>`;
   $('closeSheet').onclick = closeSheet;
-  $('shSave').onclick = async () => {
+  const save = async () => {
     const mails = $('shM').value.split(/[,，、\s]+/).map(m => m.trim()).filter(Boolean);
     const bad = mails.filter(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m));
-    if (bad.length) { toast('メールアドレスの形を確認してください：' + bad.join(', ')); return; }
+    if (bad.length) { toast('メールアドレスの形を確認してください：' + bad.join(', ')); return false; }
     try {
       await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)),
         { seller, name: $('shN').value.trim(), mails: mails.join(', '), by: S.user.email, at: serverTimestamp() }, { merge: true });
-      closeSheet(); toast('共有設定を保存しました');
-    } catch (e) { toast('保存できませんでした：' + e.message); }
+      return true;
+    } catch (e) { toast('保存できませんでした：' + e.message); return false; }
   };
+  $('shSave').onclick = async () => { if (await save()) { closeSheet(); toast('共有設定を保存しました'); } };
+  $('shMake').onclick = async () => {
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) { toast('EXPORT_URL が設定されていません'); return; }
+    if (!(await save())) return;
+    const b = $('shMake'); b.disabled = true; b.textContent = '作成中…（10〜30秒ほどかかります）';
+    try {
+      const idToken = await S.user.getIdToken();
+      const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, seller }) });
+      const r = await res.json();
+      if (!r.ok) { toast(r.message || 'シートを作成できませんでした'); b.disabled = false; b.textContent = '保存してもう一度試す'; return; }
+      S.sellers.set(sellerDocId(seller), { ...sellerInfo(seller), sheetUrl: r.url });
+      openShareSheet(seller);
+      toast(d.sheetUrl ? 'シートを更新しました' : 'シートを作成しました。案内文をコピーしてセラーさんに送れます');
+    } catch (e) {
+      toast('作成できませんでした。少し待ってから、もう一度お試しください。');
+      b.disabled = false; b.textContent = '保存してもう一度試す';
+    }
+  };
+  if ($('shGuide')) $('shGuide').onclick = () => copy(guideText(seller));
   showSheet();
+}
+
+// セラーさんへの案内文（共有設定の内容とシートURLを差し込む）
+function guideText(seller) {
+  const d = sellerInfo(seller);
+  const name = d.name || (lotsOf(seller)[0] || {}).sellerName || seller;
+  return `${name}様
+
+いつもラクロジをご利用いただき、ありがとうございます。
+お預かりしている商品の在庫を、いつでもご確認いただけるシートをご用意しました。
+
+▼保管在庫シート
+${d.sheetUrl || ''}
+${d.mails ? `
+※ご登録のメールアドレス（${d.mails}）で共有しております。
+　Googleにログインした状態で開いてください。
+` : ''}
+【シートの見方】
+・商品ごとに、保管日・入庫数・出庫数・残数を確認いただけます。
+・シートは1時間ごとに自動で更新されます。
+
+【保管料について】
+・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円の保管料がかかります。
+・毎月末時点の残数で計算し、翌月にご請求いたします。
+・シートの「状態」が「保管料対象」になっている商品が対象です。
+　「今月の保管料（見込み）」もあわせてご確認ください。
+
+【出荷のご依頼について】
+・これまでどおり、依頼フォームの「保管品出荷依頼」からお申し込みください。
+・商品名は、シートの「商品名」をそのままコピーしてご記入いただくと、
+　スムーズに出荷手続きができます。
+
+ご不明な点がありましたら、お気軽にお問い合わせください。
+引き続きどうぞよろしくお願いいたします。`;
 }
 
 async function exportNow() {
@@ -1104,6 +1162,10 @@ $('stockList').onclick = e => {
   const b = e.target.closest('[data-lot]'); if (b) openLotSheet(b.dataset.lot);
 };
 $('exportNow').onclick = exportNow;
+$('newShare').onclick = () => {
+  const k = (prompt('セラーの管理番号を入れてください（依頼フォームと同じ番号）') || '').trim();
+  if (k) openShareSheet(k);
+};
 $('stockAlerts').onclick = async e => {
   const o = e.target.closest('[data-req]'); if (o) { const r = find(o.dataset.req); if (r) openSheet(r); return; }
   const k = e.target.closest('[data-skip]');
