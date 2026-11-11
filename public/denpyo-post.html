@@ -270,7 +270,7 @@
         </details>
         <div class="note" style="margin-top:10px;border:1px solid #fed7aa;background:#fff7ed;border-radius:8px;padding:8px 10px">
             <div style="font-weight:800;color:#c2410c">保管料（依頼まとめ管理の保管在庫から）</div>
-            <div style="margin-top:4px">対象月の月末時点で、保管日から1ヶ月以上たっている在庫の残り点数 × 80円 を、セラーごとに「保管料」として台帳に入れます。何回押しても二重には入らず、最新の在庫で置き換わります（請求済みにした分は変えません）。</div>
+            <div style="margin-top:4px">対象月の月末時点で、保管日から1ヶ月以上たっている在庫の残り点数 × 80円（税抜）を、セラーごとに「保管料」として台帳に入れます。パレット契約のセラーは「枚数 × 単価」の月額で入り、「保管料なし」のセラーは入りません。何回押しても二重には入らず、最新の在庫で置き換わります（請求済みにした分は変えません）。</div>
             <button class="sub" onclick="importHokanFees(this)" style="margin-top:8px;width:100%">対象月の保管料を取り込む</button>
         </div>
         <details class="note" id="fixMinusBox" style="margin-top:10px;display:none">
@@ -1162,11 +1162,16 @@
             btn.disabled = true; const label = btn.textContent; btn.textContent = '取り込み中…';
             try {
                 const lotSnap = await withLogin(() => getDocs(collection(db, 'hokan_lots')));
-                // セラーごとに、月末時点で保管料がかかる残数を数える
+                // セラーごとの保管料の決め方（依頼まとめ管理の共有設定）：item＝1点ごと／pallet＝パレット契約／none＝保管料なし
+                const conf = {};
+                (await withLogin(() => getDocs(collection(db, 'hokan_sellers')))).docs.forEach(d => { const v = d.data(); if (v.seller) conf[v.seller] = v; });
+                const modeOf = k => { const m = (conf[k] || {}).feeMode; return m === 'pallet' || m === 'none' ? m : 'item'; };
+                // セラーごとに、月末時点で保管料がかかる残数を数える（1点ごとのセラーだけ）
                 const by = {};
                 lotSnap.docs.forEach(d => {
                     const l = d.data();
                     if (l.deleted || !l.seller || !l.inDate || l.inDate > cut) return;
+                    if (modeOf(l.seller) !== 'item') return;
                     if (hkAddMonths(l.inDate, HOKAN_FREE_MONTHS) > cut) return;
                     const rem = (Number(l.qtyIn) || 0) - (l.outs || []).filter(o => o.date <= cut).reduce((n, o) => n + (Number(o.qty) || 0), 0);
                     if (rem <= 0) return;
@@ -1174,6 +1179,14 @@
                     if (!g.name && l.sellerName) g.name = l.sellerName;
                     g.qty += rem;
                 });
+
+                // パレット契約のセラーは「枚数 × 単価」の月額
+                Object.values(conf).forEach(v => {
+                    if (modeOf(v.seller) !== 'pallet') return;
+                    const n = Number(v.pallets) || 0, rate = Number(v.palletRate) || 0;
+                    if (n > 0 && rate > 0) by[v.seller] = { seller: v.seller, name: v.name || '', pallet: true, qty: n, rate };
+                });
+                Object.values(by).forEach(g => { if (!g.name && conf[g.seller] && conf[g.seller].name) g.name = conf[g.seller].name; });
 
                 const exist = await withLogin(() => getDocs(query(collection(db, 'billing_records'), where('month', '==', ym))));
                 const old = {};
@@ -1191,8 +1204,11 @@
                         type: HOKAN_TYPE, source: 'hokan', trackingNo: '',
                         kanriNo: looksLikeKanri(k) ? k : '', shopName: g.name || (looksLikeKanri(k) ? '' : g.seller),
                         date: cut, month: ym,
-                        unitPrice: HOKAN_RATE, quantity: g.qty, amount: g.qty * HOKAN_RATE, taxMode: HOKAN_TAX_MODE,
-                        memo: `${+ym.slice(5, 7)}月末時点の保管在庫 ${g.qty}点 × ${HOKAN_RATE}円（保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分）`,
+                        unitPrice: g.pallet ? g.rate : HOKAN_RATE, quantity: g.qty,
+                        amount: g.qty * (g.pallet ? g.rate : HOKAN_RATE), taxMode: HOKAN_TAX_MODE,
+                        memo: g.pallet
+                            ? `${+ym.slice(5, 7)}月分 パレット契約 ${g.qty}枚 × ${g.rate.toLocaleString()}円`
+                            : `${+ym.slice(5, 7)}月末時点の保管在庫 ${g.qty}点 × ${HOKAN_RATE}円（保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分）`,
                         status: 'unbilled', by: by_, createdAt: serverTimestamp()
                     }]);
                 });
