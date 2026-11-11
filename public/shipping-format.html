@@ -119,11 +119,7 @@ main{max-width:1240px;margin:0 auto;padding:20px}
 .en-row .split{font-size:12px;color:var(--muted)}
 .en-row .split.over,.en-row .warn{color:var(--danger);font-weight:700;font-size:12px}
 .en-row .ops{display:flex;flex-direction:column;gap:6px}
-.tp-row{display:grid;grid-template-columns:28px 150px 1fr auto;gap:10px;padding:6px 2px;border-bottom:1px solid var(--line-soft);align-items:center;font-size:13px}
-.tp-row.is-neko{background:#fff4e8}
-.tp-row .item{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tp-row select{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;background:#fff}
-@media (max-width:760px){.en-row{grid-template-columns:1fr}.en-row .ops{flex-direction:row}.tp-row{grid-template-columns:28px 1fr auto}.tp-row .item{grid-column:2/-1;order:9}}
+@media (max-width:760px){.en-row{grid-template-columns:1fr}.en-row .ops{flex-direction:row}}
 .action-card h3{margin:0 0 2px;font-size:14px}
 .action-card .note{margin:0 0 12px;color:var(--muted);font-size:12px}
 .btn-stack{display:flex;flex-direction:column;gap:8px}
@@ -366,12 +362,11 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
       <div class="step-head">
         <span class="step-no">3</span>
         <h2 class="step-title">送り状を確認する</h2>
-        <span class="step-sub">英語の住所とヤマトの送り状種類を、出力の前にまとめて確認・変更できます</span>
+        <span class="step-sub">英語の住所を、出力の前にまとめて確認・変更できます</span>
       </div>
       <div class="step-body">
         <div id="checkEmpty" class="notice">受注CSVと、ヤマト・佐川のCSVを読み込むと表示されます。</div>
         <div id="enBlock" class="chk-block hidden"></div>
-        <div id="tpBlock" class="chk-block hidden"></div>
       </div>
     </section>
 
@@ -597,7 +592,7 @@ const db = getFirestore(app);
 var addrEdits = new Map();      // 受注番号 → 画面で直した住所（CSVにだけ使う）
 var addrChecked = new Set();    // 確認済みにした受注番号
 var typeOverrides = new Map();  // 受注番号 → 送り状種類（画面で変えたもの）
-var enOpen = false, tpOpen = false;
+var enOpen = false;
 var zipTownCache = new Map();   // 郵便番号 → 町名までの住所（zipcloud）。見つからない番号は null
 var zipPending = new Set(), zipFailed = new Set();
 
@@ -3336,7 +3331,7 @@ function zipsStillLoading() {
   return true;
 }
 
-/* ---------- 送り状を確認する（英語住所のまとめて確認・ヤマトの送り状種類のまとめて変更） ---------- */
+/* ---------- 送り状を確認する（英語住所のまとめて確認） ---------- */
 // （状態の変数はファイルの先頭で宣言しています）
 const TYPE_NAMES = { '0': '宅急便', '8': '宅急便コンパクト', 'A': 'ネコポス', '7': 'ネコポス（ゆうパケット）', '2': 'コレクト', '3': 'クロネコゆうメール', '4': 'タイム', '5': '着払い', '6': '発払い（複数口）', '9': 'コンパクトコレクト' };
 function typeName(t) { return TYPE_NAMES[t] || (t ? '種類' + t : '—'); }
@@ -3378,7 +3373,7 @@ function applyTypeOverride(row, oNum, who, warnLines) {
 }
 
 function renderCheckSection() {
-  const enB = document.getElementById('enBlock'), tpB = document.getElementById('tpBlock');
+  const enB = document.getElementById('enBlock');
   if (!enB) return;
   const targets = getAllOrderRows().length ? getShipTargets() : [];
   const ids = new Set(targets.map(t => t.no));
@@ -3388,7 +3383,6 @@ function renderCheckSection() {
   document.getElementById('checkEmpty').classList.toggle('hidden', targets.length > 0);
   if (isAddrConvertOn()) prefetchZips(targets.filter(t => t.addr && !hasJapanese(t.addr)).map(t => zip7Of(t.zip)));
   renderEnBlock(enB, targets);
-  renderTpBlock(tpB, targets);
 }
 
 // ===== 英語住所 =====
@@ -3487,64 +3481,6 @@ document.addEventListener('keydown', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.classList && t.classList.contains('en-in')) enApply(t.dataset.no, t.value, false);
-  else if (t.classList && t.classList.contains('tp-sel')) {
-    const it = getShipTargets().find(x => x.no === t.dataset.no);
-    if (it && t.value === it.type) typeOverrides.delete(t.dataset.no); else typeOverrides.set(t.dataset.no, t.value);
-    renderOrderSection();
-  } else if (t.id === 'tpAll') {
-    document.querySelectorAll('#tpBlock .tp-chk').forEach(c => { c.checked = t.checked; });
-  }
-});
-
-// ===== ヤマトの送り状種類 =====
-function renderTpBlock(box, targets) {
-  const ys = targets.filter(t => t.dest === 'yamato');
-  box.classList.toggle('hidden', !ys.length);
-  if (!ys.length) { box.innerHTML = ''; return; }
-  const cur = t => typeOverrides.has(t.no) ? typeOverrides.get(t.no) : t.type;
-  const neko = ys.filter(t => NEKOPOS_TYPES.has(cur(t))).length;
-  const changed = ys.filter(t => typeOverrides.has(t.no)).length;
-  let html = `<div class="chk-head"><h3>ヤマトの送り状種類 ${ys.length}件</h3>`
-    + `<span class="chk-note">ネコポス ${neko}件／それ以外 ${ys.length - neko}件${changed ? `（画面で変更 ${changed}件）` : ''}</span><span class="spacer"></span>`
-    + `<button type="button" class="btn btn-ghost btn-sm" id="tpToggle">${tpOpen ? '一覧を閉じる' : '一覧を開く'}</button></div>`
-    + `<div class="chk-head"><span class="chk-note">${tpOpen ? 'チェックした注文を' : 'ヤマトの送り状すべてを'}</span>`
-    + `<button type="button" class="btn btn-ghost btn-sm tp-bulk" data-t="A">ネコポスにする</button>`
-    + `<button type="button" class="btn btn-ghost btn-sm tp-bulk" data-t="0">宅急便にする</button>`
-    + `<button type="button" class="btn btn-ghost btn-sm tp-bulk" data-t="">元のCSVのとおりに戻す</button></div>`;
-  if (tpOpen) {
-    const opts = t => {
-      const list = ['0', 'A', '8'];
-      if (t.type && !list.includes(t.type)) list.unshift(t.type);
-      return list.map(v => `<option value="${v}"${cur(t) === v ? ' selected' : ''}>${escapeHtml(typeName(v))}${v === t.type ? '（元）' : ''}</option>`).join('');
-    };
-    html += `<p class="chk-note">ネコポスは日時指定ができないため、指定日・時間帯がある注文はCSVで空欄にします。</p><div class="chk-list">`
-      + `<div class="tp-row" style="font-weight:700"><input type="checkbox" id="tpAll" aria-label="すべて選ぶ"><span>受注番号</span><span>お届け先・品名</span><span>送り状種類</span></div>`
-      + ys.map(t => `<div class="tp-row${NEKOPOS_TYPES.has(cur(t)) ? ' is-neko' : ''}">
-          <input type="checkbox" class="tp-chk" data-no="${escapeHtml(t.no)}" aria-label="選ぶ">
-          <span>${escapeHtml(orderLabel(t.no))}${t.oki ? ' <span class="badge badge-okinawa">沖縄</span>' : ''}</span>
-          <span>${escapeHtml(t.name)}${t.hasDate ? ' <span class="badge" style="background:var(--tape-soft)">日時指定あり</span>' : ''}<div class="item">${escapeHtml(t.item)}</div></span>
-          <select class="tp-sel" data-no="${escapeHtml(t.no)}" aria-label="送り状種類">${opts(t)}</select></div>`).join('')
-      + `</div>`;
-  }
-  box.innerHTML = html;
-}
-document.addEventListener('click', e => {
-  const t = e.target;
-  if (t.id === 'tpToggle') { tpOpen = !tpOpen; renderCheckSection(); return; }
-  if (!t.classList.contains('tp-bulk')) return;
-  const ys = getShipTargets().filter(x => x.dest === 'yamato');
-  let nos = ys.map(x => x.no);
-  if (tpOpen) {
-    nos = [...document.querySelectorAll('#tpBlock .tp-chk:checked')].map(c => c.dataset.no);
-    if (!nos.length) { toast('変更する注文にチェックを入れてください'); return; }
-  }
-  const type = t.dataset.t;
-  nos.forEach(no => {
-    const it = ys.find(x => x.no === no); if (!it) return;
-    if (!type || type === it.type) typeOverrides.delete(no); else typeOverrides.set(no, type);
-  });
-  renderOrderSection();
-  toast(`${nos.length}件を${type === 'A' ? 'ネコポス' : type === '0' ? '宅急便' : '元のCSVのとおり'}にしました`);
 });
 
 function sagawaDataHeader() {
@@ -3604,7 +3540,10 @@ window.openPrintPreview = () => {
       const qtyRaw = mRow[COL.QTY] !== undefined && String(mRow[COL.QTY]).trim() !== '' ? String(mRow[COL.QTY]).trim() : '1';
       const kb = parseKoban(koBan);
       const isSetParent = !!(kb && kb.sub === '0' && setParents.has(kb.main));
-      const qty = isSetParent ? `<span style="font-size:8pt;font-weight:normal;color:#666;">セット</span><br>${escapeHtml(qtyRaw)}` : escapeHtml(qtyRaw);
+      // 数量2以上は黒地に白抜きの大きな数字で目立たせる（白黒印刷でもわかるように）
+      const isMulti = (Number(qtyRaw) || 0) >= 2;
+      const qtyNum = isMulti ? `<span style="display:inline-block;min-width:22px;padding:1px 5px;background:#000;color:#fff;border-radius:4px;font-size:15pt;font-weight:900;line-height:1.2;">${escapeHtml(qtyRaw)}</span><br><span style="font-size:7pt;font-weight:bold;">個数注意</span>` : escapeHtml(qtyRaw);
+      const qty = isSetParent ? `<span style="font-size:8pt;font-weight:normal;color:#666;">セット</span><br>${qtyNum}` : qtyNum;
       if (!isSetParent) totalQty += Number(qtyRaw) || 0;
       const isChild = koBan && !koBan.endsWith('-0') && koBan !== '0';
       itemRowsHtml += `
@@ -3632,7 +3571,7 @@ window.openPrintPreview = () => {
   });
 
   const printWin = window.open('', '_blank');
-  printWin.document.write(`<html><head><title>出荷検品シート</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; background: #eee; }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script></body></html>`);
+  printWin.document.write(`<html><head><title>出荷検品シート</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; background: #eee; -webkit-print-color-adjust: exact; print-color-adjust: exact; }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script></body></html>`);
   printWin.document.close();
 };
 
