@@ -282,6 +282,7 @@ const db = getFirestore(app);
 // ===== 保管料の設定 =====
 const HOKAN_RATE = 80;           // 1点あたりの保管料（円／月）
 const HOKAN_FREE_MONTHS = 1;     // 保管日からこの月数までは無料
+const PALLET_RATE = 3500;        // パレット契約の1パレットあたり月額（円・税抜）の標準
 const HOKAN_FORMS = ['shopee'];  // 保管依頼を扱うフォーム
 // 種別名に「保管」が入っていれば保管依頼、さらに「出荷・発送・出庫」が入っていれば保管品出荷依頼として扱う
 // 「Amazon返品」も在庫を減らす依頼（出庫）として扱う
@@ -452,9 +453,19 @@ async function removeOuts(lotIds, test) {
 // セラーの共有設定（hokan_sellers）。ドキュメントIDは管理番号（「/」は「_」に置き換え）
 const sellerDocId = k => String(k).replace(/\//g, '_');
 const sellerInfo = k => S.sellers.get(sellerDocId(k)) || {};
+// セラーごとの料金の決め方（共有設定で選ぶ）：item＝1点ごと（標準）／pallet＝パレット契約（月額）／none＝保管料なし
+const feeMode = k => { const m = sellerInfo(k).feeMode; return m === 'pallet' || m === 'none' ? m : 'item'; };
+const palletFee = k => { const d = sellerInfo(k); return (Number(d.pallets) || 0) * (Number(d.palletRate) || 0); };
+function feeLabel(k) {
+  const m = feeMode(k), d = sellerInfo(k);
+  if (m === 'pallet') return `パレット契約 ${Number(d.pallets) || 0}枚 × ${yen(Number(d.palletRate) || 0)}／月`;
+  if (m === 'none') return '保管料なし（別請求など）';
+  return `1点 月${HOKAN_RATE}円（${HOKAN_FREE_MONTHS}ヶ月無料）`;
+}
 function shareLine(seller) {
   const d = sellerInfo(seller);
   const parts = [];
+  if (feeMode(seller) !== 'item') parts.push(`<b>${esc(feeLabel(seller))}</b>`);
   if (d.sheetUrl) parts.push(`<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">セラー用シートを開く</a>${d.updatedAt ? `　更新 ${esc(String(d.updatedAt).slice(5, 16).replace('T', ' '))}` : ''}`);
   else if (d.mails) parts.push('<span class="warn">次の更新でセラー用シートを作ります</span>');
   else parts.push('<span class="warn">共有メール未設定</span>');
@@ -815,13 +826,14 @@ function renderStock(recs) {
   $('stockList').innerHTML = [...groups].sort((a, b) => a[0].localeCompare(b[0], 'ja')).map(([seller, lots]) => {
     lots.sort((a, b) => a.inDate.localeCompare(b.inDate));
     const total = lots.reduce((s, l) => s + remain(l), 0);
-    const fee = lots.filter(l => feeStart(l) <= today).reduce((s, l) => s + remain(l), 0);
+    const itemMode = feeMode(seller) === 'item';
+    const fee = itemMode ? lots.filter(l => feeStart(l) <= today).reduce((s, l) => s + remain(l), 0) : 0;
     return `<div class="seller"><div class="seller-h"><span><b>${esc(lots[0].sellerName || seller)}</b>　<span class="sum">${esc(seller)}</span></span>
       <span class="sum">残り ${total}点${fee ? `／保管料対象 ${fee}点` : ''}</span></div>
       ${shareLine(seller)}
       ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
         return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span><span class="p">${esc(l.product)}</span>
-          <span class="d">${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${rem > 0 ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
+          <span class="d">${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${rem > 0 && itemMode ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
           <span class="q">${rem}<small>／${l.qtyIn}点</small></span></button>`; }).join('')}</div>`;
   }).join('');
 }
@@ -843,7 +855,7 @@ function fillLotSheet(id, force) {
       <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
     <dl>
       <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
-      <dt>保管料</dt><dd>${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）</dd>
+      <dt>保管料</dt><dd>${feeMode(l.seller) === 'item' ? `${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）` : esc(feeLabel(l.seller)) + '（税抜）'}</dd>
       ${l.orderId ? `<dt>Order ID</dt><dd class="copy" data-copy="${esc(l.orderId)}">${esc(l.orderId)}（キャンセル品）</dd>` : ''}
       ${l.memo ? `<dt>メモ</dt><dd>${esc(l.memo)}</dd>` : ''}
       <dt>元の依頼</dt><dd>${req ? `<button class="mini" id="lotReq">${esc(req.type)}を開く</button>` : (l.reqId ? '（表示期間外）' : '手動で入庫')}</dd>
@@ -905,6 +917,17 @@ function openShareSheet(seller) {
     <div class="lotform">
       <label class="field"><span>セラー名（シートに表示されます）</span><input id="shN" value="${esc(name)}"></label>
       <label class="field"><span>共有するメール（複数は , 区切り）</span><input id="shM" type="email" multiple value="${esc(d.mails || '')}" placeholder="seller@example.com"></label>
+      <div class="hk" style="margin-top:12px">
+        <h3>保管料の決め方</h3>
+        <label class="oid-toggle"><input type="radio" name="shFee" value="item" ${feeMode(seller) === 'item' ? 'checked' : ''}> 1点ごと（標準：保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分 × ${HOKAN_RATE}円）</label>
+        <label class="oid-toggle"><input type="radio" name="shFee" value="pallet" ${feeMode(seller) === 'pallet' ? 'checked' : ''}> パレット契約（パレット枚数 × 単価 の月額）</label>
+        <div id="shPallet" style="display:${feeMode(seller) === 'pallet' ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 6px">
+          <label class="field" style="margin:0"><span>パレット枚数</span><input id="shPn" class="num-in" inputmode="numeric" value="${esc(d.pallets ?? '')}"></label>
+          <label class="field" style="margin:0"><span>1パレットの月額（税抜）</span><input id="shPr" class="num-in" inputmode="numeric" value="${esc(d.palletRate || PALLET_RATE)}"></label>
+        </div>
+        <label class="oid-toggle"><input type="radio" name="shFee" value="none" ${feeMode(seller) === 'none' ? 'checked' : ''}> 保管料なし（別の契約で請求するなど）</label>
+        <p class="hint">パレット契約・保管料なしのセラーは、1点ごとの保管料はかかりません。在庫の記録と出庫は今までどおりです。</p>
+      </div>
       <p class="hint">保存すると、次の更新でセラー用シートが作られ、閲覧者として共有されます。すぐに反映したいときは「セラー用シートを今すぐ更新」を押してください。</p>
       <dl>
         <dt>セラー用シート</dt><dd>${d.sheetUrl ? `<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">開く</a>` : 'まだ作成されていません'}</dd>
@@ -920,13 +943,20 @@ function openShareSheet(seller) {
       ${d.sheetUrl ? `<div class="actions"><button class="mini" id="shGuide">セラーさんへの案内文をコピー</button></div>` : ''}
     </div>`;
   $('closeSheet').onclick = closeSheet;
+  sh.querySelectorAll('input[name="shFee"]').forEach(x => x.onchange = () => {
+    $('shPallet').style.display = sh.querySelector('input[name="shFee"]:checked').value === 'pallet' ? 'grid' : 'none';
+  });
   const save = async () => {
     const mails = $('shM').value.split(/[,，、\s]+/).map(m => m.trim()).filter(Boolean);
     const bad = mails.filter(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m));
     if (bad.length) { toast('メールアドレスの形を確認してください：' + bad.join(', ')); return false; }
+    const mode = (document.querySelector('input[name="shFee"]:checked') || {}).value || 'item';
+    if (mode === 'pallet' && (!toNum($('shPn').value) || !toNum($('shPr').value))) { toast('パレット枚数と1パレットの月額を入れてください'); return false; }
     try {
       await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)),
-        { seller, name: $('shN').value.trim(), mails: mails.join(', '), by: S.user.email, at: serverTimestamp() }, { merge: true });
+        { seller, name: $('shN').value.trim(), mails: mails.join(', '), feeMode: mode,
+          pallets: mode === 'pallet' ? toNum($('shPn').value) : 0, palletRate: mode === 'pallet' ? toNum($('shPr').value) : 0,
+          by: S.user.email, at: serverTimestamp() }, { merge: true });
       return true;
     } catch (e) { toast('保存できませんでした：' + e.message); return false; }
   };
@@ -952,6 +982,20 @@ function openShareSheet(seller) {
   showSheet();
 }
 
+function guideFee(seller) {
+  const m = feeMode(seller), d = sellerInfo(seller);
+  if (m === 'pallet') return `【保管料について】
+・ご契約どおり、パレット${Number(d.pallets) || 0}枚 × ${(Number(d.palletRate) || 0).toLocaleString('ja-JP')}円（税抜）を毎月ご請求いたします。
+・シートでは、お預かりしている商品の数量をご確認いただけます。`;
+  if (m === 'none') return `【保管料について】
+・保管料は、ご契約の内容に沿ってご請求いたします。`;
+  return `【保管料について】
+・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。
+・毎月末時点の残数で計算し、翌月にご請求いたします。
+・シートの「状態」が「保管料対象」になっている商品が対象です。
+　「今月の保管料（見込み）」もあわせてご確認ください。`;
+}
+
 // セラーさんへの案内文（共有設定の内容とシートURLを差し込む）
 function guideText(seller) {
   const d = sellerInfo(seller);
@@ -971,11 +1015,7 @@ ${d.mails ? `
 ・商品ごとに、保管日・入庫数・出庫数・残数を確認いただけます。
 ・シートは1時間ごとに自動で更新されます。
 
-【保管料について】
-・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。
-・毎月末時点の残数で計算し、翌月にご請求いたします。
-・シートの「状態」が「保管料対象」になっている商品が対象です。
-　「今月の保管料（見込み）」もあわせてご確認ください。
+${guideFee(seller)}
 
 【出荷のご依頼について】
 ・これまでどおり、依頼フォームの「保管品出荷依頼」からお申し込みください。
@@ -1042,49 +1082,64 @@ function openNewLotSheet() {
 function billData() {
   const ym = S.billMonth || prevMonth(), cut = monthEnd(ym);
   const rows = new Map();
+  const get = (k, name) => {
+    if (!rows.has(k)) rows.set(k, { seller: k, name: name || sellerInfo(k).name || '', mode: feeMode(k), qty: 0, amount: 0, lots: [] });
+    const g = rows.get(k); if (!g.name && name) g.name = name; return g;
+  };
   liveLots().forEach(l => {
     if (l.inDate > cut) return;
-    const rem = remainAt(l, cut);
-    if (rem <= 0 || feeStart(l) > cut) return;
-    if (!rows.has(l.seller)) rows.set(l.seller, { seller: l.seller, name: l.sellerName || '', qty: 0, amount: 0, lots: [] });
-    const g = rows.get(l.seller);
-    if (!g.name && l.sellerName) g.name = l.sellerName;
-    g.qty += rem; g.amount += rem * HOKAN_RATE;
-    g.lots.push({ product: l.product, orderId: l.orderId || '', inDate: l.inDate, rem, amount: rem * HOKAN_RATE });
+    const rem = remainAt(l, cut), mode = feeMode(l.seller);
+    if (rem <= 0 || mode === 'none') return;
+    if (mode === 'item' && feeStart(l) > cut) return;
+    const g = get(l.seller, l.sellerName);
+    const amount = mode === 'item' ? rem * HOKAN_RATE : 0;
+    g.qty += rem; g.amount += amount;
+    g.lots.push({ product: l.product, orderId: l.orderId || '', inDate: l.inDate, rem, amount });
   });
-  const list = [...rows.values()].sort((a, b) => a.seller.localeCompare(b.seller, 'ja'));
+  // パレット契約は、在庫の数に関係なく「枚数 × 単価」の月額
+  S.sellers.forEach(d => { if (d.seller && feeMode(d.seller) === 'pallet' && palletFee(d.seller) > 0) get(d.seller, d.name); });
+  rows.forEach(g => { if (g.mode === 'pallet') { const d = sellerInfo(g.seller); g.pallets = Number(d.pallets) || 0; g.palletRate = Number(d.palletRate) || 0; g.amount = palletFee(g.seller); } });
+  const list = [...rows.values()].filter(g => g.amount > 0).sort((a, b) => a.seller.localeCompare(b.seller, 'ja'));
   list.forEach(g => g.lots.sort((a, b) => a.inDate.localeCompare(b.inDate)));
   return { ym, cut, list };
 }
+const billQty = g => g.mode === 'pallet' ? `パレット${g.pallets}枚` : `${g.qty}点`;
 function renderBill() {
   const { ym, cut, list } = billData();
   if ($('billMonth').value !== ym) $('billMonth').value = ym;
-  $('billRule').textContent = `${cut} 時点で、保管日から${HOKAN_FREE_MONTHS}ヶ月以上たっている在庫の残り点数 × ${HOKAN_RATE}円 で計算しています（金額はすべて税抜・月ごとの請求）。`;
+  $('billRule').textContent = `${cut} 時点で、保管日から${HOKAN_FREE_MONTHS}ヶ月以上たっている在庫の残り点数 × ${HOKAN_RATE}円 で計算しています。パレット契約のセラーは「枚数 × 単価」の月額で、「保管料なし」のセラーは含みません（金額はすべて税抜・月ごとの請求）。`;
   if (S.lotsErr) { $('billBody').innerHTML = `<div class="alert">${esc(S.lotsErr)}</div>`; return; }
   if (!list.length) { $('billBody').innerHTML = `<div class="empty">${esc(ym)} の保管料の対象はありません。</div>`; return; }
-  const tq = list.reduce((s, g) => s + g.qty, 0), ta = list.reduce((s, g) => s + g.amount, 0);
+  const ta = list.reduce((s, g) => s + g.amount, 0);
   $('billBody').innerHTML = `<div class="tbl"><table class="bill">
-      <thead><tr><th>管理番号</th><th>セラー名</th><th class="n">対象点数</th><th class="n">保管料（税抜）</th></tr></thead>
-      <tbody>${list.map(g => `<tr><td>${esc(g.seller)}</td><td>${esc(g.name)}</td><td class="n">${g.qty}点</td><td class="n">${yen(g.amount)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="2">合計（${list.length}セラー）</td><td class="n">${tq}点</td><td class="n">${yen(ta)}</td></tr></tfoot>
+      <thead><tr><th>管理番号</th><th>セラー名</th><th class="n">対象</th><th class="n">保管料（税抜）</th></tr></thead>
+      <tbody>${list.map(g => `<tr><td>${esc(g.seller)}</td><td>${esc(g.name)}${g.mode === 'pallet' ? '<span class="badge cancel">パレット契約</span>' : ''}</td>
+        <td class="n">${billQty(g)}</td><td class="n">${yen(g.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3">合計（${list.length}セラー）</td><td class="n">${yen(ta)}</td></tr></tfoot>
     </table></div>
-    ${list.map(g => `<details class="bd"><summary>${esc(g.name || g.seller)}　の内訳（${g.lots.length}件）</summary>
-      <div class="tbl"><table class="bill"><thead><tr><th>商品名</th><th>保管日</th><th class="n">月末の残り</th><th class="n">保管料</th></tr></thead>
-      <tbody>${g.lots.map(x => `<tr><td>${esc(x.product)}</td><td>${esc(x.inDate)}</td><td class="n">${x.rem}点</td><td class="n">${yen(x.amount)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')}`;
+    ${list.map(g => `<details class="bd"><summary>${esc(g.name || g.seller)}　の内訳${g.mode === 'pallet' ? `（パレット${g.pallets}枚 × ${yen(g.palletRate)}）` : `（${g.lots.length}件）`}</summary>
+      ${g.lots.length ? `<div class="tbl"><table class="bill"><thead><tr><th>商品名</th><th>保管日</th><th class="n">月末の残り</th><th class="n">保管料</th></tr></thead>
+      <tbody>${g.lots.map(x => `<tr><td>${esc(x.product)}</td><td>${esc(x.inDate)}</td><td class="n">${x.rem}点</td><td class="n">${g.mode === 'pallet' ? '-' : yen(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">月末時点の在庫はありません。</p>'}</details>`).join('')}`;
 }
 function billCopy() {
   const { ym, list } = billData();
   if (!list.length) { toast('コピーする対象がありません'); return; }
-  const tsv = [['請求月', '管理番号', 'セラー名', '対象点数', '単価（税抜）', '保管料（税抜）'].join('\t'),
-    ...list.map(g => [ym, g.seller, g.name, g.qty, HOKAN_RATE, g.amount].join('\t'))].join('\n');
+  const tsv = [['請求月', '管理番号', 'セラー名', '契約', '数量', '単位', '単価（税抜）', '保管料（税抜）'].join('\t'),
+    ...list.map(g => g.mode === 'pallet'
+      ? [ym, g.seller, g.name, 'パレット契約', g.pallets, 'パレット', g.palletRate, g.amount].join('\t')
+      : [ym, g.seller, g.name, '1点ごと', g.qty, '点', HOKAN_RATE, g.amount].join('\t'))].join('\n');
   copy(tsv);
 }
 function billCsv() {
   const { ym, list } = billData();
   if (!list.length) { toast('保存する対象がありません'); return; }
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['請求月', '管理番号', 'セラー名', '商品名', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）'].map(q).join(','),
-    ...list.flatMap(g => g.lots.map(x => [ym, g.seller, g.name, x.product, x.orderId, x.inDate, x.rem, HOKAN_RATE, x.amount].map(q).join(',')))];
+  const lines = [['請求月', '管理番号', 'セラー名', '契約', '商品名', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）'].map(q).join(',')];
+  list.forEach(g => {
+    if (g.mode === 'pallet') lines.push([ym, g.seller, g.name, `パレット契約（${g.pallets}枚）`, '（月額）', '', '', '', g.palletRate, g.amount].map(q).join(','));
+    g.lots.forEach(x => lines.push([ym, g.seller, g.name, g.mode === 'pallet' ? 'パレット契約' : '1点ごと', x.product, x.orderId, x.inDate, x.rem,
+      g.mode === 'pallet' ? '' : HOKAN_RATE, g.mode === 'pallet' ? '' : x.amount].map(q).join(',')));
+  });
   const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = `保管料_${ym}.csv`;
