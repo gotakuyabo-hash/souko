@@ -173,6 +173,7 @@ table.res{width:100%;border-collapse:collapse;font-size:13px}
 table.res th,table.res td{padding:6px 10px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
 table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .st-ok{color:var(--ok);font-weight:700}
+.st-warn{color:#b25e00;font-weight:700}
 .st-ng{color:var(--danger);font-weight:700}
 .mini{padding:3px 8px;font-size:12px}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:6px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:9}
@@ -2219,22 +2220,53 @@ $('#btnLink').onclick = async () => {
 
     await checkPastHolds(Object.values(cur));
     const scoped = onlySearched(), inScope = new Set(searchedNos());
-    const plan = nos.map(no => {
-      const c = byNo[no], r = cur[no], old = pickNo[no].old, multi = pickNo[no].multi;
-      if (!r) return { no, c, old, multi, status:'nf' };
-      if (scoped && !inScope.has(no)) return { no, c, r, old, multi, status:'outside' };
-      // 送り状を作った注文番号（なければ、1件だけの送り状は送り状の注文番号）と、今のシートの注文番号を比べる
+    // 送り状を作った注文番号（なければ、1件だけの送り状は送り状の注文番号）
+    const wantOf = (no, c) => {
       const rec = recs[no] || {};
-      const want = oidOf(rec.procKey || rec.procOrderId) || (c.nos.length === 1 && !NO_OID(oidOf(c.orderNo)) ? oidOf(c.orderNo) : '');
-      if (want && !matches(r, want)) return { no, c, r, old, multi, want, status:'oid' };
-      if (state.inq[no]) return { no, c, r, old, multi, status:'inq' };
-      if (state.hold[no] || HOLD_RE.test(r.note || '')) return { no, c, r, old, multi, status:'stop', stopT:'出荷保留' };
-      if (pickNo[no].unsure) return { no, c, r, old, multi, status:'unsure' }; // 問い合わせ中は追跡番号も出荷日も書き込まない
+      return oidOf(rec.procKey || rec.procOrderId) || (c.nos.length === 1 && !NO_OID(oidOf(c.orderNo)) ? oidOf(c.orderNo) : '');
+    };
+    // 1件ずつ、書き込めるかを判断する
+    const judge = (no, c, r, base) => {
+      const p = Object.assign({ no, c, r }, base);
+      if (!r) return Object.assign(p, { status:'nf' });
+      if (scoped && !inScope.has(no)) return Object.assign(p, { status:'outside' });
+      if (p.want && !matches(r, p.want)) return Object.assign(p, { status:'oid' });
+      if (state.inq[no]) return Object.assign(p, { status:'inq' });
+      if (state.hold[no] || HOLD_RE.test(r.note || '')) return Object.assign(p, { status:'stop', stopT:'出荷保留' });
+      if (p.unsure) return Object.assign(p, { status:'unsure' }); // 問い合わせ中は追跡番号も出荷日も書き込まない
       const ex = normTracking(r.tracking);
       // シートに古い送り状の番号が入っているだけなら、新しい番号で上書きする
-      if (ex && ex !== normTracking(c.tracking) && !old.some(o => normTracking(o.tracking)===ex)) return { no, c, r, old, multi, status:'conflict' };
-      return { no, c, r, old, multi, fromStor: !!state.stor[no], status: ex===normTracking(c.tracking) ? 'same' : (ex ? 'replace' : 'ok') };
-    });
+      if (ex && ex !== normTracking(c.tracking) && !p.old.some(o => normTracking(o.tracking)===ex)) return Object.assign(p, { status:'conflict' });
+      return Object.assign(p, { fromStor: !!state.stor[no], status: ex===normTracking(c.tracking) ? 'same' : (ex ? 'replace' : 'ok') });
+    };
+    let plan = nos.map(no => judge(no, byNo[no], cur[no],
+      { old: pickNo[no].old, multi: pickNo[no].multi, unsure: pickNo[no].unsure, want: wantOf(no, byNo[no]) }));
+
+    // No.が変わっていた注文：受注番号でシートを探し直し、1行に決まれば今のNo.に付け替える
+    // （有在庫用・空欄は受注番号で見分けられないので探し直さない）
+    const lost = plan.filter(p => (p.status==='oid' || p.status==='nf') && p.want && p.want.indexOf('|') < 0);
+    if (lost.length) {
+      try {
+        const j = await gas('search', { mode:'oid', values:[...new Set(lost.map(p => p.want))] });
+        if (j.mode !== 'oid') throw new Error('unsupported mode');   // 古い連携GASは受注番号で探せない
+        const byOidRows = {};
+        (j.rows || []).forEach(r => { const o = oidOf(r.orderId); (byOidRows[o] = byOidRows[o] || []).push(r); });
+        const taken = new Set(plan.filter(p => p.status!=='oid' && p.status!=='nf').map(p => p.no));
+        lost.forEach(p => {
+          const rows = byOidRows[p.want] || [];
+          if (rows.length !== 1) { p.refind = rows.length ? 'many' : 'none'; return; }
+          const r = rows[0];
+          if (taken.has(r.no) || r.no === p.no) { p.refind = 'taken'; return; }
+          taken.add(r.no);
+          const q = judge(r.no, p.c, r, { old:p.old, multi:p.multi, unsure:p.unsure, want:p.want, movedFrom:p.no });
+          plan[plan.indexOf(p)] = q;
+        });
+      } catch(e) {
+        // 連携GASが古く、受注番号で探せないときは、今までどおり止める
+        lost.forEach(p => { p.refind = 'unsupported'; });
+        if (!/unsupported|unknown/i.test(e.message)) toast('受注番号での探し直しができませんでした：'+e.message, 6000);
+      }
+    }
     linkPlan = { plan, unlinked };
     renderLinkPlan();
   }catch(e){ toast(e.message, 6000); }
@@ -2253,23 +2285,28 @@ function renderLinkPlan(){
   const w = plan.filter(p => p.status==='ok' || p.status==='same' || p.status==='replace');
   const outN = plan.filter(p => p.status==='outside').length;
   const label = p => {
-    if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません</span>';
+    const refind = { many:'（受注番号で探しましたが、同じ受注番号の行が複数あり決められません）', none:'（受注番号で探しましたが、シートに見つかりません）',
+      taken:'（受注番号で見つかったNo.には別の送り状が付くため、付け替えません）', unsupported:'（連携GASを更新すると受注番号で探し直せます）' }[p.refind] || '';
+    if (p.status==='nf') return '<span class="st-ng">シートにこのNo.がありません'+refind+'</span>';
     if (p.status==='outside') return '<span class="muted">検索結果にないため書き込みません（翌日以降の発送など）</span>';
     if (p.status==='inq') return '<span class="st-ng">問い合わせ中のため書き込みません</span>';
     if (p.status==='stop') return '<span class="st-ng">'+p.stopT+'のため書き込みません</span>';
-    if (p.status==='oid') return '<span class="st-ng">シートの注文（'+esc(keyLabel(keyOf(p.r)))+'）が送り状の注文（'+esc(keyLabel(p.want))+'）と違うため書き込みません</span>';
+    if (p.status==='oid') return '<span class="st-ng">シートの注文（'+esc(keyLabel(keyOf(p.r)))+'）が送り状の注文（'+esc(keyLabel(p.want))+'）と違うため書き込みません'+refind+'</span>';
     if (p.status==='conflict') return '<span class="st-ng">別の追跡番号が入っています（'+esc(p.r.tracking)+'）</span>';
     if (p.status==='unsure') return '<span class="st-ng">送り状が複数あり、どれが新しいか判断できません（アプリで作った記録がありません）。シートに手で入れてください</span>';
     if (p.status==='replace') return '<span class="st-ok">古い追跡番号（'+esc(p.r.tracking)+'）を新しい番号に書き換えます</span>';
     return '<span class="st-ok">'+(p.status==='same' ? '反映済み（同じ追跡番号）' : '書き込みます')+'</span>'
       + (p.fromStor ? '<br><span class="small muted">保管品の出荷：書き込んだあと保管を解除します</span>' : '');
   };
+  const label2 = p => (p.movedFrom ? '<span class="st-warn">No.'+p.movedFrom+'→'+p.no+'に変わっていました（受注番号で確認済み）</span><br>' : '') + label(p);
+  const movedN = plan.filter(p => p.movedFrom).length;
   $('#linkResult').innerHTML = '<p><b>書き込み対象 '+w.length+'件</b><span class="muted"> ／ 書き込まない '+(plan.length-w.length-outN)+'件'
-    + (outN ? ' ／ 検索結果にない送り状 '+outN+'件' : '')+' ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
+    + (outN ? ' ／ 検索結果にない送り状 '+outN+'件' : '')
+    + (movedN ? ' ／ No.が変わっていた注文 '+movedN+'件' : '')+' ／ 紐づかなかった送り状 '+unlinked.length+'件</span></p>'
     + (plan.length ? '<div class="tbl-wrap"><table class="res"><thead><tr><th>No.</th><th>配送業者</th><th>追跡番号</th><th>出荷日</th><th>結果</th></tr></thead><tbody>'
       + plan.map(p => '<tr><td>'+p.no+'</td><td>'+esc(p.c.carrier)+'</td><td>'+esc(p.c.tracking)
         + (p.multi ? '<br><span class="muted small">複数口（1口目）</span>' : '')
-        + (p.old && p.old.length ? '<br><span class="muted small">使わない古い送り状：'+esc(p.old.map(o=>o.tracking).join('、'))+'</span>' : '')+'</td><td>'+(p.r ? esc(md(linkShipDate(p))) : '')+'</td><td>'+label(p)+'</td></tr>').join('')
+        + (p.old && p.old.length ? '<br><span class="muted small">使わない古い送り状：'+esc(p.old.map(o=>o.tracking).join('、'))+'</span>' : '')+'</td><td>'+(p.r ? esc(md(linkShipDate(p))) : '')+'</td><td>'+label2(p)+'</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (unlinked.length ? '<p class="st-ng small" style="margin-top:8px">No.も受注番号も見つからなかった送り状：'+esc(unlinked.join('、'))+'</p>' : '');
   $('#linkActions').hidden = false;
@@ -2325,6 +2362,7 @@ $('#btnLinkWrite').onclick = async () => {
     logList('✅ 保管品の出荷のため、保管を解除した注文', targets.filter(p=>p.fromStor).map(p=>'No.'+p.no+'（'+p.c.carrier+' '+p.c.tracking+'）'));
     logList('注文番号が違うため書き込まなかった注文', linkPlan.plan.filter(p=>p.status==='oid').map(p=>'No.'+p.no+'（シート：'+keyLabel(keyOf(p.r))+' ／ 送り状：'+keyLabel(p.want)+'）'));
     logList('シートで見つからなかったNo.', notFound.map(n=>'No.'+n));
+    logList('⚠️ No.が変わっていたため、受注番号で探して書き込んだ注文', targets.filter(p=>p.movedFrom).map(p=>'No.'+p.movedFrom+'→No.'+p.no+'（'+keyLabel(p.want)+'）'));
     toast(done+'件をシートに反映しました');
   }catch(e){ linkLog('❌ '+e.message); toast(e.message, 6000); }
   finally{ btn.disabled = false; }
