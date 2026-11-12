@@ -819,6 +819,12 @@ function renderStock(recs) {
     if (!groups.has(l.seller)) groups.set(l.seller, []);
     groups.get(l.seller).push(l);
   });
+  // 共有設定だけあって、在庫がまだない（または表示条件に合わない）セラーも出す
+  S.sellers.forEach(d => {
+    if (!d.seller || groups.has(d.seller)) return;
+    if (q && ![d.seller, d.name].join(' ').toLowerCase().includes(q)) return;
+    groups.set(d.seller, []);
+  });
   if (!groups.size) {
     $('stockList').innerHTML = `<div class="empty">${q ? '条件に合う在庫はありません。' : '保管在庫はまだありません。保管依頼を完了にするか、「＋手動で入庫」から登録してください。'}</div>`;
     return;
@@ -828,7 +834,11 @@ function renderStock(recs) {
     const total = lots.reduce((s, l) => s + remain(l), 0);
     const itemMode = feeMode(seller) === 'item';
     const fee = itemMode ? lots.filter(l => feeStart(l) <= today).reduce((s, l) => s + remain(l), 0) : 0;
-    return `<div class="seller"><div class="seller-h"><span><b>${esc(lots[0].sellerName || seller)}</b>　<span class="sum">${esc(seller)}</span></span>
+    const title = (lots[0] && lots[0].sellerName) || sellerInfo(seller).name || seller;
+    if (!lots.length) return `<div class="seller"><div class="seller-h"><span><b>${esc(title)}</b>　<span class="sum">${esc(seller)}</span></span>
+      <span class="sum">${lotsOf(seller).some(l => remain(l) > 0) ? '在庫あり' : lotsOf(seller).length ? '残りの在庫はありません' : '在庫はまだありません'}</span></div>
+      ${shareLine(seller)}</div>`;
+    return `<div class="seller"><div class="seller-h"><span><b>${esc(title)}</b>　<span class="sum">${esc(seller)}</span></span>
       <span class="sum">残り ${total}点${fee ? `／保管料対象 ${fee}点` : ''}</span></div>
       ${shareLine(seller)}
       ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
