@@ -7,7 +7,12 @@
     <title>未読バーストコックピット</title>
     <style>
         body { -webkit-tap-highlight-color: transparent; }
-        .btn { height: 44px; border-radius: 12px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 12px; cursor: pointer; transition: transform .1s; white-space: nowrap; }
+        /* スマホで画面が横にはみ出さないように（はみ出すと全体が縮んだり、メニューがズレる） */
+        html { overflow-x: hidden; }
+        main, .burst-card { min-width: 0; max-width: 100%; }
+        .flex-wrap { flex-wrap: wrap; }
+        .gap-1 { gap: .25rem; } .bg-rose-50 { background-color: #fff1f2; } .text-rose-600 { color: #e11d48; }   /* 事前書き出しのTailwindに入っていなかったので追加（絞り込みチップが折り返さず、はみ出していた） */
+        .btn { height: 44px; border-radius: 12px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 12px; cursor: pointer; transition: transform .1s; white-space: nowrap; min-width: 0; overflow: hidden; }
         .btn:active { transform: scale(.97); }
         .btn:disabled { opacity: .5; }
         .btn-sub  { background: #f1f5f9; color: #334155; }
@@ -3272,7 +3277,7 @@
         }
         // 種類ごとに、よく使う操作へのボタン（カードの中に出す）
         function subActionsHtml(sub, cardKey, who) {
-            const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub flex-1">${label}</button>`;
+            const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub" style="flex:1 1 auto">${label}</button>`;
             let html = '';
             if (sub === 'order') {
                 html = b('📮 送り状を依頼', `openMatomaruForm('${cardKey}')`);
@@ -3290,7 +3295,8 @@
             // 担当が渡辺さん・エンジニアなら、その近道を必ず出す
             if (who === 'watanabe' && html.indexOf('openAskForm') === -1) html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + html;
             if (who === 'engineer' && html.indexOf('askDiscord') === -1) html = b('🎮 Discordで聞く', `askDiscord('${cardKey}')`) + html;
-            return html ? `<div class="flex gap-2 mt-2">${html}</div>` : '';
+            // 幅が足りない時は2段に折り返す（横にはみ出さない）
+            return html ? `<div class="flex flex-wrap gap-2 mt-2">${html}</div>` : '';
         }
         function triageCat(rid) {
             const d = roomsMeta[rid];
@@ -3360,7 +3366,7 @@
                 </div>
                 ${subRow}
                 ${whoRow}
-                ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
+                ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2" style="height:auto;min-height:44px;white-space:normal;padding:8px 12px">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
             applyTriageFilter();
         }
         function applyTriageFilter() {
