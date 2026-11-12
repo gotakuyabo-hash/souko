@@ -466,9 +466,12 @@ function shareLine(seller) {
   const d = sellerInfo(seller);
   const parts = [];
   if (feeMode(seller) !== 'item') parts.push(`<b>${esc(feeLabel(seller))}</b>`);
-  if (d.sheetUrl) parts.push(`<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">セラー用シートを開く</a>${d.updatedAt ? `　更新 ${esc(String(d.updatedAt).slice(5, 16).replace('T', ' '))}` : ''}`);
-  else if (d.mails) parts.push('<span class="warn">次の更新でセラー用シートを作ります</span>');
-  else parts.push('<span class="warn">共有メール未設定</span>');
+  // シートの状態：作成済み・共有済み／作成済み・未共有／未作成
+  if (d.sheetUrl && d.mails) parts.push(`<span class="badge free" style="margin:0">作成済み・共有済み</span>`);
+  else if (d.sheetUrl) parts.push(`<span class="badge fee" style="margin:0">作成済み・セラー未共有</span>`);
+  else if (d.mails) parts.push('<span class="warn">未作成（次の更新で作ります）</span>');
+  else parts.push('<span class="warn">未作成・共有メール未設定</span>');
+  if (d.sheetUrl) parts.push(`<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">シートを開く</a>${d.updatedAt ? `　更新 ${esc(String(d.updatedAt).slice(5, 16).replace('T', ' '))}` : ''}`);
   if (d.error) parts.push(`<span class="err">${esc(d.error)}</span>`);
   return `<div class="share"><span>${parts.join('　')}</span><button class="mini" data-share="${esc(seller)}">共有設定</button></div>`;
 }
@@ -785,6 +788,7 @@ function bindHokanPanel(r) {
       await addLots(r, items, date);
       if (!r.done) await writeAction(r, { done: true, doneDate: todayJST() });
       toast(`在庫に${sumQty(items)}点登録しました`); refill();
+      promptSheetIfNone(r);
     } catch (e) { toast('保存できませんでした：' + e.message); }
   };
   if ($('hkOut')) $('hkOut').onclick = async () => {
@@ -917,13 +921,24 @@ function fillLotSheet(id, force) {
   };
 }
 
-function openShareSheet(seller) {
+// 保管依頼を完了したとき、まだセラー用シートがないセラーなら作成画面を出す
+function promptSheetIfNone(r) {
+  const k = sellerKey(r);
+  if (!k || !isHokanIn(r)) return;
+  const d = sellerInfo(k);
+  if (d.sheetUrl || d.noSheet) return;
+  setTimeout(() => openShareSheet(k, { name: r.name || '', notice: true }), 300);
+}
+
+function openShareSheet(seller, opt = {}) {
   const sh = $('sheet'), d = sellerInfo(seller);
-  const name = d.name || (lotsOf(seller)[0] || {}).sellerName || '';
+  const name = d.name || opt.name || (lotsOf(seller)[0] || {}).sellerName || '';
   sh.dataset.id = 'share'; sh.dataset.kind = 'share'; sh.dataset.dirty = '1'; sh.dataset.f = 'shopee';
   sh.innerHTML = `
     <div class="sheet-h"><div><h2>セラー用シートの共有設定</h2><div class="sub">${esc(seller)}</div></div>
       <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    ${opt.notice ? `<div class="alert" style="margin-top:10px">このセラーさんには、まだセラー用シートがありません。メールを入れて「保存してシートを作成」を押すと、在庫を見られるシートを作って共有します。
+      <div class="actions" style="margin-top:6px"><button class="mini" id="shLater">あとで作る</button><button class="mini" id="shNever">このセラーはシートを作らない</button></div></div>` : ''}
     <div class="lotform">
       <label class="field"><span>セラー名（シートに表示されます）</span><input id="shN" value="${esc(name)}"></label>
       <label class="field"><span>共有するメール（複数は , 区切り）</span><input id="shM" type="email" multiple value="${esc(d.mails || '')}" placeholder="seller@example.com"></label>
@@ -953,6 +968,13 @@ function openShareSheet(seller) {
       ${d.sheetUrl ? `<div class="actions"><button class="mini" id="shGuide">セラーさんへの案内文をコピー</button></div>` : ''}
     </div>`;
   $('closeSheet').onclick = closeSheet;
+  if ($('shLater')) $('shLater').onclick = closeSheet;
+  if ($('shNever')) $('shNever').onclick = async () => {
+    try {
+      await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)), { seller, name: $('shN').value.trim(), noSheet: true, by: S.user.email, at: serverTimestamp() }, { merge: true });
+      closeSheet(); toast('このセラーは次からシート作成を表示しません（共有設定からいつでも作れます）');
+    } catch (e) { toast('保存できませんでした：' + e.message); }
+  };
   sh.querySelectorAll('input[name="shFee"]').forEach(x => x.onchange = () => {
     $('shPallet').style.display = sh.querySelector('input[name="shFee"]:checked').value === 'pallet' ? 'grid' : 'none';
   });
@@ -964,7 +986,7 @@ function openShareSheet(seller) {
     if (mode === 'pallet' && (!toNum($('shPn').value) || !toNum($('shPr').value))) { toast('パレット枚数と1パレットの月額を入れてください'); return false; }
     try {
       await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)),
-        { seller, name: $('shN').value.trim(), mails: mails.join(', '), feeMode: mode,
+        { seller, name: $('shN').value.trim(), mails: mails.join(', '), feeMode: mode, noSheet: false,
           pallets: mode === 'pallet' ? toNum($('shPn').value) : 0, palletRate: mode === 'pallet' ? toNum($('shPr').value) : 0,
           by: S.user.email, at: serverTimestamp() }, { merge: true });
       return true;
@@ -1178,6 +1200,7 @@ async function toggleDone(id, isUndo) {
     else await stockOnUndo(r, isUndo);
     await writeAction(r, { done: next, doneDate: next ? todayJST() : '' });
     if (!isUndo) toast((next ? '完了にしました' : '未対応に戻しました') + (msg ? `（${msg}）` : ''), () => toggleDone(id, true));
+    if (next && !isUndo) promptSheetIfNone(r);
   } catch (e) { toast('保存できませんでした：' + e.message); }
 }
 function saveNote(id, v) {
