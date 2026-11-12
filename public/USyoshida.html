@@ -2229,10 +2229,11 @@ $('#btnLink').onclick = async () => {
     const judge = (no, c, r, base) => {
       const p = Object.assign({ no, c, r }, base);
       if (!r) return Object.assign(p, { status:'nf' });
-      // 検索した注文だけ紐づける設定のとき、検索結果にないNo.は書き込まない
-      // （ただし、検索したNo.の注文が受注番号で別のNo.に見つかった場合は、検索したものとして扱う）
-      if (scoped && !inScope.has(no) && !(base.movedFrom && inScope.has(base.movedFrom))) return Object.assign(p, { status:'outside' });
+      // 注文番号の確認を先にする（No.が変わった注文は、このあと受注番号で探し直す）
       if (p.want && !matches(r, p.want)) return Object.assign(p, { status:'oid' });
+      // 検索した注文だけ紐づける設定のとき、検索結果にないNo.は書き込まない
+      // （No.が変わっていた注文は、元のNo.か新しいNo.のどちらかを検索していればよい）
+      if (scoped && !inScope.has(no) && !(base.movedFrom && inScope.has(base.movedFrom))) return Object.assign(p, { status:'outside' });
       if (state.inq[no]) return Object.assign(p, { status:'inq' });
       if (state.hold[no] || HOLD_RE.test(r.note || '')) return Object.assign(p, { status:'stop', stopT:'出荷保留' });
       if (p.unsure) return Object.assign(p, { status:'unsure' }); // 問い合わせ中は追跡番号も出荷日も書き込まない
@@ -2269,6 +2270,8 @@ $('#btnLink').onclick = async () => {
         if (!/unsupported|unknown/i.test(e.message)) toast('受注番号での探し直しができませんでした：'+e.message, 6000);
       }
     }
+    // 探し直しても見つからず、検索結果にもないものは「検索結果にない」にまとめる（翌日以降の送り状など）
+    if (scoped) plan.forEach(p => { if ((p.status==='oid' || p.status==='nf') && !inScope.has(p.no) && p.refind !== 'taken') { p.status = 'outside'; } });
     linkPlan = { plan, unlinked };
     renderLinkPlan();
   }catch(e){ toast(e.message, 6000); }
