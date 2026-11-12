@@ -25,7 +25,9 @@
         .tab-btn .ico { font-size: 22px; line-height: 1; filter: grayscale(1); opacity: .6; }
         .tab-btn.active { color: #4f46e5; }
         .tab-btn.active .ico { filter: none; opacity: 1; }
-        .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; max-width: 28rem; margin: 0 auto; background: #fff; border-radius: 20px 20px 0 0; max-height: 88vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 0px); display: none; box-shadow: 0 -8px 30px rgba(0,0,0,.15); }
+        .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; max-width: 28rem; margin: 0 auto; background: #fff; border-radius: 20px 20px 0 0; max-height: 88vh; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: env(safe-area-inset-bottom, 0px); display: none; box-shadow: 0 -8px 30px rgba(0,0,0,.15); }
+        /* シートを開いている間は、後ろの画面を固定（スマホでシートがズレるのを防ぐ） */
+        body.sheet-lock { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
         .sheet-head { position: sticky; top: 0; background: #fff; padding: 10px 20px 12px; border-bottom: 1px solid #f1f5f9; z-index: 1; }
         .sheet-head::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 9px; background: #cbd5e1; margin: 0 auto 10px; }
         .sheet-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 20px; font-size: 16px; font-weight: 600; text-align: left; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
@@ -666,12 +668,29 @@
         function openSheet(id) {
             ['sheetActions', 'modalSellerInfo', 'modalLinkCopy', 'modalAiRules', 'modalRoomNote', 'modalEditMsg'].forEach(s => document.getElementById(s).style.display = 'none');
             document.getElementById('modalOverlay').style.display = 'block';
-            document.getElementById(id).style.display = 'block';
-            document.body.style.overflow = 'hidden';
+            const el = document.getElementById(id);
+            el.style.display = 'block';
+            el.scrollTop = 0;   // 前回スクロールした位置を引き継がず、いつも先頭から表示
+            lockBodyScroll();
+        }
+        // 後ろの画面の固定／解除（スクロール位置は覚えておいて、閉じた時に元に戻す）
+        let sheetScrollY = null;
+        function lockBodyScroll() {
+            if (sheetScrollY !== null) return;
+            sheetScrollY = window.scrollY || 0;
+            document.body.style.top = `-${sheetScrollY}px`;
+            document.body.classList.add('sheet-lock');
+        }
+        function unlockBodyScroll() {
+            if (sheetScrollY === null) return;
+            document.body.classList.remove('sheet-lock');
+            document.body.style.top = '';
+            window.scrollTo(0, sheetScrollY);
+            sheetScrollY = null;
         }
         function closeAllModals() {
             ['modalOverlay', 'sheetActions', 'modalSellerInfo', 'modalLinkCopy', 'modalAiRules', 'modalRoomNote', 'modalEditMsg'].forEach(s => document.getElementById(s).style.display = 'none');
-            document.body.style.overflow = '';
+            unlockBodyScroll();
         }
 
         // ===== 通信 =====
@@ -1444,7 +1463,6 @@
                 sheetBtn('🚀', 'スタッフ連絡に登録', `openStaffAppModal('${key}')`) +
                 sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
                 sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
-                sheetBtn('📋', '本文をコピー', `copyMessageText('${key}')`) +
                 (m.mine ? sheetBtn('✏️', 'このメッセージを編集', `openEditMsg('${key}')`) + sheetBtn('🗑️', 'このメッセージを削除', `deleteMsg('${key}')`) : '') +
                 sheetBtn('📁', 'このルームを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
                 sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
@@ -1559,12 +1577,6 @@
             window.open(getDiscordUrl(), '_blank', 'noopener');
         };
 
-        window.copyMessageText = function(key) {
-            const text = (window.messageStore[key] || {}).body || "";
-            navigator.clipboard.writeText(text)
-                .then(() => { closeAllModals(); showToast('コピーしました'); })
-                .catch(err => alert("コピーに失敗しました: " + err));
-        };
         window.copyAllUnreadChats = function() {
             const cards = document.querySelectorAll(`#${activeListId()} .burst-card`);
             const parts = [];
@@ -3273,8 +3285,7 @@
             else if (sub === 'trouble') html = b('🚨 誤出荷に記録', `openMisshipForm('${cardKey}')`) + b('🧾 補填を記録', `openBillingForm('${cardKey}')`);
             else if (sub === 'system') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
             else if (sub === 'shopee') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
-            else if (sub === 'request') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('📋 本文をコピー', `copyMessageText('${cardKey}')`);
-            else if (sub === 'share') html = b('📋 本文をコピー', `copyMessageText('${cardKey}')`);
+            else if (sub === 'request') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'other') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             // 担当が渡辺さん・エンジニアなら、その近道を必ず出す
             if (who === 'watanabe' && html.indexOf('openAskForm') === -1) html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + html;
