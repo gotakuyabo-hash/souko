@@ -2229,7 +2229,9 @@ $('#btnLink').onclick = async () => {
     const judge = (no, c, r, base) => {
       const p = Object.assign({ no, c, r }, base);
       if (!r) return Object.assign(p, { status:'nf' });
-      if (scoped && !inScope.has(no)) return Object.assign(p, { status:'outside' });
+      // 検索した注文だけ紐づける設定のとき、検索結果にないNo.は書き込まない
+      // （ただし、検索したNo.の注文が受注番号で別のNo.に見つかった場合は、検索したものとして扱う）
+      if (scoped && !inScope.has(no) && !(base.movedFrom && inScope.has(base.movedFrom))) return Object.assign(p, { status:'outside' });
       if (p.want && !matches(r, p.want)) return Object.assign(p, { status:'oid' });
       if (state.inq[no]) return Object.assign(p, { status:'inq' });
       if (state.hold[no] || HOLD_RE.test(r.note || '')) return Object.assign(p, { status:'stop', stopT:'出荷保留' });
