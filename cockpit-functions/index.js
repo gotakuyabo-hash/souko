@@ -2661,6 +2661,27 @@ async function lineHandleEvent(ev) {
   }
 }
 
+// 同じLINE公式アカウントを使っているほかのシステムにも、届いたものをそのまま転送する
+//   （Webhook URLは1つしか登録できないため。署名ごと転送するので、転送先の修正は不要）
+//   転送先を変える時は functions/.env の LINE_FORWARD_URLS（カンマ区切り）で上書きできる
+const LINE_FORWARD_URLS_DEFAULT = "https://mercari-fulfill-production.up.railway.app/api/line/webhook";   // メルカリ発送代行のシステム
+async function lineForward(raw, sig) {
+  const urls = String(process.env.LINE_FORWARD_URLS ?? LINE_FORWARD_URLS_DEFAULT).split(/[,\s]+/).filter(u => /^https:\/\//.test(u));
+  await Promise.allSettled(urls.map(async url => {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-line-signature": sig },
+        body: raw,
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!r.ok) console.error("LINEの転送先がエラーを返しました: " + url + " (" + r.status + ")");
+    } catch (e) {
+      console.error("LINEの転送に失敗: " + url + " " + e.message);
+    }
+  }));
+}
+
 exports.lineWebhook = onRequest(
   { region: REGION, secrets: [APP_SECRET, LINE_CHANNEL_SECRET], timeoutSeconds: 60, memory: "256MiB" },
   async (req, res) => {
@@ -2676,9 +2697,11 @@ exports.lineWebhook = onRequest(
     }
     let body = {};
     try { body = JSON.parse(raw.toString("utf8")); } catch (e) {}
+    const forwarding = lineForward(raw, sig);   // ほかのシステムへの転送（コックピットの保存と同時に進める）
     for (const ev of (Array.isArray(body.events) ? body.events : [])) {
       try { await lineHandleEvent(ev); } catch (e) { console.error("LINEのメッセージの保存に失敗: " + e.message); }
     }
+    await forwarding;
     res.status(200).send("ok");   // 「検証」ボタン（イベントなし）にも 200 を返す
   }
 );
