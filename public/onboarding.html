@@ -20,7 +20,9 @@ button{cursor:pointer}
 .top{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;
   display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px}
 .top h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.04em}
-.top .synced{font-size:12px;opacity:.75}
+.top .synced{font-size:12px;opacity:.75;margin-left:auto}
+.top .syncbtn{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:6px;padding:3px 10px;font-size:12.5px;white-space:nowrap}
+.top .syncbtn:disabled{opacity:.5}
 
 .wrap{max-width:720px;margin:0 auto;padding:12px 12px 40px}
 .filters{display:grid;gap:10px;margin-bottom:12px}
@@ -113,6 +115,7 @@ pre.out{margin:0;white-space:pre-wrap;word-break:break-all;background:#F6F8FA;bo
 <header class="top">
   <h1>新規お申込み</h1>
   <span class="synced" id="synced"></span>
+  <button type="button" class="syncbtn" id="syncNow">今すぐ同期</button>
 </header>
 
 <div class="wrap">
@@ -280,18 +283,22 @@ function toast(msg, err){ const t = $('#toast'); t.textContent = msg; t.classNam
   clearTimeout(t._t); t._t = setTimeout(() => { t.className = ''; }, 2800); }
 
 // ===== Firestore（リアルタイム） =====
+let lastSync = 0;
+onSnapshot(doc(db, 'onboarding_meta', 'status'), d => {
+  const x = d.data() || {};
+  if (!x.lastSync || !x.lastSync.toDate) return;
+  const t = x.lastSync.toDate();
+  lastSync = t.getTime();
+  $('#synced').textContent = 'シート同期 ' + t.getHours() + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+});
+
 onSnapshot(collection(db, COLLECTION), snap => {
-  let last = 0;
   APPS = snap.docs.map(d => {
     const x = d.data();
-    const t = x.syncedAt && x.syncedAt.toDate ? x.syncedAt.toDate().getTime() : 0;
-    if (t > last) last = t;
     return { id: d.id, source: x.source, prefix: x.prefix, row: x.row, hasRowNo: !!x.hasRowNo,
       stepKeys: x.stepKeys || [], fields: x.info || {}, steps: x.steps || {},
       pending: x.pending || null, syncError: x.syncError || '' };
   });
-  if (last){ const d = new Date(last);
-    $('#synced').textContent = 'シート同期 ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); }
   renderChips(); renderList();
   if (cur){ const a = APPS.find(x => x.id === cur.a.id); if (a){ cur.a = a; renderStatus(); } }
 }, err => {
@@ -399,7 +406,7 @@ function texts(){
 function statusHtml(){
   const a = cur.a;
   if (a.syncError) return '<p class="status err">シートに反映できませんでした：' + esc(a.syncError) + '</p>';
-  if (hasPending(a)) return '<p class="status">保存済みです。シートへの反映を待っています（1分ほど）。</p>';
+  if (hasPending(a)) return '<p class="status">保存済みです。シートへ反映しています（数秒〜十数秒）。</p>';
   return '';
 }
 function renderStatus(){ const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
@@ -498,18 +505,36 @@ async function save(){
     await updateDoc(doc(db, COLLECTION, a.id), upd);
     cur.base = JSON.parse(JSON.stringify({ fields: Object.assign({}, B.fields, fields), steps: Object.assign({}, B.steps, steps) }));
     cur.suggested = { no: false, pw: false };
-    if (SYNC_URL) fetch(SYNC_URL, { method: 'POST', mode: 'no-cors' }).catch(() => {});
+    triggerSync();
     renderDetail();
-    toast('保存しました。シートには1分ほどで反映されます');
+    toast('保存しました。シートへ反映しています');
   } catch (e) {
     btn.disabled = false; btn.textContent = '保存';
     toast('保存できませんでした：' + e.message, true);
   }
 }
 
+// ===== 今すぐ同期 =====
+function triggerSync(){
+  if (SYNC_URL) fetch(SYNC_URL, { method: 'POST', mode: 'no-cors' }).catch(() => {});
+}
+function syncNow(btn){
+  if (!SYNC_URL){ toast('SYNC_URL が設定されていません', true); return; }
+  const before = lastSync;
+  btn.disabled = true; btn.textContent = '同期中…';
+  triggerSync();
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (lastSync > before){ clearInterval(timer); btn.disabled = false; btn.textContent = '今すぐ同期'; toast('シートと同期しました'); }
+    else if (Date.now() - started > 60000){ clearInterval(timer); btn.disabled = false; btn.textContent = '今すぐ同期';
+      toast('同期の完了を確認できませんでした。少し待って再読み込みしてください', true); }
+  }, 500);
+}
+
 // ===== イベント =====
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'syncNow') return syncNow(t);
   if (t.dataset.mode){ mode = t.dataset.mode;
     document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b === t));
     return renderList(); }
