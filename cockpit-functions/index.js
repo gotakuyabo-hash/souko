@@ -9,6 +9,15 @@
  *   OPENAI_API_KEY      … OpenAI（ChatGPT）APIキー
  *   CW_TOKEN_STAFF      … ラクロジスタッフアカウントのChatwork APIトークン
  *   CW_TOKEN_MATSUSHITA … 松下アカウントのChatwork APIトークン
+ *   LINE_CHANNEL_SECRET … LINE公式アカウント（Messaging API）のチャネルシークレット
+ *                         （送信用のトークンは、チャネルIDとこのシークレットから自動で取得する）
+ *
+ * ▼ LINE公式アカウント（画面のアカウント選択で「LINE」を選ぶ）
+ *   lineWebhook … LINEからメッセージを受け取る入口（LINE DevelopersのWebhook URLに登録）
+ *   Chatworkと同じ cw_rooms・本文コレクション・cw_handled に「line」アカウントとして保存するので、
+ *   画面の要対応・仕分け・対応済みの仕組みをそのまま使える
+ *   line_users/{u_ユーザーID|g_グループID|r_トークルームID} … LINEの相手と、画面用のルームID（数字）の対応
+ *   line_rooms/{ルームID}                                  … 画面用のルームID → LINEの送り先
  *
  * ▼ 普通の設定（functions/.env）
  *   STAFF_ACCOUNT_IDS … 自社スタッフ個人のChatworkアカウントID（カンマ区切り）
@@ -56,13 +65,16 @@ const APP_SECRET = defineSecret("APP_SECRET");
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const CW_TOKEN_STAFF = defineSecret("CW_TOKEN_STAFF");
 const CW_TOKEN_MATSUSHITA = defineSecret("CW_TOKEN_MATSUSHITA");
-const ALL_SECRETS = [APP_SECRET, OPENAI_API_KEY, CW_TOKEN_STAFF, CW_TOKEN_MATSUSHITA];
+const LINE_CHANNEL_SECRET = defineSecret("LINE_CHANNEL_SECRET");
+const ALL_SECRETS = [APP_SECRET, OPENAI_API_KEY, CW_TOKEN_STAFF, CW_TOKEN_MATSUSHITA, LINE_CHANNEL_SECRET];
 
 // 画面の「アカウント選択」の値 → トークン
 const ACCOUNTS = {
   staff: CW_TOKEN_STAFF,
   matsushita: CW_TOKEN_MATSUSHITA
 };
+// LINE公式アカウント（Chatworkのトークンは使わない、画面用のアカウント名）
+const LINE_ACC = "line";
 
 const OPENAI_MODEL = "gpt-6-luna";   // 文章がいまいちなら "gpt-6-sol" に変えると高性能（料金は上がる）
 
@@ -188,6 +200,8 @@ async function handleRequest(p) {
       result = await getQuestions();
     } else if (action === "close_question") {
       result = await closeQuestion(p.account, p.room_id, p.no);
+    } else if (p.account === LINE_ACC) {
+      result = await handleLineAction(action, p);
     } else {
       const token = getChatworkToken(p.account);
       if (action === "get_unread_bundle") {
@@ -384,7 +398,7 @@ async function getLearnIds() {
 
 // 「後で対応」リスト（スタッフ全員で共有。アカウントごと）
 function laterDocId(account) {
-  if (!ACCOUNTS[account]) throw new Error("アカウントの指定が正しくありません: " + account);
+  if (!ACCOUNTS[account] && account !== LINE_ACC) throw new Error("アカウントの指定が正しくありません: " + account);
   return "later_" + account;
 }
 async function getLater(account) {
@@ -704,7 +718,7 @@ const TRIAGE_JA = { none: "返信不要", easy: "すぐ返せる", check: "要�
 async function roomFacts(account, roomId) {
   const out = { cat: "", sub: "", point: "", answers: [] };
   const rid = String(roomId || "").replace(/[^0-9]/g, "");
-  if (!rid || !ACCOUNTS[account]) return out;
+  if (!rid || (!ACCOUNTS[account] && account !== LINE_ACC)) return out;
   try {
     const [rs, ms] = await Promise.all([
       db.collection("cw_rooms").doc(account + "_" + rid).get(),
@@ -825,12 +839,12 @@ async function saveRoomNote(p) {
 }
 
 // ルームの最近のやり取り（最大40件）と、いまのメモから「状況の整理」をAIで作る（保存はしない）
-async function summarizeRoom(token, p) {
+async function summarizeRoom(token, p, given) {
   const rid = safeRid(p.room_id);
-  const msgs = await cw(token, "get", "/rooms/" + rid + "/messages?force=1");
+  const msgs = given ? given.msgs : await cw(token, "get", "/rooms/" + rid + "/messages?force=1");
   const list = (Array.isArray(msgs) ? msgs : []).slice(-40);
   if (!list.length) throw new Error("このルームにはメッセージがありません");
-  const myIds = (await getMyIds()).map(String);
+  const myIds = given ? given.myIds : (await getMyIds()).map(String);
   const fmt = t => new Date((t || 0) * 1000).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const lines = list.map(m => {
     const id = String(m.account && m.account.account_id);
@@ -839,7 +853,7 @@ async function summarizeRoom(token, p) {
   }).join("\n");
   const current = (await getRoomNote(rid)).summary;
 
-  const prompt = "以下は、物流倉庫（自社）と相手とのChatworkルーム「" + String(p.room_name || "ルーム") + "」のやり取りです。\n"
+  const prompt = "以下は、物流倉庫（自社）と相手との" + (given ? "LINEのトーク" : "Chatworkルーム") + "「" + String(p.room_name || "ルーム") + "」のやり取りです。\n"
     + "次にこのルームで返信する担当者が、すぐ状況をつかめるように整理してください。\n\n"
     + "【整理の決まり】\n"
     + "・次の見出しで、それぞれ「・」で始まる短い箇条書きにする（該当がなければ「・特になし」）\n"
@@ -1445,6 +1459,8 @@ exports.syncChatworkToFirestore = onSchedule(
           } catch (e2) {}
         }
       }
+      // LINE：届いたメッセージの仕分けと、動作確認用の記録
+      try { await syncLine(); } catch (e) { console.error("line: " + e.message); }
     } finally {
       syncRunning = false;
     }
@@ -2443,6 +2459,406 @@ async function getFirebaseToken(p) {
   const dev = String(p.device_id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "unknown";
   const token = await admin.auth().createCustomToken("cockpit_" + dev, { cockpit: true, gen });
   return { token, gen };
+}
+
+// ==============================
+// LINE公式アカウント（Messaging API）
+//   届いたメッセージは Webhook（lineWebhook）で受け取り、Chatworkと同じ形で Firestore に保存する
+//     cw_rooms/line_{ルームID}        … 要対応の判定に使う情報（Chatworkと同じ項目）＋ needTriage（仕分け待ち）
+//     本文コレクション/line_{ルームID} … メッセージ（最新 LINE_MSG_KEEP 件）
+//   ルームIDは画面の仕組みに合わせて数字にする（LINE_ROOM_BASE ＋ 連番）
+//   自社（こちらから送ったメッセージ）の account_id は LINE_SELF_ID
+// ==============================
+const LINE_API = "https://api.line.me";
+const LINE_ROOM_BASE = 900000000000;
+const LINE_SELF_ID = "1";
+const LINE_SELF_NAME = "LOGEX（LINE）";
+const LINE_MSG_KEEP = 100;
+const LINE_BODY_MAX = 2000;
+const LINE_REPLY_WINDOW_MS = 50 * 1000;   // 届いてすぐの返信は無料の「応答メッセージ」で送る（それ以降はプッシュ）
+
+// チャネルID（秘密ではないのでここに書く。functions/.env の LINE_CHANNEL_ID があればそちらを使う）
+const LINE_CHANNEL_ID_DEFAULT = "2010916424";
+
+// 送信などに使うトークン：チャネルIDとチャネルシークレットから自動で取得（15分有効。14分だけ使い回す）
+//   長期のチャネルアクセストークンを発行・保管しなくてよい
+async function lineToken() {
+  const hit = cacheGet("line_token");
+  if (hit) return hit;
+  const secret = LINE_CHANNEL_SECRET.value();
+  if (!secret) throw new Error("LINEのチャネルシークレット（LINE_CHANNEL_SECRET）が登録されていません");
+  const res = await fetch(LINE_API + "/oauth2/v3/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: String(process.env.LINE_CHANNEL_ID || LINE_CHANNEL_ID_DEFAULT),
+      client_secret: secret
+    }).toString()
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error("LINEのトークンを取得できませんでした (" + res.status + "): " + text.slice(0, 200));
+  const data = JSON.parse(text);
+  if (!data.access_token) throw new Error("LINEのトークンを取得できませんでした");
+  cachePut("line_token", data.access_token, Math.max(60, Math.min(840, (Number(data.expires_in) || 900) - 60)));
+  return data.access_token;
+}
+
+async function lineApi(method, path, body) {
+  const token = await lineToken();
+  const opt = { method, headers: { Authorization: "Bearer " + token } };
+  if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(LINE_API + path, opt);
+  const text = await res.text();
+  if (!res.ok) throw new Error("LINE API エラー (" + res.status + "): " + text.slice(0, 300));
+  return text ? JSON.parse(text) : {};
+}
+
+// LINEの相手（友だち・グループ）→ 画面用のルームID。初めての相手には連番で作る
+function lineKeyOf(src) {
+  if (!src) return null;
+  if (src.type === "group" && src.groupId) return { key: "g_" + src.groupId, type: "group", lineId: src.groupId };
+  if (src.type === "room" && src.roomId) return { key: "r_" + src.roomId, type: "room", lineId: src.roomId };
+  if (src.userId) return { key: "u_" + src.userId, type: "user", lineId: src.userId };
+  return null;
+}
+async function lineRoomFor(k) {
+  const ref = db.collection("line_users").doc(k.key);
+  const snap = await ref.get();
+  if (snap.exists && snap.get("roomId")) return snap.data();
+  return db.runTransaction(async tx => {
+    const s = await tx.get(ref);
+    if (s.exists && s.get("roomId")) return s.data();
+    const cref = db.collection("cw_server").doc("line_counter");
+    const c = await tx.get(cref);
+    const n = (c.exists ? Number(c.get("n")) || 0 : 0) + 1;
+    const data = { key: k.key, type: k.type, lineId: k.lineId, roomId: String(LINE_ROOM_BASE + n), createdAt: nowSec() };
+    tx.set(cref, { n });
+    tx.set(ref, data);
+    tx.set(db.collection("line_rooms").doc(data.roomId), { key: k.key, type: k.type, lineId: k.lineId });
+    return data;
+  });
+}
+
+// 相手の名前・アイコン（1日1回だけLINEに聞き直す）
+async function lineRefreshProfile(room) {
+  if (room.name && Date.now() - (room.profAt || 0) < 86400000) return room;
+  let name = room.name || "", pic = room.pic || "";
+  try {
+    if (room.type === "group") {
+      const g = await lineApi("GET", "/v2/bot/group/" + encodeURIComponent(room.lineId) + "/summary");
+      name = g.groupName || name || "LINEグループ"; pic = g.pictureUrl || pic;
+    } else if (room.type === "room") {
+      name = name || "LINEトークルーム";
+    } else {
+      const u = await lineApi("GET", "/v2/bot/profile/" + encodeURIComponent(room.lineId));
+      name = u.displayName || name || "LINEの友だち"; pic = u.pictureUrl || pic;
+    }
+  } catch (e) {
+    console.error("LINEのプロフィールを取得できませんでした: " + e.message);
+    name = name || "LINEの友だち";
+  }
+  const upd = { name, pic, profAt: Date.now() };
+  await db.collection("line_users").doc(room.key).set(upd, { merge: true });
+  return Object.assign({}, room, upd);
+}
+
+// グループの中で発言した人の名前（6時間キャッシュ）
+async function lineMemberName(room, userId) {
+  if (!userId) return "";
+  if (room.type === "user") return room.name || "";
+  const key = "line_member_" + room.lineId + "_" + userId;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  let name = "";
+  try {
+    const path = room.type === "group"
+      ? "/v2/bot/group/" + encodeURIComponent(room.lineId) + "/member/" + encodeURIComponent(userId)
+      : "/v2/bot/room/" + encodeURIComponent(room.lineId) + "/member/" + encodeURIComponent(userId);
+    name = (await lineApi("GET", path)).displayName || "";
+  } catch (e) {}
+  cachePut(key, name || "メンバー", 21600);
+  return name || "メンバー";
+}
+
+// 相手の発言者ID（画面の仕組みに合わせて数字にする）
+function lineSenderId(room, userId) {
+  if (room.type === "user" || !userId) return String(room.roomId);
+  return String(parseInt(crypto.createHash("sha1").update(String(userId)).digest("hex").slice(0, 12), 16));
+}
+
+// LINEのメッセージ → 画面に出す本文
+function lineBodyOf(msg) {
+  switch (msg.type) {
+    case "text": return String(msg.text || "");
+    case "sticker": return "（スタンプ）";
+    case "image": return "（画像）※内容はLINE公式アカウントのアプリで確認してください";
+    case "video": return "（動画）※内容はLINE公式アカウントのアプリで確認してください";
+    case "audio": return "（音声）※内容はLINE公式アカウントのアプリで確認してください";
+    case "file": return "（ファイル：" + String(msg.fileName || "") + "）※内容はLINE公式アカウントのアプリで確認してください";
+    case "location": return "（位置情報）" + [msg.title, msg.address].filter(Boolean).join(" ");
+    default: return "（" + String(msg.type || "メッセージ") + "）";
+  }
+}
+
+// メッセージを1件追加して、要対応の判定に使う情報を更新（同時に届いても取りこぼさないようトランザクション）
+async function lineAppend(rid, m, fromCustomer, name) {
+  const msgRef = db.collection(msgCollection()).doc(LINE_ACC + "_" + rid);
+  const roomRef = db.collection("cw_rooms").doc(LINE_ACC + "_" + rid);
+  await db.runTransaction(async tx => {
+    const [ms, rs] = await Promise.all([tx.get(msgRef), tx.get(roomRef)]);
+    let msgs = (ms.exists && Array.isArray(ms.get("messages"))) ? ms.get("messages") : [];
+    if (msgs.some(x => String(x.message_id) === String(m.message_id))) return;   // 同じメッセージが2回届いた時
+    msgs.push(m);
+    msgs.sort((a, b) => (a.send_time || 0) - (b.send_time || 0));
+    msgs = msgs.slice(-LINE_MSG_KEEP);
+    const last = msgs[msgs.length - 1];
+    let lastMineIdx = -1;
+    msgs.forEach((x, i) => { if (String(x.account && x.account.account_id) === LINE_SELF_ID) lastMineIdx = i; });
+    const cur = rs.exists ? rs.data() : {};
+    const t = last.send_time || nowSec();
+    const meta = {
+      account: LINE_ACC, roomId: String(rid), name: name || cur.name || "LINE",
+      lastUpdate: t, msgUpdate: t, lastMsgId: String(last.message_id), lastMsgTime: t,
+      lastMine: lastMineIdx === msgs.length - 1,
+      custTimes: msgs.slice(lastMineIdx + 1).map(x => x.send_time || 0).slice(0, 20),
+      unread: fromCustomer ? (Number(cur.unread) || 0) + 1 : 0
+    };
+    if (fromCustomer) meta.needTriage = true;
+    tx.set(roomRef, meta, { merge: true });
+    tx.set(msgRef, { account: LINE_ACC, roomId: String(rid), lastMsgId: meta.lastMsgId, msgUpdate: t, messages: msgs }, { merge: true });
+  });
+}
+
+// Webhookの1件分
+async function lineHandleEvent(ev) {
+  const k = lineKeyOf(ev.source);
+  if (!k) return;
+  if (ev.type !== "message" && ev.type !== "follow") return;   // 友だち追加はルームだけ作る（要対応には出さない）
+  let room = await lineRoomFor(k);
+  room = await lineRefreshProfile(room);
+  if (ev.type === "follow") {
+    await db.collection("cw_rooms").doc(LINE_ACC + "_" + room.roomId).set({ account: LINE_ACC, roomId: room.roomId, name: room.name }, { merge: true });
+    return;
+  }
+  const msg = ev.message || {};
+  const userId = ev.source && ev.source.userId;
+  const m = {
+    message_id: String(msg.id || ev.webhookEventId || Date.now()).replace(/[^0-9]/g, "") || String(Date.now()),
+    send_time: Math.floor((ev.timestamp || Date.now()) / 1000),
+    body: lineBodyOf(msg).slice(0, LINE_BODY_MAX),
+    account: {
+      account_id: lineSenderId(room, userId),
+      name: room.type === "user" ? room.name : await lineMemberName(room, userId),
+      avatar_image_url: room.type === "user" ? (room.pic || "") : ""
+    }
+  };
+  if (msg.quoteToken) m.quoteToken = String(msg.quoteToken);
+  await lineAppend(room.roomId, m, true, room.name);
+  // すぐ返信する時のために、応答用のトークンを覚えておく（1回だけ・短時間だけ使える）
+  if (ev.replyToken) {
+    await db.collection("line_users").doc(room.key).set({ replyToken: ev.replyToken, replyAt: ev.timestamp || Date.now(), replyUsed: false }, { merge: true });
+  }
+}
+
+exports.lineWebhook = onRequest(
+  { region: REGION, secrets: [APP_SECRET, LINE_CHANNEL_SECRET], timeoutSeconds: 60, memory: "256MiB" },
+  async (req, res) => {
+    if (req.method !== "POST") { res.status(200).send("ok"); return; }
+    // LINEから届いたものか確認（署名のチェック）
+    const secret = LINE_CHANNEL_SECRET.value();
+    const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+    const sig = String(req.get("x-line-signature") || "");
+    const expect = secret ? crypto.createHmac("sha256", secret).update(raw).digest("base64") : "";
+    if (!secret || !sig || sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) {
+      res.status(401).send("bad signature");
+      return;
+    }
+    let body = {};
+    try { body = JSON.parse(raw.toString("utf8")); } catch (e) {}
+    for (const ev of (Array.isArray(body.events) ? body.events : [])) {
+      try { await lineHandleEvent(ev); } catch (e) { console.error("LINEのメッセージの保存に失敗: " + e.message); }
+    }
+    res.status(200).send("ok");   // 「検証」ボタン（イベントなし）にも 200 を返す
+  }
+);
+
+// 定期同期の最後に：仕分け待ちのトークをAIで仕分ける（Chatworkと同じ仕分け）
+async function syncLine() {
+  const now = nowSec();
+  const snap = await db.collection("cw_rooms").where("account", "==", LINE_ACC).where("needTriage", "==", true).limit(TRIAGE_MAX_PER_SYNC).get();
+  if (!snap.empty) {
+    const msgCol = msgCollection();
+    const isMineMsg = m => String(m.account && m.account.account_id) === LINE_SELF_ID;
+    const targets = [];
+    for (const d of snap.docs) {
+      const meta = d.data();
+      const rid = String(meta.roomId);
+      const ms = await db.collection(msgCol).doc(LINE_ACC + "_" + rid).get();
+      const msgs = ms.exists && Array.isArray(ms.get("messages")) ? ms.get("messages") : [];
+      if (!msgs.length || meta.lastMine) { await d.ref.set({ needTriage: false }, { merge: true }); continue; }
+      targets.push({ rid, name: meta.name || "", msgs, mineIds: [LINE_SELF_ID], meId: "", isMineMsg, internal: false, forId: String(meta.lastMsgId || "") });
+    }
+    if (targets.length) {
+      const results = await triageRooms(targets);
+      await Promise.all(targets.map(async t => {
+        const r = results[t.rid];
+        if (!r) return;   // 失敗したものは次の同期でもう一度
+        const roomRef = db.collection("cw_rooms").doc(LINE_ACC + "_" + t.rid);
+        const msgRef = db.collection(msgCol).doc(LINE_ACC + "_" + t.rid);
+        await db.runTransaction(async tx => {
+          const cur = await tx.get(roomRef);
+          // 仕分け中に新しいメッセージが届いていたら、次の同期でもう一度仕分ける
+          const same = cur.exists && String(cur.get("lastMsgId") || "") === t.forId;
+          const upd = { triage: r.cat, triageSub: r.sub, triageConf: r.conf, triageFixed: false, triageFor: t.forId };
+          if (same) upd.needTriage = false;
+          tx.set(roomRef, upd, { merge: true });
+          tx.set(msgRef, { triagePoint: r.point, triageFor: t.forId }, { merge: true });
+        });
+      }));
+    }
+  }
+  // 画面は「同期が10分以内に動いているか」で Firestore の情報を使うので、5分に1回記録する
+  const last = syncStatusMem[LINE_ACC] || {};
+  if (now - (last.at || 0) >= 300) {
+    await db.collection("cw_sync_status").doc(LINE_ACC).set({ account: LINE_ACC, lastRunAt: now, pending: 0, lastError: "" }, { merge: true });
+    syncStatusMem[LINE_ACC] = { at: now };
+  }
+}
+
+// ---------- 画面からの操作（アカウントが「line」の時） ----------
+async function lineRoomsList() {
+  const snap = await db.collection("cw_rooms").where("account", "==", LINE_ACC).get();
+  return snap.docs.map(d => d.data()).map(d => ({
+    room_id: Number(d.roomId), name: d.name || "LINE", unread_num: Number(d.unread) || 0, last_update_time: d.lastUpdate || 0
+  }));
+}
+async function lineMsgs(rid) {
+  const ms = await db.collection(msgCollection()).doc(LINE_ACC + "_" + rid).get();
+  return ms.exists && Array.isArray(ms.get("messages")) ? ms.get("messages") : [];
+}
+async function lineLatest(roomIds, count) {
+  const latest = {};
+  await inChunks(onlyIds(roomIds), 25, async id => {
+    try { latest[id] = { messages: (await lineMsgs(id)).slice(-(count || LATEST_COUNT)) }; }
+    catch (e) { latest[id] = { error: "取得失敗" }; }
+  });
+  return latest;
+}
+async function lineMarkRead(roomIds) {
+  const ids = onlyIds(roomIds);
+  await commitWrites(ids.map(id => wPatch("cw_rooms", LINE_ACC + "_" + id, { unread: 0 })));
+  return { ok: ids.length, ng: 0 };
+}
+
+// 送信：届いてすぐなら応答メッセージ（無料）、それ以外はプッシュメッセージ
+async function lineSend(roomId, body) {
+  const rid = safeRid(roomId);
+  const rs = await db.collection("line_rooms").doc(rid).get();
+  if (!rs.exists) throw new Error("LINEの送り先が見つかりません");
+  const rec = rs.data();
+  let text = String(body || "");
+  // 画面の「〇〇さんのメッセージへの返信として送る」→ LINEの引用返信にする
+  let quoteToken = "", rpTag = "";
+  const rp = text.match(/^\[rp aid=\d+ to=\d+-(\d+)\][^\n]*\n?/);
+  if (rp) {
+    rpTag = rp[0];
+    text = text.slice(rp[0].length);
+    const hit = (await lineMsgs(rid)).find(x => String(x.message_id) === rp[1]);
+    if (hit && hit.quoteToken) quoteToken = hit.quoteToken;
+  }
+  text = text.replace(/\[To:\d+\][^\n]*\n?/g, "").replace(/\[\/?(?:info|title|code|hr)\]/g, "").trim();
+  if (!text) throw new Error("送信する本文が空です");
+  if (text.length > 5000) throw new Error("LINEで送れるのは5000文字までです");
+  const msg = { type: "text", text };
+  if (quoteToken) msg.quoteToken = quoteToken;
+
+  let sent = null, via = "push";
+  const uref = db.collection("line_users").doc(rec.key);
+  const u = (await uref.get()).data() || {};
+  if (u.replyToken && !u.replyUsed && Date.now() - (u.replyAt || 0) < LINE_REPLY_WINDOW_MS) {
+    await uref.set({ replyUsed: true }, { merge: true });
+    try { sent = await lineApi("POST", "/v2/bot/message/reply", { replyToken: u.replyToken, messages: [msg] }); via = "reply"; }
+    catch (e) { sent = null; }
+  }
+  if (!sent) sent = await lineApi("POST", "/v2/bot/message/push", { to: rec.lineId, messages: [msg] });
+  const id = String((sent.sentMessages && sent.sentMessages[0] && sent.sentMessages[0].id) || Date.now()).replace(/[^0-9]/g, "");
+  await lineAppend(rid, {
+    message_id: id, send_time: nowSec(), body: (rpTag + text).slice(0, LINE_BODY_MAX),
+    account: { account_id: LINE_SELF_ID, name: LINE_SELF_NAME, avatar_image_url: "" }
+  }, false);
+  return { success: true, via };
+}
+
+async function handleLineAction(action, p) {
+  if (action === "get_todo_bundle" || action === "get_unread_bundle") {
+    const handled = p.handled || {};
+    const baseline = Number(p.baseline) || 0;
+    const rooms = await lineRoomsList();
+    const cands = rooms.filter(r => {
+      const rid = String(r.room_id);
+      const eff = Object.prototype.hasOwnProperty.call(handled, rid) ? Number(handled[rid]) || 0 : (r.unread_num > 0 ? 0 : baseline);
+      return (r.last_update_time || 0) > eff;
+    }).slice(0, TODO_MAX_FETCH);
+    const [latest, later] = await Promise.all([lineLatest(cands.map(r => r.room_id)), getLater(LINE_ACC)]);
+    return { rooms, latest, later };
+  }
+  if (action === "get_rooms") return { rooms: await lineRoomsList() };
+  if (action === "get_later") return { later: await getLater(LINE_ACC) };
+  if (action === "set_later") return { later: await setLater(LINE_ACC, p.room_ids, p.on !== false) };
+  if (action === "get_later_bundle") {
+    const later = await getLater(LINE_ACC);
+    return { rooms: await lineRoomsList(), later, latest: await lineLatest(later) };
+  }
+  if (action === "get_latest_messages") return { latest: await lineLatest(p.room_ids) };
+  if (action === "get_room_data") return { messages: await lineMsgs(safeRid(p.room_id)), members: [] };
+  if (action === "get_members") return { members: [] };
+  if (action === "get_reply_refs") {
+    const out = {};
+    for (const r of (Array.isArray(p.refs) ? p.refs : []).slice(0, 20)) {
+      const rid = String((r && r.room_id) || "").replace(/[^0-9]/g, ""), mid = String((r && r.message_id) || "").replace(/[^0-9]/g, "");
+      if (!rid || !mid) continue;
+      const m = (await lineMsgs(rid)).find(x => String(x.message_id) === mid);
+      out[rid + "-" + mid] = m ? { name: (m.account && m.account.name) || "", body: stripTags(m.body).slice(0, 300), time: m.send_time || 0 }
+        : { error: "返信先のメッセージが見つかりませんでした" };
+    }
+    return { refs: out };
+  }
+  if (action === "mark_read") return await lineMarkRead([p.room_id]);
+  if (action === "mark_read_batch") return await lineMarkRead(p.room_ids);
+  if (action === "send_message") {
+    const result = await lineSend(p.room_id, p.body);
+    await markSentFromCockpit(p.room_id, p.body);
+    if (p.done) {
+      await lineMarkRead([p.room_id]);
+      result.later = await setLater(LINE_ACC, [p.room_id], false);
+    }
+    return result;
+  }
+  if (action === "upload_file") throw new Error("LINEへのファイル送信には、まだ対応していません（LINE公式アカウントのアプリから送ってください）");
+  if (action === "edit_message" || action === "delete_message") throw new Error("LINEでは、送ったメッセージの編集・削除はできません");
+  if (action === "get_room_file") throw new Error("LINEのファイルは、LINE公式アカウントのアプリで確認してください");
+  if (action === "ask_question") throw new Error("LINEのトークから渡辺さんに聞く機能は、まだ対応していません");
+  if (action === "sync_now") return { synced: true, later: await getLater(LINE_ACC) };
+  if (action === "fix_triage") return await fixTriage(p);
+  if (action === "fix_who" || action === "log_who") return { ok: true };
+  if (action === "summarize_room") {
+    const rid = safeRid(p.room_id);
+    return await summarizeRoom(null, p, { msgs: await lineMsgs(rid), myIds: [LINE_SELF_ID] });
+  }
+  if (action === "get_me") {
+    const cfg = await getAiConfig();
+    return {
+      me_id: LINE_SELF_ID,
+      owner_ids: await getOwnerIds(),
+      internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x)),
+      quick_links: String(cfg.quickLinks || "")
+    };
+  }
+  // 撮影オプションの一覧はChatworkのルームから作るので、ラクロジスタッフのアカウントで取得
+  if (action === "get_option_sellers") return await getOptionSellers(getChatworkToken("staff"), p.label);
+  if (action === "set_option_override") return await setOptionOverride(p);
+  throw new Error("LINEでは使えない操作です: " + action);
 }
 
 // 返送タスクアプリ（henso.html）用
