@@ -732,6 +732,15 @@
         }
 
         // ===== 画面切替 =====
+        // LINE公式アカウントのチャット画面（ブラウザ版）で、このトークを開く
+        //   スマホでポップアップを止められないよう、先に新しいタブを開いてからURLを入れる
+        window.openLineChat = async function(rid) {
+            closeAllModals();
+            const w = window.open('about:blank', '_blank');
+            let url = 'https://chat.line.biz/';
+            try { url = (await callApi('get_chat_url', { room_id: rid })).url || url; } catch (e) {}
+            if (w) w.location.href = url; else location.href = url;
+        };
         // LINEを選んでいる時は、ひと目で分かるようにアカウント欄をLINEの緑にする
         function paintAccountSelect() {
             const sel = document.getElementById('accountSelect');
@@ -1466,6 +1475,7 @@
             if (isLine()) {
                 // LINE：Chatwork専用の機能（セラー情報・渡辺さん・Discord・USアプリ・編集削除など）は出さない
                 document.getElementById('sheetActionsBody').innerHTML =
+                    sheetBtn('💬', 'LINEのチャット画面で開く（過去のやり取りをすべて見る）', `openLineChat('${rid}')`) +
                     sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
                     sheetBtn('📮', 'まとまるくんに送り状を依頼（宛先を読み取る）', `openMatomaruForm('${key}')`) +
                     sheetBtn('🔗', 'ほかのサイトを開く（Robot-in など）', `openLinkSheet('', '')`) +
@@ -2130,8 +2140,9 @@
                 let html = `
                     <div class="bg-white rounded-2xl shadow-sm p-4">
                         <div class="font-bold text-base" data-op-room="${currentRoomId}">${esc(roomName)}</div>
-                        <div class="grid ${isLine() ? 'grid-cols-3' : 'grid-cols-4'} gap-2 mt-3">
-                            ${isLine() ? '' : `<button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>`}
+                        <div class="grid grid-cols-4 gap-2 mt-3">
+                            ${isLine() ? `<button onclick="openLineChat('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">💬 LINE</button>`
+                                : `<button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>`}
                             <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
                             <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
                             <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
@@ -2293,12 +2304,21 @@
             handledReady = (async () => {
                 const f = await loadFirestore();
                 const metaRef = f.doc(f.db, 'cw_handled_meta', acc);
-                const meta = await f.getDoc(metaRef);
-                if (meta.exists()) {
+                // 初めて開くアカウント（LINEなど）は端末に控えがないため、通信が不安定だと
+                //「client is offline」で読めないことがある → 少し待って3回まで読み直す
+                let meta = null;
+                for (let i = 0; i < 3 && !meta; i++) {
+                    try { meta = await f.getDoc(metaRef); }
+                    catch (e) { if (i < 2) await new Promise(r => setTimeout(r, 1500)); else console.warn('対応状況の基準日時を読めませんでした:', e.message); }
+                }
+                if (meta && meta.exists()) {
                     baselineAt = meta.data().baselineAt;
-                } else {
+                } else if (meta) {
                     baselineAt = Math.floor(Date.now() / 1000);
                     await f.setDoc(metaRef, { account: acc, baselineAt: baselineAt, createdAt: f.serverTimestamp() });
+                } else {
+                    // 読めなかった時は、今の時刻を仮の基準にして続ける（未読のメッセージは表示される）
+                    baselineAt = baselineAt || Math.floor(Date.now() / 1000);
                 }
                 await new Promise((resolve, reject) => {
                     let first = true;
