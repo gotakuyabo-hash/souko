@@ -185,6 +185,8 @@ details.bd table{margin-top:6px}
 .hk-hit small{display:block;color:var(--sub);font-size:11px}
 .credit{font-size:10px;color:var(--sub);text-align:right}
 .credit a{color:var(--sub)}
+.fixbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;font-size:13px;color:var(--sub)}
+.fixbar + .hk{margin-top:6px}
 </style>
 </head>
 <body>
@@ -584,7 +586,8 @@ function listen() {
 function effective(r) {
   const a = S.acts.get(r.id);
   if (!a) return r;
-  return { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '' };
+  const fix = a.userFix ? { user: a.userFix, userOrig: r.user, nameOrig: r.name, name: a.nameFix || r.name, userFix: a.userFix, nameFix: a.nameFix || '' } : {};
+  return { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '', ...fix };
 }
 function allRecs() { return [...S.reqs.values()].map(effective); }
 function find(id) { const r = S.reqs.get(id); return r ? effective(r) : null; }
@@ -709,7 +712,7 @@ function openSheet(r) {
 }
 function fillSheet(r, force) {
   if (!force && sheetBusy()) return; // 入力中は書き換えない
-  const rows = [['受付日時', r.ts], ['管理番号', r.user], ['名前', r.name], ['メール', r.email],
+  const rows = [['受付日時', r.ts], ['管理番号', r.user + (r.userOrig ? `（依頼時は ${r.userOrig}・修正済み）` : '')], ['名前', r.name], ['メール', r.email],
     ...(r.fields || []).map(f => [f.k, f.v])].filter(x => x[1]);
   const isUrl = v => /^https?:\/\//.test(v);
   const val = v => isUrl(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">ファイルを開く</a>` : esc(v);
@@ -800,6 +803,35 @@ async function findProduct(row, btn) {
 }
 
 function hokanPanel(r) {
+  const body = hokanPanelBody(r);
+  if (!body) return '';
+  return `<div class="fixbar"><span>管理番号 <b>${esc(sellerKey(r) || 'なし')}</b>${r.userOrig ? `（依頼時は ${esc(r.userOrig)}）` : ''}　${esc(r.name || '')}</span>
+    <button class="mini" id="hkFix">管理番号を直す</button></div>` + body;
+}
+
+// 間違った管理番号で依頼されたとき：この依頼だけ正しい番号に直す（入庫済みなら在庫も移す）
+async function fixSeller(r) {
+  const cur = sellerKey(r), orig = r.userOrig || r.user;
+  const k = (prompt(`正しい管理番号を入れてください（今：${cur}）\n依頼時の番号に戻すときは「${orig}」を入れてください。`, cur) || '').trim();
+  if (!k || k === cur) return;
+  if (isHokanOut(r) && outsOf(r.id).length) { toast('すでに出庫済みです。先に「未対応に戻す」を押してから直してください'); return; }
+  const guess = sellerInfo(k).name || (lotsOf(k)[0] || {}).sellerName || (k === orig ? (r.nameOrig || '') : '') || '';
+  const name = (prompt('セラー名を確認してください', guess || r.name || '') ?? '').trim();
+  const back = k === (r.userOrig || '');
+  try {
+    await writeAction(r, back ? { userFix: '', nameFix: '' } : { userFix: k, nameFix: name });
+    const ins = lotsIn(r.id);
+    if (ins.length) {                                  // この依頼で入れた在庫も、正しいセラーに移す
+      const b = writeBatch(db);
+      ins.forEach(l => b.update(doc(db, 'hokan_lots', l.id), { seller: k, sellerName: name || l.sellerName || '' }));
+      await b.commit();
+    }
+    toast(`管理番号を ${k} に直しました` + (ins.length ? `（在庫${ins.length}件も移しました）` : ''));
+    refill();
+  } catch (e) { toast('直せませんでした：' + e.message); }
+}
+
+function hokanPanelBody(r) {
   if (!isHokanIn(r) && !isHokanOut(r)) return '';
   const who = esc(sellerKey(r) || '（管理番号なし）');
   if (isHokanIn(r)) {
@@ -830,7 +862,7 @@ function hokanPanel(r) {
     ${lots.length ? lots.map(l => `<div class="hk-row out">
         <div class="lbl">${esc(l.product)}<small>保管日 ${esc(l.inDate)}・残り${remain(l)}点</small></div>
         <input class="hk-o num-in" data-lot="${esc(l.id)}" inputmode="numeric" value="${plan.get(l.id) || 0}" aria-label="${esc(l.product)}の出庫数"></div>`).join('')
-      : '<p>このセラーの保管在庫がありません。先に「保管在庫」画面で入庫を登録してください。</p>'}
+      : '<p>このセラーの保管在庫がありません。管理番号が間違っていないか確認してください（上の「管理番号を直す」で直せます）。</p>'}
     ${lots.length ? `<label class="field"><span>出庫日</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
     <div class="actions"><button class="primary" id="hkOut">${r.done ? '出庫する' : '出庫して完了'}</button></div>` : ''}
   </div>`;
@@ -838,6 +870,7 @@ function hokanPanel(r) {
 
 function bindHokanPanel(r) {
   const sh = $('sheet');
+  if ($('hkFix')) $('hkFix').onclick = () => fixSeller(r);
   bindRows(() => { sh.dataset.dirty = '1'; });
   if ($('hkReg')) $('hkReg').onclick = async () => {
     const items = readRows();
@@ -946,6 +979,8 @@ function fillLotSheet(id, force) {
     ${(l.outs || []).length ? `<ul class="hist">${[...l.outs].sort((a, b) => b.date.localeCompare(a.date)).map(o => `<li><span>${esc(o.date)}　−${o.qty}点　${esc(o.reqId ? '依頼から' : '手動')}${o.memo ? '　' + esc(o.memo) : ''}</span>
       <button class="mini danger" data-cancel="${esc(o.id)}">取り消す</button></li>`).join('')}</ul>` : '<p class="hint">まだ出庫はありません。</p>'}
     <details class="bd lotform" style="margin-top:16px"><summary>入庫内容を直す・削除する</summary>
+      <label class="field"><span>管理番号（間違っていたら直す）</span><input id="leS" value="${esc(l.seller)}"></label>
+      <label class="field"><span>セラー名</span><input id="leSN" value="${esc(l.sellerName || '')}"></label>
       <label class="field"><span>商品名</span><input id="leP" value="${esc(l.product)}"></label>
       <label class="field"><span>入庫数</span><input id="leQ" class="num-in" inputmode="numeric" value="${l.qtyIn}"></label>
       <label class="field"><span>保管日</span><input type="date" id="leD" value="${esc(l.inDate)}"></label>
@@ -971,10 +1006,12 @@ function fillLotSheet(id, force) {
   });
   $('leSave').onclick = async () => {
     const qtyIn = toNum($('leQ').value), inDate = $('leD').value, product = $('leP').value.trim();
+    const seller = $('leS').value.trim(), sellerName = $('leSN').value.trim();
+    if (!seller) { toast('管理番号を入れてください'); return; }
     const used = sumQty(l.outs || []);
     if (!product || !qtyIn || !inDate) { toast('商品名・入庫数・保管日を入れてください'); return; }
     if (qtyIn < used) { toast(`すでに${used}点出庫しているため、入庫数は${used}以上にしてください`); return; }
-    try { await updateDoc(doc(db, 'hokan_lots', id), { product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim() }); toast('保存しました'); refill(); }
+    try { await updateDoc(doc(db, 'hokan_lots', id), { seller, sellerName, product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim() }); toast('保存しました'); refill(); }
     catch (e) { toast('保存できませんでした：' + e.message); }
   };
   $('leDel').onclick = async () => {
@@ -1249,6 +1286,8 @@ function writeAction(r, patch) {
     done: r.done,
     doneDate: r.doneDate || '',
     note: r.note ?? null,
+    userFix: r.userFix || '',     // 管理番号の修正（間違えて依頼されたとき）
+    nameFix: r.nameFix || '',
     ...patch,
     by: S.user.email,
     at: serverTimestamp()
