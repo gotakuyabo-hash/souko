@@ -77,11 +77,6 @@
         .tri-easy { background: #eef2ff; color: #4338ca; }
         .tri-check { background: #fffbeb; color: #b45309; }
         .tri-shopee { background: #ffe4dc; color: #c2410c; border: 1px solid #fdba9b; }
-        .who-staff { background: #dcfce7; color: #166534; }
-        .who-watanabe { background: #fae8ff; color: #86198f; }
-        .who-engineer { background: #e0e7ff; color: #3730a3; }
-        .who-chip { height: 32px; border-radius: 10px; font-size: 12px; font-weight: 700; background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 0 10px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
-        .who-chip.on { background: #334155; color: #fff; border-color: #334155; }
         .tri-request { background: #ffedd5; color: #c2410c; }
         .tri-share { background: #cffafe; color: #0e7490; }
         .tri-order { background: #dcfce7; color: #15803d; }
@@ -1360,7 +1355,7 @@
             const head = cardHeadHtml(roomId, roomName, badge, badgeCls);
             const triHtml = (tri ? `<div class="tri-line">${tri.html || ''}</div>` : '') + questionBoxHtml(rid);
             const wrap = (inner, extraCls, cardKey) =>
-                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}" data-sub="${tri ? esc(tri.sub || '') : ''}" data-who="${tri ? esc(tri.who || '') : ''}">${head}${triHtml}${inner}</div>`;
+                `<div class="burst-card bg-white rounded-2xl shadow-sm p-4 ${extraCls || ''}" data-room-id="${rid}" data-room-name="${esc(roomName)}" data-card-key="${cardKey || ''}" data-tri="${tri ? esc(tri.cat || '') : ''}" data-sub="${tri ? esc(tri.sub || '') : ''}">${head}${triHtml}${inner}</div>`;
 
             if (!entry) return wrap('<div class="mt-3 text-sm text-slate-400">読込中…</div>');
             if (entry.error) return wrap(`<div class="mt-3 text-sm text-red-500">取得失敗：${esc(entry.error)}</div>`);
@@ -1424,7 +1419,7 @@
                     <button onclick="markDone('${rid}', '${safeId(last.message_id)}', this)" class="btn btn-sub flex-1">✓ 対応済み</button>
                     <button onclick="openMsgActions('${cardKey}')" class="btn btn-sub w-12 shrink-0 text-lg" aria-label="その他">⋯</button>
                 </div>
-                ${tri && tri.sub ? subActionsHtml(tri.sub, cardKey, tri.who) : ''}
+                ${tri && tri.sub ? subActionsHtml(tri.sub, cardKey) : ''}
                 ${replyPanelHtml(cardKey, null, '📤 送信して完了')}`;
             return wrap(inner, (lastIsMine && unreplied === 0) ? 'opacity-75' : '', cardKey);
         }
@@ -1562,7 +1557,6 @@
         };
         window.askDiscord = function(key) {
             const st = window.messageStore[key] || {};
-            if (st.roomId) callApi('log_who', { room_id: st.roomId, who: 'engineer', text: String(st.body || '').slice(0, 600) }).catch(() => {});
             if (!getDiscordUrl() && !setDiscordUrl()) return;
             const c = msgCache[st.roomId];
             const point = (c && c.point) ? c.point : '';
@@ -2603,7 +2597,7 @@
                 c.pointTried = true;
                 needBodies.add(it.rid);
             }
-            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, sub: triageSub(it.rid), who: triageWho(it.rid), html: triageLineHtml(it.rid) });
+            return burstCardHtml(it.rid, it.d.name || `ルームID: ${it.rid}`, badge, waitCls(it.waitSince), entry, count, { cat: cat, sub: triageSub(it.rid), html: triageLineHtml(it.rid) });
         }
 
         // ===== 返信先の表示（どのメッセージへの返信かを、本文の上に小さく出す） =====
@@ -3257,26 +3251,13 @@
         const TRIAGE_SUB_ORDER = ['trouble', 'shopee', 'order', 'request', 'ship', 'bill', 'system', 'share', 'other'];
         let triageFilter = 'all';
         let subFilter = 'all';
-        // 誰が答えられそうか（要確認のときだけ。判定がない時は渡辺さん判断として扱う）
-        const TRIAGE_WHO = {
-            staff: { icon: '👥', label: 'スタッフ対応可' },
-            watanabe: { icon: '👤', label: '渡辺さん判断' },
-            engineer: { icon: '💻', label: 'エンジニア' }
-        };
-        const TRIAGE_WHO_ORDER = ['staff', 'watanabe', 'engineer'];
-        let whoFilter = 'all';
-        function triageWho(rid) {
-            if (triageCat(rid) !== 'check') return '';
-            const w = (roomsMeta[rid] || {}).triageWho;
-            return TRIAGE_WHO[w] ? w : 'watanabe';
-        }
         function triageSub(rid) {
             if (triageCat(rid) !== 'check') return '';
             const s = (roomsMeta[rid] || {}).triageSub;
             return TRIAGE_SUBS[s] ? s : 'other';
         }
         // 種類ごとに、よく使う操作へのボタン（カードの中に出す）
-        function subActionsHtml(sub, cardKey, who) {
+        function subActionsHtml(sub, cardKey) {
             const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub" style="flex:1 1 auto">${label}</button>`;
             let html = '';
             if (sub === 'order') {
@@ -3292,9 +3273,6 @@
             else if (sub === 'shopee') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
             else if (sub === 'request') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'other') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
-            // 担当が渡辺さん・エンジニアなら、その近道を必ず出す
-            if (who === 'watanabe' && html.indexOf('openAskForm') === -1) html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + html;
-            if (who === 'engineer' && html.indexOf('askDiscord') === -1) html = b('🎮 Discordで聞く', `askDiscord('${cardKey}')`) + html;
             // 幅が足りない時は2段に折り返す（横にはみ出さない）
             return html ? `<div class="flex flex-wrap gap-2 mt-2">${html}</div>` : '';
         }
@@ -3319,10 +3297,8 @@
             const dm = roomsMeta[rid] || {};
             const fixed = dm.triageFixed ? '<span class="text-[11px] text-slate-400">✎</span>'
                 : (dm.triageConf === 'low' ? '<span class="text-[11px] font-bold text-amber-700" title="AIが迷った判定です">🤔 迷い</span>' : '') + '<span class="text-[11px] text-slate-400">▾</span>';
-            const who = triageWho(rid);
-            const whoTag = who ? `<span class="tri-tag who-${who}">${TRIAGE_WHO[who].icon} ${TRIAGE_WHO[who].label}${dm.triageWhoFixed ? ' ✎' : ''}</span>` : '';
             // タグを押すと仕分けを直せる
-            return `<button onclick="openTriageFix('${safeId(rid)}')" class="flex items-center gap-1 shrink-0 cursor-pointer flex-wrap" aria-label="仕分けを直す"><span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${subTag}${whoTag}${fixed}</button>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
+            return `<button onclick="openTriageFix('${safeId(rid)}')" class="flex items-center gap-1 shrink-0 cursor-pointer flex-wrap" aria-label="仕分けを直す"><span class="tri-tag tri-${cat}">${TRIAGE_LABELS[cat]}</span>${subTag}${fixed}</button>${point ? `<span class="min-w-0">${esc(point)}</span>` : ''}`;
         }
         // 書きかけの返信を消さないように、仕分けの1行だけ差し替える
         function updateTriageLine(rid) {
@@ -3332,7 +3308,6 @@
             if (line) line.innerHTML = triageLineHtml(rid);
             el.setAttribute('data-tri', triageCat(rid));
             el.setAttribute('data-sub', triageSub(rid));
-            el.setAttribute('data-who', triageWho(rid));
             updateTriageBar();
         }
         function updateTriageBar() {
@@ -3348,13 +3323,6 @@
             const ns = {};
             cards.forEach(c => { if (c.getAttribute('data-tri') === 'check') { const s = c.getAttribute('data-sub') || 'other'; ns[s] = (ns[s] || 0) + 1; } });
             if (triageFilter !== 'check' || (subFilter !== 'all' && !ns[subFilter])) subFilter = 'all';
-            const nw = {};
-            cards.forEach(c => { if (c.getAttribute('data-tri') === 'check') { const w = c.getAttribute('data-who') || 'watanabe'; nw[w] = (nw[w] || 0) + 1; } });
-            if (triageFilter !== 'check' || (whoFilter !== 'all' && !nw[whoFilter])) whoFilter = 'all';
-            const whoChip = (f, label, cnt) => `<button onclick="setWhoFilter('${f}')" class="who-chip ${whoFilter === f ? 'on' : ''}">${label}${cnt !== null ? ` <b>${cnt}</b>` : ''}</button>`;
-            const whoRow = (triageFilter === 'check' && n.check)
-                ? `<div class="flex flex-wrap gap-2 mt-2 items-center"><span class="text-xs font-bold text-slate-500">担当：</span>${whoChip('all', 'すべて', null)}${TRIAGE_WHO_ORDER.filter(w => nw[w]).map(w => whoChip(w, `${TRIAGE_WHO[w].icon} ${TRIAGE_WHO[w].label}`, nw[w])).join('')}</div>`
-                : '';
             const chip = (f, label) => `<button onclick="setTriageFilter('${f}')" class="tri-chip ${triageFilter === f ? 'on' : ''}"><b>${n[f]}</b>${label}</button>`;
             const subChip = (f, label, cnt) => `<button onclick="setSubFilter('${f}')" class="sub-chip ${subFilter === f ? 'on' : ''}">${label} <b>${cnt}</b></button>`;
             const subRow = (triageFilter === 'check' && n.check)
@@ -3365,7 +3333,6 @@
                     ${chip('all', 'すべて')}${chip('check', '🔍 要確認')}${chip('easy', '💬 すぐ返せる')}${chip('none', '✓ 返信不要')}
                 </div>
                 ${subRow}
-                ${whoRow}
                 ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2" style="height:auto;min-height:44px;white-space:normal;padding:8px 12px">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
             applyTriageFilter();
         }
@@ -3373,8 +3340,7 @@
             document.querySelectorAll('#burstModeContainer .burst-card').forEach(c => {
                 const okCat = triageFilter === 'all' || c.getAttribute('data-tri') === triageFilter;
                 const okSub = triageFilter !== 'check' || subFilter === 'all' || c.getAttribute('data-sub') === subFilter;
-                const okWho = triageFilter !== 'check' || whoFilter === 'all' || (c.getAttribute('data-who') || 'watanabe') === whoFilter;
-                c.style.display = (okCat && okSub && okWho) ? '' : 'none';
+                c.style.display = (okCat && okSub) ? '' : 'none';
             });
         }
         // ===== 仕分けを手で直す（直した結果は、次からAIのお手本になる） =====
@@ -3388,30 +3354,8 @@
             document.getElementById('sheetActionsBody').innerHTML =
                 `<div class="px-4 pt-3 pb-2 text-xs text-slate-500">正しい分類を選んでください。直した内容は、次からAIが仕分けるときのお手本になります。</div>` +
                 opt('none', '', '✓ 返信不要') + opt('easy', '', '💬 すぐ返せる') +
-                TRIAGE_SUB_ORDER.map(s => opt('check', s, `🔍 要確認・${TRIAGE_SUBS[s].icon} ${TRIAGE_SUBS[s].label}`)).join('') +
-                (cur === 'check'
-                    ? `<div class="px-4 pt-4 pb-2 text-xs font-bold text-slate-500">誰が答えられるか</div>` +
-                      TRIAGE_WHO_ORDER.map(w => sheetBtn(triageWho(rid) === w ? '✅' : '　', `${TRIAGE_WHO[w].icon} ${TRIAGE_WHO[w].label}`, `fixWho('${rid}', '${w}')`)).join('')
-                    : '');
+                TRIAGE_SUB_ORDER.map(s => opt('check', s, `🔍 要確認・${TRIAGE_SUBS[s].icon} ${TRIAGE_SUBS[s].label}`)).join('');
             openSheet('sheetActions');
-        };
-        window.fixWho = async function(rid, who) {
-            closeAllModals();
-            const d = roomsMeta[rid];
-            if (!d || who === triageWho(rid)) return;
-            const card = document.querySelector(`#burstModeContainer .burst-card[data-room-id="${safeId(rid)}"]`);
-            const st = card ? (window.messageStore[card.getAttribute('data-card-key')] || {}) : {};
-            const before = { triageWho: d.triageWho, triageWhoFixed: d.triageWhoFixed };
-            Object.assign(d, { triageWho: who, triageWhoFixed: true });
-            updateTriageLine(rid);
-            try {
-                await callApi('fix_who', { room_id: rid, who, text: String(st.body || '').slice(0, 600) });
-                showToast('担当を直しました（次からAIのお手本になります）');
-            } catch (e) {
-                Object.assign(d, before);
-                updateTriageLine(rid);
-                alert('担当を直せませんでした: ' + e.message);
-            }
         };
         window.fixTriage = async function(rid, cat, sub) {
             closeAllModals();
@@ -3434,14 +3378,6 @@
             }
         };
 
-        window.setWhoFilter = function(f) {
-            whoFilter = f;
-            document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
-            document.getElementById('selectAllCheckbox').checked = false;
-            updateSelectionBar();
-            updateTriageBar();
-            window.scrollTo(0, 0);
-        };
         window.setSubFilter = function(f) {
             subFilter = f;
             document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
@@ -3453,7 +3389,6 @@
         window.setTriageFilter = function(f) {
             triageFilter = f;
             subFilter = 'all';
-            whoFilter = 'all';
             // 隠れるカードに選択が残らないように、選択はいったん外す
             document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
             document.getElementById('selectAllCheckbox').checked = false;
