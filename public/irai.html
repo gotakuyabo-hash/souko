@@ -176,6 +176,15 @@ details.bd table{margin-top:6px}
 .oid-toggle{display:flex;gap:6px;align-items:center;font-size:13px;margin:6px 0}
 .oid-toggle input{width:auto}
 .badge.cancel{background:#E7F5FF;color:var(--rs)}
+.hk-code{grid-column:1/-1;display:flex;gap:6px}
+.hk-code input{flex:1}
+.hk-hits{grid-column:1/-1;display:flex;flex-direction:column;gap:4px}
+.hk-hits:empty{display:none}
+.hk-hit{display:flex;gap:8px;align-items:center;text-align:left;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:6px 8px;font-size:13px;width:100%}
+.hk-hit img{width:40px;height:40px;object-fit:contain;flex:none;background:#fff;border-radius:4px}
+.hk-hit small{display:block;color:var(--sub);font-size:11px}
+.credit{font-size:10px;color:var(--sub);text-align:right}
+.credit a{color:var(--sub)}
 </style>
 </head>
 <body>
@@ -302,6 +311,7 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString
 const half = v => String(v ?? '').replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 const toNum = v => { const m = half(v).replace(/,/g, '').match(/\d+/); return m ? Number(m[0]) : 0; };
 const norm = v => half(v).toLowerCase().replace(/[\s　]/g, '');
+const isJan = v => /^(\d{8}|\d{13})$/.test(String(v || '').trim());
 const yen = n => n.toLocaleString('ja-JP') + '円';
 function addMonths(s, n) {
   const [y, m, d] = s.split('-').map(Number);
@@ -379,7 +389,7 @@ async function addLots(r, items, inDate) {
     const b = writeBatch(db);
     items.slice(i, i + 400).forEach(it => b.set(doc(collection(db, 'hokan_lots')), {
       seller: r ? sellerKey(r) : it.seller, sellerName: r ? (r.name || '') : (it.sellerName || ''),
-      product: it.product, qtyIn: it.qty, inDate, reqId: r ? r.id : '', outs: [], memo: '', orderId: it.orderId || '',
+      product: it.product, qtyIn: it.qty, inDate, reqId: r ? r.id : '', outs: [], memo: '', orderId: it.orderId || '', jan: it.jan || '', model: it.model || '',
       by: S.user.email, at: serverTimestamp()
     }));
     await b.commit();
@@ -396,14 +406,19 @@ function parsePaste(text) {
     let qi = -1;
     for (let i = cols.length - 1; i >= 1; i--) if (/^[0-9０-９,，]+\s*(個|点|枚|本|セット|pcs)?$/i.test(cols[i])) { qi = i; break; }
     if (qi < 0) return;
-    const qty = toNum(cols[qi]), product = cols.slice(0, qi).join(' ').trim();
+    const head = cols.slice(0, qi);
+    const ji = head.findIndex(c => isJan(half(c)));               // 8桁・13桁の数字の列はJANとして扱う
+    const jan = ji >= 0 ? half(head.splice(ji, 1)[0]) : '';
+    const qty = toNum(cols[qi]), product = head.join(' ').trim();
     if (!qty || !product) return;
-    merged.set(product, (merged.get(product) || 0) + qty);
+    const key = product + '\t' + jan;
+    const m = merged.get(key) || { product, code: jan, qty: 0 };
+    m.qty += qty; merged.set(key, m);
   });
-  return [...merged].map(([product, qty]) => ({ product, qty }));
+  return [...merged.values()];
 }
 const pasteBox = () => `<details class="bd paste" style="margin:8px 0"><summary>Excel・スプレッドシートからまとめて貼り付け</summary>
-  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の2列をコピーして、ここに貼り付けてください（見出し行があっても大丈夫です）"></textarea>
+  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の列をコピーして、ここに貼り付けてください（JANの列があれば一緒に読み込みます。見出し行があっても大丈夫です）"></textarea>
   <div class="actions" style="margin-top:6px"><button class="mini" id="hkPasteGo">下の表に読み込む</button></div></details>`;
 function rowsTotal() {
   const rows = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ p: x.querySelector('.hk-p').value.trim(), q: toNum(x.querySelector('.hk-q').value) })).filter(x => x.p || x.q);
@@ -414,8 +429,14 @@ function bindRows(onChange) {
   if (!$('hkRows')) return;
   const changed = () => { if (onChange) onChange(); rowsTotal(); };
   $('hkAdd').onclick = () => { $('hkRows').insertAdjacentHTML('beforeend', itemRow()); changed(); };
-  $('hkRows').onclick = e => { const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); changed(); } };
-  $('hkRows').oninput = rowsTotal;
+  $('hkRows').onclick = e => {
+    const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); changed(); return; }
+    const f = e.target.closest('.hk-find'); if (f) findProduct(f.closest('.hk-row'), f);
+  };
+  $('hkRows').onkeydown = e => {   // JAN・型番の欄でEnter（バーコードリーダーも）→ すぐ検索
+    if (e.key === 'Enter' && e.target.classList.contains('hk-c')) { e.preventDefault(); const row = e.target.closest('.hk-row'); findProduct(row, row.querySelector('.hk-find')); }
+  };
+  $('hkRows').oninput = e => { if (e.target.classList.contains('hk-c')) e.target.dataset.jan = ''; rowsTotal(); };
   if ($('hkCancel')) $('hkCancel').onchange = () => $('hkRows').classList.toggle('oid', $('hkCancel').checked);
   if ($('hkPasteGo')) $('hkPasteGo').onclick = () => {
     const items = parsePaste($('hkPaste').value);
@@ -725,6 +746,9 @@ const itemRow = (it = {}) => `<div class="hk-row">
   <input class="hk-p" placeholder="商品名" value="${esc(it.product || '')}">
   <input class="hk-q num-in" inputmode="numeric" placeholder="数量" value="${it.qty || ''}">
   <button class="mini hk-del" aria-label="この行を消す">×</button>
+  <div class="hk-code"><input class="hk-c" placeholder="JAN・型番（入れて🔍で商品名を検索）" value="${esc(it.code || it.jan || it.model || '')}" data-jan="${esc(it.jan || '')}">
+    <button class="mini hk-find" aria-label="ネットで商品を検索">🔍 検索</button></div>
+  <div class="hk-hits"></div>
   <input class="hk-oid" placeholder="キャンセル品のOrder ID" value="${esc(it.orderId || '')}"></div>`;
 const oidToggle = (on = false) => `<label class="oid-toggle"><input type="checkbox" id="hkCancel" ${on ? 'checked' : ''}> キャンセル品として登録する（Order IDを入れる）</label>`;
 // 依頼に書かれているOrder ID（注文番号の欄、または「Order ID」「注文番号」などの項目）
@@ -735,9 +759,44 @@ function reqOrderId(r) {
 // 登録欄の行を読み取る（キャンセル品にチェックがあるときだけ Order ID を付ける）
 function readRows(extra = {}) {
   const withOid = $('hkCancel') && $('hkCancel').checked;
-  return [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ ...extra,
-    product: x.querySelector('.hk-p').value.trim(), qty: toNum(x.querySelector('.hk-q').value),
-    orderId: withOid ? x.querySelector('.hk-oid').value.trim() : '' })).filter(i => i.product || i.qty);
+  return [...document.querySelectorAll('#hkRows .hk-row')].map(x => {
+    const ci = x.querySelector('.hk-c'), code = half(ci.value).trim();
+    return { ...extra,
+      product: x.querySelector('.hk-p').value.trim(), qty: toNum(x.querySelector('.hk-q').value),
+      jan: isJan(code) ? code : (ci.dataset.jan || ''), model: isJan(code) ? '' : code,
+      orderId: withOid ? x.querySelector('.hk-oid').value.trim() : '' };
+  }).filter(i => i.product || i.qty);
+}
+
+// JAN・型番からネットで商品を探す（書き出しGASがYahoo!ショッピングの商品検索APIを呼ぶ）
+async function findProduct(row, btn) {
+  const ci = row.querySelector('.hk-c'), code = half(ci.value).trim(), box = row.querySelector('.hk-hits');
+  if (!code) { toast('JANか型番を入れてください'); ci.focus(); return; }
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) { toast('EXPORT_URL が設定されていません'); return; }
+  btn.disabled = true; btn.textContent = '検索中…';
+  try {
+    const idToken = await S.user.getIdToken();
+    const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, action: 'lookup', code }) });
+    const r = await res.json();
+    if (!r.ok) { box.innerHTML = ''; toast(r.message || '検索できませんでした'); return; }
+    if (!r.items.length) { box.innerHTML = '<p class="hint">見つかりませんでした。商品名を手で入れてください。</p>'; return; }
+    box.innerHTML = r.items.map((h, i) => `<button class="hk-hit" data-i="${i}">${h.image ? `<img src="${esc(h.image)}" alt="" loading="lazy">` : ''}
+        <span>${esc(h.clean || h.name)}<small>${esc([h.brand, h.jan && 'JAN ' + h.jan].filter(Boolean).join('・'))}</small></span></button>`).join('')
+      + '<div class="credit"><a href="https://developer.yahoo.co.jp/sitemap/" target="_blank" rel="noopener">Web Services by Yahoo! JAPAN</a></div>';
+    box.querySelectorAll('.hk-hit').forEach(b => b.onclick = () => {
+      const h = r.items[+b.dataset.i];
+      row.querySelector('.hk-p').value = h.clean || h.name;
+      if (h.jan && !isJan(code)) ci.dataset.jan = h.jan;     // 型番で探したときは、見つかったJANも一緒に記録
+      box.innerHTML = '';
+      $('sheet').dataset.dirty = '1';
+      rowsTotal();
+      const q = row.querySelector('.hk-q'); if (!q.value) q.focus();
+    });
+  } catch (e) {
+    toast('検索できませんでした。少し待ってから、もう一度お試しください。');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 検索';
+  }
 }
 
 function hokanPanel(r) {
@@ -819,7 +878,7 @@ function renderStock(recs) {
   liveLots().forEach(l => {
     const rem = remain(l);
     if (S.sfilter === 'have' && rem <= 0) return;
-    if (q && ![l.seller, l.sellerName, l.product, l.orderId].join(' ').toLowerCase().includes(q)) return;
+    if (q && ![l.seller, l.sellerName, l.product, l.orderId, l.jan, l.model].join(' ').toLowerCase().includes(q)) return;
     if (!groups.has(l.seller)) groups.set(l.seller, []);
     groups.get(l.seller).push(l);
   });
@@ -847,7 +906,7 @@ function renderStock(recs) {
       ${shareLine(seller)}
       ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
         return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span><span class="p">${esc(l.product)}</span>
-          <span class="d">${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${rem > 0 && itemMode ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
+          <span class="d">${l.jan || l.model ? `${esc([l.jan && 'JAN ' + l.jan, l.model && '型番 ' + l.model].filter(Boolean).join('・'))}　` : ''}${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${rem > 0 && itemMode ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
           <span class="q">${rem}<small>／${l.qtyIn}点</small></span></button>`; }).join('')}</div>`;
   }).join('');
 }
@@ -870,6 +929,8 @@ function fillLotSheet(id, force) {
     <dl>
       <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
       <dt>保管料</dt><dd>${feeMode(l.seller) === 'item' ? `${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）` : esc(feeLabel(l.seller)) + '（税抜）'}</dd>
+      ${l.jan ? `<dt>JAN</dt><dd class="copy" data-copy="${esc(l.jan)}">${esc(l.jan)}</dd>` : ''}
+      ${l.model ? `<dt>型番</dt><dd class="copy" data-copy="${esc(l.model)}">${esc(l.model)}</dd>` : ''}
       ${l.orderId ? `<dt>Order ID</dt><dd class="copy" data-copy="${esc(l.orderId)}">${esc(l.orderId)}（キャンセル品）</dd>` : ''}
       ${l.memo ? `<dt>メモ</dt><dd>${esc(l.memo)}</dd>` : ''}
       <dt>元の依頼</dt><dd>${req ? `<button class="mini" id="lotReq">${esc(req.type)}を開く</button>` : (l.reqId ? '（表示期間外）' : '手動で入庫')}</dd>
@@ -888,6 +949,8 @@ function fillLotSheet(id, force) {
       <label class="field"><span>商品名</span><input id="leP" value="${esc(l.product)}"></label>
       <label class="field"><span>入庫数</span><input id="leQ" class="num-in" inputmode="numeric" value="${l.qtyIn}"></label>
       <label class="field"><span>保管日</span><input type="date" id="leD" value="${esc(l.inDate)}"></label>
+      <label class="field"><span>JAN（任意）</span><input id="leJ" inputmode="numeric" value="${esc(l.jan || '')}"></label>
+      <label class="field"><span>型番（任意）</span><input id="leMd" value="${esc(l.model || '')}"></label>
       <label class="field"><span>キャンセル品のOrder ID（任意）</span><input id="leO" value="${esc(l.orderId || '')}"></label>
       <label class="field"><span>メモ</span><input id="leM" value="${esc(l.memo || '')}"></label>
       <div class="actions"><button class="primary" id="leSave">保存する</button><button class="mini danger" id="leDel">この在庫を削除</button></div>
@@ -911,7 +974,7 @@ function fillLotSheet(id, force) {
     const used = sumQty(l.outs || []);
     if (!product || !qtyIn || !inDate) { toast('商品名・入庫数・保管日を入れてください'); return; }
     if (qtyIn < used) { toast(`すでに${used}点出庫しているため、入庫数は${used}以上にしてください`); return; }
-    try { await updateDoc(doc(db, 'hokan_lots', id), { product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim() }); toast('保存しました'); refill(); }
+    try { await updateDoc(doc(db, 'hokan_lots', id), { product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim() }); toast('保存しました'); refill(); }
     catch (e) { toast('保存できませんでした：' + e.message); }
   };
   $('leDel').onclick = async () => {
@@ -1126,7 +1189,7 @@ function billData() {
     const g = get(l.seller, l.sellerName);
     const amount = mode === 'item' ? rem * HOKAN_RATE : 0;
     g.qty += rem; g.amount += amount;
-    g.lots.push({ product: l.product, orderId: l.orderId || '', inDate: l.inDate, rem, amount });
+    g.lots.push({ product: l.product, jan: l.jan || '', model: l.model || '', orderId: l.orderId || '', inDate: l.inDate, rem, amount });
   });
   // パレット契約は、在庫の数に関係なく「枚数 × 単価」の月額
   S.sellers.forEach(d => { if (d.seller && feeMode(d.seller) === 'pallet' && palletFee(d.seller) > 0) get(d.seller, d.name); });
@@ -1166,10 +1229,10 @@ function billCsv() {
   const { ym, list } = billData();
   if (!list.length) { toast('保存する対象がありません'); return; }
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['請求月', '管理番号', 'セラー名', '契約', '商品名', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）'].map(q).join(',')];
+  const lines = [['請求月', '管理番号', 'セラー名', '契約', '商品名', 'JAN', '型番', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）'].map(q).join(',')];
   list.forEach(g => {
-    if (g.mode === 'pallet') lines.push([ym, g.seller, g.name, `パレット契約（${g.pallets}枚）`, '（月額）', '', '', '', g.palletRate, g.amount].map(q).join(','));
-    g.lots.forEach(x => lines.push([ym, g.seller, g.name, g.mode === 'pallet' ? 'パレット契約' : '1点ごと', x.product, x.orderId, x.inDate, x.rem,
+    if (g.mode === 'pallet') lines.push([ym, g.seller, g.name, `パレット契約（${g.pallets}枚）`, '（月額）', '', '', '', '', '', g.palletRate, g.amount].map(q).join(','));
+    g.lots.forEach(x => lines.push([ym, g.seller, g.name, g.mode === 'pallet' ? 'パレット契約' : '1点ごと', x.product, x.jan, x.model, x.orderId, x.inDate, x.rem,
       g.mode === 'pallet' ? '' : HOKAN_RATE, g.mode === 'pallet' ? '' : x.amount].map(q).join(',')));
   });
   const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv' });
