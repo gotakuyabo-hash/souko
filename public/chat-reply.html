@@ -10,6 +10,12 @@
         /* スマホで画面が横にはみ出さないように（はみ出すと全体が縮んだり、メニューがズレる） */
         html { overflow-x: hidden; }
         main, .burst-card { min-width: 0; max-width: 100%; }
+        /* カードを左右にフリックして「対応済み」（縦のスクロールはそのまま） */
+        .burst-card { touch-action: pan-y; position: relative; }
+        .burst-card.swipe-on { background: #dcfce7 !important; }
+        .burst-card.swipe-on::after { content: '✓ 対応済み'; position: absolute; top: 10px; right: 12px; background: #16a34a; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 9999px; pointer-events: none; }
+        .undo-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 60; background: #0f172a; color: #fff; border-radius: 9999px; padding: 6px 6px 6px 16px; display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(0,0,0,.2); max-width: 92vw; }
+        .undo-bar button { background: #fbbf24; color: #1e293b; border-radius: 9999px; padding: 8px 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .flex-wrap { flex-wrap: wrap; }
         .gap-1 { gap: .25rem; } .bg-rose-50 { background-color: #fff1f2; } .text-rose-600 { color: #e11d48; }   /* 事前書き出しのTailwindに入っていなかったので追加（絞り込みチップが折り返さず、はみ出していた） */
         .btn { height: 44px; border-radius: 12px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 12px; cursor: pointer; transition: transform .1s; white-space: nowrap; min-width: 0; overflow: hidden; }
@@ -3679,6 +3685,100 @@
                 btn.textContent = label;
             }
         };
+
+        // ===== カードを左右にフリックして「対応済み」 =====
+        //   返信を書いている途中のカード・入力欄の上から始めた時は動かさない。6秒間は「元に戻す」ができる
+        (function setupSwipeDone() {
+            const TH = 0.35;   // カードの幅の35%以上動かしたら対応済み
+            let st = null;
+            const busyCard = card =>
+                Array.from(card.querySelectorAll('[id^="reply_panel_"]')).some(p => p.style.display !== 'none') ||
+                Array.from(card.querySelectorAll('textarea')).some(t => t.value.trim());
+            const snapBack = card => {
+                card.style.transition = 'transform .2s';
+                card.style.transform = '';
+                card.classList.remove('swipe-on');
+            };
+            document.addEventListener('touchstart', e => {
+                st = null;
+                if (e.touches.length !== 1 || (currentMode !== 'burst' && currentMode !== 'later')) return;
+                const card = e.target.closest('#burstModeContainer .burst-card, #laterModeContainer .burst-card');
+                if (!card || e.target.closest('textarea, input, select, [contenteditable]') || busyCard(card)) return;
+                st = { card, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false, dead: false, w: card.offsetWidth || 1 };
+            }, { passive: true });
+            document.addEventListener('touchmove', e => {
+                if (!st || st.dead) return;
+                const t = e.touches[0];
+                const dx = t.clientX - st.x, dy = t.clientY - st.y;
+                if (!st.on) {
+                    if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { st.dead = true; return; }   // 縦のスクロール
+                    if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+                    st.on = true;
+                    st.card.style.transition = 'none';
+                }
+                st.dx = dx;
+                st.card.style.transform = `translateX(${dx}px)`;
+                st.card.classList.toggle('swipe-on', Math.abs(dx) > st.w * TH);
+            }, { passive: true });
+            const end = () => {
+                const s = st; st = null;
+                if (!s || !s.on) return;
+                if (Math.abs(s.dx) > s.w * TH) swipeDone(s.card, s.dx > 0 ? 1 : -1);
+                else snapBack(s.card);
+            };
+            document.addEventListener('touchend', end);
+            document.addEventListener('touchcancel', () => { const s = st; st = null; if (s && s.on) snapBack(s.card); });
+        })();
+
+        async function swipeDone(card, dir) {
+            const rid = card.getAttribute('data-room-id');
+            const mode = currentMode;
+            const prev = handledMap[rid] ? Object.assign({}, handledMap[rid]) : null;
+            card.style.transition = 'transform .2s ease-out, opacity .2s';
+            card.style.transform = `translateX(${dir * 120}%)`;
+            card.style.opacity = '0';
+            try {
+                await setHandled([rid], { reopen: false });
+                callApi("mark_read", { room_id: rid }).catch(() => {});
+                markReadInCache([rid]);
+                if (mode === 'later') callApi("set_later", { room_ids: [rid], on: false }).catch(() => {});
+                setTimeout(() => removeCard(rid), 200);
+                showUndoBar(rid, prev, mode);
+            } catch (e) {
+                card.style.transform = '';
+                card.style.opacity = '';
+                card.classList.remove('swipe-on');
+                alert("対応済みの保存に失敗しました: " + e.message);
+            }
+        }
+
+        // 「対応済みにしました［元に戻す］」の帯（6秒で消える）
+        let undoTimer = null;
+        function showUndoBar(rid, prev, mode) {
+            document.querySelectorAll('.undo-bar').forEach(b => b.remove());
+            clearTimeout(undoTimer);
+            const name = (window.roomNameMap && window.roomNameMap[rid]) || (roomsMeta[rid] && roomsMeta[rid].name) || '';
+            const bar = document.createElement('div');
+            bar.className = 'undo-bar';
+            bar.innerHTML = `<span class="truncate">✓ ${esc(name ? name.slice(0, 12) : '')} 対応済み</span><button type="button">元に戻す</button>`;
+            bar.querySelector('button').onclick = async () => {
+                bar.remove();
+                clearTimeout(undoTimer);
+                try {
+                    // 対応済みにする前の状態に戻す（記録がなかったルームは、要対応に出る状態にする）
+                    await setHandled([rid], prev
+                        ? { reopen: !!prev.reopen, at: Number(prev.handledAt) || 1, logAction: 'undo' }
+                        : { reopen: false, at: 1, logAction: 'undo' });
+                    if (mode === 'later') await callApi("set_later", { room_ids: [rid], on: true });
+                    showToast("元に戻しました");
+                    refreshCurrentView(false);
+                } catch (e) {
+                    alert("元に戻せませんでした: " + e.message);
+                }
+            };
+            document.body.appendChild(bar);
+            undoTimer = setTimeout(() => bar.remove(), 6000);
+        }
 
         // 「↺ 未対応に戻す」：要対応タブにもう一度表示
         window.reopenRoom = async function(roomId) {
