@@ -1066,6 +1066,13 @@ function openShareSheet(seller, opt = {}) {
         <button class="mini" id="shSave">保存だけする</button>
       </div>
       ${d.sheetUrl ? `<div class="actions"><button class="mini" id="shGuide">セラーさんへの案内文をコピー</button></div>` : ''}
+      <details class="bd" style="margin-top:14px"><summary>間違って作った管理番号をまとめる・削除する</summary>
+        <p class="hint">管理番号を間違えて依頼され、別のセラーとして登録されてしまったときに使います。</p>
+        <div class="actions">
+          <button class="mini" id="shMerge">正しい管理番号にまとめる</button>
+          <button class="mini danger" id="shDel">この管理番号を削除</button>
+        </div>
+      </details>
     </div>`;
   $('closeSheet').onclick = closeSheet;
   if ($('shLater')) $('shLater').onclick = closeSheet;
@@ -1111,6 +1118,8 @@ function openShareSheet(seller, opt = {}) {
     }
   };
   if ($('shGuide')) $('shGuide').onclick = () => copy(guideText(seller));
+  $('shMerge').onclick = () => mergeSeller(seller);
+  $('shDel').onclick = () => deleteSeller(seller);
   showSheet();
 }
 
@@ -1156,6 +1165,59 @@ ${guideFee(seller)}
 
 ご不明な点がありましたら、お気軽にお問い合わせください。
 引き続きどうぞよろしくお願いいたします。`;
+}
+
+// ---------- 間違って作った管理番号の整理 ----------
+async function callExport(body) {
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) throw new Error('EXPORT_URL が設定されていません');
+  const idToken = await S.user.getIdToken();
+  const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, ...body }) });
+  const r = await res.json();
+  if (!r.ok) throw new Error(r.message || '処理できませんでした');
+  return r;
+}
+const trashSheet = url => url ? callExport({ action: 'trash', url }) : Promise.resolve();
+
+// from の在庫と設定を to にまとめて、from を消す
+async function mergeSeller(from) {
+  const to = (prompt(`まとめ先の「正しい管理番号」を入れてください。\n${from} の在庫をすべて移して、${from} は一覧から消します。`) || '').trim();
+  if (!to || to === from) return;
+  const lots = lotsOf(from), dF = sellerInfo(from), dT = sellerInfo(to);
+  const toName = dT.name || (lotsOf(to)[0] || {}).sellerName || dF.name || '';
+  if (!confirm(`${from}（${dF.name || ''}）の在庫${lots.length}件を、${to}（${toName}）に移します。よろしいですか？`)) return;
+  let keepSheet = false;
+  if (dF.sheetUrl && !dT.sheetUrl) {
+    keepSheet = confirm(`${from} のセラー用シートを、${to} のシートとして引き継ぎますか？\n\n・OK：引き継ぐ（共有先のメールもそのまま）\n・キャンセル：このシートはゴミ箱に入れる`);
+  }
+  try {
+    for (let i = 0; i < lots.length; i += 400) {
+      const b = writeBatch(db);
+      lots.slice(i, i + 400).forEach(l => b.update(doc(db, 'hokan_lots', l.id), { seller: to, sellerName: toName || l.sellerName || '' }));
+      await b.commit();
+    }
+    if (keepSheet) {
+      await setDoc(doc(db, 'hokan_sellers', sellerDocId(to)), {
+        seller: to, name: toName, sheetUrl: dF.sheetUrl, mails: dF.mails || '', feeMode: dF.feeMode || 'item',
+        pallets: dF.pallets || 0, palletRate: dF.palletRate || 0, noSheet: false, by: S.user.email, at: serverTimestamp() }, { merge: true });
+    } else if (dF.sheetUrl) {
+      await trashSheet(dF.sheetUrl);
+    }
+    await deleteDoc(doc(db, 'hokan_sellers', sellerDocId(from)));
+    closeSheet();
+    toast(`${from} を ${to} にまとめました。セラー用シートは次の更新で反映されます`);
+  } catch (e) { toast('まとめられませんでした：' + e.message); }
+}
+
+// 在庫がない管理番号を一覧から消す（シートがあればゴミ箱へ）
+async function deleteSeller(k) {
+  if (lotsOf(k).length) { toast('この管理番号には在庫の記録が残っています。「正しい管理番号にまとめる」を使ってください'); return; }
+  const d = sellerInfo(k);
+  if (!confirm(`${k}（${d.name || ''}）を一覧から削除します。` + (d.sheetUrl ? '\nセラー用シートもゴミ箱に入れます（30日以内ならドライブから戻せます）。' : '') + '\nよろしいですか？')) return;
+  try {
+    if (d.sheetUrl) await trashSheet(d.sheetUrl);
+    await deleteDoc(doc(db, 'hokan_sellers', sellerDocId(k)));
+    closeSheet(); toast(`${k} を削除しました`);
+  } catch (e) { toast('削除できませんでした：' + e.message); }
 }
 
 async function exportNow() {
