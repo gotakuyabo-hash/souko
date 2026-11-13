@@ -2813,6 +2813,25 @@ async function lineSend(roomId, body) {
   return { success: true, via };
 }
 
+// LINE公式アカウントのチャット画面（ブラウザ版）でこのトークを開くURL
+//   友だち（1対1）は、そのトークを直接開く。グループや、うまく作れない時はチャット画面のトップ
+async function lineChatUrl(roomId) {
+  const top = "https://chat.line.biz/";
+  try {
+    const rs = await db.collection("line_rooms").doc(safeRid(roomId)).get();
+    if (!rs.exists || rs.get("type") !== "user") return top;
+    let botId = cacheGet("line_bot_id");
+    if (!botId) {
+      botId = String((await lineApi("GET", "/v2/bot/info")).userId || "");
+      if (botId) cachePut("line_bot_id", botId, 86400);
+    }
+    return botId ? top + encodeURIComponent(botId) + "/chat/" + encodeURIComponent(rs.get("lineId")) : top;
+  } catch (e) {
+    console.error("LINEのチャット画面のURLを作れませんでした: " + e.message);
+    return top;
+  }
+}
+
 async function handleLineAction(action, p) {
   if (action === "get_todo_bundle" || action === "get_unread_bundle") {
     const handled = p.handled || {};
@@ -2863,6 +2882,7 @@ async function handleLineAction(action, p) {
   if (action === "get_room_file") throw new Error("LINEのファイルは、LINE公式アカウントのアプリで確認してください");
   if (action === "ask_question") throw new Error("LINEのトークから渡辺さんに聞く機能は、まだ対応していません");
   if (action === "sync_now") return { synced: true, later: await getLater(LINE_ACC) };
+  if (action === "get_chat_url") return { url: await lineChatUrl(p.room_id) };
   if (action === "fix_triage") return await fixTriage(p);
   if (action === "fix_who" || action === "log_who") return { ok: true };
   if (action === "summarize_room") {
