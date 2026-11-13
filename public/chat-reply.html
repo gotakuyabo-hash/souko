@@ -26,7 +26,7 @@
         .clamp { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
         .clamp-s { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
         .msg-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.7; }
-        .tab-btn { height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 700; color: #94a3b8; cursor: pointer; }
+        .tab-btn { min-width: 0; overflow: hidden; height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 700; color: #94a3b8; cursor: pointer; }
         .tab-btn .ico { font-size: 22px; line-height: 1; filter: grayscale(1); opacity: .6; }
         .tab-btn.active { color: #4f46e5; }
         .tab-btn.active .ico { filter: none; opacity: 1; }
@@ -151,6 +151,7 @@
             <select id="accountSelect" onchange="onAccountChange()" class="flex-1 min-w-0 bg-indigo-500 text-white font-bold rounded-xl px-3 h-11 text-[16px] border-0">
                 <option value="staff" selected>ラクロジスタッフ</option>
                 <option value="matsushita">松下</option>
+                <option value="line">LINE</option>
             </select>
             <span id="loadStatus" class="shrink-0 text-xs font-bold bg-indigo-500 px-2.5 py-1 rounded-full">読込中</span>
             <button id="layoutBtn" onclick="toggleLayout()" class="shrink-0 w-11 h-11 rounded-xl bg-indigo-700 text-lg cursor-pointer" aria-label="表示の切替">🖥️</button>
@@ -355,6 +356,7 @@
         window.roomNameMap = {};
 
         window.addEventListener('DOMContentLoaded', () => {
+            paintAccountSelect();
             updateLaterBadge();
             restoreHandledCache(getAccount());
             loadMsgCache();
@@ -473,6 +475,9 @@
 
         // ===== 共通 =====
         function getAccount() { return document.getElementById('accountSelect').value; }
+        // LINE公式アカウント（アカウント選択で「LINE」）。自社が送ったメッセージの発言者IDは "1"
+        const LINE_SELF_ID = '1';
+        function isLine() { return getAccount() === 'line'; }
         function esc(str) {
             return (str === undefined || str === null) ? '' : String(str)
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -488,6 +493,7 @@
         function isMine(m, rid) {
             if (!(m && m.account)) return false;
             const id = String(m.account.account_id);
+            if (isLine()) return id === LINE_SELF_ID;
             // 自社の人からでも、このアカウント宛て（[To:]・返信・タスクの担当）の依頼は「相手からの連絡」として扱う
             const me = localStorage.getItem("cw_me_id_v1_" + getAccount()) || '';
             if (me && id !== me) {
@@ -726,7 +732,13 @@
         }
 
         // ===== 画面切替 =====
+        // LINEを選んでいる時は、ひと目で分かるようにアカウント欄をLINEの緑にする
+        function paintAccountSelect() {
+            const sel = document.getElementById('accountSelect');
+            sel.style.backgroundColor = isLine() ? '#06C755' : '';
+        }
         function onAccountChange() {
+            paintAccountSelect();
             allRoomsCache = [];
             roomMembersCache = {};
             currentRoomId = null;
@@ -947,7 +959,7 @@
             const rp = st.replyTo;
             return `
                 <div id="reply_panel_${key}" class="mt-3 pt-3 border-t border-slate-100 space-y-2" style="display:none;">
-                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
+                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onchange="insertMentionForMsg('${key}')" class="inp" ${isLine() ? 'style="display:none"' : ''}>${memberOptionsHtml(members)}</select>
                     <div class="flex gap-2">
                         <input type="text" id="custom_prompt_${key}" placeholder="AIへの指示（任意）例：丁寧にお断り" class="inp flex-1 min-w-0 bg-slate-50">
                         <button onclick="generateAiReplyForMessage('${key}', this)" class="btn btn-ai shrink-0">✨ AI作成</button>
@@ -956,8 +968,8 @@
                     <textarea id="reply_text_${key}" rows="6" placeholder="返信文" class="inp"></textarea>
                     <button onclick="useLastSent('${key}')" class="btn btn-sub w-full">📋 直前の送信文を使う</button>
                     ${rp && rp.mid ? `<label class="flex items-center gap-2 text-sm text-slate-600 py-1 cursor-pointer">
-                        <input type="checkbox" id="rp_${key}" checked class="w-5 h-5 accent-indigo-600 shrink-0">
-                        <span>${esc(rp.name)}さんのメッセージへの返信として送る（↩）</span></label>` : ''}
+                        <input type="checkbox" id="rp_${key}" ${isLine() ? '' : 'checked'} class="w-5 h-5 accent-indigo-600 shrink-0">
+                        <span>${isLine() ? 'このメッセージを引用して返信する（LINEの引用返信）' : `${esc(rp.name)}さんのメッセージへの返信として送る（↩）`}</span></label>` : ''}
                     ${attachBoxHtml(key)}
                     <button onclick="sendReplyForMessage('${key}', this)" class="btn btn-ok w-full mt-1">${sendLabel || '📤 送信'}</button>
                 </div>`;
@@ -1198,6 +1210,7 @@
         const CW_FILE_MAX = 5 * 1024 * 1024;
 
         function attachBoxHtml(key) {
+            if (isLine()) return '';   // LINEへのファイル送信はまだ未対応
             return `
                 <div>
                     <label class="btn btn-sub w-full cursor-pointer">📎 ファイルを添付
@@ -1450,6 +1463,20 @@
             const rid = m.roomId;
             const later = isLater(rid);
             document.getElementById('sheetActionsTitle').textContent = m.roomName || '';
+            if (isLine()) {
+                // LINE：Chatwork専用の機能（セラー情報・渡辺さん・Discord・USアプリ・編集削除など）は出さない
+                document.getElementById('sheetActionsBody').innerHTML =
+                    sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
+                    sheetBtn('📮', 'まとまるくんに送り状を依頼（宛先を読み取る）', `openMatomaruForm('${key}')`) +
+                    sheetBtn('🔗', 'ほかのサイトを開く（Robot-in など）', `openLinkSheet('', '')`) +
+                    sheetBtn('🧾', '請求に記録（補填・イレギュラー発送など）', `openBillingForm('${key}')`) +
+                    sheetBtn('🚨', '誤出荷に記録', `openMisshipForm('${key}')`) +
+                    sheetBtn('📁', 'このトークを開く（過去のやり取り）', `closeAllModals(); openRoomFromList('${rid}')`) +
+                    sheetBtn('↺', '未対応に戻す（要対応に表示）', `reopenRoom('${rid}')`) +
+                    sheetBtn('👤', `担当者名を変更（今：${esc(localStorage.getItem(STAFF_NAME_KEY) || '未設定')}）`, `changeStaffName()`);
+                openSheet('sheetActions');
+                return;
+            }
             document.getElementById('sheetActionsBody').innerHTML =
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
@@ -2103,8 +2130,8 @@
                 let html = `
                     <div class="bg-white rounded-2xl shadow-sm p-4">
                         <div class="font-bold text-base" data-op-room="${currentRoomId}">${esc(roomName)}</div>
-                        <div class="grid grid-cols-4 gap-2 mt-3">
-                            <button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>
+                        <div class="grid ${isLine() ? 'grid-cols-3' : 'grid-cols-4'} gap-2 mt-3">
+                            ${isLine() ? '' : `<button onclick="fetchSellerInfo('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">🔑 セラー</button>`}
                             <button onclick="copyAllRoomMessages('${currentRoomId}')" class="btn btn-sub px-1 text-[13px]">📋 コピー</button>
                             <button onclick="markDone('${currentRoomId}', '${safeId(latest.message_id)}', this)" class="btn btn-sub px-1 text-[13px]">✓ 対応済</button>
                             <button onclick="toggleLaterRoom('${currentRoomId}'); this.textContent = isLater('${currentRoomId}') ? '⏳ 後で中' : '⏳ 後で';" class="btn btn-sub px-1 text-[13px]">${later ? '⏳ 後で中' : '⏳ 後で'}</button>
@@ -2156,7 +2183,7 @@
             return `
                 <div class="bg-white border-2 border-emerald-300 rounded-2xl shadow-sm p-4 space-y-2">
                     <div class="font-bold text-base text-emerald-800">✏️ 新しく発信する</div>
-                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onfocus="ensureMembers('${key}')" onchange="insertMentionForMsg('${key}')" class="inp">${memberOptionsHtml(members)}</select>
+                    <select id="member_select_${key}" ${members ? 'data-loaded="1"' : ''} onfocus="ensureMembers('${key}')" onchange="insertMentionForMsg('${key}')" class="inp" ${isLine() ? 'style="display:none"' : ''}>${memberOptionsHtml(members)}</select>
                     <textarea id="custom_prompt_${key}" rows="2" placeholder="伝えたい内容をざっくり（例：明日の出荷は14時締め切り）" class="inp bg-slate-50"></textarea>
                     <button onclick="generateComposeAi('${key}', this)" class="btn btn-ai w-full">✨ AIで文章を作成</button>
                     <button onclick="openRoomNote('${key}')" class="text-xs font-bold text-indigo-600 py-1 cursor-pointer">📋 このルームの状況の整理（AIに渡す）</button>
@@ -3258,7 +3285,8 @@
         }
         // 種類ごとに、よく使う操作へのボタン（カードの中に出す）
         function subActionsHtml(sub, cardKey) {
-            const b = (label, onclick) => `<button onclick="${onclick}" class="btn btn-s btn-sub" style="flex:1 1 auto">${label}</button>`;
+            const b = (label, onclick) => (isLine() && /^(openAskForm|askDiscord|openUsRequest)\(/.test(onclick)) ? ''
+                : `<button onclick="${onclick}" class="btn btn-s btn-sub" style="flex:1 1 auto">${label}</button>`;
             let html = '';
             if (sub === 'order') {
                 html = b('📮 送り状を依頼', `openMatomaruForm('${cardKey}')`);
