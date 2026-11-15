@@ -234,8 +234,6 @@ const shukkaAuto = (() => {
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
                 <button onclick="switchTab('tracking')" id="tabBtnTracking" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">追跡番号の追記</button>
                 <button onclick="switchTab('monthly')" id="tabBtnMonthly" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">月別出荷件数</button>
-                <button onclick="switchTab('stock')" id="tabBtnStock" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">在庫一覧</button>
-                <button onclick="switchTab('inbound')" id="tabBtnInbound" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">入庫登録</button>
             </div>
         </div>
     </header>
@@ -387,9 +385,9 @@ const shukkaAuto = (() => {
                 <div class="flex justify-between items-center flex-wrap gap-2">
                     <div>
                         <h2 class="text-lg font-semibold"><i class="fa-solid fa-barcode text-teal-600 mr-2"></i>追跡番号の追記</h2>
-                        <p class="text-xs text-slate-500 mt-1">出庫シートで追跡番号（G列）が空欄の行を、発送日ごとに表示します（直近60日）。</p>
+                        <p class="text-xs text-slate-500 mt-1">出庫シートで追跡番号（G列）が空欄の<b>Shopeeの注文</b>（受注番号が数字6桁＋英数字8桁）を、発送日ごとに表示します（直近60日）。<br>Shopee以外の注文には追記しません。</p>
                     </div>
-                    <button onclick="loadPending()" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                    <button onclick="loadPending(true)" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
                 </div>
                 <p id="pendingStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
                 <div class="overflow-x-auto border rounded-xl">
@@ -431,7 +429,7 @@ const shukkaAuto = (() => {
                         <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-teal-600 mr-2"></i>月別出荷件数（出庫シートから集計）</h2>
                         <p class="text-xs text-slate-500 mt-1">出荷件数 ＝ 発送日が入っている行の受注番号の数（同じ受注番号は1件）。発送日が空の行は数えません。<br>Shopee ＝ 受注番号がShopeeの形式（数字6桁＋英数字8桁）のもの。それ以外は「その他」に入ります。</p>
                     </div>
-                    <button onclick="loadMonthly()" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                    <button onclick="loadMonthly(true)" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
                 </div>
                 <p id="monthlyStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
                 <div class="overflow-x-auto border rounded-xl">
@@ -443,127 +441,6 @@ const shukkaAuto = (() => {
             </div>
         </div>
 
-        <div id="tabContentStock" class="hidden space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                <div class="flex justify-between items-center flex-wrap gap-2">
-                    <div>
-                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-boxes-stacked text-indigo-600 mr-2"></i>在庫一覧（在庫シートから読み込み）</h2>
-                        <p class="text-xs text-slate-500 mt-1">各取引先の【商品リスト】「在庫シート」の在庫列をそのまま表示しています。<br>受注データを取り込んでいるときは「今回の出荷数」と「出荷後」も表示します。</p>
-                    </div>
-                    <button onclick="loadStock(true).then(renderStockList); renderStockList();" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
-                </div>
-
-                <div id="stockSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
-
-                <div class="flex flex-wrap gap-2 items-center text-xs">
-                    <select id="stockClientFilter" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
-                        <option value="">すべての取引先</option>
-                    </select>
-                    <select id="stockLevelFilter" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
-                        <option value="">すべての在庫</option>
-                        <option value="zero">在庫0以下</option>
-                        <option value="low">在庫10未満</option>
-                        <option value="short">今回の出荷で不足</option>
-                    </select>
-                    <select id="stockSort" onchange="renderStockList()" class="border rounded-lg px-3 py-2 bg-white">
-                        <option value="sheet">シートの並び順</option>
-                        <option value="asc">在庫が少ない順</option>
-                        <option value="desc">在庫が多い順</option>
-                        <option value="name">商品名順</option>
-                    </select>
-                    <input id="stockSearch" oninput="renderStockList()" type="search" placeholder="商品名・JANで検索" class="border rounded-lg px-3 py-2 flex-grow min-w-[180px]">
-                </div>
-
-                <p id="stockListStatus" class="text-xs text-slate-500"></p>
-                <div class="overflow-x-auto border rounded-xl">
-                    <table class="w-full text-left border-collapse text-sm">
-                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
-                            <tr>
-                                <th class="px-3 py-3">取引先</th>
-                                <th class="px-3 py-3">商品名</th>
-                                <th class="px-3 py-3 text-center">在庫</th>
-                                <th class="px-3 py-3 text-center">今回の出荷数</th>
-                                <th class="px-3 py-3 text-center">出荷後</th>
-                            </tr>
-                        </thead>
-                        <tbody id="stockListBody" class="divide-y"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div id="tabContentInbound" class="hidden space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                <div>
-                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-truck-ramp-box text-emerald-600 mr-2"></i>入庫登録（入庫シートに記入）</h2>
-                    <p class="text-xs text-slate-500 mt-1">入庫シートの「倉庫入力」欄（入荷日・入庫数量・担当者・備考）に書き込みます。書き込むと在庫シートの在庫に反映されます。</p>
-                </div>
-                <div class="grid md:grid-cols-3 gap-3 text-sm bg-slate-50 border rounded-xl p-4">
-                    <label class="space-y-1">
-                        <span class="text-xs font-semibold text-slate-600">取引先</span>
-                        <select id="inClient" onchange="loadInboundPending()" class="w-full border rounded-lg px-3 py-2 bg-white"></select>
-                    </label>
-                    <label class="space-y-1">
-                        <span class="text-xs font-semibold text-slate-600">入荷日</span>
-                        <input type="date" id="inDate" class="w-full border rounded-lg px-3 py-2 bg-white">
-                    </label>
-                    <label class="space-y-1">
-                        <span class="text-xs font-semibold text-slate-600">担当者</span>
-                        <input type="text" id="inStaff" onchange="saveInboundStaff()" class="w-full border rounded-lg px-3 py-2 bg-white" placeholder="例：松下">
-                    </label>
-                </div>
-            </div>
-
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                <div class="flex justify-between items-center flex-wrap gap-2">
-                    <div>
-                        <h3 class="font-semibold"><i class="fa-solid fa-clipboard-check text-emerald-600 mr-2"></i>① 入荷予定から入庫する</h3>
-                        <p class="text-xs text-slate-500 mt-1">お客様が入荷予定数を入れていて、入庫数量がまだ空欄の行です。届いた数を確認してチェックしてください。</p>
-                    </div>
-                    <button onclick="loadInboundPending()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-2 px-3 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
-                </div>
-                <p id="inPendingStatus" class="text-xs text-slate-500"></p>
-                <div class="overflow-x-auto border rounded-xl">
-                    <table class="w-full text-left border-collapse text-sm">
-                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
-                            <tr>
-                                <th class="px-3 py-3 w-10 text-center"><input type="checkbox" id="inPendingAll" onchange="toggleInboundAll(this.checked)"></th>
-                                <th class="px-3 py-3">商品名</th>
-                                <th class="px-3 py-3">発送情報</th>
-                                <th class="px-3 py-3 text-center">入荷予定数</th>
-                                <th class="px-3 py-3 text-center">入庫数量</th>
-                                <th class="px-3 py-3">備考</th>
-                            </tr>
-                        </thead>
-                        <tbody id="inPendingBody" class="divide-y"></tbody>
-                    </table>
-                </div>
-                <div class="flex justify-end">
-                    <button id="inFillBtn" onclick="submitInboundFill()" class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium" disabled><i class="fa-solid fa-check mr-1"></i>チェックした行を入庫済みにする</button>
-                </div>
-            </div>
-
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                <div>
-                    <h3 class="font-semibold"><i class="fa-solid fa-plus text-emerald-600 mr-2"></i>② 予定にない入庫を追加する</h3>
-                    <p class="text-xs text-slate-500 mt-1">入荷予定がない商品が届いたときに使います。商品は在庫シートの商品から選んでください（同じ名前でないと在庫に反映されません）。</p>
-                </div>
-                <datalist id="inProductList"></datalist>
-                <div class="overflow-x-auto border rounded-xl">
-                    <table class="w-full text-left border-collapse text-sm">
-                        <thead class="bg-slate-100 text-slate-600 text-xs border-b">
-                            <tr><th class="px-3 py-3">商品名</th><th class="px-3 py-3 w-28 text-center">入庫数量</th><th class="px-3 py-3 w-32">賞味期限</th><th class="px-3 py-3">備考</th><th class="px-3 py-3 w-10"></th></tr>
-                        </thead>
-                        <tbody id="inAddBody" class="divide-y"></tbody>
-                    </table>
-                </div>
-                <div class="flex justify-between flex-wrap gap-2">
-                    <button onclick="addInboundRow()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs py-2 px-3 rounded-lg font-medium"><i class="fa-solid fa-plus mr-1"></i>行を追加</button>
-                    <button id="inAddBtn" onclick="submitInboundAdd()" class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-file-import mr-1"></i>入庫シートに追加</button>
-                </div>
-            </div>
-            <div id="inResult" class="hidden text-sm rounded-lg px-4 py-3"></div>
-        </div>
 
     </main>
 
@@ -656,16 +533,14 @@ const shukkaAuto = (() => {
             <div class="flex justify-between items-center border-b pb-3 no-print">
                 <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs font-normal text-slate-500">(行をドラッグして並び替え可能)</span></h3>
                 <div class="flex space-x-2">
-                    <button onclick="loadStock(true).then(rerenderPicking)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-rotate mr-1"></i>在庫を更新</button>
                     <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
                     <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
-            <p id="pickingStockStatus" class="text-xs text-slate-500 no-print"></p>
             <div class="overflow-x-auto border rounded-xl">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead class="bg-slate-100 border-b">
-                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th><th class="px-4 py-3 text-center">在庫</th><th class="px-4 py-3 text-center">出荷後</th></tr>
+                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
                 </table>
@@ -719,14 +594,14 @@ const shukkaAuto = (() => {
         // ===== 出庫シート連携の設定 =====
         const GAS_TOKEN = 'logex-bunkatsu-2026';   // GAS側の TOKEN と同じにする
 
+        // ▼ GASのURL（1本で吉原建設様・今別府様の両方を扱います）
+        const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjBhbPv6s63kLusrHWH0roLuUnAAuCE3_fiJ5D0vokgQP9f_3HNUdcgB2ru9kO6yd8/exec';
+
         // 取引先の一覧（key は GAS 側の CLIENTS と同じにする）
         // carrier：書き込み画面で最初に選ばれている配送会社
-        // gasUrl ：その取引先の書き込み・集計に使うGASのURL（…/exec）
         const CLIENTS = [
-            { key: 'yoshihara', name: '吉原建設様', carrier: '佐川急便', color: 'bg-sky-100 text-sky-800',
-              gasUrl: 'https://script.google.com/macros/s/AKfycbzN7qnB1sGj2pzte5JhnsfAnKvDprOmcbmxEQF7qAxgNQlFNKOtZYwXnhYsdFDuQ6A3Iw/exec' },
-            { key: 'imabeppu',  name: '今別府様',   carrier: '西濃運輸', color: 'bg-lime-100 text-lime-800',
-              gasUrl: 'https://script.google.com/macros/s/AKfycbybT7INyszYe9GvVJinLLEcoxL3vH_NbJlGKUB66SFVfdsoUeo6jVeYxp_sWNOiwqnQFQ/exec' },
+            { key: 'yoshihara', name: '吉原建設様', carrier: '佐川急便', color: 'bg-sky-100 text-sky-800' },
+            { key: 'imabeppu',  name: '今別府様',   carrier: '西濃運輸', color: 'bg-lime-100 text-lime-800' },
         ];
         const clientOf = key => CLIENTS.find(c => c.key === key);
         function clientBadge(key) {
@@ -828,7 +703,8 @@ const shukkaAuto = (() => {
 
         window.addEventListener('DOMContentLoaded', () => {
             setupFileHandlers();
-            loadStock(false).then(() => { if (multiplierMaster.length) renderMasterTable(); });
+            // 追跡番号・月別件数を裏で先に読み込んでおく（タブを開いたときにすぐ出るように）
+            setTimeout(() => loadSummary(false, true), 800);
             document.getElementById('masterClientFilter').insertAdjacentHTML('beforeend',
                 CLIENTS.map(c => `<option value="${c.key}">取引先：${esc(c.name)}</option>`).join(''));
         });
@@ -863,15 +739,13 @@ const shukkaAuto = (() => {
         function switchTab(tabName) {
             const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
             const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly'],['stock','Stock'],['inbound','Inbound']].forEach(([key, id]) => {
+            [['orders','Orders'],['master','Master'],['tracking','Tracking'],['monthly','Monthly']].forEach(([key, id]) => {
                 document.getElementById('tabBtn' + id).className = tabName === key ? on : off;
                 document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== key);
             });
             if (tabName === 'master') renderMasterTable();
-            if (tabName === 'monthly') loadMonthly();
-            if (tabName === 'tracking') loadPending();
-            if (tabName === 'stock') { renderStockList(); loadStock(true).then(renderStockList); }
-            if (tabName === 'inbound') openInboundTab();
+            if (tabName === 'monthly') loadMonthly(false);
+            if (tabName === 'tracking') loadPending(false);
         }
 
         function updateMasterCountBadge() {
@@ -943,7 +817,6 @@ const shukkaAuto = (() => {
                         <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${esc(it.shelf || '未設定')}</span>
                         <span class="font-semibold text-slate-800 flex-grow">${esc(it.jpName)}</span>
                         <span class="text-indigo-600 font-bold">× ${esc(it.multiplier)}</span>
-                        ${stockBadge(rule.client, it.jpName)}
                     </div>
                 `).join('');
 
@@ -1295,7 +1168,7 @@ const shukkaAuto = (() => {
                 const reader = new FileReader();
                 reader.onload = e => {
                     try {
-                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', sheets: 0, cellStyles: false, cellHTML: false, cellNF: false, cellText: false });
                         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
                         if (rows.length) {
                             allFilesRawData.push({ id: fileId, name: file.name, rows });
@@ -1666,26 +1539,20 @@ const shukkaAuto = (() => {
             let map = {};
             processedDataRows.forEach(r => {
                 let k = (r.shelf || '未設定') + "_" + r.jpName;
-                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, client: r.client || '', total: 0 };
+                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, total: 0 };
                 map[k].total += r.baseQty * r.multiplier;
             });
             let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf, 'ja', { numeric: true }));
             pickingData = sorted;
             renderTotalPickingTable(sorted);
             document.getElementById('totalPickingModal').classList.remove('hidden');
-            // 在庫は開くたびに最新を読み込む
-            loadStock(true).then(rerenderPicking);
         }
 
         let pickingData = [];
-        function rerenderPicking() {
-            if (!document.getElementById('totalPickingModal').classList.contains('hidden')) renderTotalPickingTable(pickingData);
-        }
 
         function renderTotalPickingTable(data) {
             const tbody = document.getElementById('totalPickingBody');
             tbody.innerHTML = '';
-            document.getElementById('pickingStockStatus').innerHTML = stockStatusText(data);
             data.forEach((x, index) => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 cursor-grab';
@@ -1714,9 +1581,7 @@ const shukkaAuto = (() => {
                     <td class="px-4 py-2 font-bold text-indigo-700">${esc(x.shelf)}</td>
                     <td class="px-4 py-2 font-semibold">${esc(x.name)}</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base">${x.total}</td>
-                    ${stockCells(x.client, x.name, x.total)}
                 `;
-                if (stockShort(x.client, x.name, x.total)) tr.classList.add('bg-rose-50');
                 tbody.appendChild(tr);
             });
         }
@@ -1738,420 +1603,11 @@ const shukkaAuto = (() => {
             XLSX.writeFile(wb, `受注データ_処理結果_${new Date().toISOString().slice(0,10)}.xlsx`);
         }
 
-        // ===== 在庫（各取引先の【商品リスト】在庫シートから読み込み） =====
-        // stockCache[取引先key] = { byJan: {JAN: 在庫}, byName: {商品名: 在庫}, at: 読込時刻, error: エラー文 }
-        let stockCache = {};
-        let stockLoading = null;
-
-        // 商品名から JAN を取り出す
-        //  「（JAN：9144）」「(JAN:9818)」→ 9144 / 9818
-        //  「JELBE朝の麹青汁 4977569260649」のような13桁・8桁 → 13桁そのものと下4桁の両方
-        function jansOf(text) {
-            const t = String(text || '').normalize('NFKC');
-            const out = [];
-            const m = t.match(/JAN\s*[:：]?\s*(\d+)/i);
-            if (m) out.push(m[1]);
-            (t.match(/\d{13}|\d{8}/g) || []).forEach(n => { out.push(n, n.slice(-4)); });
-            if (m && m[1].length >= 8) out.push(m[1].slice(-4));
-            return [...new Set(out)];
-        }
-        // 全角・半角スペースの違いを気にせず比べるための形
-        function nameKey(name) {
-            return String(name || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
-        }
-
-        async function loadStock(force) {
-            if (stockLoading) return stockLoading;
-            if (!force && Object.keys(stockCache).length) return;
-            const targets = CLIENTS.filter(c => c.gasUrl && c.gasUrl.startsWith('https://'));
-            stockLoading = Promise.all(targets.map(async c => {
-                try {
-                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=stock`;
-                    const data = await readGas(await fetch(url));
-                    if (data.ok === false && data.error) throw new Error(data.error);
-                    if (!Array.isArray(data.items)) throw new Error('GASに在庫の機能がまだありません（新しいコードで再デプロイしてください）');
-                    const byJan = {}, byName = {};
-                    data.items.forEach(it => {
-                        const n = Number(it.stock);
-                        if (!isFinite(n)) return;
-                        // 商品名②のJAN →（品番の13桁JAN）→ 商品名 の順で登録（先に登録したものが優先）
-                        [it.name2, it.code, it.name].forEach(nm => {
-                            if (!nm) return;
-                            jansOf(nm).forEach(j => { if (byJan[j] === undefined) byJan[j] = n; });
-                        });
-                        [it.name, it.name2].forEach(nm => { if (nm) byName[nameKey(nm)] = n; });
-                    });
-                    stockCache[c.key] = { byJan, byName, items: data.items, at: new Date() };
-                } catch (err) {
-                    stockCache[c.key] = { byJan: {}, byName: {}, at: new Date(),
-                        error: err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message };
-                }
-            })).finally(() => { stockLoading = null; });
-            return stockLoading;
-        }
-
-        // 在庫数を返す（見つからなければ null）
-        function stockOf(client, jpName) {
-            const list = client ? [stockCache[client]] : Object.values(stockCache);
-            for (const sc of list) {
-                if (!sc) continue;
-                for (const j of jansOf(jpName)) if (sc.byJan[j] !== undefined) return sc.byJan[j];
-                const n = sc.byName[nameKey(jpName)];
-                if (n !== undefined) return n;
-            }
-            return null;
-        }
-        function stockShort(client, jpName, need) {
-            const s = stockOf(client, jpName);
-            return s !== null && need > s;
-        }
-        function stockCells(client, jpName, need) {
-            const s = stockOf(client, jpName);
-            if (s === null) return `<td class="px-4 py-2 text-center text-slate-400">－</td><td class="px-4 py-2 text-center text-slate-400">－</td>`;
-            const after = s - need;
-            return `<td class="px-4 py-2 text-center font-bold text-slate-700 text-base">${s}</td>
-                    <td class="px-4 py-2 text-center font-bold text-base ${after < 0 ? 'text-rose-600' : 'text-slate-500'}">${after}${after < 0 ? '<div class="text-[10px]">在庫不足</div>' : ''}</td>`;
-        }
-        function stockBadge(client, jpName) {
-            const s = stockOf(client, jpName);
-            if (s === null) return '';
-            const color = s <= 0 ? 'bg-rose-100 text-rose-700' : s < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700';
-            return `<span class="${color} font-bold px-2 py-0.5 rounded text-[10px] whitespace-nowrap">在庫 ${s}</span>`;
-        }
-        function stockStatusText(data) {
-            if (stockLoading) return '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>在庫を読み込み中...';
-            const keys = Object.keys(stockCache);
-            if (!keys.length) return '';
-            const errs = keys.filter(k => stockCache[k].error).map(k => `${esc(clientOf(k)?.name || k)}：${esc(stockCache[k].error)}`);
-            const at = stockCache[keys[0]].at;
-            const time = at ? `${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}` : '';
-            const short = (data || []).filter(x => stockShort(x.client, x.name, x.total)).length;
-            const missing = (data || []).filter(x => stockOf(x.client, x.name) === null).length;
-            let html = `在庫は在庫シートの値です（${time} 時点）。`;
-            if (short) html += ` <span class="text-rose-600 font-bold">在庫不足 ${short} 件</span>`;
-            if (missing) html += ` <span class="text-amber-700">在庫シートに見つからない商品 ${missing} 件（－表示）</span>`;
-            if (errs.length) html += `<br><span class="text-rose-600">${errs.join('<br>')}</span>`;
-            return html;
-        }
-
-        // ===== 在庫一覧タブ =====
-        // 取り込み中の受注データから、この在庫行の「今回の出荷数」を数える
-        function needForStockItem(clientKey, it) {
-            if (!processedDataRows.length) return null;
-            const jans = new Set([it.name2, it.code, it.name].flatMap(t => jansOf(t)));
-            const names = new Set([it.name, it.name2].filter(Boolean).map(nameKey));
-            let total = 0;
-            processedDataRows.forEach(r => {
-                if (r.client && r.client !== clientKey) return;
-                const hit = jansOf(r.jpName).some(j => jans.has(j)) || names.has(nameKey(r.jpName));
-                if (hit) total += (Number(r.baseQty) || 0) * (Number(r.multiplier) || 1);
-            });
-            return total;
-        }
-
-        function renderStockList() {
-            const sel = document.getElementById('stockClientFilter');
-            if (sel.options.length === 1) {
-                CLIENTS.forEach(c => sel.insertAdjacentHTML('beforeend', `<option value="${esc(c.key)}">${esc(c.name)}</option>`));
-            }
-            const fClient = sel.value;
-            const fLevel = document.getElementById('stockLevelFilter').value;
-            const sort = document.getElementById('stockSort').value;
-            const q = nameKey(document.getElementById('stockSearch').value);
-
-            // 一覧を作る
-            let rows = [];
-            CLIENTS.forEach(c => {
-                const sc = stockCache[c.key];
-                if (!sc || !sc.items) return;
-                if (fClient && fClient !== c.key) return;
-                sc.items.forEach((it, i) => {
-                    const need = needForStockItem(c.key, it);
-                    rows.push({ client: c, it, order: i, stock: Number(it.stock), need,
-                                after: need === null ? null : Number(it.stock) - need });
-                });
-            });
-
-            // 集計カード（絞り込み前の数）
-            const total = rows.length;
-            const zero = rows.filter(r => r.stock <= 0).length;
-            const low = rows.filter(r => r.stock > 0 && r.stock < 10).length;
-            const short = rows.filter(r => r.after !== null && r.need > 0 && r.after < 0).length;
-            const card = (label, n, cls) => `<div class="rounded-xl border px-4 py-3 ${cls}"><div class="text-[11px]">${label}</div><div class="text-2xl font-bold">${n}</div></div>`;
-            document.getElementById('stockSummary').innerHTML =
-                card('品目数', total, 'bg-slate-50 text-slate-700') +
-                card('在庫0以下', zero, zero ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-500') +
-                card('在庫10未満', low, low ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-500') +
-                card('今回の出荷で不足', short, short ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-500');
-
-            // 絞り込み
-            if (fLevel === 'zero') rows = rows.filter(r => r.stock <= 0);
-            if (fLevel === 'low') rows = rows.filter(r => r.stock < 10);
-            if (fLevel === 'short') rows = rows.filter(r => r.after !== null && r.need > 0 && r.after < 0);
-            if (q) rows = rows.filter(r => nameKey([r.it.code, r.it.name, r.it.name2].join(' ')).includes(q));
-
-            // 並べ替え
-            if (sort === 'asc') rows.sort((a, b) => a.stock - b.stock);
-            if (sort === 'desc') rows.sort((a, b) => b.stock - a.stock);
-            if (sort === 'name') rows.sort((a, b) => (a.it.name2 || a.it.name).localeCompare(b.it.name2 || b.it.name, 'ja'));
-
-            // 表
-            const body = document.getElementById('stockListBody');
-            if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="5" class="px-3 py-8 text-center text-slate-400 text-xs">${stockLoading ? '読み込み中...' : '表示する商品がありません'}</td></tr>`;
-            } else {
-                body.innerHTML = rows.map(r => {
-                    const s = r.stock;
-                    const sCls = s <= 0 ? 'bg-rose-100 text-rose-700' : s < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700';
-                    const main = r.it.name2 || r.it.name;
-                    const sub = r.it.name2 && r.it.name && r.it.name !== r.it.name2 ? r.it.name : '';
-                    const needTd = r.need === null || r.need === 0
-                        ? `<td class="px-3 py-2 text-center text-slate-300">－</td><td class="px-3 py-2 text-center text-slate-300">－</td>`
-                        : `<td class="px-3 py-2 text-center font-bold text-indigo-700">${r.need}</td>
-                           <td class="px-3 py-2 text-center font-bold ${r.after < 0 ? 'text-rose-600' : 'text-slate-600'}">${r.after}${r.after < 0 ? '<div class="text-[10px]">在庫不足</div>' : ''}</td>`;
-                    return `<tr class="${r.after !== null && r.need > 0 && r.after < 0 ? 'bg-rose-50' : 'hover:bg-slate-50'}">
-                        <td class="px-3 py-2"><span class="${r.client.color} text-[10px] font-bold px-2 py-0.5 rounded whitespace-nowrap">${esc(r.client.name)}</span></td>
-                        <td class="px-3 py-2">
-                            <div class="font-medium text-slate-800">${esc(main)}</div>
-                            ${sub ? `<div class="text-[11px] text-slate-400">${esc(sub)}</div>` : ''}
-                            ${r.it.code ? `<div class="text-[11px] text-slate-400">品番 ${esc(r.it.code)}</div>` : ''}
-                        </td>
-                        <td class="px-3 py-2 text-center"><span class="${sCls} font-bold px-3 py-1 rounded-lg text-base">${s}</span></td>
-                        ${needTd}
-                    </tr>`;
-                }).join('');
-            }
-
-            // 状態表示
-            const st = document.getElementById('stockListStatus');
-            if (stockLoading) { st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>在庫シートを読み込み中...'; return; }
-            const keys = Object.keys(stockCache);
-            if (!keys.length) { st.innerHTML = '「最新に更新」を押すと在庫シートから読み込みます。'; return; }
-            const at = stockCache[keys[0]].at;
-            const time = at ? `${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}` : '';
-            const errs = keys.filter(k => stockCache[k].error)
-                .map(k => `<span class="text-rose-600">${esc(clientOf(k)?.name || k)}：${esc(stockCache[k].error)}</span>`);
-            st.innerHTML = `${time} 時点の在庫です。表示 ${rows.length} 件` +
-                (processedDataRows.length ? '' : '（受注データを取り込むと「今回の出荷数」も出ます）') +
-                (errs.length ? '<br>' + errs.join('<br>') : '');
-        }
-
-        // ===== 入庫登録タブ =====
-        let inPending = [];
-
-        function todayYmd() {
-            const d = new Date();
-            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        }
-        function saveInboundStaff() {
-            try { localStorage.setItem('bunkatsu_inbound_staff', document.getElementById('inStaff').value.trim()); } catch (_) {}
-        }
-        function inClientKey() { return document.getElementById('inClient').value; }
-
-        async function openInboundTab() {
-            const sel = document.getElementById('inClient');
-            if (!sel.options.length) {
-                CLIENTS.forEach(c => sel.insertAdjacentHTML('beforeend', `<option value="${esc(c.key)}">${esc(c.name)}</option>`));
-                document.getElementById('inDate').value = todayYmd();
-                try { document.getElementById('inStaff').value = localStorage.getItem('bunkatsu_inbound_staff') || ''; } catch (_) {}
-            }
-            if (!document.getElementById('inAddBody').children.length) addInboundRow();
-            await loadStock(false);
-            loadInboundPending();
-        }
-
-        // 在庫シートの商品を候補にする（入庫シートには在庫シートと同じ商品名で書く必要があるため）
-        function inboundProducts() {
-            const sc = stockCache[inClientKey()];
-            return sc && sc.items ? sc.items : [];
-        }
-        function fillInboundProducts() {
-            document.getElementById('inProductList').innerHTML = inboundProducts()
-                .map(it => `<option value="${esc(it.name || it.name2)}">${esc(it.name2 && it.name2 !== it.name ? it.name2 : '')}</option>`).join('');
-        }
-        function findInboundProduct(text) {
-            const k = nameKey(text);
-            if (!k) return null;
-            return inboundProducts().find(it => nameKey(it.name) === k || nameKey(it.name2) === k) || null;
-        }
-
-        async function loadInboundPending() {
-            const c = clientOf(inClientKey());
-            const st = document.getElementById('inPendingStatus');
-            const body = document.getElementById('inPendingBody');
-            fillInboundProducts();
-            if (!c || !c.gasUrl) return;
-            st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>入庫シートを読み込み中...';
-            body.innerHTML = '';
-            try {
-                const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=inboundPending`;
-                const data = await readGas(await fetch(url));
-                if (data.ok === false) throw new Error(data.error);
-                if (!Array.isArray(data.items)) throw new Error('GASに入庫の機能がまだありません（新しいコードで再デプロイしてください）');
-                inPending = data.items;
-                renderInboundPending();
-                st.innerHTML = inPending.length ? `入荷予定 ${inPending.length} 行` : '入庫待ちの入荷予定はありません。';
-            } catch (err) {
-                inPending = [];
-                renderInboundPending();
-                st.innerHTML = `<span class="text-rose-600">${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}</span>`;
-            }
-        }
-
-        function renderInboundPending() {
-            document.getElementById('inPendingAll').checked = false;
-            document.getElementById('inPendingBody').innerHTML = inPending.map((r, i) => `
-                <tr class="hover:bg-slate-50">
-                    <td class="px-3 py-2 text-center"><input type="checkbox" class="in-chk" data-i="${i}" onchange="updateInboundFillBtn()"></td>
-                    <td class="px-3 py-2">
-                        <div class="font-medium text-slate-800">${esc(r.name)}</div>
-                        <div class="text-[11px] text-slate-400">入庫シート ${r.row}行目${r.code ? '　コード ' + esc(r.code) : ''}${r.expiry ? '　賞味期限 ' + esc(r.expiry) : ''}${findInboundProduct(r.name) ? '' : '　<span class="text-amber-700">※在庫シートに同じ名前の商品がありません</span>'}</div>
-                    </td>
-                    <td class="px-3 py-2 text-xs text-slate-500">${[r.shipDate && '出荷 ' + esc(r.shipDate), esc(r.carrier), esc(r.track)].filter(Boolean).join('<br>') || '－'}</td>
-                    <td class="px-3 py-2 text-center font-bold text-slate-600">${esc(r.plan)}</td>
-                    <td class="px-3 py-2 text-center"><input type="number" min="0" class="in-qty w-20 border rounded px-2 py-1 text-center" data-i="${i}" value="${esc(r.plan)}" oninput="markInboundDiff(this)"></td>
-                    <td class="px-3 py-2"><input type="text" class="in-note w-full border rounded px-2 py-1 text-xs" data-i="${i}" placeholder="数の違いなど"></td>
-                </tr>`).join('') || '';
-            updateInboundFillBtn();
-        }
-        function markInboundDiff(el) {
-            const r = inPending[el.dataset.i];
-            el.classList.toggle('bg-amber-50', String(el.value) !== String(r.plan));
-            el.classList.toggle('border-amber-400', String(el.value) !== String(r.plan));
-        }
-        function toggleInboundAll(on) {
-            document.querySelectorAll('.in-chk').forEach(c => c.checked = on);
-            updateInboundFillBtn();
-        }
-        function updateInboundFillBtn() {
-            const n = document.querySelectorAll('.in-chk:checked').length;
-            const btn = document.getElementById('inFillBtn');
-            btn.disabled = !n;
-            btn.innerHTML = `<i class="fa-solid fa-check mr-1"></i>チェックした行を入庫済みにする${n ? `（${n}行）` : ''}`;
-        }
-
-        function inboundCommon() {
-            const date = document.getElementById('inDate').value;
-            const staff = document.getElementById('inStaff').value.trim();
-            if (!date) { alert('入荷日を入れてください'); return null; }
-            if (!staff && !confirm('担当者が空欄です。このまま書き込みますか？')) return null;
-            saveInboundStaff();
-            return { token: GAS_TOKEN, client: inClientKey(), date, staff };
-        }
-
-        function showInboundResult(ok, html) {
-            const box = document.getElementById('inResult');
-            box.className = `text-sm rounded-lg px-4 py-3 ${ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`;
-            box.innerHTML = html;
-            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-
-        async function postGas(key, payload) {
-            const resp = await fetch(clientOf(key).gasUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
-            const data = await readGas(resp);
-            if (data.ok === false) throw new Error(data.error || '書き込みに失敗しました');
-            return data;
-        }
-
-        async function submitInboundFill() {
-            const base = inboundCommon(); if (!base) return;
-            const entries = [...document.querySelectorAll('.in-chk:checked')].map(c => {
-                const i = c.dataset.i, r = inPending[i];
-                return { row: r.row, name: r.name,
-                         qty: Number(document.querySelector(`.in-qty[data-i="${i}"]`).value),
-                         note: document.querySelector(`.in-note[data-i="${i}"]`).value.trim() };
-            });
-            const bad = entries.find(e => !(e.qty >= 0) || document.querySelector(`.in-qty[data-i="${inPending.findIndex(r => r.row === e.row)}"]`).value === '');
-            if (bad) { alert(`「${bad.name}」の入庫数量を入れてください`); return; }
-            const diff = entries.filter(e => String(e.qty) !== String(inPending.find(r => r.row === e.row).plan));
-            let msg = `${clientOf(base.client).name} の入庫シートに ${entries.length} 行を記入します。\n入荷日：${base.date}　担当者：${base.staff || '（空欄）'}`;
-            if (diff.length) msg += `\n\n※入荷予定数と違う行が ${diff.length} 行あります。`;
-            if (!confirm(msg)) return;
-
-            const btn = document.getElementById('inFillBtn');
-            btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
-            try {
-                const data = await postGas(base.client, { ...base, action: 'inboundFill', entries });
-                let html = `<i class="fa-solid fa-circle-check mr-1"></i>${esc(data.client)}：${data.updated} 行を入庫済みにしました。`;
-                if (data.skipped && data.skipped.length) html += `<br><span class="text-amber-700">書き込まなかった行（シートが変わっていたため）：${data.skipped.map(esc).join('、')}</span>`;
-                showInboundResult(true, html);
-                await loadInboundPending();
-                loadStock(true).then(() => { renderStockList(); fillInboundProducts(); });
-            } catch (err) {
-                showInboundResult(false, `<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}`);
-                updateInboundFillBtn();
-            }
-        }
-
-        function addInboundRow() {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td class="px-3 py-2"><input type="text" list="inProductList" class="in-add-name w-full border rounded px-2 py-1" placeholder="商品名を入力して候補から選ぶ" oninput="checkInboundName(this)">
-                    <div class="in-add-hint text-[11px] mt-0.5"></div></td>
-                <td class="px-3 py-2"><input type="number" min="1" class="in-add-qty w-full border rounded px-2 py-1 text-center"></td>
-                <td class="px-3 py-2"><input type="text" class="in-add-exp w-full border rounded px-2 py-1" placeholder="例：2027.6"></td>
-                <td class="px-3 py-2"><input type="text" class="in-add-note w-full border rounded px-2 py-1 text-xs"></td>
-                <td class="px-3 py-2 text-center"><button onclick="this.closest('tr').remove()" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></td>`;
-            document.getElementById('inAddBody').appendChild(tr);
-        }
-        function checkInboundName(el) {
-            const hint = el.parentElement.querySelector('.in-add-hint');
-            if (!el.value.trim()) { hint.innerHTML = ''; return; }
-            const it = findInboundProduct(el.value);
-            hint.innerHTML = it
-                ? `<span class="text-emerald-700"><i class="fa-solid fa-check mr-1"></i>在庫シートの商品（現在の在庫 ${it.stock}）</span>`
-                : `<span class="text-amber-700">在庫シートにない名前です（このままだと在庫に反映されません）</span>`;
-        }
-
-        async function submitInboundAdd() {
-            const base = inboundCommon(); if (!base) return;
-            const rows = [...document.querySelectorAll('#inAddBody tr')].map(tr => ({
-                name: tr.querySelector('.in-add-name').value.trim(),
-                qty: Number(tr.querySelector('.in-add-qty').value),
-                expiry: tr.querySelector('.in-add-exp').value.trim(),
-                note: tr.querySelector('.in-add-note').value.trim(),
-            })).filter(r => r.name || r.qty);
-            if (!rows.length) { alert('商品と入庫数量を入れてください'); return; }
-            const noQty = rows.find(r => !(r.qty > 0));
-            if (noQty) { alert(`「${noQty.name || '（商品名なし）'}」の入庫数量を入れてください`); return; }
-            const noName = rows.find(r => !r.name);
-            if (noName) { alert('商品名が空欄の行があります'); return; }
-
-            // 在庫シートの商品名に合わせる（品番があれば商品コードにも入れる）
-            const unknown = [];
-            const items = rows.map(r => {
-                const it = findInboundProduct(r.name);
-                if (!it) unknown.push(r.name);
-                return { name: it ? (it.name || it.name2) : r.name, code: it ? (it.code || '') : '', qty: r.qty, expiry: r.expiry, note: r.note };
-            });
-            let msg = `${clientOf(base.client).name} の入庫シートに ${items.length} 行を追加します。\n入荷日：${base.date}　担当者：${base.staff || '（空欄）'}\n\n` +
-                      items.map(it => `・${it.name} × ${it.qty}`).join('\n');
-            if (unknown.length) msg += `\n\n※在庫シートにない名前が ${unknown.length} 件あります（在庫に反映されません）：\n${unknown.join('\n')}`;
-            if (!confirm(msg)) return;
-
-            const btn = document.getElementById('inAddBtn');
-            btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>書き込み中...';
-            try {
-                const data = await postGas(base.client, { ...base, action: 'inboundAdd', items });
-                showInboundResult(true, `<i class="fa-solid fa-circle-check mr-1"></i>${esc(data.client)}：入庫シートの ${data.startRow} 行目から ${data.added} 行を追加しました。`);
-                document.getElementById('inAddBody').innerHTML = '';
-                addInboundRow();
-                loadStock(true).then(() => { renderStockList(); fillInboundProducts(); });
-            } catch (err) {
-                showInboundResult(false, `<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message)}`);
-            } finally {
-                btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-file-import mr-1"></i>入庫シートに追加';
-            }
-        }
-
         // ===== 出庫シートに書き込み =====
-        function gasReady() {
-            const missing = CLIENTS.filter(c => !c.gasUrl || !c.gasUrl.startsWith('https://'));
-            if (missing.length) {
-                alert(`GASのURLが設定されていません：${missing.map(c => c.name).join('、')}\nファイル内の CLIENTS の gasUrl を確認してください。`);
-                return false;
-            }
-            return true;
+        function gasReady(quiet) {
+            if (GAS_URL && GAS_URL.startsWith('https://')) return true;
+            if (!quiet) alert('GASのURLが設定されていません。\nファイル内の GAS_URL を確認してください。');
+            return false;
         }
 
         function todayStr() {
@@ -2242,7 +1698,7 @@ const shukkaAuto = (() => {
                         rows: groups[key].map(r => ({ orderSn: r.orderSn, jpName: r.jpName, qty: r.baseQty * r.multiplier }))
                     };
                     // text/plain で送るとGAS側でCORSエラーになりにくい
-                    const resp = await fetch(clientOf(key).gasUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    const resp = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
                     const data = await resp.json();
                     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
@@ -2268,6 +1724,7 @@ const shukkaAuto = (() => {
                 }
             }
 
+            cacheStale('summary'); // 次に開いたときに最新を読み直す
             if (failed) {
                 res.className = 'text-sm rounded-lg px-3 py-2 bg-rose-50 border border-rose-200 text-rose-700';
                 res.innerHTML = '失敗した取引先があります。「もう一度書き込む」を押すと、失敗した分だけ送り直します。';
@@ -2280,29 +1737,90 @@ const shukkaAuto = (() => {
             }
         }
 
+        // ===== 読み込み結果の一時保存 =====
+        // タブを開いたら前回の結果をすぐ出し、裏で最新を読み込む。1分以内に読んだものは読み直さない
+        const CACHE_TTL = 60 * 1000;
+        const cacheKey = name => 'bunkatsu_cache_' + name;
+        function cacheGet(name) {
+            try { return JSON.parse(localStorage.getItem(cacheKey(name)) || 'null'); } catch (_) { return null; }
+        }
+        function cacheSet(name, data) {
+            try { localStorage.setItem(cacheKey(name), JSON.stringify({ at: Date.now(), data })); } catch (_) {}
+        }
+        function cacheStale(name) {
+            const c = cacheGet(name);
+            if (c) { c.stale = true; try { localStorage.setItem(cacheKey(name), JSON.stringify(c)); } catch (_) {} }
+        }
+        const cacheFresh = c => c && !c.stale && Date.now() - c.at < CACHE_TTL;
+        function hhmm(t) {
+            const d = new Date(t);
+            return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+        const SPIN = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>';
+
+        // GASの返事を読む（ログイン画面などが返ってきたときもわかるように）
+        async function readGas(resp) {
+            const text = await resp.text();
+            try { return JSON.parse(text); }
+            catch (_) { throw new Error(text.includes('<html') || text.includes('<!DOCTYPE') ? 'GASの公開設定が「全員」になっていない可能性があります' : 'GASの返事が読み取れません'); }
+        }
+        const netErr = (err, msg) => err.message === 'Failed to fetch' ? msg : err.message;
+
+        // ===== 出庫シートの読み込み（月別件数と追跡番号の空欄を、2社分まとめて1回で読む） =====
+        let summaryLoading = null;
+
+        async function loadSummary(force, quiet) {
+            const stEls = [document.getElementById('monthlyStatus'), document.getElementById('pendingStatus')];
+            if (!gasReady(quiet)) { stEls.forEach(el => el.innerText = 'GASのURLが未設定です。'); return; }
+            const cached = cacheGet('summary');
+            if (cached) renderSummary(cached.data, cached.at, !cacheFresh(cached) || force);
+            if (cacheFresh(cached) && !force) return;
+            if (!cached) stEls.forEach(el => el.innerHTML = SPIN + '出庫シートを読み込み中...');
+
+            if (!summaryLoading) {
+                summaryLoading = (async () => {
+                    try {
+                        // shopee=1：追跡番号の空欄は、Shopeeの受注番号の行だけを数える
+                        const url = `${GAS_URL}?token=${encodeURIComponent(GAS_TOKEN)}&action=summary&shopee=1&clients=${CLIENTS.map(c => c.key).join(',')}`;
+                        const data = await readGas(await fetch(url));
+                        if (!data.ok) throw new Error(data.error || '不明なエラー');
+                        if (!data.clients) throw new Error('GASが古いままです（新しいコードで再デプロイしてください）');
+                        return CLIENTS.map(c => {
+                            const r = data.clients[c.key];
+                            if (!r) return { key: c.key, groups: [], error: 'GASの取引先一覧（CLIENTS）にありません' };
+                            if (!r.ok) return { key: c.key, groups: [], error: r.error || '不明なエラー' };
+                            if (r.shopeeOnly !== true) return { key: c.key, groups: [], error: 'GASがShopee限定に対応していません' };
+                            return { key: c.key, months: r.months, groups: r.groups || [] };
+                        });
+                    } catch (err) {
+                        const msg = netErr(err, 'GASに接続できません（URLか公開設定を確認）');
+                        return CLIENTS.map(c => ({ key: c.key, groups: [], error: msg }));
+                    }
+                })().finally(() => { summaryLoading = null; });
+            }
+            const raw = await summaryLoading;
+            if (!raw.some(r => r.error)) cacheSet('summary', raw);
+            renderSummary(raw, Date.now(), false);
+        }
+
+        function renderSummary(raw, at, refreshing) {
+            renderMonthly(raw, at, refreshing);
+            renderPending(raw, at, refreshing);
+        }
+
+        function loadMonthly(force, quiet) { return loadSummary(force, quiet); }
+
+        function loadPending(force, quiet) {
+            if (!quiet) document.getElementById('fillResult').classList.add('hidden');
+            return loadSummary(force, quiet);
+        }
+
         // ===== 月別出荷件数 =====
-        async function loadMonthly() {
+        function renderMonthly(raw, at, refreshing) {
             const status = document.getElementById('monthlyStatus');
             const head = document.getElementById('monthlyHead');
             const body = document.getElementById('monthlyBody');
-            if (!gasReady()) { status.innerText = 'GASのURLが未設定です。'; return; }
-            status.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>出庫シートを読み込み中...';
-
-            // 取引先ごとに同時に読み込む
-            const results = await Promise.all(CLIENTS.map(async c => {
-                try {
-                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}`;
-                    const resp = await fetch(url);
-                    const text = await resp.text();
-                    let data;
-                    try { data = JSON.parse(text); }
-                    catch (_) { throw new Error(text.includes('<html') || text.includes('<!DOCTYPE') ? 'GASの公開設定が「全員」になっていない可能性があります' : 'GASの返事が読み取れません'); }
-                    if (!data.ok) throw new Error(data.error || '不明なエラー');
-                    return { c, months: data.months };
-                } catch (err) {
-                    return { c, error: err.message === 'Failed to fetch' ? 'GASに接続できません（URLか公開設定を確認）' : err.message };
-                }
-            }));
+            const results = raw.map(r => ({ ...r, c: clientOf(r.key) })).filter(r => r.c);
 
             const allMonths = [...new Set(results.flatMap(r => (r.months || []).map(m => m.month)))].sort().reverse();
             const hasErr = results.some(r => r.error);
@@ -2340,18 +1858,11 @@ const shukkaAuto = (() => {
                 ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
                 : noSplit
                     ? `<span class="text-amber-700">GASが古いため、Shopee／その他の内訳が出ません（新しいGASコードで再デプロイしてください）</span>`
-                    : `${new Date().toLocaleString('ja-JP')} 時点（件数＝注文数）`;
+                    : `${hhmm(at)} 時点（件数＝注文数）` + (refreshing ? `　<span class="text-teal-700">${SPIN}最新を読み込み中...</span>` : '');
         }
 
-        // ===== 追跡番号の追記 =====
-        let pendingData = []; // [{ c, groups:[{date,orders,rows}] , error }]
-
-        // GASの返事を読む（ログイン画面などが返ってきたときもわかるように）
-        async function readGas(resp) {
-            const text = await resp.text();
-            try { return JSON.parse(text); }
-            catch (_) { throw new Error(text.includes('<html') || text.includes('<!DOCTYPE') ? 'GASの公開設定が「全員」になっていない可能性があります' : 'GASの返事が読み取れません'); }
-        }
+        // ===== 追跡番号の追記（Shopeeの注文だけ） =====
+        let pendingData = []; // [{ c, groups:[{date,orders,rows}], error }]
 
         function fmtDate(ymd) {
             const [y, m, d] = ymd.split('-').map(Number);
@@ -2359,25 +1870,12 @@ const shukkaAuto = (() => {
             return `${m}/${d}（${w}）`;
         }
 
-        async function loadPending() {
-            const status = document.getElementById('pendingStatus');
-            if (!gasReady()) { status.innerText = 'GASのURLが未設定です。'; return; }
-            status.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>出庫シートを読み込み中...';
-            document.getElementById('fillResult').classList.add('hidden');
-
-            pendingData = await Promise.all(CLIENTS.map(async c => {
-                try {
-                    const url = `${c.gasUrl}?token=${encodeURIComponent(GAS_TOKEN)}&client=${encodeURIComponent(c.key)}&action=pending`;
-                    const data = await readGas(await fetch(url));
-                    if (!data.ok) throw new Error(data.error || '不明なエラー');
-                    if (!data.groups) throw new Error('GASが古いままです（新しいコードで再デプロイしてください）');
-                    return { c, groups: data.groups };
-                } catch (err) {
-                    return { c, groups: [], error: err.message === 'Failed to fetch' ? 'GASに接続できません' : err.message };
-                }
-            }));
+        function renderPending(raw, at, refreshing) {
+            const keepChecked = selectedPendingDates();
+            pendingData = raw.map(r => ({ ...r, c: clientOf(r.key) })).filter(r => r.c);
 
             const dates = [...new Set(pendingData.flatMap(r => r.groups.map(g => g.date)))].sort().reverse();
+            const isChecked = (d, i) => keepChecked.length ? keepChecked.includes(d) : (i === 0 && dates.length === 1);
             document.getElementById('pendingHead').innerHTML = `<tr>
                 <th class="px-3 py-3 w-8"></th>
                 <th class="px-4 py-3">発送日</th>
@@ -2385,19 +1883,19 @@ const shukkaAuto = (() => {
             </tr>`;
             document.getElementById('pendingBody').innerHTML = dates.length ? dates.map((d, i) => `
                 <tr class="hover:bg-slate-50 cursor-pointer" onclick="if(event.target.tagName!=='INPUT'){const cb=this.querySelector('input');cb.checked=!cb.checked;updateFillSummary();}">
-                    <td class="px-3 py-2.5"><input type="checkbox" class="pending-date" value="${d}" onchange="updateFillSummary()" ${i === 0 && dates.length === 1 ? 'checked' : ''}></td>
+                    <td class="px-3 py-2.5"><input type="checkbox" class="pending-date" value="${d}" onchange="updateFillSummary()" ${isChecked(d, i) ? 'checked' : ''}></td>
                     <td class="px-4 py-2.5 font-medium">${fmtDate(d)}</td>
                     ${pendingData.map(r => {
                         const g = r.groups.find(x => x.date === d);
                         return `<td class="px-4 py-2.5 text-right">${g ? `<b class="text-teal-700">${g.orders}件</b> <span class="text-xs text-slate-400">${g.rows}行</span>` : '<span class="text-slate-300">−</span>'}</td>`;
                     }).join('')}
                 </tr>`).join('')
-                : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center text-slate-400">追跡番号が空欄の行はありません</td></tr>`;
+                : `<tr><td colspan="${CLIENTS.length + 2}" class="px-4 py-6 text-center text-slate-400">追跡番号が空欄のShopeeの注文はありません</td></tr>`;
 
             const errs = pendingData.filter(r => r.error);
-            status.innerHTML = errs.length
+            document.getElementById('pendingStatus').innerHTML = errs.length
                 ? `<span class="text-rose-600">読み込みに失敗：${errs.map(r => `${esc(r.c.name)}（${esc(r.error)}）`).join('、')}</span>`
-                : `${new Date().toLocaleString('ja-JP')} 時点`;
+                : `${hhmm(at)} 時点` + (refreshing ? `　<span class="text-teal-700">${SPIN}最新を読み込み中...</span>` : '');
             updateFillSummary();
         }
 
@@ -2414,7 +1912,7 @@ const shukkaAuto = (() => {
                 const n = r.groups.filter(g => dates.includes(g.date)).reduce((s, g) => s + g.orders, 0);
                 return n ? `${r.c.name} ${n}件` : '';
             }).filter(Boolean);
-            el.innerHTML = `${dates.map(fmtDate).join('・')} の <b>${parts.join('、')}</b> に追記します。`;
+            el.innerHTML = `${dates.map(fmtDate).join('・')} の <b>${parts.join('、')}</b>（Shopeeの注文のみ）に追記します。`;
         }
 
         async function submitFillTracking() {
@@ -2423,38 +1921,56 @@ const shukkaAuto = (() => {
             const carrier = document.getElementById('fillCarrier').value;
             if (!dates.length) return;
             if (!tracking) { alert('追跡番号を入力してください'); return; }
-            if (dates.length > 1 && !confirm(`${dates.length}日分に同じ追跡番号「${tracking}」を入れます。よろしいですか？`)) return;
+            if (dates.length > 1 && !confirm(`${dates.length}日分のShopeeの注文に同じ追跡番号「${tracking}」を入れます。よろしいですか？`)) return;
 
             const btn = document.getElementById('fillBtn');
             const res = document.getElementById('fillResult');
             btn.disabled = true;
-            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>追記中...';
+            btn.innerHTML = SPIN + '追記中...';
 
-            const targets = pendingData.filter(r => r.groups.some(g => dates.includes(g.date)));
+            const targets = pendingData.filter(r => !r.error && r.groups.some(g => dates.includes(g.date)));
             const lines = [];
             let failed = false;
-            for (const r of targets) {
-                try {
-                    const resp = await fetch(r.c.gasUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({ token: GAS_TOKEN, action: 'fillTracking', client: r.c.key, dates, tracking, carrier })
-                    });
-                    const data = await readGas(resp);
-                    if (!data.ok) throw new Error(data.error || '不明なエラー');
-                    lines.push(`<i class="fa-solid fa-circle-check mr-1"></i>${esc(r.c.name)}：${data.updatedOrders}件（${data.updated}行）に追記しました`);
-                } catch (err) {
-                    failed = true;
-                    lines.push(`<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(r.c.name)}：失敗しました（${esc(err.message)}）`);
-                }
+            try {
+                // 2社分をまとめて1回で書き込む
+                const resp = await fetch(GAS_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ token: GAS_TOKEN, action: 'fillTracking', clients: targets.map(r => r.c.key), dates, tracking, carrier, shopeeOnly: true })
+                });
+                const data = await readGas(resp);
+                if (!data.ok) throw new Error(data.error || '不明なエラー');
+                if (data.shopeeOnly !== true || !data.results) throw new Error('GASがShopee限定に対応していない可能性があります。出庫シートを確認してください');
+                targets.forEach(r => {
+                    const x = data.results[r.c.key] || { ok: false, error: 'GASから返事がありません' };
+                    if (x.ok) {
+                        lines.push(`<i class="fa-solid fa-circle-check mr-1"></i>${esc(r.c.name)}：${x.updatedOrders}件（${x.updated}行）に追記しました`);
+                        r.groups = r.groups.filter(g => !dates.includes(g.date)); // 表からすぐ消す
+                    } else {
+                        failed = true;
+                        lines.push(`<i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(r.c.name)}：失敗しました（${esc(x.error)}）`);
+                    }
+                });
+            } catch (err) {
+                failed = true;
+                lines.push(`<i class="fa-solid fa-triangle-exclamation mr-1"></i>失敗しました（${esc(netErr(err, 'GASに接続できません'))}）`);
             }
             res.className = `text-sm rounded-lg px-3 py-2 ${failed ? 'bg-rose-50 border border-rose-200 text-rose-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-800'}`;
             res.innerHTML = lines.join('<br>');
+            res.classList.remove('hidden');
             btn.innerHTML = '<i class="fa-solid fa-pen-to-square mr-1"></i>選んだ発送日に追記';
             if (!failed) document.getElementById('fillTracking').value = '';
-            const keep = res.innerHTML, keepClass = res.className;
-            await loadPending(); // 残りを表示し直す
-            res.className = keepClass; res.innerHTML = keep; res.classList.remove('hidden');
+
+            // 読み直しを待たずに表を更新し、裏で最新を確認する
+            document.querySelectorAll('.pending-date:checked').forEach(cb => { cb.checked = false; });
+            const cur = cacheGet('summary');
+            const raw = pendingData.map(({ key, groups, error }) => {
+                const old = cur && cur.data ? cur.data.find(x => x.key === key) : null;
+                return { ...(old || {}), key, groups, error };
+            });
+            renderPending(raw, Date.now(), true);
+            cacheSet('summary', raw); cacheStale('summary');
+            loadSummary(true, true);
         }
 
         function resetApp() {
