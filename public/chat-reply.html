@@ -2446,6 +2446,7 @@
 
         function renderTodo(data, allowAuto) {
             const container = document.getElementById('burstModeContainer');
+            todoRenderedFs = false;   // 仕分けなしの表示（自動同期が止まっている時の予備）
             allRoomsCache = data.rooms || [];
             const auto = [];
             const items = computeTodo(data, auto).filter(it => !isLater(it.r.room_id));   // 「後で対応」に入れたルームは出さない
@@ -2501,8 +2502,18 @@
         let bodyLoading = false;
         let busyToastAt = 0;
 
+        // 自動同期が動いているか（サーバーは変化がない時も4分ごとに記録する。少し遅れても15分までは「動いている」とみなす）
+        //   ※ 以前は10分で切っていたため、静かな時間帯に一瞬「止まった」と判断され、仕分けのない従来の表示に切り替わることがあった
         function fsActive() {
-            return !!(syncStatus && syncStatus.lastRunAt && Date.now() / 1000 - syncStatus.lastRunAt < 600 && Object.keys(roomsMeta).length);
+            return !!(syncStatus && syncStatus.lastRunAt && Date.now() / 1000 - syncStatus.lastRunAt < 900 && Object.keys(roomsMeta).length);
+        }
+        // 要対応を「仕分けあり（Firestore同期）」で表示しているか
+        let todoRenderedFs = false;
+        // 仕分けなしの表示になっていたら、同期が届いた時点で仕分けありの表示に戻す（返信を書いている途中なら待つ）
+        function backToFsView() {
+            if (currentMode !== 'burst' || todoRenderedFs || !fsActive()) return;
+            if (isUserBusy(document.getElementById('burstModeContainer'))) return;
+            fsTodoRefresh(false);
         }
         function resetRoomsSync() {
             roomsUnsubs.forEach(u => { try { u(); } catch (e) {} });
@@ -2541,7 +2552,7 @@
                         if (roomsAcc !== acc) return;
                         syncStatus = d.exists() ? d.data() : null;
                         gotStatus = true; done();
-                        if (currentMode === 'burst' && fsActive()) setLastUpdatedFs();
+                        if (currentMode === 'burst' && fsActive()) { setLastUpdatedFs(); backToFsView(); }
                     }, err => { handleFsDenied(err); gotStatus = true; done(); }));
                     roomsUnsubs.push(f.onSnapshot(f.query(f.collection(f.db, 'cw_rooms'), f.where('account', '==', acc)), qs => {
                         fsOk(qs);
@@ -2552,6 +2563,7 @@
                         const first = !gotRooms;
                         gotRooms = true; done();
                         if (!first) onRoomsMetaChanged();
+                        else setTimeout(backToFsView, 0);   // 起動時に4秒待っても届かず、仕分けなしで表示していた時
                     }, err => { handleFsDenied(err); gotRooms = true; done(); }));
                 });
             })().catch(e => { console.error(e); roomsReady = null; });
@@ -3476,6 +3488,7 @@
 
         function renderTodoFs() {
             const container = document.getElementById('burstModeContainer');
+            todoRenderedFs = true;
             allRoomsCache = metaToRooms();
             const auto = [];
             const sorted = computeTodoMeta(auto).filter(it => !isLater(it.rid));   // 「後で対応」に入れたルームは出さない
