@@ -3290,23 +3290,24 @@
         //   none=返信不要 / easy=すぐ返せる / check=要確認。判定したメッセージが最新の時だけ使う
         const TRIAGE_LABELS = { none: '✓ 返信不要', easy: '💬 すぐ返せる', check: '🔍 要確認' };
         // 要確認の2次仕分け（サーバーが triageSub に入れる。古い判定で種類がない時は「その他」）
+        //   「共有」は廃止（すぐ返せる・返信不要で足りるため）。以前の判定で share が残っている時は「その他」に出す
+        //   「出荷依頼」と「依頼（作業依頼）」は「依頼」1つにまとめた（値は order。以前の判定の request も「依頼」に出す）
         const TRIAGE_SUBS = {
-            order: { icon: '🚚', label: '出荷依頼' },
+            order: { icon: '🙏', label: '依頼' },
             ship: { icon: '📦', label: '出荷・追跡' },
             bill: { icon: '💴', label: '請求・料金' },
             trouble: { icon: '⚠️', label: 'トラブル' },
             system: { icon: '💻', label: 'システム' },
             shopee: { icon: '🛍️', label: 'Shopee連携' },
-            request: { icon: '🙏', label: '依頼' },
-            share: { icon: '📢', label: '共有' },
             other: { icon: '📝', label: 'その他' }
         };
-        const TRIAGE_SUB_ORDER = ['trouble', 'shopee', 'order', 'request', 'ship', 'bill', 'system', 'share', 'other'];
+        const TRIAGE_SUB_ORDER = ['trouble', 'shopee', 'order', 'ship', 'bill', 'system', 'other'];
         let triageFilter = 'all';
         let subFilter = 'all';
         function triageSub(rid) {
             if (triageCat(rid) !== 'check') return '';
-            const s = (roomsMeta[rid] || {}).triageSub;
+            let s = (roomsMeta[rid] || {}).triageSub;
+            if (s === 'request') s = 'order';   // 作業依頼も「依頼」にまとめる
             return TRIAGE_SUBS[s] ? s : 'other';
         }
         // 種類ごとに、よく使う操作へのボタン（カードの中に出す）
@@ -3319,13 +3320,13 @@
                 // USアプリのボタンは、前にUSアプリへ送ったことのあるルームだけに出す
                 const st = window.messageStore[cardKey] || {};
                 if (isUsRoom(st.roomId)) html += b('📦 USアプリに出荷依頼', `openUsRequest('${cardKey}')`);
+                html += b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);   // 作業の依頼は判断が要ることが多い
             }
             else if (sub === 'ship') html = b('🔗 Robot-in・追跡', `openLinkSheet('', '')`) + b('🚚 送り状を探す', `switchMode('ship')`);
             else if (sub === 'bill') html = b('🧾 請求に記録', `openBillingForm('${cardKey}')`) + b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'trouble') html = b('🚨 誤出荷に記録', `openMisshipForm('${cardKey}')`) + b('🧾 補填を記録', `openBillingForm('${cardKey}')`);
             else if (sub === 'system') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
             else if (sub === 'shopee') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`) + b('🎮 Discordで聞く', `askDiscord('${cardKey}')`);
-            else if (sub === 'request') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             else if (sub === 'other') html = b('👤 渡辺さんに聞く', `openAskForm('${cardKey}')`);
             // 幅が足りない時は2段に折り返す（横にはみ出さない）
             return html ? `<div class="flex flex-wrap gap-2 mt-2">${html}</div>` : '';
