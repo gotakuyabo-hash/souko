@@ -11,7 +11,7 @@
     <!-- Firebase SDK (Modular v10) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 
         const firebaseConfig = {
@@ -28,7 +28,7 @@
         const db = getFirestore(app);
 
         window.db = db;
-        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where };
 
 /* =========================================================
    日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
@@ -241,6 +241,7 @@ const shukkaAuto = (() => {
             <div class="flex bg-indigo-900/60 p-1 rounded-xl">
                 <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
+                <button onclick="switchTab('history')" id="tabBtnHistory" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">出荷履歴</button>
             </div>
         </div>
     </header>
@@ -344,6 +345,32 @@ const shukkaAuto = (() => {
                         <tbody id="masterTableBody" class="divide-y"></tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <!-- 出荷履歴タブ -->
+        <div id="tabContentHistory" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <h2 class="text-lg font-semibold"><i class="fa-solid fa-magnifying-glass text-teal-600 mr-2"></i>注文番号で調べる</h2>
+                <p class="text-xs text-slate-500 leading-relaxed">
+                    検品書・ピックリストの印刷、Excel保存、Chatwork送信、「出荷件数に登録」をした注文が、その日の出荷として記録されています。<br>
+                    ※ボタンを押した記録です。実際に荷物が出たかは、追跡番号でもご確認ください。
+                </p>
+                <textarea id="historySearchInput" rows="3" class="w-full font-mono text-sm border rounded-xl p-3 bg-slate-50" placeholder="注文番号を入力（複数あるときは改行で区切って貼り付けできます）"></textarea>
+                <div class="flex gap-2">
+                    <button onclick="searchShukkaHistory()" id="historySearchBtn" class="bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white text-xs px-4 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-magnifying-glass mr-1"></i>検索する</button>
+                    <button onclick="document.getElementById('historySearchInput').value='';document.getElementById('historySearchResult').innerHTML='';" class="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs px-4 py-2.5 rounded-xl">クリア</button>
+                </div>
+                <div id="historySearchResult"></div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-teal-600 mr-2"></i>日付から見る</h2>
+                    <button onclick="loadShukkaDates()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg"><i class="fa-solid fa-rotate-right mr-1"></i>最新にする</button>
+                </div>
+                <div id="historyDateList" class="text-xs text-slate-500">読み込み中...</div>
+                <div id="historyDateDetail"></div>
             </div>
         </div>
 
@@ -547,13 +574,151 @@ const shukkaAuto = (() => {
             }).catch(err => { alert('コピーに失敗しました'); });
         }
 
+        let shukkaDatesLoaded = false;
+
         function switchTab(tabName) {
-            const isOrders = tabName === 'orders';
-            document.getElementById('tabBtnOrders').className = isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            document.getElementById('tabBtnMaster').className = !isOrders ? "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm" : "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
-            document.getElementById('tabContentOrders').classList.toggle('hidden', !isOrders);
-            document.getElementById('tabContentMaster').classList.toggle('hidden', isOrders);
-            if (!isOrders) renderMasterTable();
+            const on = "px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm";
+            const off = "px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white";
+            [['orders', 'Orders'], ['master', 'Master'], ['history', 'History']].forEach(([name, id]) => {
+                document.getElementById('tabBtn' + id).className = tabName === name ? on : off;
+                document.getElementById('tabContent' + id).classList.toggle('hidden', tabName !== name);
+            });
+            if (tabName === 'master') renderMasterTable();
+            if (tabName === 'history' && !shukkaDatesLoaded) loadShukkaDates();
+        }
+
+        // ===== 出荷履歴（shukka_auto_ids に記録された注文番号を見る） =====
+        const SHUKKA_SRC = 'medicarry';
+        const SHUKKA_IDS_COL = 'shukka_auto_ids';
+        const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+        let shukkaDateDocs = [];   // [{ date, ids }]
+
+        function formatShukkaDate(d) {
+            const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!m) return d;
+            const w = WEEKDAYS[new Date(+m[1], +m[2] - 1, +m[3]).getDay()];
+            return `${m[1]}/${+m[2]}/${+m[3]}（${w}）`;
+        }
+
+        async function searchShukkaHistory() {
+            const resultEl = document.getElementById('historySearchResult');
+            const raw = document.getElementById('historySearchInput').value;
+            const ids = [...new Set(raw.split(/[\s,、，]+/).map(s => s.trim()).filter(Boolean))];
+            if (!ids.length) { resultEl.innerHTML = '<p class="text-xs text-rose-600">注文番号を入力してください。</p>'; return; }
+            if (ids.length > 300) { resultEl.innerHTML = '<p class="text-xs text-rose-600">一度に調べられるのは300件までです。</p>'; return; }
+
+            const { collection, query, where, getDocs } = window.firebaseFns;
+            const btn = document.getElementById('historySearchBtn');
+            btn.disabled = true;
+            resultEl.innerHTML = '<p class="text-xs text-slate-500"><i class="fa-solid fa-circle-notch fa-spin mr-1"></i>検索中...</p>';
+
+            try {
+                const findDates = async id => {
+                    const snap = await getDocs(query(collection(window.db, SHUKKA_IDS_COL), where('ids', 'array-contains', id)));
+                    const dates = [];
+                    snap.forEach(d => { const x = d.data(); if (x.src === SHUKKA_SRC && x.date) dates.push(x.date); });
+                    return dates;
+                };
+                const results = [];
+                for (let i = 0; i < ids.length; i += 10) {   // 10件ずつ並べて問い合わせ
+                    const part = await Promise.all(ids.slice(i, i + 10).map(async id => {
+                        let dates = await findDates(id);
+                        // 小文字で入力された場合は大文字でも探す（Shopeeの注文番号は大文字）
+                        if (!dates.length && id !== id.toUpperCase()) dates = await findDates(id.toUpperCase());
+                        return { id, dates: [...new Set(dates)].sort() };
+                    }));
+                    results.push(...part);
+                }
+
+                const found = results.filter(r => r.dates.length).length;
+                const notFound = results.length - found;
+                const rowsHtml = results.map(r => `
+                    <tr class="${r.dates.length ? '' : 'bg-rose-50'}">
+                        <td class="px-4 py-2 font-mono">${escapeHtml(r.id)}</td>
+                        <td class="px-4 py-2">${r.dates.length
+                            ? '<span class="text-emerald-700 font-bold"><i class="fa-solid fa-circle-check mr-1"></i>記録あり</span>'
+                            : '<span class="text-rose-600 font-bold"><i class="fa-solid fa-circle-xmark mr-1"></i>記録なし</span>'}</td>
+                        <td class="px-4 py-2">${r.dates.map(d => escapeHtml(formatShukkaDate(d))).join('<br>') || '-'}</td>
+                    </tr>`).join('');
+
+                resultEl.innerHTML = `
+                    <p class="text-sm mb-2"><span class="text-emerald-700 font-bold">記録あり ${found}件</span>　/　<span class="text-rose-600 font-bold">記録なし ${notFound}件</span></p>
+                    <div class="overflow-x-auto border rounded-xl">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead class="bg-slate-100 border-b"><tr>
+                                <th class="px-4 py-2">注文番号</th><th class="px-4 py-2">結果</th><th class="px-4 py-2">記録された日</th>
+                            </tr></thead>
+                            <tbody class="divide-y">${rowsHtml}</tbody>
+                        </table>
+                    </div>
+                    ${notFound ? `<p class="text-[11px] text-slate-500 mt-2">※「記録なし」でも、記録機能を入れる前の出荷や、別のツールで処理した注文の可能性があります。${shukkaDateDocs.length ? `（この画面で見られる記録は ${escapeHtml(formatShukkaDate(shukkaDateDocs[shukkaDateDocs.length - 1].date))} 以降です）` : ''}</p>` : ''}
+                `;
+            } catch (e) {
+                console.error(e);
+                resultEl.innerHTML = `<p class="text-xs text-rose-600">検索できませんでした：${escapeHtml(e.code || e.message || e)}</p>`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function loadShukkaDates() {
+            const listEl = document.getElementById('historyDateList');
+            listEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>読み込み中...';
+            const { collection, query, where, getDocs } = window.firebaseFns;
+            try {
+                const snap = await getDocs(query(collection(window.db, SHUKKA_IDS_COL), where('src', '==', SHUKKA_SRC)));
+                shukkaDateDocs = [];
+                snap.forEach(d => { const x = d.data(); if (x.date) shukkaDateDocs.push({ date: x.date, ids: x.ids || [] }); });
+                shukkaDateDocs.sort((a, b) => b.date.localeCompare(a.date));   // 新しい日付が上
+                shukkaDatesLoaded = true;
+
+                if (!shukkaDateDocs.length) { listEl.innerHTML = 'まだ出荷の記録がありません。'; return; }
+                listEl.innerHTML = `
+                    <div class="flex flex-wrap gap-2">
+                        ${shukkaDateDocs.map((x, i) => `
+                            <button onclick="showShukkaDate(${i})" class="shukka-date-btn border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 text-slate-700 px-3 py-2 rounded-lg">
+                                <span class="font-semibold">${escapeHtml(formatShukkaDate(x.date))}</span>
+                                <span class="ml-1 text-teal-700 font-bold">${x.ids.length}件</span>
+                            </button>`).join('')}
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-2">いちばん古い記録：${escapeHtml(formatShukkaDate(shukkaDateDocs[shukkaDateDocs.length - 1].date))}</p>
+                `;
+            } catch (e) {
+                console.error(e);
+                listEl.innerHTML = `<span class="text-rose-600">読み込めませんでした：${escapeHtml(e.code || e.message || e)}</span>`;
+            }
+        }
+
+        function showShukkaDate(i) {
+            const x = shukkaDateDocs[i];
+            if (!x) return;
+            document.querySelectorAll('.shukka-date-btn').forEach((b, j) => {
+                b.classList.toggle('ring-2', j === i);
+                b.classList.toggle('ring-teal-400', j === i);
+            });
+            const ids = [...x.ids].sort();
+            document.getElementById('historyDateDetail').innerHTML = `
+                <div class="border rounded-xl p-4 bg-slate-50/50 space-y-3">
+                    <div class="flex flex-wrap justify-between items-center gap-2">
+                        <h3 class="font-bold text-sm">${escapeHtml(formatShukkaDate(x.date))} の注文　<span class="text-teal-700">${ids.length}件</span></h3>
+                        <div class="flex gap-2">
+                            <input type="text" oninput="filterShukkaIds(this.value)" placeholder="この日の中から絞り込み" class="text-xs border rounded-lg px-3 py-1.5 bg-white">
+                            <button id="copyShukkaIdsBtn" class="bg-teal-600 hover:bg-teal-700 text-white text-xs px-3 py-1.5 rounded-lg"><i class="fa-regular fa-copy mr-1"></i>全部コピー</button>
+                        </div>
+                    </div>
+                    <div id="shukkaIdList" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1 max-h-[400px] overflow-y-auto">
+                        ${ids.map(id => `<div class="shukka-id font-mono text-xs bg-white border rounded px-2 py-1" data-id="${escapeHtml(id.toLowerCase())}">${escapeHtml(id)}</div>`).join('')}
+                    </div>
+                </div>
+            `;
+            document.getElementById('copyShukkaIdsBtn').onclick = () => copyToClipboard(ids.join('\n'));
+        }
+
+        function filterShukkaIds(q) {
+            const k = String(q || '').trim().toLowerCase();
+            document.querySelectorAll('#shukkaIdList .shukka-id').forEach(el => {
+                el.style.display = !k || el.dataset.id.includes(k) ? '' : 'none';
+            });
         }
 
         function updateMasterCountBadge() {
