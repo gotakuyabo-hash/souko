@@ -86,7 +86,8 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { initializeFirestore, collection, getDocs, query, where, orderBy, limit, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+// 読み込み専用の軽量版（lite）。常時接続（Listen）を使わず1回ずつ普通に取りに行くので速く、404/transport エラーも起きない
+import { getFirestore, collection, getDocs, query, where, orderBy, limit, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-lite.js";
 import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
@@ -97,8 +98,7 @@ const app = initializeApp({
     messagingSenderId: "642116656086",
     appId: "1:642116656086:web:139cc5558a4ef6ebda6277"
 });
-// 通信が途中で切れて「Listen 404 / transport errored」が出るのを防ぐため、ロングポーリングに固定
-const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+const db = getFirestore(app);
 const auth = getAuth(app);
 
 // ===== 合言葉ログイン（コックピットと同じ仕組み） =====
@@ -158,15 +158,27 @@ function bodyForCompare(t) {
 function editRatio(a, b) {
     a = String(a).slice(0, 1500); b = String(b).slice(0, 1500);
     if (!a.length && !b.length) return 0;
-    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    if (a === b) return 0;
+    const maxLen = Math.max(a.length, b.length);
+    // 先頭・末尾の同じ部分は計算不要なので外す（少しだけ直した文はほぼ一瞬で終わる）
+    let s = 0;
+    while (s < a.length && s < b.length && a[s] === b[s]) s++;
+    let ea = a.length, eb = b.length;
+    while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+    a = a.slice(s, ea); b = b.slice(s, eb);
+    if (!a.length || !b.length) return Math.max(a.length, b.length) / maxLen;
+    let prev = new Uint16Array(b.length + 1), cur = new Uint16Array(b.length + 1);
+    for (let j = 0; j <= b.length; j++) prev[j] = j;
     for (let i = 1; i <= a.length; i++) {
-        const cur = [i];
+        cur[0] = i;
+        const ca = a.charCodeAt(i - 1);
         for (let j = 1; j <= b.length; j++) {
-            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            const x = prev[j] + 1, y = cur[j - 1] + 1, z = prev[j - 1] + (ca === b.charCodeAt(j - 1) ? 0 : 1);
+            cur[j] = x < y ? (x < z ? x : z) : (y < z ? y : z);
         }
-        prev = cur;
+        const t = prev; prev = cur; cur = t;
     }
-    return prev[b.length] / Math.max(a.length, b.length);
+    return prev[b.length] / maxLen;
 }
 const editLevel = r => r < 0.05 ? 'そのまま' : r < 0.3 ? '軽い修正' : '大幅修正';
 
@@ -183,15 +195,25 @@ async function fetchRange(name, field, from, to) {
         [from.getTime(), to.getTime()],
         [from.toISOString(), to.toISOString()]
     ];
-    for (const [a, b] of tries) {
-        const snap = await getDocs(query(col, where(field, '>=', a), where(field, '<', b), orderBy(field)));
-        snap.docs.forEach(d => map.set(d.id, Object.assign({ _id: d.id }, d.data())));
-    }
+    // 3通りを順番待ちせず同時に実行（待ち時間が約1/3に）
+    const snaps = await Promise.all(tries.map(([a, b]) =>
+        getDocs(query(col, where(field, '>=', a), where(field, '<', b), orderBy(field)))));
+    snaps.forEach(snap => snap.docs.forEach(d => map.set(d.id, Object.assign({ _id: d.id }, d.data()))));
     let list = Array.from(map.values());
     let mode = '期間検索';
 
-    // ② それでも0件なら、全件を読んで手元で期間を絞り込む（項目名や日付形式が違う場合の予備）
+    // ② 0件のときは、まず1件だけ見て「日付の形式が想定どおりか」を確認。
+    //    想定どおりなら本当にこの期間は0件なので、重い全件読み込みはしない
+    let needFull = false;
     if (!list.length) {
+        const one = await getDocs(query(col, limit(1)));
+        const s = one.docs[0] ? one.docs[0].data() : null;
+        if (!s) fetchInfo[name] = { total: 0 };
+        else needFull = !(s[field] && (s[field].toDate || typeof s[field] === 'number' || typeof s[field] === 'string'));
+    }
+
+    // ③ 形式が違う場合だけ、全件を読んで手元で期間を絞り込む（項目名や日付形式が違う場合の予備）
+    if (needFull) {
         const snap = await getDocs(query(col, limit(5000)));
         const all = snap.docs.map(d => Object.assign({ _id: d.id }, d.data()));
         const sample = all[0] || {};
@@ -224,7 +246,9 @@ window.loadLogs = async function () {
     btn.textContent = '読み込み中…';
     msg.textContent = '';
     try {
+        msg.textContent = 'ログイン確認中…';
         await ensureLogin(false);
+        msg.textContent = 'ログを取得中…';
         const load = () => Promise.all([
             fetchRange('ai_reply_logs', 'createdAt', aiFrom, to),
             fetchRange('ai_brushup_feedback', 'updatedAt', from, to)
@@ -236,7 +260,8 @@ window.loadLogs = async function () {
             await ensureLogin(true);      // 通行証が古い時はログインし直して再挑戦
             [aiLogs, sendLogs] = await load();
         }
-        buildRows();
+        msg.textContent = `AI案と送信文を比較中…（${sendLogs.length}件）`;
+        await buildRows(msg);
         renderSummary(from, to);
         document.getElementById('result').style.display = 'block';
         msg.textContent = `AI生成ログ ${aiLogs.length} 件、送信ログ ${sendLogs.length} 件を読み込みました。`;
@@ -258,12 +283,22 @@ window.loadLogs = async function () {
     }
 };
 
-function buildRows() {
+async function buildRows(msg) {
     const byDraft = {};
     aiLogs.forEach(a => { if (a.draftId) byDraft[a.draftId] = a; });
     const usedAiIds = new Set();
+    // 推定ひもづけ用：ルームごとにAI案をまとめておく（毎回全件を探さない）
+    const aiByRoom = {};
+    aiLogs.forEach(a => { const k = String(a.roomId); (aiByRoom[k] = aiByRoom[k] || []).push(a); });
 
-    rows = sendLogs.map(s => {
+    rows = [];
+    for (let idx = 0; idx < sendLogs.length; idx++) {
+        // 20件ごとに画面へ制御を返して、固まらないようにする
+        if (idx && idx % 20 === 0) {
+            if (msg) msg.textContent = `AI案と送信文を比較中…（${idx}/${sendLogs.length}件）`;
+            await new Promise(r => setTimeout(r, 0));
+        }
+        rows.push((s => {
         const sentAt = toDate(s.updatedAt);
         const sent = s.finalText || bodyForCompare(s.userEditedText);
         let ai = null, link = 'なし';
@@ -272,7 +307,7 @@ function buildRows() {
             ai = byDraft[s.draftId]; link = 'ID';
         } else if (s.usedAi === undefined && sentAt) {
             // 以前の記録：同じルームで60分以内の最新のAI案を推定でひもづけ
-            const cand = aiLogs.filter(a => String(a.roomId) === String(s.roomId) && toDate(a.createdAt)
+            const cand = (aiByRoom[String(s.roomId)] || []).filter(a => toDate(a.createdAt)
                 && toDate(a.createdAt) <= sentAt && sentAt - toDate(a.createdAt) <= 60 * 60000 && !usedAiIds.has(a._id));
             if (cand.length) { ai = cand[cand.length - 1]; link = '推定'; }
         } else if (s.usedAi && s.aiGeneratedText) {
@@ -292,7 +327,8 @@ function buildRows() {
             aiText, sent, reused: !!s.reusedLastSent,
             direct: s.source === 'chatwork_direct'
         };
-    });
+        })(sendLogs[idx]));
+    }
 
     // 作ったが送らなかったAI案（期間内のみ）
     const fromV = new Date(document.getElementById('fromDate').value + 'T00:00:00');
