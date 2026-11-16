@@ -42,7 +42,8 @@
  *
  * ▼ 要対応の仕分け（同期のときにAIが自動で判定）
  *   cw_rooms/{アカウント}_{ルームID} の triage（none=返信不要 / easy=すぐ返せる / check=要確認）と triageFor（判定したメッセージID）
- *   triageSub（要確認の種類：order=出荷依頼 / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / shopee=Shopee連携 / request=依頼 / share=共有 / other=その他）
+ *   triageSub（要確認の種類：order=依頼（出荷・作業） / ship=出荷・追跡 / bill=請求・料金 / trouble=トラブル / system=システム / shopee=Shopee連携 / other=その他）
+ *     ※ 以前の request（依頼）は order に、share（共有）は other に読み替える
  *   本文コレクションの triagePoint（相手の用件・確認すること。40文字ほど）
  *
  * ▼ Chatworkで直接送った返信（コックピットを使わずに送ったもの）
@@ -701,9 +702,7 @@ const AI_BASE_NOTE = "【指示】は担当者の走り書きのメモです。�
 const NO_PROMPT_HINTS = {
   none: "お礼・了承などの短い返事で十分です。",
   easy: "会話の内容だけで答えられる返信にしてください。",
-  order: "出荷の依頼を承った旨を伝えてください。出荷日や完了は約束しないでください。",
-  request: "作業の依頼を承った旨を伝えてください。対応日や完了は約束しないでください。",
-  share: "共有（注文の詳細・納品の連絡など）を受け取ったお礼と、確認する旨を伝えてください。",
+  order: "ご依頼（出荷・作業）を承った旨を伝えてください。出荷日・対応日や完了は約束しないでください。",
   trouble: "ご迷惑へのお詫びと、すぐに状況を確認してご連絡する旨を伝えてください。原因や補償には触れないでください。",
   ship: "出荷状況を確認してご連絡する旨を伝えてください。",
   bill: "請求・料金について確認してご連絡する旨を伝えてください。金額は書かないでください。",
@@ -712,7 +711,7 @@ const NO_PROMPT_HINTS = {
   other: "確認してご連絡する旨を伝えてください。"
 };
 const TRIAGE_JA = { none: "返信不要", easy: "すぐ返せる", check: "要確認",
-  order: "出荷依頼", request: "依頼", share: "共有", trouble: "トラブル", ship: "出荷・追跡", bill: "請求・料金", system: "システム", shopee: "Shopee連携", other: "その他" };
+  order: "依頼", trouble: "トラブル", ship: "出荷・追跡", bill: "請求・料金", system: "システム", shopee: "Shopee連携", other: "その他" };
 
 // ルームの仕分け・確認ポイント・渡辺さんの回答を集める（返信作成の材料）
 async function roomFacts(account, roomId) {
@@ -728,7 +727,7 @@ async function roomFacts(account, roomId) {
       const d = rs.data();
       if (d.triage && (d.lastMine || String(d.triageFor || "") === String(d.lastMsgId || ""))) {
         out.cat = d.triage;
-        out.sub = d.triage === "check" ? (d.triageSub || "other") : "";
+        out.sub = d.triage === "check" ? normSub(d.triageSub) : "";
       }
       const qs = Object.values(d.questions || {});
       if (d.question && d.question.status) qs.push(d.question);
@@ -2198,7 +2197,15 @@ const TRIAGE_MODEL = OPENAI_MODEL;
 const TRIAGE_ROOM_EXAMPLES = 3;      // ルームごとに、そのルームで手で直した例を何件まで渡すか      // 1回の同期で仕分ける最大ルーム数（3回分を同時に）      // 手で直した仕分けを、お手本として何件渡すか
 const TRIAGE_CATS = ["none", "easy", "check"];
 // 要確認（check）の2次仕分け
-const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "shopee", "request", "share", "other"];
+const TRIAGE_SUBS = ["order", "ship", "bill", "trouble", "system", "shopee", "other"];
+// 種類をまとめた時の読み替え（以前の判定・AIが古い名前を返した時用）
+//   request（作業の依頼）→ order（依頼）／ share（共有）→ other
+function normSub(sub) {
+  sub = String(sub || "");
+  if (sub === "request") return "order";
+  if (sub === "share") return "other";
+  return TRIAGE_SUBS.indexOf(sub) === -1 ? "other" : sub;
+}
 
 // ===== 誰が答えられそうか（who）=====
 //   staff=スタッフで対応可 / watanabe=渡辺さん判断 / engineer=エンジニア（要確認のときだけ）
@@ -2294,8 +2301,9 @@ async function triageRooms(targets) {
 function fixLine(x) {
   const text = String(x.text || "").replace(/\s+/g, " ").trim().slice(0, 160);
   if (!text || TRIAGE_CATS.indexOf(x.cat) === -1) return "";
-  return "・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + x.sub + "）" : "")
-    + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + x.beforeSub + "）" : "") + " と誤判定" : "");
+  // 以前のお手本の request・share は、いまの種類に読み替えて渡す（古い名前をAIに覚えさせないため）
+  return "・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + normSub(x.sub) + "）" : "")
+    + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + normSub(x.beforeSub) + "）" : "") + " と誤判定" : "");
 }
 // 読み込み回数を抑えるため、直した例は5分だけ使い回す（直した時はすぐ読み直す）
 let fixCache = { at: 0, docs: null };
@@ -2336,7 +2344,7 @@ async function fixTriage(p) {
   let sub = String(p.sub || "");
   if (!acc || !rid || TRIAGE_CATS.indexOf(cat) === -1) throw new Error("仕分けの指定が正しくありません");
   if (cat !== "check") sub = "";
-  else if (TRIAGE_SUBS.indexOf(sub) === -1) sub = "other";
+  else sub = normSub(sub);
   const ref = db.collection("cw_rooms").doc(acc + "_" + rid);
   const snap = await ref.get();
   const cur = snap.exists ? snap.data() : {};
@@ -2389,29 +2397,29 @@ async function triageChunk(list, examples) {
     + "　・システムの自動通知、定型のお知らせ、全員向けの周知で、自社がすることがない\n"
     + "　【未返信】に質問・依頼・報告・相談・期限のある連絡が1つでも含まれていれば none にしない\n"
     + "easy：倉庫や社内で調べなくても返信できる。受け取りのお礼、日程の承諾、決まっている手順の案内など（出荷・発送の依頼は easy にしない）\n"
+    + "　・納品・入荷の連絡（倉庫あてに商品を送った・送る予定、入荷予定、納品書や数量の連絡）は、「承知しました、到着しましたら確認します」で返せるので easy\n"
+    + "　・休業日や運用の変更のお知らせ、作業結果の報告など、ひとこと「承知しました」と返せば済む共有も easy\n"
     + "check：返信の前に確認や判断が必要。出荷・発送の依頼、在庫・入荷・出荷状況・追跡番号・料金・請求・破損・誤出荷・現物の確認、社内での相談が必要なもの\n"
     + "迷ったときは check にする。\n\n"
     + "【sub】check のときだけ、確認の種類を1つ選ぶ（check 以外は空文字）\n"
-    + "order：出荷・発送の依頼（No.や注文番号を挙げて「出荷してください」「発送お願いします」、再発送・追加発送の依頼など）。はっきり出荷・発送を頼む言葉があるものだけ\n"
+    + "order：倉庫や自社に何かをしてほしい依頼。次の2つをまとめて order にする\n"
+    + "　・出荷・発送の依頼（No.や注文番号を挙げて「出荷してください」「発送お願いします」、再発送・追加発送の依頼、"
+    + "依頼の言葉がなくても出荷してほしい注文の詳細（注文番号・商品・数量・お届け先）を送ってきたもの）\n"
+    + "　・出荷以外の作業の依頼（検品・ラベル貼り・同梱物・梱包方法の指定・返送・FBA納品・在庫の移動や廃棄など）\n"
     + "ship：すでに出した荷物についての、出荷状況・発送日・追跡番号・配送状況・届かない（未着）の問い合わせ\n"
     + "bill：請求・料金・見積・支払い・請求書の問い合わせ\n"
     + "trouble：破損・誤出荷・数量違い・紛失・返品・クレームなどのトラブル\n"
     + "shopee：Shopeeの連携手続き（新規セラーのShopeeショップ連携・認証・連携のための設定や情報のやり取り、連携の手順についての質問や「連携できました／できません」の連絡など）\n"
     + "system：システム・ツール・ログイン・API・設定などの問い合わせ（Shopeeの連携手続きは shopee にする）\n"
-    + "request：出荷以外の作業の依頼（検品・ラベル貼り・同梱物・梱包方法の指定・返送・FBA納品・在庫の移動や廃棄など、倉庫や自社に何かをしてほしいもの）\n"
-    + "share：セラーからの情報の共有。特に多いのは次の2つ\n"
-    + "　・注文の詳細の連絡（注文番号・商品・数量・お届け先などを送ってくるだけで、「出荷してください」などの依頼の言葉がないもの）\n"
-    + "　・納品の連絡（倉庫あてに商品を送った・送る予定、入荷予定、納品書や数量の連絡）\n"
-    + "　ほかに、休業日や運用の変更のお知らせ、作業結果の報告など、内容を確認して社内に伝えたり記録したりする必要があるもの\n"
-    + "　注文の詳細と納品の連絡は、短い文でも none にせず share にする（倉庫での確認・記録が必要なため）\n"
-    + "other：上のどれにも当てはまらないもの（在庫・入荷の確認、相談など）\n"
+    + "other：上のどれにも当てはまらないもの（在庫・入荷状況の問い合わせ、相談など）\n"
     + "【社内ルーム】と書かれたルームは社内のスタッフどうしのルーム。社内の雑談・作業報告・連絡で自社（このアカウント）に何も求めていないものは none。自社あての依頼・質問は check か easy\n"
     + "ルームの中に「このルームで以前スタッフが直した仕分け」があれば、そのルームの傾向として強く参考にする\n"
-    + "複数に当てはまるときは trouble ＞ shopee ＞ order ＞ request ＞ bill ＞ ship ＞ system ＞ share の順で優先する。ただし、注文の詳細や納品の連絡で、依頼の言葉がないものは order や request にせず share にする。\n"
-    + "共有・お知らせでも、自社がすることも伝えることも何もないもの（全員向けの周知など）は check にせず none にする。\n\n"
+    + "複数に当てはまるときは trouble ＞ shopee ＞ order ＞ bill ＞ ship ＞ system の順で優先する。\n"
+    + "納品・入荷の連絡は短い文でも none にせず easy にする（受け取った旨を返すため）。"
+    + "共有・お知らせでも、自社がすることも伝えることも何もないもの（全員向けの周知など）は none にする。\n\n"
     + "【point】相手が求めていることを40文字以内で。check のときは、確認すべきことを入れる（例：「入荷予定日の確認。在庫数を確認して回答」）。none のときは空でよい。\n\n"
     + "【出力】次のJSONだけを返す\n"
-    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|shopee|request|share|other|\", \"who\": \"staff|watanabe|engineer|\", \"conf\": \"high|low\", \"point\": \"...\"}]}\n"
+    + "{\"rooms\": [{\"id\": \"ルームID\", \"cat\": \"none|easy|check\", \"sub\": \"order|ship|bill|trouble|system|shopee|other|\", \"who\": \"staff|watanabe|engineer|\", \"conf\": \"high|low\", \"point\": \"...\"}]}\n"
     + "conf：判定に自信があれば high、文が短い・意図があいまい・どちらとも取れるときは low";
 
   const g = examples && examples.global;
@@ -2441,7 +2449,7 @@ async function triageChunk(list, examples) {
     // 自信のない「返信不要」は、見落とし防止のため要確認に上げる
     if (cat === "none" && conf === "low") { cat = "check"; sub = "other"; }
     if (cat !== "check") sub = "";
-    else if (TRIAGE_SUBS.indexOf(sub) === -1) sub = "other";
+    else sub = normSub(sub);
     let who = String((x && x.who) || "").trim();
     if (cat !== "check") who = "";
     else if (TRIAGE_WHO.indexOf(who) === -1) who = "watanabe";
