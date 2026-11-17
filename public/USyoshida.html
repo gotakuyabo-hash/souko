@@ -297,7 +297,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 
       <div class="panel stack" style="margin-top:16px">
         <h2 class="h2">チャットでの報告</h2>
-        <p class="muted small">上のRobot-inの履歴を読み取ってから押してください。「連携失敗」はRobot-inで失敗だった受注番号、「連携不可」はこの出荷日にアプリで出荷日を入れた注文のうち、Robot-inの履歴に出てこなかった受注番号です。送る前に文面を直せます。</p>
+        <p class="muted small">上のRobot-inの履歴を読み取ってから押してください。「連携失敗」はRobot-inで失敗だった受注番号のうちこのシートの注文（他ストアの注文は入れません）、「連携不可」はこの出荷日にアプリで出荷日を入れた注文のうち、Robot-inの履歴に出てこなかった受注番号です。送る前に文面を直せます。</p>
         <div class="search-row" style="justify-content:flex-start">
           <label>出荷日 <input type="date" id="reportDate"></label>
           <button id="btnReportMake" class="primary">報告文を作る</button>
@@ -2585,8 +2585,10 @@ $('#btnRobotRead').onclick = async () => {
       x.skipped = all.filter(o => !v.ok[o.no]).map(o => o.no);
     });
     robotPlan = items;
-    const ok = items.filter(x=>x.status==='成功').length, ng = items.filter(x=>x.status!=='成功').length, nf = items.filter(x=>!x.orders.length).length;
-    $('#robotResult').innerHTML = '<p><b>'+items.length+'件</b><span class="muted"> ／ 成功 '+ok+'件 ／ 失敗 '+ng+'件 ／ 該当なし '+nf+'件</span></p>'
+    // 成功・失敗はこのシートの注文だけで数える（該当なし＝他のストアの注文など）
+    const mine = items.filter(x=>x.orders.length);
+    const ok = mine.filter(x=>x.status==='成功').length, ng = mine.filter(x=>x.status!=='成功').length, nf = items.length - mine.length;
+    $('#robotResult').innerHTML = '<p><b>'+items.length+'件</b><span class="muted"> ／ このシートの注文：成功 '+ok+'件 ／ 失敗 '+ng+'件 ／ 該当なし（他ストアなど・報告に入れません） '+nf+'件</span></p>'
       + '<div class="tbl-wrap"><table class="res"><thead><tr><th>受注番号</th><th>結果</th><th>No.</th><th>メッセージ</th></tr></thead><tbody>'
       + items.map(x => '<tr><td>'+esc(x.orderNo)+'</td><td class="'+(x.status==='成功'?'st-ok':'st-ng')+'">'+esc(x.status)+'</td>'
         + '<td>'+(x.orders.length ? x.orders.map(o=>'No.'+o.no).join('、') : '<span class="st-ng">該当なし</span>')
@@ -2697,7 +2699,8 @@ $('#btnReportMake').onclick = async () => {
   const btn = $('#btnReportMake'); btn.disabled = true;
   try{
     const inRobot = new Set(robotPlan.map(x => x.orderNo));
-    const failed = robotPlan.filter(x => x.status !== '成功').map(x => x.orderNo);
+    // Robot-inの履歴には他のストアの注文も入っているので、このシートの注文（No.が見つかったもの）だけを報告する
+    const failed = robotPlan.filter(x => x.status !== '成功' && x.orders && x.orders.length).map(x => x.orderNo);
     // この出荷日にアプリで出荷日を入れた注文のうち、Robot-inの履歴に出てこなかったもの
     const snap = await ordersCol().where('shippedAt','==',date).get();
     const notLinked = [];
