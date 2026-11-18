@@ -10,7 +10,7 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -23,10 +23,13 @@
         };
 
         const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+        // この端末にもマスタを保存しておく（次に開いたとき、通信を待たずにすぐ使える）
+        let db;
+        try { db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+        catch (e) { db = getFirestore(app); }
 
         window.db = db;
-        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch };
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, onSnapshot };
 
 /* =========================================================
    日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
@@ -685,21 +688,46 @@ const shukkaAuto = (() => {
         let processedDataRows = [];
         let draggedRowIndex = null;
 
-        window.initFirestoreMaster = async function() {
-            try {
-                const querySnapshot = await window.firebaseFns.getDocs(window.firebaseFns.collection(window.db, "products_master"));
-                multiplierMaster = [];
-                querySnapshot.forEach((docSnap) => {
-                    multiplierMaster.push(docSnap.data());
+        // 商品マスタは、Firestoreの変化をずっと受け取る形で読む
+        //  ・開いたときは、この端末に保存してあるマスタですぐ表示 → 裏でサーバーの最新に置きかわる
+        //  ・保存・削除したら、全件を読み直さずに、変わった分だけ自動で反映される（ほかの人の変更も）
+        // ※マスタが空でも自動でプリセットを復元しません（全クリアが元に戻らないように）
+        let masterMap = new Map();      // SKU（小文字）→ マスタ。照合を速くするため
+        let masterReady = null, serverSynced = false;
+        window.initFirestoreMaster = function() {
+            if (masterReady) return masterReady;
+            masterReady = new Promise(resolve => {
+                let first = true;
+                window.firebaseFns.onSnapshot(window.firebaseFns.collection(window.db, "products_master"), snap => {
+                    multiplierMaster = snap.docs.map(d => d.data()).filter(m => m && m.key && Array.isArray(m.items));
+                    masterMap = new Map(multiplierMaster.map(m => [String(m.key).toLowerCase(), m]));
+                    updateMasterCountBadge();
+                    if (!document.getElementById('tabContentMaster').classList.contains('hidden') || first) renderMasterTable();
+                    if (first) { first = false; resolve(); if (allFilesRawData.length) processAllData(); }
+                    // 端末の保存分で表示したあと、サーバーの最新が初めて届いたら、読み込み済みの受注も照合し直す
+                    else if (!serverSynced && !snap.metadata.fromCache && allFilesRawData.length) processAllData();
+                    if (!snap.metadata.fromCache) serverSynced = true;
+                }, err => {
+                    console.error("Firestore読み込みエラー:", err);
+                    alert("Firestoreからのマスタ読み込みに失敗しました。インターネット接続やFirebase設定を確認してください。");
+                    resolve();
                 });
-                // ※マスタが空でも自動でプリセットを復元しません（全クリアが元に戻らないように）
-                updateMasterCountBadge();
-                renderMasterTable();
-            } catch (err) {
-                console.error("Firestore読み込みエラー:", err);
-                alert("Firestoreからのマスタ読み込みに失敗しました。インターネット接続やFirebase設定を確認してください。");
-            }
+            });
+            return masterReady;
         };
+
+        // まとめて書き込む（1回あたり450件まで）。sets：保存するマスタ、dels：削除するSKU
+        async function batchMaster(sets = [], dels = []) {
+            const { writeBatch, doc } = window.firebaseFns;
+            const ops = [...sets.map(d => ['set', d]), ...dels.map(k => ['del', k])];
+            for (let i = 0; i < ops.length; i += 450) {
+                const batch = writeBatch(window.db);
+                ops.slice(i, i + 450).forEach(([t, v]) => t === 'set'
+                    ? batch.set(doc(window.db, "products_master", v.key), v)
+                    : batch.delete(doc(window.db, "products_master", v)));
+                await batch.commit();
+            }
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             setupFileHandlers();
@@ -755,10 +783,7 @@ const shukkaAuto = (() => {
         async function loadDefaultPresets() {
             if (confirm('Firestoreのマスタを初期プリセットに一括リセット（上書き）しますか？')) {
                 try {
-                    for (let preset of DEFAULT_PRESETS) {
-                        await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", preset.key), preset);
-                    }
-                    await window.initFirestoreMaster();
+                    await batchMaster(DEFAULT_PRESETS);
                     if (allFilesRawData.length > 0) processAllData();
                     alert('プリセットをFirestoreに復元しました。');
                 } catch (e) {
@@ -771,10 +796,8 @@ const shukkaAuto = (() => {
         async function clearMasterFirestore() {
             if (confirm('Firestore上のマスタをすべて削除しますか？')) {
                 try {
-                    for (let m of multiplierMaster) {
-                        await window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.db, "products_master", m.key));
-                    }
-                    multiplierMaster = [];
+                    await batchMaster([], multiplierMaster.map(m => m.key));
+                    multiplierMaster = []; masterMap = new Map();
                     updateMasterCountBadge();
                     renderMasterTable();
                     alert('すべて削除しました');
@@ -905,13 +928,12 @@ const shukkaAuto = (() => {
             if (keys.length === 0) { alert('有効なデータが見つかりませんでした'); return; }
 
             try {
-                for (let key of keys) {
+                await batchMaster(keys.map(key => {
                     const old = multiplierMaster.find(m => m.key === key);
                     const client = map[key].client !== null ? map[key].client : (old?.client || '');
-                    let newData = { key, items: map[key].items, client };
-                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), newData);
-                }
-                await window.initFirestoreMaster();
+                    return { key, items: map[key].items, client };
+                }));
+                if (allFilesRawData.length) processAllData();
                 closeBulkMasterModal();
                 alert(`${keys.length}件のマスタを一括登録しました`);
             } catch (e) {
@@ -964,7 +986,6 @@ const shukkaAuto = (() => {
 
             try {
                 await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), newData);
-                await window.initFirestoreMaster();
                 closeMasterModal();
                 if (allFilesRawData.length > 0) processAllData();
                 alert('Firestoreに保存しました');
@@ -1010,13 +1031,7 @@ const shukkaAuto = (() => {
 
         // まとめてFirestoreに保存（500件ずつ）
         async function commitMasterDocs(docs) {
-            const { writeBatch, doc } = window.firebaseFns;
-            for (let i = 0; i < docs.length; i += 450) {
-                const batch = writeBatch(window.db);
-                docs.slice(i, i + 450).forEach(d => batch.set(doc(window.db, "products_master", d.key), d));
-                await batch.commit();
-            }
-            await window.initFirestoreMaster();
+            await batchMaster(docs);
             if (allFilesRawData.length) processAllData();
         }
 
@@ -1086,14 +1101,8 @@ const shukkaAuto = (() => {
             const targets = selectedMasters();
             if (!confirm(`選択した ${targets.length} 件のSKUをマスタから削除します。\n元に戻せません。よろしいですか？\n\n・${targets.slice(0, 10).map(m => m.key).join('\n・')}${targets.length > 10 ? '\n…ほか' : ''}`)) return;
             try {
-                const { writeBatch, doc } = window.firebaseFns;
-                for (let i = 0; i < targets.length; i += 450) {
-                    const batch = writeBatch(window.db);
-                    targets.slice(i, i + 450).forEach(m => batch.delete(doc(window.db, "products_master", m.key)));
-                    await batch.commit();
-                }
+                await batchMaster([], targets.map(m => m.key));
                 selectedMasterKeys.clear();
-                await window.initFirestoreMaster();
                 if (allFilesRawData.length) processAllData();
                 alert(`${targets.length} 件のSKUを削除しました`);
             } catch (e) { console.error(e); alert('削除に失敗しました'); }
@@ -1123,7 +1132,6 @@ const shukkaAuto = (() => {
             if (confirm(`SKU「${key}」を削除しますか？`)) {
                 try {
                     await window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.db, "products_master", key));
-                    await window.initFirestoreMaster();
                 } catch (e) {
                     console.error(e);
                     alert('削除に失敗しました');
@@ -1228,7 +1236,7 @@ const shukkaAuto = (() => {
             // SKUがあればSKU、なければ商品名キーでマスタを探す
             const lookupKey = sku || makeNameKey(productInfo);
 
-            let matched = lookupKey ? multiplierMaster.find(r => r.key.toLowerCase() === lookupKey.toLowerCase()) : null;
+            let matched = lookupKey ? masterMap.get(lookupKey.toLowerCase()) : null;
 
             let results = [];
             if (matched && matched.items && matched.items.length > 0) {
@@ -1391,7 +1399,6 @@ const shukkaAuto = (() => {
 
             try {
                 await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", key), { key, items, client });
-                await window.initFirestoreMaster();
                 processAllData();
                 alert('Firestoreのマスタに登録しました');
             } catch (e) {
@@ -1434,10 +1441,7 @@ const shukkaAuto = (() => {
             if (!confirm(msg)) return;
 
             try {
-                for (const d of changed) {
-                    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.db, "products_master", d.key), d);
-                }
-                await window.initFirestoreMaster();
+                await batchMaster(changed);
                 processAllData();
                 alert(`${changed.length} 件のマスタを更新しました`);
             } catch (e) {
