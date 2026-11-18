@@ -350,6 +350,21 @@ function idx() {
 const lotsIn = reqId => idx().ins.get(reqId) || [];
 const outsOf = reqId => idx().outs.get(reqId) || [];
 
+// 「・2609142JPHBDGE「商品名」」のように、Order IDのあとに商品名が続く行を読み取る（数量がなければ1点）
+const OID_RE = /^(\d{6}[0-9A-Z]{6,10})(?![0-9A-Z])/i;
+function parseOidLine(raw) {
+  const line = String(raw || '').trim().replace(/^[・•●○■□◆◇▶►\-*]+[\s　]*/, '');
+  const m = half(line).match(OID_RE);
+  if (!m || isJan(half(m[1]))) return null;               // 8桁・13桁の数字だけならJANとして扱う
+  let rest = line.slice(m[0].length).replace(/^[\s　:：、,，\-]+/, '').trim();
+  let qty = 1;
+  const q = half(rest).match(/^(.*?)[\s　]*(?:[x×X＊*][\s　]*(\d+)\s*(?:個|点|枚|本|セット|pcs)?|(\d+)\s*(?:個|点|枚|本|セット|pcs))$/i);
+  if (q && q[1].trim()) { qty = Number(q[2] || q[3]) || 1; rest = rest.slice(0, q[1].length).trim(); }
+  const b = rest.match(/^[「『"“](.*)[」』"”]$/);
+  const product = (b ? b[1] : rest).trim();
+  return product ? { product, qty, orderId: half(m[1]).toUpperCase() } : null;
+}
+
 // 依頼の項目から「商品名と数量」を読み取る（読み取れない分は画面で入力）
 function parseItems(r) {
   const fs = (r.fields || []).filter(f => f.v && !/^https?:\/\//.test(f.v));
@@ -357,6 +372,7 @@ function parseItems(r) {
   const isP = k => !isQ(k) && /商品|品名|アイテム|SKU|内容/i.test(k);
   const ps = fs.filter(f => isP(f.k)), qs = fs.filter(f => isQ(f.k));
   const lines = v => String(v).split(/\r?\n/).map(t => t.trim()).filter(Boolean).map(t => {
+    const o = parseOidLine(t); if (o) return o;
     const m = half(t).match(/^(.*?)[\s　]*(?:[x×X＊*]|数量[:：]?)[\s　]*(\d+)\s*(?:個|点|枚|本|セット|pcs)?$/i)
            || half(t).match(/^(.*?)[\s　]+(\d+)\s*(?:個|点|枚|本|セット|pcs)$/i);
     return m ? { product: m[1].trim(), qty: Number(m[2]) } : { product: t, qty: 0 };
@@ -409,7 +425,29 @@ async function addLots(r, items, inDate) {
 // Excel・スプレッドシートからコピーした表を読み取る（商品名と数量。見出し行や数量のない行は飛ばす）
 function parsePaste(text) {
   const merged = new Map();
-  String(text).split(/\r?\n/).forEach(line => {
+  const put = (product, jan, qty, orderId = '') => {
+    const key = product + '\t' + jan + '\t' + orderId;     // Order IDが違えば別の行にする
+    const m = merged.get(key) || { product, code: jan, qty: 0, orderId };
+    m.qty += qty; merged.set(key, m);
+  };
+  String(text).split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    // Order ID＋商品名の行（キャンセル品の一覧など）
+    if (!line.includes('\t')) { const o = parseOidLine(line); if (o) { put(o.product, '', o.qty, o.orderId); return; } }
+    // 1行に「商品名 1個」「商品名 ×2」のように書いた形（タブ区切りでない行）
+    if (!line.includes('\t')) {
+      const h = half(line);
+      const m = h.match(/^(.*?)[\s　]*(?:[x×X＊*]|数量[:：]?)[\s　]*([\d,]+)\s*(?:個|点|枚|本|セット|pcs)?$/i)
+             || h.match(/^(.*?)[\s　]*([\d,]+)\s*(?:個|点|枚|本|セット|pcs)$/i);
+      if (m && m[1].trim()) {
+        const words = line.slice(0, m[1].length).trim().split(/[\s　]+/);
+        const ji = words.findIndex(w => isJan(half(w)));          // 8桁・13桁の数字はJANとして扱う
+        const jan = ji >= 0 ? half(words.splice(ji, 1)[0]) : '';
+        const product = words.join(' ').trim(), qty = toNum(m[2]);
+        if (product && qty) { put(product, jan, qty); return; }
+      }
+    }
     const cols = (line.includes('\t') ? line.split('\t') : line.split(/[,，]/)).map(c => c.trim()).filter(Boolean);
     if (cols.length < 2) return;
     let qi = -1;
@@ -420,14 +458,12 @@ function parsePaste(text) {
     const jan = ji >= 0 ? half(head.splice(ji, 1)[0]) : '';
     const qty = toNum(cols[qi]), product = head.join(' ').trim();
     if (!qty || !product) return;
-    const key = product + '\t' + jan;
-    const m = merged.get(key) || { product, code: jan, qty: 0 };
-    m.qty += qty; merged.set(key, m);
+    put(product, jan, qty);
   });
   return [...merged.values()];
 }
 const pasteBox = () => `<details class="bd paste" style="margin:8px 0"><summary>Excel・スプレッドシートからまとめて貼り付け</summary>
-  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の列をコピーして、ここに貼り付けてください（JANの列があれば一緒に読み込みます。見出し行があっても大丈夫です）"></textarea>
+  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の列をコピーして貼り付けるか、「商品名 1個」のように1行ずつ書いて貼り付けてください（JANがあれば一緒に読み込みます。見出し行があっても大丈夫です）"></textarea>
   <div class="actions" style="margin-top:6px"><button class="mini" id="hkPasteGo">下の表に読み込む</button></div></details>`;
 function rowsTotal() {
   const rows = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ p: x.querySelector('.hk-p').value.trim(), q: toNum(x.querySelector('.hk-q').value) })).filter(x => x.p || x.q);
@@ -449,10 +485,11 @@ function bindRows(onChange) {
   if ($('hkCancel')) $('hkCancel').onchange = () => $('hkRows').classList.toggle('oid', $('hkCancel').checked);
   if ($('hkPasteGo')) $('hkPasteGo').onclick = () => {
     const items = parsePaste($('hkPaste').value);
-    if (!items.length) { toast('商品名と数量を読み取れませんでした。「商品名」「数量」の2列をコピーしてください'); return; }
+    if (!items.length) { toast('商品名と数量を読み取れませんでした。「商品名」「数量」の2列をコピーするか、「商品名 1個」の形で貼り付けてください'); return; }
     const filled = [...document.querySelectorAll('#hkRows .hk-row')].some(x => x.querySelector('.hk-p').value.trim() || x.querySelector('.hk-q').value.trim());
     if (filled) $('hkRows').insertAdjacentHTML('beforeend', items.map(itemRow).join(''));
     else $('hkRows').innerHTML = items.map(itemRow).join('');
+    if (items.some(i => i.orderId) && $('hkCancel')) { $('hkCancel').checked = true; $('hkRows').classList.add('oid'); }
     $('hkPaste').value = '';
     $('hkPaste').closest('details').open = false;
     changed();
@@ -511,7 +548,7 @@ const sumQty = a => a.reduce((s, x) => s + x.qty, 0);
 async function stockOnDone(r) {
   if (isHokanIn(r) && !lotsIn(r.id).length) {
     const oid = reqOrderId(r);
-    const items = parseItems(r).filter(i => i.product && i.qty > 0).map(i => ({ ...i, orderId: oid }));
+    const items = parseItems(r).filter(i => i.product && i.qty > 0).map(i => ({ ...i, orderId: i.orderId || oid }));
     if (!items.length) { openSheet(r); toast('数量を読み取れませんでした。下の「保管在庫」に数量を入れて登録してください'); return false; }
     await addLots(r, items, todayYmd());
     return `在庫に${sumQty(items)}点登録`;
@@ -861,10 +898,11 @@ function hokanPanelBody(r) {
       ${ins.map(l => `<p>${esc(l.product)}　${l.qtyIn}点（残り${remain(l)}点）　保管日 ${esc(l.inDate)}${l.orderId ? `　Order ID ${esc(l.orderId)}` : ''}</p>`).join('')}
       <p class="hint">保管日・数量の修正は「保管在庫」画面から行えます。</p></div>`;
     const items = parseItems(r);
+    const withOid = !!reqOrderId(r) || items.some(i => i.orderId);
     return `<div class="hk lotform-req"><h3>保管在庫に登録（${who}）</h3>
       ${pasteBox()}
-      ${oidToggle(!!reqOrderId(r))}
-      <div id="hkRows" class="${reqOrderId(r) ? 'oid' : ''}">${(items.length ? items : [{}]).map(it => itemRow({ ...it, orderId: reqOrderId(r) })).join('')}</div>
+      ${oidToggle(withOid)}
+      <div id="hkRows" class="${withOid ? 'oid' : ''}">${(items.length ? items : [{}]).map(it => itemRow({ ...it, orderId: it.orderId || reqOrderId(r) })).join('')}</div>
       <div class="total" id="hkTotal"></div>
       <button class="mini" id="hkAdd">＋商品を追加</button>
       <label class="field"><span>保管日（入庫した日）</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
