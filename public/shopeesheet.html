@@ -355,7 +355,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, query, where } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -368,8 +368,6 @@ const FIREBASE_CONFIG = {
 };
 const API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec'; // GASのウェブアプリURL
 const SELLER_COLLECTION = 'deliverySellers'; // セラー一覧を入れるFirestoreのコレクション名
-const MANUAL_COLLECTION = 'deliveryManualOut'; // 手動出庫（注文シートにない出庫）を入れるFirestoreのコレクション名
-
 // ログインはアプリと同じドメインでないと結果を受け取れないため、
 // web.app で開かれたら同じページの firebaseapp.com に移動する（中身は同じFirebase Hosting）
 if (location.hostname === 'souko-2de57.web.app'){
@@ -547,22 +545,9 @@ async function load(){
     $('list').innerHTML = '<div class="empty-state">セラーが登録されていません。「セラー管理」から追加してください。</div>';
     return;
   }
-  try { [D] = await Promise.all([call('getData'), loadManual()]); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
+  try { D = await call('getData'); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
   render();
   saveSummary();
-}
-
-/* ===== 手動出庫（Firestore：deliveryManualOut） ===== */
-async function loadManual(){
-  MAN = [];
-  if (!S.sellerId) return;
-  try {
-    const snap = await getDocs(query(collection(db, MANUAL_COLLECTION), where('sellerId', '==', S.sellerId)));
-    MAN = snap.docs.map(d => { const x = d.data(); return { id:d.id, ...x, qty:Number(x.qty) || 0 }; });
-  } catch(e){
-    console.warn('手動出庫を読み込めませんでした', e);
-    toast('手動出庫の記録を読み込めません：' + (e.code || e.message) + '（在庫は手動出庫なしで計算しています）', true);
-  }
 }
 function applyResult(res){
   if (res && res.data) D = res.data;
@@ -617,6 +602,7 @@ function keyOf(o){ return o.orderId || ('#'+o.row); }
 /* ===== 描画 ===== */
 function render(){
   if (!D) return;
+  MAN = (D.manual || []).map(m => ({ ...m, qty:Number(m.qty) || 0 })); // 手動出庫シート
   $('title').textContent = D.title;
   $('meta').textContent = '注文シート「' + D.orderSheet + '」・' + D.loadedAt + ' に読み込み';
   renderFlow();
@@ -1242,7 +1228,7 @@ function renderManHist(rows){
   const keyOfMan = m => { const c = normCode(m.code) || NAME_MAP.get(String(m.name || '').trim()) || ''; return c ? 'c:' + c : 'n:' + String(m.name || '').trim(); };
   const q = S.sq.trim().toLowerCase(), qc = normCode(q);
   const list = MAN.filter(m => !q || String(m.name || '').toLowerCase().includes(q) || (qc && String(m.code || '').toLowerCase().includes(qc)) || String(m.dest || '').toLowerCase().includes(q) || String(m.note || '').toLowerCase().includes(q))
-    .sort((a,b) => String(b.date).localeCompare(String(a.date)) || ((b.createdAtMs || 0) - (a.createdAtMs || 0)));
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)) || (b.row - a.row));
   const total = list.reduce((a,m) => a + m.qty, 0);
   $('manCount').textContent = list.length ? list.length + '件・合計 ' + total + '点' : '';
   $('manHist').innerHTML = list.length ?
@@ -1250,11 +1236,12 @@ function renderManHist(rows){
     list.map(m => '<tr><td class="num" style="white-space:nowrap">'+fmtMD(m.date)+'</td>' +
       '<td>'+esc(nameOf.get(keyOfMan(m)) || m.name)+(m.code?'<div class="muted" style="font-size:12px">'+esc(m.code)+'</div>':'')+'</td>' +
       '<td class="n"><b>'+m.qty+'</b></td><td>'+esc(m.dest)+'</td><td>'+esc(m.staff)+'</td><td>'+esc(m.note)+'</td>' +
-      '<td><button type="button" class="edit danger" style="color:var(--danger)" data-man-del="'+esc(m.id)+'">取り消し</button></td></tr>').join('') + '</tbody></table>'
+      '<td><button type="button" class="edit danger" style="color:var(--danger)" data-man-del="'+m.row+'">取り消し</button></td></tr>').join('') + '</tbody></table>'
     : '<p class="muted" style="padding:0 16px 16px">' + (q ? '当てはまる手動出庫はありません。' : 'まだ手動出庫はありません。Shopeeなど別のモールで在庫を使ったときは「手動出庫」から記録してください。') + '</p>';
 }
 
 function openManOut(presetKey){
+  if (!D.hasManualApi){ toast('GASが手動出庫に対応していません。新しいGASのコードを貼り付けて「新バージョン」でデプロイしてください', true); return; }
   const { rows } = stockRows();
   const list = rows.slice().sort((a,b) => (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
   if (!list.length){ toast('商品がありません。先に入庫を登録してください', true); return; }
@@ -1282,19 +1269,12 @@ function openManOut(presetKey){
       const staff = String(fd.get('staff') || '').trim(), dst = String(fd.get('dest') || '').trim();
       if (staff) store('lastStaff', staff);
       if (dst) store('lastManDest', dst);
-      const rec = {
-        sellerId:S.sellerId, sheetId:S.sheetId, code:r.code, name:r.name, qty,
-        date:fd.get('date') || today(), dest:dst, staff, note:String(fd.get('note') || '').trim(),
-        createdAtMs:Date.now(), createdAt:serverTimestamp(), createdBy:auth.currentUser ? auth.currentUser.email : '',
-      };
-      busy(true);
-      try {
-        const ref = await addDoc(collection(db, MANUAL_COLLECTION), rec);
-        MAN.push({ ...rec, id:ref.id });
-      } catch(e){ toast('出庫を保存できませんでした：' + (e.code || e.message), true); return false; }
-      finally { busy(false); }
-      render();
-      toast(r.name + ' を ' + qty + '点 出庫しました');
+      const rec = { code:r.code, name:r.name, qty, date:fd.get('date') || today(), dest:dst, staff, note:String(fd.get('note') || '').trim() };
+      let res;
+      try { res = await call('addManualOut', rec); } catch(e){ return false; }
+      applyResult(res);
+      const sk = (res.fix && res.fix.skipped) || [];
+      toast(r.name + ' を ' + qty + '点 出庫しました（手動出庫シートに記録）' + (sk.length ? '／在庫シートの出庫数が手入力の商品：' + sk.slice(0, 3).join('、') + (sk.length > 3 ? ' ほか' : '') + '（シートの在庫数には入っていません）' : ''), sk.length > 0);
     }
   );
   const f = $('dlgBody').querySelector('form');
@@ -1326,15 +1306,12 @@ function openManOut(presetKey){
   (presetKey ? f.elements.qty : f.elements.code).focus();
 }
 
-async function removeManOut(id){
-  const m = MAN.find(x => x.id === id);
-  if (!m || !confirm('「' + m.name + ' ×' + m.qty + '」（' + fmtMD(m.date) + '）の手動出庫を取り消しますか？在庫に戻ります。')) return;
-  busy(true);
-  try { await deleteDoc(doc(db, MANUAL_COLLECTION, id)); }
-  catch(e){ toast('取り消せませんでした：' + (e.code || e.message), true); return; }
-  finally { busy(false); }
-  MAN = MAN.filter(x => x.id !== id);
-  render();
+async function removeManOut(row){
+  const m = MAN.find(x => x.row === Number(row));
+  if (!m || !confirm('「' + m.name + ' ×' + m.qty + '」（' + fmtMD(m.date) + '）の手動出庫を取り消しますか？\n手動出庫シートの行を消して、在庫に戻します。')) return;
+  let res;
+  try { res = await call('deleteManualOut', { row:m.row, id:m.id }); } catch(e){ return; }
+  applyResult(res);
   toast('手動出庫を取り消しました');
 }
 
