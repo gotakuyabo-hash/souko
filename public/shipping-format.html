@@ -417,6 +417,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
           <div class="btn-stack">
             <button id="calcPickBtn" class="btn btn-primary" onclick="processOrderPickCalculation()" disabled>ピック数を算出 <span class="hint" id="calcHint"></span></button>
             <button id="zaicoBtn" class="btn btn-yamato" onclick="sendToZaico()" disabled>zaicoに出庫指示を送信 <span class="hint" id="zaicoHint"></span></button>
+            <button id="pickListBtn" class="btn btn-ghost" onclick="openTotalPickList()" disabled>トータルピックリストを印刷 <span class="hint" id="pickListHint"></span></button>
           </div>
           <div id="zaicoNextNote"></div>
         </div>
@@ -740,6 +741,7 @@ let uploadedFiles = [];
 let pickGroups = [];        // バーコード単位でまとめたピック行
 let pickMeta = null;
 let pickStale = false;
+let lastZaicoSend = null;   // 直近のzaico送信結果（トータルピックリストに伝票番号・未登録を出すため）
 let pickSort = { col: 'shelfNumber', asc: true };
 let pickFilterIssues = false;
 let orderSortState = { col: null, asc: true };
@@ -858,7 +860,7 @@ window.removeFile = (fileId) => {
 window.resetAllData = () => {
   if (!confirm("読み込んだCSVとピックリストをすべてリセットしますか？\n（商品マスタは消えません）")) return;
   uploadedFiles = [];
-  pickGroups = []; pickMeta = null; pickStale = false;
+  pickGroups = []; pickMeta = null; pickStale = false; lastZaicoSend = null;
   orderSortState = { col: null, asc: true };
   updateAccumulatedData(false);
   toast('リセットしました');
@@ -920,6 +922,7 @@ function updateButtons() {
   setBtn('calcPickBtn', hasOrder, 'calcHint', hasOrder ? (pickStale ? '受注が変わったので再計算してください' : '') : '受注CSVが必要です');
   const canSend = pickGroups.length > 0 && !pickStale;
   setBtn('zaicoBtn', canSend, 'zaicoHint', canSend ? `${pickGroups.filter(g => g.barcode && g.shelfNumber).length}明細` : '先にピック数を算出してください');
+  setBtn('pickListBtn', canSend, 'pickListHint', canSend ? (lastZaicoSend ? `zaico送信済み・${pickGroups.length}行` : `${pickGroups.length}行（zaico送信後がおすすめ）`) : '先にピック数を算出してください');
 }
 function setBtn(id, enabled, hintId, hint) {
   document.getElementById(id).disabled = !enabled;
@@ -1242,6 +1245,7 @@ window.processOrderPickCalculation = async () => {
 
     pickGroups = groupSkuItems(skuItems);
     pickMeta = { excluded, skuCount: skuItems.length };
+    lastZaicoSend = null;
     pickStale = false;
     sortPickGroups();
     renderPickSection();
@@ -2415,15 +2419,16 @@ function showZaicoNextNote({ ok, slipNum = '', problems = 0, unknownGap = 0, net
   const el = document.getElementById('zaicoNextNote');
   if (!el) return;
   const link = `<button class="btn btn-ghost btn-sm" onclick="switchTab('zaicoLogTab')">zaico出庫履歴を開く</button>`;
+  const pickBtn = `<div style="margin-top:8px"><button class="btn btn-primary btn-sm" onclick="openTotalPickList()">🖨 トータルピックリストを印刷</button></div>`;
   if (ok && !problems && !unknownGap) {
-    el.innerHTML = `<div class="zaico-next"><b>✅ zaico送信完了</b>（伝票番号 ${escapeHtml(slipNum)}）<br>そのまま出荷作業を続けてください。</div>`;
+    el.innerHTML = `<div class="zaico-next"><b>✅ zaico送信完了</b>（伝票番号 ${escapeHtml(slipNum)}）<br>続けてトータルピックリストを印刷して、ピッキングを始めてください。${pickBtn}</div>`;
   } else if (ok) {
     el.innerHTML = `<div class="zaico-next has-problem"><b>⚠ zaicoに登録できなかった商品が ${problems || unknownGap} 件あります</b>（伝票番号 ${escapeHtml(slipNum)}）<br>
       ▶ <b>出荷作業はこのまま続けてOK</b>です。送り直し・手での出庫はしないでください。<br>
-      ▶ ${saved ? '履歴に「未対応」で残しました。あとで担当者がその商品だけ送ります。' : '履歴の保存に失敗しました。担当者に声をかけてください。'} ${link}</div>`;
+      ▶ ${saved ? '履歴に「未対応」で残しました。あとで担当者がその商品だけ送ります。' : '履歴の保存に失敗しました。担当者に声をかけてください。'} ${link}${pickBtn}</div>`;
   } else {
     el.innerHTML = `<div class="zaico-next has-problem"><b>⚠ zaicoへの送信がうまくいきませんでした</b><br>
-      ▶ ${network ? '<b>もう一度押さないでください</b>（二重に出庫される可能性があります）。' : '出荷作業はこのまま続けてOKです。'}担当者に声をかけてください。 ${saved ? link : ''}</div>`;
+      ▶ ${network ? '<b>もう一度押さないでください</b>（二重に出庫される可能性があります）。' : '出荷作業はこのまま続けてOKです。'}担当者に声をかけてください。 ${saved ? link : ''}<br>▶ ピッキングはトータルピックリストで進めてOKです。${pickBtn}</div>`;
   }
 }
 
@@ -2592,6 +2597,7 @@ window.sendToZaico = async () => {
       const saved = await saveZaicoLog(buildZaicoLog({ kind: 'success', customerName, slipNum: data.slipNum, validItems, notSentItems, failures, unknownGap, registered: hasCount ? registered : null }));
       msg += saved ? '\n\n※この送信内容は「zaico出庫履歴」タブで確認できます。' : '\n\n※履歴の保存に失敗しました（送信自体は完了しています）。';
       alert(msg);
+      lastZaicoSend = { ok: true, slipNum: data.slipNum || '', customerName, at: new Date(), failedBarcodes: new Set(failures.map(f => String(f.barcode || '')).filter(Boolean)) };
       showZaicoNextNote({ ok: true, slipNum: data.slipNum, problems: failures.length + notSent.length, unknownGap, saved });
       learnZaicoIds(data.inventoryIds);
       toast(failures.length || unknownGap ? '登録できなかった商品があります（出荷は続けてOK）' : 'zaicoに送信しました');
@@ -2603,12 +2609,14 @@ window.sendToZaico = async () => {
       const saved = await saveZaicoLog(buildZaicoLog({ kind: 'error', customerName, slipNum: data.slipNum || '', validItems, notSentItems, failures, errorMessage: data.error || '送信できませんでした' }));
       if (saved) msg += '\n\n※この内容は「zaico出庫履歴」タブに記録しました。';
       alert(msg);
+      lastZaicoSend = { ok: false, slipNum: '', customerName, at: new Date(), failedBarcodes: new Set() };
       showZaicoNextNote({ ok: false, saved });
     }
   } catch (err) {
     console.error(err);
     await saveZaicoLog(buildZaicoLog({ kind: 'network', customerName, slipNum: '', validItems, notSentItems, failures: [], errorMessage: '通信エラー：' + err.message }));
     alert('通信エラーが発生しました：' + err.message + '\n\nzaico側に登録されたかどうか分からないため、続けて送り直さないでください（二重に出庫される可能性があります）。\n担当者がzaicoの出庫一覧を確認します。（この内容は「zaico出庫履歴」タブに記録しました）');
+    lastZaicoSend = { ok: false, slipNum: '', customerName, at: new Date(), failedBarcodes: new Set() };
     showZaicoNextNote({ ok: false, network: true, saved: true });
   } finally {
     updateButtons();
@@ -3487,6 +3495,75 @@ function sagawaDataHeader() {
   const f = uploadedFiles.find(item => item.type === 'sagawa');
   return f ? f.header : [];
 }
+
+/* ---------- トータルピックリスト ---------- */
+// 画面のピックリスト（＝zaicoに送った並び順）を、そのまま100×150mmで印刷する。zaicoに入っていない行もピックは必要なので全部出す
+window.openTotalPickList = () => {
+  if (!pickGroups.length || pickStale) { alert('先に「ピック数を算出」を押してください。'); return; }
+  syncInputs();
+  if (!lastZaicoSend && !confirm('まだzaicoに出庫指示を送信していません。\n（送信後に印刷すると、伝票番号とzaico未登録の商品がリストに出ます）\n\nこのまま印刷しますか？')) return;
+  const z = lastZaicoSend;
+  const now = new Date();
+  const orderCount = getOrderUniqueIds().size;
+  const totalPick = pickGroups.reduce((s, g) => s + g.pickCount, 0);
+  const rows = pickGroups.map((g, i) => {
+    const notes = [];
+    if (g.skus.some(s => s.fromSet)) notes.push('セットの中身：' + [...new Set(g.skus.filter(s => s.fromSet).map(s => s.setName))].join('、'));
+    if (g.skus.length > 1) notes.push(`${g.skus.length}SKU合算`);
+    if (g.shelfConflict) notes.push('棚番が食い違い：' + [...new Set(g.skus.map(s => s.shelfNumber).filter(Boolean))].join(' / '));
+    if (!g.barcode || !g.shelfNumber) notes.push('<b>zaico未送信</b>');
+    else if (z && z.failedBarcodes.has(String(g.barcode))) notes.push('<b>zaico未登録</b>');
+    const skuTxt = [...new Set(g.skus.map(s => s.fromSet ? s.setCode : s.skuCode).filter(Boolean))].join(', ');
+    const multi = g.pickCount >= 2;
+    const qty = multi ? `<span class="qty-multi">${g.pickCount}</span>` : `${g.pickCount}`;
+    return `<tr>
+      <td class="c"><div class="box"></div><div class="no">${i + 1}</div></td>
+      <td class="shelf">${escapeHtml(g.shelfNumber) || '<span class="none">棚番なし</span>'}</td>
+      <td><div class="nm">${escapeHtml(g.productName)}</div><div class="sub">${escapeHtml(skuTxt)}${g.barcode ? `　JAN ${escapeHtml(g.barcode)}` : ''}</div>${notes.length ? `<div class="note">${notes.join('／')}</div>` : ''}</td>
+      <td class="c qty">${qty}</td>
+    </tr>`;
+  }).join('');
+  const zaicoLine = z ? (z.ok ? `zaico伝票番号 <b>${escapeHtml(z.slipNum)}</b>（${escapeHtml(z.customerName)}）` : 'zaico送信エラー（担当者確認中）') : 'zaico未送信';
+  const html = `<html><head><title>トータルピックリスト</title><style>
+    @page { size: 100mm 150mm; margin: 3mm; }
+    body { font-family: sans-serif; margin: 0; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h1 { font-size: 12pt; margin: 0 0 2px; display: flex; justify-content: space-between; align-items: flex-end; }
+    h1 small { font-size: 8pt; font-weight: normal; }
+    .meta { font-size: 7.5pt; line-height: 1.4; border-bottom: 2px solid #000; padding-bottom: 2px; margin-bottom: 3px; }
+    .meta .big { font-size: 10pt; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead { display: table-header-group; }
+    th { background: #2c3e50; color: #fff; font-size: 7.5pt; padding: 2px; }
+    td { border-bottom: 1px solid #bbb; padding: 2px 2px; font-size: 8.5pt; vertical-align: middle; word-break: break-all; }
+    tr { page-break-inside: avoid; }
+    .c { text-align: center; }
+    .box { width: 12px; height: 12px; border: 1.5px solid #333; margin: 0 auto; }
+    .no { font-size: 7pt; color: #555; }
+    .shelf { font-weight: bold; font-size: 9.5pt; }
+    .none { font-size: 7pt; color: #c0392b; }
+    .nm { font-weight: bold; line-height: 1.25; }
+    .sub { font-size: 6.5pt; color: #555; }
+    .note { font-size: 7pt; color: #c0392b; }
+    .qty { font-size: 12pt; font-weight: bold; }
+    .qty-multi { display: inline-block; min-width: 20px; padding: 0 4px; background: #000; color: #fff; border-radius: 3px; font-weight: 900; }
+    .foot { margin-top: 4px; font-size: 7.5pt; text-align: right; }
+  </style></head><body>
+    <h1><span>トータルピックリスト</span><small>${escapeHtml(now.toLocaleString())}</small></h1>
+    <div class="meta">
+      受注 <b>${orderCount}</b>件・ピック行 <b>${pickGroups.length}</b>・<span class="big">合計 ${totalPick}</span><br>${zaicoLine}
+    </div>
+    <table>
+      <thead><tr><th style="width:9%">確認</th><th style="width:20%">棚番</th><th style="text-align:left">商品名 / SKU / JAN</th><th style="width:13%">数</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="foot">合計 <b>${totalPick}</b>　担当：＿＿＿＿　確認：＿＿＿＿</div>
+    <script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { alert('ポップアップがブロックされました。ブラウザでこのページのポップアップを許可してください。'); return; }
+  w.document.write(html);
+  w.document.close();
+};
 
 /* ---------- 検品シート ---------- */
 window.openPrintPreview = () => {
