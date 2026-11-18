@@ -294,11 +294,19 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <section id="v-stock" class="view" hidden>
     <div class="toolbar">
       <input id="sq" type="search" placeholder="商品名・商品コードで探す">
+      <button id="manOutBtn" class="btn primary" type="button">手動出庫</button>
       <button id="addStock" class="btn" type="button" hidden></button>
     </div>
     <div class="panel tablewrap" style="padding:0"><table id="stockTbl"></table></div>
+    <div class="panel tablewrap" style="padding:0">
+      <div class="ph" style="padding:16px 16px 0">
+        <h2>手動出庫の履歴</h2>
+        <span class="muted" id="manCount" style="font-size:13px"></span>
+      </div>
+      <div id="manHist" style="margin-top:12px"></div>
+    </div>
     <details id="unmatched" class="panel" hidden></details>
-    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量。引当後＝在庫 − まだ出荷していない注文の数量。商品コードが一致するものを同じ商品として数えます。コードがないものだけ商品名の完全一致で数えます（在庫シートと同じルール）。</p>
+    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量 − 手動出庫。引当後＝在庫 − まだ出荷していない注文の数量。手動出庫は、注文シートにない出庫（Shopeeなど別のモールで使った分）を記録するものです。商品コードが一致するものを同じ商品として数えます。コードがないものだけ商品名の完全一致で数えます（在庫シートと同じルール）。</p>
   </section>
 
   <!-- 保管料 -->
@@ -310,7 +318,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
     </div>
     <div id="feeSum" class="feesum"></div>
     <div class="panel tablewrap" style="padding:0"><table id="feeTbl"></table></div>
-    <p class="hint">月末の時点で倉庫に残っていて、入荷日から1ヶ月が過ぎている商品を、1点ごとに数えます（例：9/30入荷→10月末は対象、10/1入荷→10月末は対象外）。出荷は古い入荷分から順に引きます（先入れ先出し）。月末までに出荷済みのものは引きます（発送日が空の出荷済みも引きます）。商品コードが同じものを同じ商品として数えます。消費税は10%・切り捨てで計算しています。</p>
+    <p class="hint">月末の時点で倉庫に残っていて、入荷日から1ヶ月が過ぎている商品を、1点ごとに数えます（例：9/30入荷→10月末は対象、10/1入荷→10月末は対象外）。出荷は古い入荷分から順に引きます（先入れ先出し）。月末までに出荷済みのものは引きます（発送日が空の出荷済みも引きます）。月末までの手動出庫も同じように引きます。商品コードが同じものを同じ商品として数えます。消費税は10%・切り捨てで計算しています。</p>
   </section>
 </main>
 
@@ -329,6 +337,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <datalist id="dlCodes"></datalist>
 <datalist id="dlStaff"></datalist>
 <datalist id="dlCarriers"></datalist>
+<datalist id="dlManDest"></datalist>
 
 <div id="gate" class="gate">
   <div class="box">
@@ -346,7 +355,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, query, where } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -359,6 +368,7 @@ const FIREBASE_CONFIG = {
 };
 const API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec'; // GASのウェブアプリURL
 const SELLER_COLLECTION = 'deliverySellers'; // セラー一覧を入れるFirestoreのコレクション名
+const MANUAL_COLLECTION = 'deliveryManualOut'; // 手動出庫（注文シートにない出庫）を入れるFirestoreのコレクション名
 
 // ログインはアプリと同じドメインでないと結果を受け取れないため、
 // web.app で開かれたら同じページの firebaseapp.com に移動する（中身は同じFirebase Hosting）
@@ -480,6 +490,7 @@ const shukkaAuto = (() => {
 /* ===== 状態 ===== */
 let D = null;
 let SELLERS = [];
+let MAN = []; // 手動出庫（Firestore）
 const S = { sellerId:'', sheetId:'', tab:'orders', filter:'pending', q:'', sel:new Set(), groupSel:true, limit:300, inMonth:'', sq:'' };
 const $ = id => document.getElementById(id);
 
@@ -536,9 +547,22 @@ async function load(){
     $('list').innerHTML = '<div class="empty-state">セラーが登録されていません。「セラー管理」から追加してください。</div>';
     return;
   }
-  try { D = await call('getData'); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
+  try { [D] = await Promise.all([call('getData'), loadManual()]); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
   render();
   saveSummary();
+}
+
+/* ===== 手動出庫（Firestore：deliveryManualOut） ===== */
+async function loadManual(){
+  MAN = [];
+  if (!S.sellerId) return;
+  try {
+    const snap = await getDocs(query(collection(db, MANUAL_COLLECTION), where('sellerId', '==', S.sellerId)));
+    MAN = snap.docs.map(d => { const x = d.data(); return { id:d.id, ...x, qty:Number(x.qty) || 0 }; });
+  } catch(e){
+    console.warn('手動出庫を読み込めませんでした', e);
+    toast('手動出庫の記録を読み込めません：' + (e.code || e.message) + '（在庫は手動出庫なしで計算しています）', true);
+  }
 }
 function applyResult(res){
   if (res && res.data) D = res.data;
@@ -743,6 +767,8 @@ function fillLists(){
   $('dlStaff').innerHTML = [...staff].map(n => '<option value="'+esc(n)+'">').join('');
   const car = new Set(['佐川急便', ...[...D.carriers, ...D.orders.map(o => o.carrier)].map(normCarrier)].filter(Boolean));
   $('dlCarriers').innerHTML = [...car].map(n => '<option value="'+esc(n)+'">').join('');
+  const dests = new Set(['Shopee', 'Lazada', 'Amazon', 'サンプル', '返品・破損', ...MAN.map(m => m.dest)].filter(Boolean));
+  $('dlManDest').innerHTML = [...dests].map(n => '<option value="'+esc(n)+'">').join('');
 }
 
 /* ===== 選択 ===== */
@@ -1162,7 +1188,7 @@ function stockRows(){
   const map = new Map();
   const get = (code, name) => {
     const k = keyOf2(code, name);
-    if (!map.has(k)) map.set(k, { name:String(name || '').trim(), code:codeOf(code, name), inQty:0, pend:0, out:0, resv:0, inSheet:false });
+    if (!map.has(k)) map.set(k, { key:k, name:String(name || '').trim(), code:codeOf(code, name), inQty:0, pend:0, out:0, man:0, resv:0, inSheet:false });
     return map.get(k);
   };
   D.stock.forEach(st => { const x = get(st.code, st.name); x.inSheet = true; x.name = String(st.name || '').trim(); }); // 在庫シートの商品名で表示
@@ -1178,7 +1204,8 @@ function stockRows(){
     const x = map.get(k);
     if (o.shipped) x.out += o.qty; else x.resv += o.qty;
   });
-  const rows = [...map.values()].map(x => ({ ...x, stock:x.inQty - x.out, avail:x.inQty - x.out - x.resv }));
+  MAN.forEach(m => { get(m.code, m.name).man += m.qty; }); // 手動出庫
+  const rows = [...map.values()].map(x => ({ ...x, stock:x.inQty - x.out - x.man, avail:x.inQty - x.out - x.man - x.resv }));
   return { rows, unmatched };
 }
 
@@ -1188,11 +1215,13 @@ function renderStock(){
   const qc = normCode(q);
   const list = rows.filter(r => !q || r.name.toLowerCase().includes(q) || (qc && r.code.toLowerCase().includes(qc))).sort((a,b) => a.avail - b.avail || a.name.localeCompare(b.name, 'ja'));
   $('stockTbl').innerHTML = list.length ?
-    '<thead><tr><th>商品コード</th><th>商品名</th><th class="n">入庫</th><th class="n">出庫</th><th class="n">在庫</th><th class="n">未出荷の注文</th><th class="n">引当後</th><th class="n">入荷待ち</th></tr></thead><tbody>' +
+    '<thead><tr><th>商品コード</th><th>商品名</th><th class="n">入庫</th><th class="n">出荷（注文）</th><th class="n">手動出庫</th><th class="n">在庫</th><th class="n">未出荷の注文</th><th class="n">引当後</th><th class="n">入荷待ち</th><th></th></tr></thead><tbody>' +
     list.map(r => '<tr'+(r.avail < 0 ? ' class="neg"' : '')+'><td class="num" style="white-space:nowrap">'+(r.code ? esc(r.code) : '<span class="muted">－</span>')+'</td><td>'+esc(r.name)+(r.inSheet?'':'<span class="tag">在庫シート未登録</span>')+'</td>' +
-      '<td class="n">'+r.inQty+'</td><td class="n">'+r.out+'</td><td class="n'+(r.stock<0?' neg-v':'')+'"><b>'+r.stock+'</b></td>' +
-      '<td class="n">'+(r.resv||'')+'</td><td class="n'+(r.avail<0?' neg-v':'')+'">'+r.avail+'</td><td class="n">'+(r.pend||'')+'</td></tr>').join('') + '</tbody>'
+      '<td class="n">'+r.inQty+'</td><td class="n">'+r.out+'</td><td class="n">'+(r.man||'')+'</td><td class="n'+(r.stock<0?' neg-v':'')+'"><b>'+r.stock+'</b></td>' +
+      '<td class="n">'+(r.resv||'')+'</td><td class="n'+(r.avail<0?' neg-v':'')+'">'+r.avail+'</td><td class="n">'+(r.pend||'')+'</td>' +
+      '<td><button type="button" class="edit" data-man-out="'+esc(r.key)+'">出庫</button></td></tr>').join('') + '</tbody>'
     : '<tbody><tr><td class="muted">商品がありません。入庫を登録すると、ここに在庫が出ます。</td></tr></tbody>';
+  renderManHist(rows);
 
   const missing = rows.filter(r => !r.inSheet).map(r => ({ name:r.name, code:r.code })); // 商品コードも一緒に在庫シートへ
   const btn = $('addStock');
@@ -1205,6 +1234,108 @@ function renderStock(){
   um.innerHTML = '<summary>在庫と結びついていない注文の商品名（'+unmatched.size+'件）</summary>' +
     '<p class="hint">商品コードが登録されておらず、商品名も入庫シートと完全に一致していないため、在庫から引かれていません。1つのセルに複数商品を書いた注文もここに出ます。</p>' +
     '<ul>' + [...unmatched.entries()].map(([n, q]) => '<li>'+nl(n || '（商品名なし）')+' ×'+q+'</li>').join('') + '</ul>';
+}
+
+/* ===== 手動出庫 ===== */
+function renderManHist(rows){
+  const nameOf = new Map(rows.map(r => [r.key, r.name]));
+  const keyOfMan = m => { const c = normCode(m.code) || NAME_MAP.get(String(m.name || '').trim()) || ''; return c ? 'c:' + c : 'n:' + String(m.name || '').trim(); };
+  const q = S.sq.trim().toLowerCase(), qc = normCode(q);
+  const list = MAN.filter(m => !q || String(m.name || '').toLowerCase().includes(q) || (qc && String(m.code || '').toLowerCase().includes(qc)) || String(m.dest || '').toLowerCase().includes(q) || String(m.note || '').toLowerCase().includes(q))
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)) || ((b.createdAtMs || 0) - (a.createdAtMs || 0)));
+  const total = list.reduce((a,m) => a + m.qty, 0);
+  $('manCount').textContent = list.length ? list.length + '件・合計 ' + total + '点' : '';
+  $('manHist').innerHTML = list.length ?
+    '<table><thead><tr><th>出庫日</th><th>商品</th><th class="n">数量</th><th>出庫先・用途</th><th>担当</th><th>備考</th><th></th></tr></thead><tbody>' +
+    list.map(m => '<tr><td class="num" style="white-space:nowrap">'+fmtMD(m.date)+'</td>' +
+      '<td>'+esc(nameOf.get(keyOfMan(m)) || m.name)+(m.code?'<div class="muted" style="font-size:12px">'+esc(m.code)+'</div>':'')+'</td>' +
+      '<td class="n"><b>'+m.qty+'</b></td><td>'+esc(m.dest)+'</td><td>'+esc(m.staff)+'</td><td>'+esc(m.note)+'</td>' +
+      '<td><button type="button" class="edit danger" style="color:var(--danger)" data-man-del="'+esc(m.id)+'">取り消し</button></td></tr>').join('') + '</tbody></table>'
+    : '<p class="muted" style="padding:0 16px 16px">' + (q ? '当てはまる手動出庫はありません。' : 'まだ手動出庫はありません。Shopeeなど別のモールで在庫を使ったときは「手動出庫」から記録してください。') + '</p>';
+}
+
+function openManOut(presetKey){
+  const { rows } = stockRows();
+  const list = rows.slice().sort((a,b) => (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
+  if (!list.length){ toast('商品がありません。先に入庫を登録してください', true); return; }
+  const dest = store('lastManDest') || 'Shopee';
+  openDlg(
+    '<form><h2>手動出庫</h2>' +
+    '<p class="sub">注文シートにない出庫（Shopeeなど別のモールで使った分）を在庫から引きます。</p>' +
+    '<label>商品コード（バーコード可）<input name="code" autocomplete="off" placeholder="読むと下の商品が選ばれます"></label>' +
+    '<label>商品<select name="item" required><option value="">選んでください</option>' +
+      list.map(r => '<option value="'+esc(r.key)+'"'+(r.key === presetKey ? ' selected' : '')+'>'+esc((r.code ? r.code + '　' : '') + r.name)+'（在庫 '+r.stock+'）</option>').join('') +
+    '</select></label>' +
+    '<p class="hint" id="moHint" style="margin:-4px 0 10px"></p>' +
+    '<div class="two"><label>出庫数<input name="qty" type="number" min="1" step="1" inputmode="numeric" required></label>' +
+    '<label>出庫日<input name="date" type="date" value="'+today()+'" required></label></div>' +
+    '<div class="two"><label>出庫先・用途<input name="dest" list="dlManDest" value="'+esc(dest)+'" autocomplete="off"></label>' +
+    '<label>担当者<input name="staff" list="dlStaff" value="'+esc(store('lastStaff'))+'" autocomplete="off"></label></div>' +
+    '<label>備考<input name="note" autocomplete="off" placeholder="Order IDなど"></label>' +
+    '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">出庫する</button></div></form>',
+    async fd => {
+      const r = list.find(x => x.key === fd.get('item'));
+      const qty = parseInt(fd.get('qty'), 10);
+      if (!r){ toast('商品を選んでください', true); return false; }
+      if (!(qty > 0)){ toast('出庫数を1以上で入れてください', true); return false; }
+      if (qty > r.stock && !confirm('在庫（' + r.stock + '点）より多く出庫します。よろしいですか？')) return false;
+      const staff = String(fd.get('staff') || '').trim(), dst = String(fd.get('dest') || '').trim();
+      if (staff) store('lastStaff', staff);
+      if (dst) store('lastManDest', dst);
+      const rec = {
+        sellerId:S.sellerId, sheetId:S.sheetId, code:r.code, name:r.name, qty,
+        date:fd.get('date') || today(), dest:dst, staff, note:String(fd.get('note') || '').trim(),
+        createdAtMs:Date.now(), createdAt:serverTimestamp(), createdBy:auth.currentUser ? auth.currentUser.email : '',
+      };
+      busy(true);
+      try {
+        const ref = await addDoc(collection(db, MANUAL_COLLECTION), rec);
+        MAN.push({ ...rec, id:ref.id });
+      } catch(e){ toast('出庫を保存できませんでした：' + (e.code || e.message), true); return false; }
+      finally { busy(false); }
+      render();
+      toast(r.name + ' を ' + qty + '点 出庫しました');
+    }
+  );
+  const f = $('dlgBody').querySelector('form');
+  const hint = () => {
+    const r = list.find(x => x.key === f.elements.item.value);
+    const h = $('moHint');
+    if (!r){ h.textContent = ''; return; }
+    h.style.color = '';
+    h.textContent = '在庫 ' + r.stock + '点・未出荷の注文 ' + (r.resv || 0) + '点・引当後 ' + r.avail + '点';
+  };
+  const byCode = () => {
+    const c = normCode(f.elements.code.value);
+    if (f.elements.code.value !== c) f.elements.code.value = c;
+    if (!c) return false;
+    const r = list.find(x => x.code === c);
+    if (r){ f.elements.item.value = r.key; hint(); return true; }
+    $('moHint').textContent = 'このコードの商品が見つかりません'; $('moHint').style.color = 'var(--wait)';
+    return false;
+  };
+  f.elements.code.addEventListener('input', byCode);
+  // バーコードリーダーは最後にEnterを送るので、登録はせずに出庫数へ進める
+  f.elements.code.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    (byCode() ? f.elements.qty : f.elements.item).focus();
+  });
+  f.elements.item.addEventListener('change', hint);
+  hint();
+  (presetKey ? f.elements.qty : f.elements.code).focus();
+}
+
+async function removeManOut(id){
+  const m = MAN.find(x => x.id === id);
+  if (!m || !confirm('「' + m.name + ' ×' + m.qty + '」（' + fmtMD(m.date) + '）の手動出庫を取り消しますか？在庫に戻ります。')) return;
+  busy(true);
+  try { await deleteDoc(doc(db, MANUAL_COLLECTION, id)); }
+  catch(e){ toast('取り消せませんでした：' + (e.code || e.message), true); return; }
+  finally { busy(false); }
+  MAN = MAN.filter(x => x.id !== id);
+  render();
+  toast('手動出庫を取り消しました');
 }
 
 /* ===== トータルピックリスト（未出荷の注文を商品ごとに合計） ===== */
@@ -1318,12 +1449,17 @@ function feeRows(ym){
       lots.get(k).push({ k, code:codeOf(b.code, b.name), name:stockName.get(k) || b.name, inDate:b.inDate, left:Number(b.inQty) });
     });
   // 月末までに出荷したぶんを、古いロットから引く
+  const take = (k, qty) => {
+    const ls = lots.get(k); if (!ls) return;
+    let q = qty;
+    for (const l of ls){ if (q <= 0) break; const t = Math.min(l.left, q); l.left -= t; q -= t; }
+  };
   D.orders.forEach(o => {
     if (!o.shipped || (o.shipDate && o.shipDate > end)) return;
-    const ls = lots.get(key(o.code, o.item)); if (!ls) return;
-    let q = o.qty;
-    for (const l of ls){ if (q <= 0) break; const t = Math.min(l.left, q); l.left -= t; q -= t; }
+    take(key(o.code, o.item), o.qty);
   });
+  // 月末までの手動出庫も、古いロットから引く
+  MAN.forEach(m => { if (m.date && m.date <= end) take(key(m.code, m.name), m.qty); });
   const rows = [];
   lots.forEach(ls => ls.forEach(l => {
     if (l.left <= 0 || addMonth1(l.inDate) > end) return;
@@ -1388,6 +1524,9 @@ document.addEventListener('click', e => {
   if (t.dataset.del){ removeSeller(t.dataset.del); return; }
   if (t.id === 'more'){ S.limit += 300; renderOrders(); return; }
   if (t.id === 'selAll'){ visibleOrders().slice(0, S.limit).forEach(o => S.sel.add(o.row)); renderOrders(); renderBar(); return; }
+  if (t.id === 'manOutBtn'){ if (D) openManOut(''); return; }
+  if (t.dataset.manOut){ if (D) openManOut(t.dataset.manOut); return; }
+  if (t.dataset.manDel){ removeManOut(t.dataset.manDel); return; }
   if (t.dataset.recvIn){ const b = D.inbound.find(x => x.row === Number(t.dataset.recvIn)); if (b) openReceiveIn(b); return; }
   if (t.id === 'addStock'){
     const names = JSON.parse(t.dataset.names || '[]');
@@ -1480,7 +1619,7 @@ function selectSeller(id){
   store('seller', id);
   S.sellerId = x ? x.id : '';
   S.sheetId = x ? x.sheetId : '';
-  S.sel.clear(); S.inMonth = ''; S.limit = 300; D = null;
+  S.sel.clear(); S.inMonth = ''; S.limit = 300; D = null; MAN = [];
   load();
 }
 $('seller').addEventListener('change', e => selectSeller(e.target.value));
