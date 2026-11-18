@@ -355,7 +355,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocs, getDocsFromCache, getDoc, getDocFromCache, addDoc, deleteDoc, doc, updateDoc, writeBatch, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -376,7 +376,10 @@ if (location.hostname === 'souko-2de57.web.app'){
 
 const fbApp = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
+// この端末にもFirestoreのデータを保存しておく（次に開いたときすぐ表示できる）
+let db;
+try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+catch(e){ db = getFirestore(fbApp); }
 
 /* =========================================================
    日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
@@ -491,6 +494,8 @@ let SELLERS = [];
 let MAN = []; // 手動出庫（Firestore）
 const S = { sellerId:'', sheetId:'', tab:'orders', filter:'pending', q:'', sel:new Set(), groupSel:true, limit:300, inMonth:'', sq:'' };
 const $ = id => document.getElementById(id);
+// シートへの書き込み待ちの列（画面は先に変えて、シートへは裏で順番に書く）
+const Q = { list:[], busy:null, reload:new Set() };
 
 /* ===== 便利関数 ===== */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -505,10 +510,13 @@ function fmtMD(s){
 }
 function store(k, v){ try{ if (v === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, v); }catch(e){ return ''; } }
 async function run(fn, ...args){
+  const sheetId = fn === 'checkSheet' ? args.shift() : S.sheetId;
+  return runFor(sheetId, fn, ...args);
+}
+async function runFor(sheetId, fn, ...args){
   const user = auth.currentUser;
   if (!user) throw new Error('ログインしてください');
   const idToken = await user.getIdToken();
-  const sheetId = fn === 'checkSheet' ? args.shift() : S.sheetId;
   let res;
   try {
     res = await fetch(API_URL, {
@@ -535,26 +543,141 @@ async function call(fn, ...args){
   finally { busy(false); }
 }
 
-/* ===== 読み込み ===== */
+/* ===== 読み込み =====
+   1. Firestoreに保存してある内容をすぐ表示（この端末の保存 → なければサーバー）
+   2. 裏でGASからシートの最新を読み、変わっていれば差し替えて、Firestoreにも保存
+   3. ほかの人が書き込んで保存が新しくなったら、自動で差し替える */
 async function load(){
   if (!S.sheetId){
     D = null;
+    watchCache('');
     $('title').textContent = 'セラーを追加してください';
     $('meta').textContent = '右上の「セラー管理」から、セラーの配送管理シートを登録します。';
     $('flow').innerHTML = '';
     $('list').innerHTML = '<div class="empty-state">セラーが登録されていません。「セラー管理」から追加してください。</div>';
     return;
   }
-  try { D = await call('getData'); } catch(e){ D = null; $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; return; }
-  render();
-  saveSummary();
+  const sid = S.sellerId, sheet = S.sheetId;
+  watchCache(sid);
+  if (!D){
+    $('list').innerHTML = '<div class="empty-state">読み込み中…</div>';
+    let c = await readCache(sid, true).catch(() => null);
+    if (!c) c = await readCache(sid, false).catch(e => { cacheWarn(e); return null; });
+    if (c && sid === S.sellerId && !D){ CACHE_V = c.v; D = c.data; render(); }
+  }
+  S.checking = true; if (D) render();
+  try {
+    const fresh = await runFor(sheet, 'getData');
+    if (sid !== S.sellerId) return;
+    if (!pendingFor(sheet)){ D = fresh; render(); saveSummary(); saveCache(); }
+  } catch(e){
+    if (sid !== S.sellerId) return;
+    if (D) toast('シートの最新を読めませんでした（保存済みの内容を表示しています）：' + (e.message || e), true);
+    else { $('title').textContent = '読み込めませんでした'; $('list').innerHTML = '<div class="empty-state">'+esc(e.message || e)+'</div>'; }
+  } finally {
+    if (sid === S.sellerId){ S.checking = false; if (D) render(); }
+  }
 }
 function applyResult(res){
   if (res && res.data) D = res.data;
   if (res && res.errors && res.errors.length) toast(res.errors.join(' / '), true);
   render();
   saveSummary();
+  saveCache();
 }
+
+/* ===== Firestoreへの保存（セラーごとに delivery_cache/{セラーID}） =====
+   1つのドキュメントには約1MBまでしか入らないので、内容を分けて parts に入れる */
+const CACHE = 'delivery_cache';
+const CLIENT = Math.random().toString(36).slice(2) + Date.now().toString(36);
+const PART = 250000; // 1つに入れる文字数
+let CACHE_V = 0, cacheUnsub = null, cacheWarned = false;
+function cacheWarn(e){
+  console.warn('Firestoreの保存を使えませんでした', e);
+  if (!cacheWarned && e && e.code === 'permission-denied'){
+    cacheWarned = true;
+    toast('Firestoreの「' + CACHE + '」を読み書きする許可がありません。ルールに追加すると、開くのが速くなります', true);
+  }
+}
+async function readCache(sid, local){
+  const ref = doc(db, CACHE, sid);
+  const m = local ? await getDocFromCache(ref) : await getDoc(ref);
+  if (!m.exists()) return null;
+  const meta = m.data();
+  const ps = local ? await getDocsFromCache(collection(ref, 'parts')) : await getDocs(collection(ref, 'parts'));
+  const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a,b) => a.i - b.i);
+  if (!meta.parts || parts.length !== meta.parts) return null;
+  return { v: meta.v, data: JSON.parse(parts.map(p => p.s).join('')) };
+}
+async function saveCache(){
+  if (!D || !S.sellerId) return;
+  const sid = S.sellerId, json = JSON.stringify(D), v = Date.now();
+  const n = Math.max(1, Math.ceil(json.length / PART));
+  try {
+    const ref = doc(db, CACHE, sid);
+    const b = writeBatch(db);
+    for (let i = 0; i < n; i++) b.set(doc(ref, 'parts', 'p' + i), { i, v, s: json.slice(i * PART, (i + 1) * PART) });
+    for (let i = n; i < n + 10; i++) b.delete(doc(ref, 'parts', 'p' + i)); // 前より短くなったときの残りを消す
+    b.set(ref, { v, parts: n, sheetId: S.sheetId, client: CLIENT, by: auth.currentUser ? auth.currentUser.email : '', at: serverTimestamp() });
+    CACHE_V = v;
+    await b.commit();
+  } catch(e){ cacheWarn(e); }
+}
+// ほかの人（ほかのパソコン）が保存したら、自動で差し替える
+function watchCache(sid){
+  if (cacheUnsub){ cacheUnsub(); cacheUnsub = null; }
+  if (!sid) return;
+  cacheUnsub = onSnapshot(doc(db, CACHE, sid), snap => {
+    const m = snap.data();
+    if (!m || m.client === CLIENT || m.v <= CACHE_V || sid !== S.sellerId || pendingFor(S.sheetId)) return;
+    readCache(sid, false).then(c => {
+      if (!c || sid !== S.sellerId || c.v <= CACHE_V || pendingFor(S.sheetId)) return;
+      CACHE_V = c.v; D = c.data; render(); saveSummary();
+    }).catch(cacheWarn);
+  }, cacheWarn);
+}
+
+/* ===== シートへの書き込み（画面は先に変えて、シートへは裏で順番に） ===== */
+const pendingFor = sheet => !!((Q.busy && Q.busy.sheet === sheet) || Q.list.some(j => j.sheet === sheet));
+function syncNote(){
+  const n = Q.list.filter(j => j.sheet === S.sheetId).length + (Q.busy && Q.busy.sheet === S.sheetId ? 1 : 0);
+  return n ? '・シートに反映中（' + n + '件）' : S.checking ? '・最新を確認中…' : '';
+}
+function queueWrite(fn, args, after){
+  Q.list.push({ sheet:S.sheetId, fn, args, after });
+  pump();
+  if (D) render();
+}
+async function pump(){
+  if (Q.busy || !Q.list.length) return;
+  const j = Q.busy = Q.list.shift();
+  try {
+    const res = await runFor(j.sheet, j.fn, ...j.args);
+    Q.busy = null;
+    if (j.after){ try { j.after(res); } catch(e){ console.warn(e); } }
+    if (res && res.errors && res.errors.length) toast(res.errors.join(' / '), true);
+    // 後ろに書き込み待ちがなければ、シートの最新の内容に差し替える
+    if (j.sheet === S.sheetId && !pendingFor(j.sheet) && res && res.data){ D = res.data; saveSummary(); saveCache(); }
+  } catch(e){
+    Q.busy = null;
+    toast('シートに書き込めませんでした：' + (e.message || e) + '　シートの内容を読み直します', true);
+    Q.reload.add(j.sheet);
+  }
+  if (Q.reload.has(S.sheetId) && !pendingFor(S.sheetId)){ Q.reload.delete(S.sheetId); load(); }
+  if (D) render();
+  pump();
+}
+window.addEventListener('beforeunload', e => { if (Q.busy || Q.list.length){ e.preventDefault(); e.returnValue = ''; } });
+// 画面のデータを先に書き換える（シートの返事が来たら、そちらに置きかわる）
+function localOrders(updates){
+  updates.forEach(u => {
+    const o = byRow(u.row); if (!o) return;
+    const f = { ...u.fields };
+    if (typeof f.size === 'boolean') f.size = f.size ? (typeof o.size === 'string' && o.size ? o.size : '120以上') : '';
+    Object.assign(o, f);
+  });
+}
+const tempRow = () => -(Date.now() + Math.floor(Math.random() * 1000)); // シートに入るまでの仮の行番号
 
 /* ===== 未出荷件数をFirestoreに保存（チェックリストアプリで表示するため） ===== */
 async function saveSummary(){
@@ -604,7 +727,7 @@ function render(){
   if (!D) return;
   MAN = (D.manual || []).map(m => ({ ...m, qty:Number(m.qty) || 0 })); // 手動出庫シート
   $('title').textContent = D.title;
-  $('meta').textContent = '注文シート「' + D.orderSheet + '」・' + D.loadedAt + ' に読み込み';
+  $('meta').textContent = '注文シート「' + D.orderSheet + '」・' + D.loadedAt + ' に読み込み' + syncNote();
   renderFlow();
   if (S.tab === 'orders') renderOrders();
   if (S.tab === 'inbound') renderInbound();
@@ -788,8 +911,10 @@ function summaryOf(rows){
 
 /* ===== 受領・出荷 ===== */
 async function setReceived(rows, val){
-  const res = await call('updateOrders', rows.map(o => ({ row:o.row, orderId:o.orderId, fields:{ received:val } })));
-  applyResult(res);
+  if (!rows.length) return;
+  const ups = rows.map(o => ({ row:o.row, orderId:o.orderId, fields:{ received:val } }));
+  localOrders(ups); saveSummary();
+  queueWrite('updateOrders', [ups]);
   toast(val ? '受領にしました（' + rows.length + '行）' : '受領を外しました');
 }
 
@@ -815,11 +940,12 @@ function openShip(rows){
         if (fd.get('received') === 'on') f.received = true;
         return { row:o.row, orderId:o.orderId, fields:f };
       });
-      const res = await call('updateOrders', updates);
+      const before = rows.map(o => o.shipDate);
       S.sel.clear();
-      applyResult(res);
+      localOrders(updates); saveSummary();
+      queueWrite('updateOrders', [updates]);
       toast('出荷にしました（' + ids.size + '件）');
-      pushShipCounts([fd.get('shipDate'), ...rows.map(o => o.shipDate)]);
+      pushShipCounts([fd.get('shipDate'), ...before]);
     }
   );
 }
@@ -831,11 +957,13 @@ function openUnship(rows){
     '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn danger" type="submit">出荷を取り消す</button></div></form>',
     async fd => {
       const clear = fd.get('clear') === 'on';
-      const res = await call('updateOrders', rows.map(o => ({ row:o.row, orderId:o.orderId,
-        fields: clear ? { shipped:false, shipDate:'', carrier:'', tracking:'' } : { shipped:false } })));
-      applyResult(res);
+      const before = rows.map(o => o.shipDate);
+      const ups = rows.map(o => ({ row:o.row, orderId:o.orderId,
+        fields: clear ? { shipped:false, shipDate:'', carrier:'', tracking:'' } : { shipped:false } }));
+      localOrders(ups); saveSummary();
+      queueWrite('updateOrders', [ups]);
       toast('出荷を取り消しました');
-      pushShipCounts(rows.map(o => o.shipDate));
+      pushShipCounts(before);
     }
   );
 }
@@ -864,10 +992,12 @@ function openEdit(o){
         size: o.sizeCheck ? fd.get('size') === 'on' : (fd.get('size') || '').trim(), note: fd.get('note'),
       };
       if (D.hasPacking) fields.packing = fd.get('packing') === 'on';
-      const res = await call('updateOrders', [{ row:o.row, orderId:o.orderId, fields }]);
-      applyResult(res);
+      const prev = { shipped:o.shipped, shipDate:o.shipDate };
+      const ups = [{ row:o.row, orderId:o.orderId, fields }];
+      localOrders(ups); saveSummary();
+      queueWrite('updateOrders', [ups]);
       toast('保存しました');
-      if (o.shipped !== fields.shipped || normShipDate(o.shipDate) !== normShipDate(fields.shipDate)) pushShipCounts([o.shipDate, fields.shipDate]);
+      if (prev.shipped !== fields.shipped || normShipDate(prev.shipDate) !== normShipDate(fields.shipDate)) pushShipCounts([prev.shipDate, fields.shipDate]);
     }
   );
 }
@@ -1148,6 +1278,7 @@ function renderInbound(){
 }
 
 function openReceiveIn(b){
+  if (b.row < 0){ toast('この入庫はまだシートに反映中です。少し待ってからもう一度押してください', true); return; }
   openDlg(
     '<form><h2>入荷処理</h2><p class="sub">'+esc(b.name)+'（予定 '+b.planned+'個）</p>' +
     '<div class="two"><label>入荷日<input name="inDate" type="date" value="'+today()+'" required></label>' +
@@ -1158,9 +1289,9 @@ function openReceiveIn(b){
     '<div class="acts"><button type="button" class="btn ghost" data-close>やめる</button><button class="btn primary" type="submit">入荷にする</button></div></form>',
     async fd => {
       const staff = fd.get('staff').trim(); if (staff) store('lastStaff', staff);
-      const res = await call('updateInbound', { row:b.row, name:b.name, fields:{
-        inDate:fd.get('inDate'), inQty:fd.get('inQty'), staff, expiry:fd.get('expiry').trim(), note:fd.get('note') } });
-      applyResult(res);
+      const fields = { inDate:fd.get('inDate'), inQty:fd.get('inQty'), staff, expiry:fd.get('expiry').trim(), note:fd.get('note') };
+      Object.assign(b, fields);
+      queueWrite('updateInbound', [{ row:b.row, name:b.name, fields }]);
       toast('入荷にしました');
     }
   );
@@ -1270,11 +1401,12 @@ function openManOut(presetKey){
       if (staff) store('lastStaff', staff);
       if (dst) store('lastManDest', dst);
       const rec = { code:r.code, name:r.name, qty, date:fd.get('date') || today(), dest:dst, staff, note:String(fd.get('note') || '').trim() };
-      let res;
-      try { res = await call('addManualOut', rec); } catch(e){ return false; }
-      applyResult(res);
-      const sk = (res.fix && res.fix.skipped) || [];
-      toast(r.name + ' を ' + qty + '点 出庫しました（手動出庫シートに記録）' + (sk.length ? '／在庫シートの出庫数が手入力の商品：' + sk.slice(0, 3).join('、') + (sk.length > 3 ? ' ほか' : '') + '（シートの在庫数には入っていません）' : ''), sk.length > 0);
+      D.manual = (D.manual || []).concat([{ row:tempRow(), id:'', ...rec }]);
+      queueWrite('addManualOut', [rec], res => {
+        const sk = (res && res.fix && res.fix.skipped) || [];
+        if (sk.length) toast('在庫シートの出庫数が手入力の商品：' + sk.slice(0, 3).join('、') + (sk.length > 3 ? ' ほか' : '') + '（シートの在庫数には入っていません）', true);
+      });
+      toast(r.name + ' を ' + qty + '点 出庫しました（手動出庫シートに記録します）');
     }
   );
   const f = $('dlgBody').querySelector('form');
@@ -1308,10 +1440,10 @@ function openManOut(presetKey){
 
 async function removeManOut(row){
   const m = MAN.find(x => x.row === Number(row));
+  if (m && m.row < 0){ toast('この出庫はまだシートに反映中です。少し待ってからもう一度押してください', true); return; }
   if (!m || !confirm('「' + m.name + ' ×' + m.qty + '」（' + fmtMD(m.date) + '）の手動出庫を取り消しますか？\n手動出庫シートの行を消して、在庫に戻します。')) return;
-  let res;
-  try { res = await call('deleteManualOut', { row:m.row, id:m.id }); } catch(e){ return; }
-  applyResult(res);
+  D.manual = (D.manual || []).filter(x => x.row !== m.row);
+  queueWrite('deleteManualOut', [{ row:m.row, id:m.id }]);
   toast('手動出庫を取り消しました');
 }
 
@@ -1507,7 +1639,8 @@ document.addEventListener('click', e => {
   if (t.dataset.recvIn){ const b = D.inbound.find(x => x.row === Number(t.dataset.recvIn)); if (b) openReceiveIn(b); return; }
   if (t.id === 'addStock'){
     const names = JSON.parse(t.dataset.names || '[]');
-    call('addStockItems', names).then(res => { applyResult(res); toast('在庫シートに' + res.added + '件追加しました'); }).catch(() => {});
+    toast('在庫シートに追加しています…');
+    queueWrite('addStockItems', [names], res => toast('在庫シートに' + ((res && res.added) || 0) + '件追加しました'));
     return;
   }
 
@@ -1572,13 +1705,12 @@ $('inForm').addEventListener('submit', async e => {
   if (entry.inDate && entry.inQty === ''){ toast('入荷日を入れたときは入庫数量も入れてください', true); return; }
   if (!entry.inDate && entry.planned === ''){ toast('入荷待ちで登録するときは入荷予定数を入れてください', true); return; }
   if (entry.staff) store('lastStaff', entry.staff);
-  try {
-    const res = await call('addInbound', entry);
-    ['name','code','planned','expiry','inQty','note'].forEach(k => f.elements[k].value = '');
-    codeHint(''); f.elements.code.focus();
-    applyResult(res);
-    toast(entry.inDate ? '入庫を登録しました' : '入荷待ちとして登録しました');
-  } catch(err){}
+  if (!D.hasInbound){ toast('「入庫シート」が見つかりません。シート名を確認してください', true); return; }
+  D.inbound.push({ row:tempRow(), ...entry });
+  queueWrite('addInbound', [entry]);
+  ['name','code','planned','expiry','inQty','note'].forEach(k => f.elements[k].value = '');
+  codeHint(''); f.elements.code.focus();
+  toast(entry.inDate ? '入庫を登録しました' : '入荷待ちとして登録しました');
 });
 
 /* ===== セラー（Firestore） ===== */
