@@ -1300,7 +1300,9 @@ async function exportNow() {
 function openNewLotSheet() {
   const sh = $('sheet');
   const sellers = new Map();
-  allRecs().filter(r => HOKAN_FORMS.includes(r.form) && sellerKey(r)).forEach(r => sellers.set(sellerKey(r), r.name || ''));
+  // 候補：すべてのフォームの依頼・共有設定だけのセラー・在庫のあるセラー
+  allRecs().filter(r => sellerKey(r)).forEach(r => { if (!sellers.get(sellerKey(r))) sellers.set(sellerKey(r), r.name || ''); });
+  S.sellers.forEach(d => { if (d.seller) sellers.set(d.seller, d.name || sellers.get(d.seller) || ''); });
   liveLots().forEach(l => sellers.set(l.seller, l.sellerName || sellers.get(l.seller) || ''));
   sh.dataset.id = 'new'; sh.dataset.kind = 'new'; sh.dataset.dirty = '1'; sh.dataset.f = 'shopee';
   sh.innerHTML = `
