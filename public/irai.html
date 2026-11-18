@@ -187,6 +187,12 @@ details.bd table{margin-top:6px}
 .credit a{color:var(--sub)}
 .fixbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;font-size:13px;color:var(--sub)}
 .fixbar + .hk{margin-top:6px}
+/* 依頼の取り消し */
+.cxl{color:var(--late);font-weight:700}
+.item.is-cancel{opacity:.55}
+.item.is-cancel .l2{text-decoration:line-through}
+.cxl-box{margin-top:14px;background:#FFF5F5;border:1px solid #FFA8A8;border-radius:8px;padding:10px 12px;font-size:13px}
+.cxl-box b{color:var(--late)}
 </style>
 </head>
 <body>
@@ -221,6 +227,7 @@ details.bd table{margin-top:6px}
     <div class="seg" id="status">
       <button data-s="open" aria-pressed="true">未対応</button>
       <button data-s="done" aria-pressed="false">対応済</button>
+      <button data-s="cancel" aria-pressed="false">取消</button>
       <button data-s="all" aria-pressed="false">すべて</button>
     </div>
     <input class="search" id="q" type="search" placeholder="注文番号・管理番号・名前・商品名で検索">
@@ -266,7 +273,7 @@ details.bd table{margin-top:6px}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ===== Firebaseの設定（souko-2de57） =====
 const firebaseConfig = {
@@ -303,7 +310,7 @@ const isHokanOut = r => HOKAN_FORMS.includes(r.form) &&
 // =========================================
 
 const FORM_ORDER = [['shopee', 'Shopee'], ['domestic', '国内EC'], ['rs', '注文配送']];
-const S = { sellers: new Map(), lots: new Map(), skip: {}, lotsErr: '', view: 'req', sq: '', sfilter: 'have', billMonth: '', reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
+const S = { cancels: {}, sellers: new Map(), lots: new Map(), skip: {}, lotsErr: '', view: 'req', sq: '', sfilter: 'have', billMonth: '', reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DAY = 86400000;
@@ -575,6 +582,8 @@ function listen() {
     render();
   }, () => {}));
   S.unsubs.push(onSnapshot(doc(db, 'settings', 'hokan_skip'), d => { S.skip = (d.data() || {}).ids || {}; render(); }, () => {}));
+  // 取り消した依頼（settings/irai_cancel の ids に 依頼ID → 理由・日付・操作した人）
+  S.unsubs.push(onSnapshot(doc(db, 'settings', 'irai_cancel'), d => { S.cancels = (d.data() || {}).ids || {}; render(); }, () => {}));
   S.unsubs.push(onSnapshot(doc(db, 'irai_meta', 'status'), d => {
     const m = d.data() || {};
     $('meta').textContent = m.syncedAt ? 'シート同期 ' + m.syncedAt.slice(5) : 'シート同期 待機中';
@@ -585,10 +594,17 @@ function listen() {
 // アプリで操作した内容（シート反映前）を上書きして表示
 function effective(r) {
   const a = S.acts.get(r.id);
-  if (!a) return r;
-  const fix = a.userFix ? { user: a.userFix, userOrig: r.user, nameOrig: r.name, name: a.nameFix || r.name, userFix: a.userFix, nameFix: a.nameFix || '' } : {};
-  return { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '', ...fix };
+  let e = r;
+  if (a) {
+    const fix = a.userFix ? { user: a.userFix, userOrig: r.user, nameOrig: r.name, name: a.nameFix || r.name, userFix: a.userFix, nameFix: a.nameFix || '' } : {};
+    e = { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '', ...fix };
+  }
+  const c = S.cancels[r.id];   // 取り消した依頼は「対応済」と同じく未対応から外し、取消として表示
+  if (c) e = { ...e, done: true, doneDate: c.date || e.doneDate, canceled: true, cancelReason: c.reason || '', cancelBy: c.by || '', cancelDate: c.date || '' };
+  return e;
 }
+// 状態の絞り込み：未対応／対応済（取消を除く）／取消／すべて
+const statusOk = r => S.status === 'all' || (S.status === 'open' ? !r.done : S.status === 'cancel' ? !!r.canceled : (r.done && !r.canceled));
 function allRecs() { return [...S.reqs.values()].map(effective); }
 function find(id) { const r = S.reqs.get(id); return r ? effective(r) : null; }
 
@@ -602,9 +618,9 @@ function filtered(recs) {
   const q = S.q.trim().toLowerCase();
   const list = recs.filter(r =>
     (S.form === 'all' || r.form === S.form) &&
-    (S.status === 'all' || (S.status === 'open' ? !r.done : r.done)) &&
+    statusOk(r) &&
     (S.type === 'all' || r.type === S.type) &&
-    (!q || [r.order, r.user, r.name, r.email, r.product, r.note, ...(r.fields || []).map(f => f.v)].join(' ').toLowerCase().includes(q))
+    (!q || [r.order, r.user, r.name, r.email, r.product, r.note, r.cancelReason, ...(r.fields || []).map(f => f.v)].join(' ').toLowerCase().includes(q))
   );
   list.sort((a, b) => S.status === 'open' ? a.t - b.t : b.t - a.t);
   return list;
@@ -655,8 +671,7 @@ function renderReq(recs) {
   $('tabs').innerHTML = tabs.map(([k, lb]) =>
     `<button class="tab" data-f="${k}" aria-pressed="${S.form === k}"><span class="lb">${esc(lb)}</span><span class="num">${open(k)}<small>件</small></span></button>`).join('');
 
-  const base = recs.filter(r => (S.form === 'all' || r.form === S.form) &&
-    (S.status === 'all' || (S.status === 'open' ? !r.done : r.done)));
+  const base = recs.filter(r => (S.form === 'all' || r.form === S.form) && statusOk(r));
   const types = {};
   base.forEach(r => types[r.type] = (types[r.type] || 0) + 1);
   if (S.type !== 'all' && !types[S.type]) S.type = 'all';
@@ -669,7 +684,7 @@ function renderReq(recs) {
   const list = filtered(recs);
   const shown = list.slice(0, S.limit);
   $('list').innerHTML = shown.length ? shown.map(itemHtml).join('') :
-    `<div class="empty">${S.status === 'open' && !S.q ? '未対応の依頼はありません。' : '条件に合う依頼はありません。検索語や種別を変えてみてください。'}</div>`;
+    `<div class="empty">${S.status === 'open' && !S.q ? '未対応の依頼はありません。' : S.status === 'cancel' && !S.q ? '取り消した依頼はありません。' : '条件に合う依頼はありません。検索語や種別を変えてみてください。'}</div>`;
   $('more').hidden = list.length <= S.limit;
   $('more').textContent = `さらに表示（残り${list.length - S.limit}件）`;
 }
@@ -681,6 +696,7 @@ function statusTag(r) {
 }
 
 function hokanTag(r) {
+  if (r.canceled) return '';
   if (isHokanIn(r)) return lotsIn(r.id).length ? '<span class="hk-ok">在庫登録済</span>' : (r.done ? '<span class="pending">在庫未登録</span>' : '');
   if (isHokanOut(r)) return outsOf(r.id).length ? '<span class="hk-ok">出庫済</span>' : (r.done ? '<span class="pending">在庫未出庫</span>' : '');
   return '';
@@ -689,13 +705,14 @@ function hokanTag(r) {
 function itemHtml(r) {
   const a = ageText(r.t);
   const who = [r.user, r.name].filter(Boolean).join('　');
-  return `<div class="item ${r.done ? 'is-done' : ''}" data-f="${r.form}">
+  const doneTag = r.canceled ? `<span class="cxl">取消 ${esc(r.cancelDate)}</span>` : r.done ? `<span>済 ${esc(r.doneDate)}</span>` : '';
+  return `<div class="item ${r.done ? 'is-done' : ''} ${r.canceled ? 'is-cancel' : ''}" data-f="${r.form}">
     <div class="strip"></div>
     <button class="body" data-open="${esc(r.id)}">
       <div class="l1"><span class="type">${esc(r.type)}</span><span>${esc(r.formLabel)}</span>
-        <span class="age ${!r.done && a.late ? 'late' : ''}">${a.txt}</span>${r.done ? `<span>済 ${esc(r.doneDate)}</span>` : ''}${statusTag(r)}${hokanTag(r)}</div>
+        <span class="age ${!r.done && a.late ? 'late' : ''}">${a.txt}</span>${doneTag}${statusTag(r)}${hokanTag(r)}</div>
       <div class="l2">${esc(who || '（名前なし）')}</div>
-      <div class="l3">${r.order ? `<b>${esc(r.order)}</b>　` : ''}${esc(r.product)}</div>
+      <div class="l3">${r.canceled && r.cancelReason ? `理由：${esc(r.cancelReason)}　` : ''}${r.order ? `<b>${esc(r.order)}</b>　` : ''}${esc(r.product)}</div>
     </button>
     <button class="quick ${r.done ? '' : 'do'}" data-quick="${esc(r.id)}">${r.done ? '戻す' : '完了'}</button>
   </div>`;
@@ -719,20 +736,24 @@ function fillSheet(r, force) {
   $('sheet').dataset.f = r.form;
   $('sheet').innerHTML = `
     <div class="sheet-h">
-      <div><h2>${esc(r.type)}</h2><div class="sub">${esc(r.formLabel)}　${r.done ? '対応済 ' + esc(r.doneDate) : '未対応・' + ageText(r.t).txt}　${statusTag(r)}</div></div>
+      <div><h2>${esc(r.type)}</h2><div class="sub">${esc(r.formLabel)}　${r.canceled ? '<span class="cxl">取消 ' + esc(r.cancelDate) + '</span>' : r.done ? '対応済 ' + esc(r.doneDate) : '未対応・' + ageText(r.t).txt}　${statusTag(r)}</div></div>
       <button class="close" id="closeSheet" aria-label="閉じる">×</button>
     </div>
+    ${r.canceled ? `<div class="cxl-box"><b>この依頼は取り消し済みです</b><br>
+      取消日 ${esc(r.cancelDate)}${r.cancelBy ? `　操作 ${esc(r.cancelBy)}` : ''}${r.cancelReason ? `<br>理由：${esc(r.cancelReason)}` : ''}</div>` : ''}
     <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${isUrl(v) ? '' : 'copy'}" data-copy="${esc(v)}">${val(v)}</dd>`).join('')}</dl>
     <p class="hint">項目をタップするとコピーできます。</p>
     ${r.noteLabel ? `<div class="note"><label for="noteIn">${esc(r.noteLabel)}</label>
       <div class="note-row"><input id="noteIn" value="${esc(r.note || '')}"><button class="btn" id="saveNote">保存</button></div></div>` : ''}
-    ${hokanPanel(r)}
+    ${r.canceled ? '' : hokanPanel(r)}
     <div class="actions">
-      <button class="primary ${r.done ? 'undo' : ''}" id="toggleDone">${r.done ? '未対応に戻す' : '完了にする'}</button>
+      <button class="primary ${r.done ? 'undo' : ''}" id="toggleDone">${r.canceled ? '取り消しをやめる（未対応に戻す）' : r.done ? '未対応に戻す' : '完了にする'}</button>
       <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">シートで開く</a>
-    </div>`;
+    </div>
+    ${r.canceled ? '' : `<div class="actions" style="margin-top:10px;justify-content:flex-end"><button class="mini danger" id="cancelReq">この依頼を取り消す</button></div>`}`;
   $('closeSheet').onclick = closeSheet;
   $('toggleDone').onclick = () => { closeSheet(); toggleDone(r.id); };
+  if ($('cancelReq')) $('cancelReq').onclick = () => cancelReq(r.id);
   if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
   bindHokanPanel(r);
 }
@@ -899,7 +920,7 @@ function bindHokanPanel(r) {
 function renderStock(recs) {
   const al = [];
   if (S.lotsErr) al.push(`<div class="alert">${esc(S.lotsErr)}</div>`);
-  const miss = recs.filter(r => r.done && !S.skip[r.id] &&
+  const miss = recs.filter(r => r.done && !r.canceled && !S.skip[r.id] &&
     ((isHokanIn(r) && !lotsIn(r.id).length) || (isHokanOut(r) && !outsOf(r.id).length))).sort((a, b) => a.t - b.t);
   if (miss.length) al.push(`<div class="alert"><b>完了済みなのに在庫に反映していない依頼が${miss.length}件あります。</b>開いて登録・出庫するか、反映不要なら「対象外」を押してください。
     ${miss.slice(0, 30).map(r => `<div class="pend-row"><button class="open" data-req="${esc(r.id)}">${esc(r.type)}　${esc([r.user, r.name].filter(Boolean).join(' '))}　<small>${esc(r.doneDate || '')}</small></button>
@@ -1355,8 +1376,36 @@ function writeAction(r, patch) {
     at: serverTimestamp()
   });
 }
+// ---------- 依頼の取り消し（セラー都合のキャンセル・重複依頼など） ----------
+// 記録は settings/irai_cancel に残し、シート側は「完了」として反映（未対応の件数から外れる）
+const cancelRef = () => doc(db, 'settings', 'irai_cancel');
+async function cancelReq(id) {
+  const r = find(id); if (!r || r.canceled) return;
+  const reason = prompt(`この依頼を取り消します。\n${r.type}　${[r.user, r.name].filter(Boolean).join(' ')}\n\n理由（任意。例：セラー様都合でキャンセル、重複依頼）`, '');
+  if (reason === null) return;                         // キャンセルを押したら何もしない
+  try {
+    if (lotsIn(r.id).length || outsOf(r.id).length) await stockOnUndo(r, false);   // 在庫に反映済みなら戻すか確認
+    const date = todayJST();
+    await setDoc(cancelRef(), { ids: { [r.id]: { reason: reason.trim(), date, by: S.user.email, at: new Date().toISOString() } } }, { merge: true });
+    if (!r.done) await writeAction(r, { done: true, doneDate: date });
+    closeSheet();
+    toast('依頼を取り消しました', () => restoreReq(id, true));
+  } catch (e) { toast('取り消せませんでした：' + e.message); }
+}
+// 取り消しをやめて「未対応」に戻す
+async function restoreReq(id, isUndo) {
+  const r = find(id); if (!r || !r.canceled) return;
+  if (!isUndo && !confirm('取り消しをやめて、この依頼を「未対応」に戻しますか？')) return;
+  try {
+    await updateDoc(cancelRef(), new FieldPath('ids', id), deleteField());
+    await writeAction(r, { done: false, doneDate: '' });
+    toast('取り消しをやめて、未対応に戻しました');
+  } catch (e) { toast('戻せませんでした：' + e.message); }
+}
+
 async function toggleDone(id, isUndo) {
   const r = find(id); if (!r) return;
+  if (r.canceled) { await restoreReq(id); return; }
   const next = !r.done;
   try {
     let msg = '';
