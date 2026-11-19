@@ -355,7 +355,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocs, getDocsFromCache, getDoc, getDocFromCache, addDoc, deleteDoc, doc, updateDoc, writeBatch, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, writeBatch, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -376,10 +376,11 @@ if (location.hostname === 'souko-2de57.web.app'){
 
 const fbApp = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(fbApp);
-// この端末にもFirestoreのデータを保存しておく（次に開いたときすぐ表示できる）
-let db;
-try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
-catch(e){ db = getFirestore(fbApp); }
+// ※端末への保存（persistentLocalCache）は使わない。
+//   同じサイトのほかのアプリと保存場所を取り合って、読み込みが止まることがあるため
+const db = getFirestore(fbApp);
+// 返事が来ないときに、いつまでも待たないようにする
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
 /* =========================================================
    日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
@@ -561,8 +562,7 @@ async function load(){
   watchCache(sid);
   if (!D){
     $('list').innerHTML = '<div class="empty-state">読み込み中…</div>';
-    let c = await readCache(sid, true).catch(() => null);
-    if (!c) c = await readCache(sid, false).catch(e => { cacheWarn(e); return null; });
+    const c = await withTimeout(readCache(sid), 5000).catch(e => { cacheWarn(e); return null; });
     if (c && sid === S.sellerId && !D){ CACHE_V = c.v; D = c.data; render(); }
   }
   S.checking = true; if (D) render();
@@ -599,12 +599,12 @@ function cacheWarn(e){
     toast('Firestoreの「' + CACHE + '」を読み書きする許可がありません。ルールに追加すると、開くのが速くなります', true);
   }
 }
-async function readCache(sid, local){
+async function readCache(sid){
   const ref = doc(db, CACHE, sid);
-  const m = local ? await getDocFromCache(ref) : await getDoc(ref);
+  const m = await getDoc(ref);
   if (!m.exists()) return null;
   const meta = m.data();
-  const ps = local ? await getDocsFromCache(collection(ref, 'parts')) : await getDocs(collection(ref, 'parts'));
+  const ps = await getDocs(collection(ref, 'parts'));
   const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a,b) => a.i - b.i);
   if (!meta.parts || parts.length !== meta.parts) return null;
   return { v: meta.v, data: JSON.parse(parts.map(p => p.s).join('')) };
@@ -630,7 +630,7 @@ function watchCache(sid){
   cacheUnsub = onSnapshot(doc(db, CACHE, sid), snap => {
     const m = snap.data();
     if (!m || m.client === CLIENT || m.v <= CACHE_V || sid !== S.sellerId || pendingFor(S.sheetId)) return;
-    readCache(sid, false).then(c => {
+    readCache(sid).then(c => {
       if (!c || sid !== S.sellerId || c.v <= CACHE_V || pendingFor(S.sheetId)) return;
       CACHE_V = c.v; D = c.data; render(); saveSummary();
     }).catch(cacheWarn);
