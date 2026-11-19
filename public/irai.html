@@ -813,7 +813,7 @@ function fillSheet(r, force) {
   if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
   bindHokanPanel(r);
 }
-function closeSheet() { const sh = $('sheet'); sh.classList.remove('open'); sh.dataset.id = ''; sh.dataset.kind = ''; sh.dataset.dirty = ''; $('bg').style.display = 'none'; }
+function closeSheet() { const sh = $('sheet'); sh.classList.remove('open'); sh.dataset.id = ''; sh.dataset.kind = ''; sh.dataset.edit = ''; sh.dataset.dirty = ''; $('bg').style.display = 'none'; }
 function showSheet() { $('bg').style.display = 'block'; requestAnimationFrame(() => $('sheet').classList.add('open')); }
 function sheetBusy() {
   const sh = $('sheet'), ae = document.activeElement;
@@ -916,8 +916,9 @@ function hokanPanelBody(r) {
   if (isHokanIn(r)) {
     const ins = lotsIn(r.id);
     if (ins.length) return `<div class="hk"><h3>保管在庫：登録済み</h3>
-      ${ins.map(l => `<p>${esc(l.product)}　${l.qtyIn}点（残り${remain(l)}点）　保管日 ${esc(l.inDate)}${l.expiry ? `　賞味期限 ${esc(l.expiry)}${expBadge(l.expiry)}` : ''}${l.orderId ? `　Order ID ${esc(l.orderId)}` : ''}</p>`).join('')}
-      <p class="hint">保管日・数量の修正は「保管在庫」画面から行えます。</p></div>`;
+      ${ins.map(l => `<div class="pend-row" style="border-top:1px solid var(--line)"><span style="font-size:13px">${esc(l.product)}　${l.qtyIn}点（残り${remain(l)}点）　保管日 ${esc(l.inDate)}${l.expiry ? `　賞味期限 ${esc(l.expiry)}${expBadge(l.expiry)}` : ''}${l.orderId ? `　Order ID ${esc(l.orderId)}` : ''}</span>
+        <button class="mini" data-editlot="${esc(l.id)}">✏️ 編集</button></div>`).join('')}
+      <p class="hint">「編集」から商品名・数量・保管日・賞味期限などを直せます。</p></div>`;
     const items = parseItems(r);
     const withOid = !!reqOrderId(r) || items.some(i => i.orderId);
     return `<div class="hk lotform-req"><h3>保管在庫に登録（${who}）</h3>
@@ -1024,9 +1025,9 @@ function renderStock(recs) {
   }).join('');
 }
 
-function openLotSheet(id) {
+function openLotSheet(id, edit) {
   const sh = $('sheet');
-  sh.dataset.id = id; sh.dataset.kind = 'lot'; sh.dataset.dirty = '';
+  sh.dataset.id = id; sh.dataset.kind = 'lot'; sh.dataset.dirty = ''; sh.dataset.edit = edit ? '1' : '';
   fillLotSheet(id, true);
   showSheet();
 }
@@ -1038,7 +1039,7 @@ function fillLotSheet(id, force) {
   sh.dataset.f = 'shopee';
   sh.innerHTML = `
     <div class="sheet-h"><div><h2>${esc(l.product)}</h2><div class="sub">${esc(l.sellerName || '')}　${esc(l.seller)}　残り${rem}点／${l.qtyIn}点</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+      <div style="display:flex;gap:4px;align-items:center"><button class="mini" id="lotEdit">✏️ 編集</button><button class="close" id="closeSheet" aria-label="閉じる">×</button></div></div>
     <dl>
       <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
       <dt>保管料</dt><dd>${feeMode(l.seller) === 'item' ? `${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）` : esc(feeLabel(l.seller)) + '（税抜）'}</dd>
@@ -1059,7 +1060,7 @@ function fillLotSheet(id, force) {
     <h3 style="font-size:15px;margin:16px 0 0">出庫の履歴</h3>
     ${(l.outs || []).length ? `<ul class="hist">${[...l.outs].sort((a, b) => b.date.localeCompare(a.date)).map(o => `<li><span>${esc(o.date)}　−${o.qty}点　${esc(o.reqId ? '依頼から' : '手動')}${o.memo ? '　' + esc(o.memo) : ''}</span>
       <button class="mini danger" data-cancel="${esc(o.id)}">取り消す</button></li>`).join('')}</ul>` : '<p class="hint">まだ出庫はありません。</p>'}
-    <details class="bd lotform" style="margin-top:16px"><summary>入庫内容を直す・削除する</summary>
+    <details class="bd lotform" id="leBox" style="margin-top:16px" ${sh.dataset.edit === '1' ? 'open' : ''}><summary><b>✏️ 入庫した商品の情報を編集する</b>（商品名・数量・保管日・賞味期限など）・削除</summary>
       <label class="field"><span>管理番号（間違っていたら直す）</span><input id="leS" value="${esc(l.seller)}"></label>
       <label class="field"><span>セラー名</span><input id="leSN" value="${esc(l.sellerName || '')}"></label>
       <label class="field"><span>商品名</span><input id="leP" value="${esc(l.product)}"></label>
@@ -1073,6 +1074,8 @@ function fillLotSheet(id, force) {
       <div class="actions"><button class="primary" id="leSave">保存する</button><button class="mini danger" id="leDel">この在庫を削除</button></div>
     </details>`;
   $('closeSheet').onclick = closeSheet;
+  $('leBox').ontoggle = () => { sh.dataset.edit = $('leBox').open ? '1' : ''; };
+  $('lotEdit').onclick = () => { $('leBox').open = true; sh.dataset.edit = '1'; $('leBox').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => $('leP').focus(), 300); };
   if ($('lotReq')) $('lotReq').onclick = () => openSheet(req);
   $('loOut').onclick = async () => {
     const qty = toNum($('loQty').value), date = $('loDate').value;
@@ -1093,7 +1096,7 @@ function fillLotSheet(id, force) {
     const used = sumQty(l.outs || []);
     if (!product || !qtyIn || !inDate) { toast('商品名・入庫数・保管日を入れてください'); return; }
     if (qtyIn < used) { toast(`すでに${used}点出庫しているため、入庫数は${used}以上にしてください`); return; }
-    try { await updateDoc(doc(db, 'hokan_lots', id), { seller, sellerName, product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim(), expiry: $('leE').value || '' }); toast('保存しました'); refill(); }
+    try { await updateDoc(doc(db, 'hokan_lots', id), { seller, sellerName, product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim(), expiry: $('leE').value || '' }); sh.dataset.edit = ''; toast('保存しました'); refill(); }
     catch (e) { toast('保存できませんでした：' + e.message); }
   };
   $('leDel').onclick = async () => {
@@ -1573,7 +1576,10 @@ $('list').onclick = e => {
   const q = e.target.closest('[data-quick]'); if (q) { toggleDone(q.dataset.quick); return; }
   const o = e.target.closest('[data-open]'); if (o) { const r = find(o.dataset.open); if (r) openSheet(r); }
 };
-$('sheet').onclick = e => { const d = e.target.closest('dd.copy'); if (d) copy(d.dataset.copy); };
+$('sheet').onclick = e => {
+  const el = e.target.closest('[data-editlot]'); if (el) { openLotSheet(el.dataset.editlot, true); return; }
+  const d = e.target.closest('dd.copy'); if (d) copy(d.dataset.copy);
+};
 $('bg').onclick = closeSheet;
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 </script>
