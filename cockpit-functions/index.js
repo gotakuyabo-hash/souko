@@ -521,6 +521,7 @@ async function createSupportCall(token, roomId, send) {
       + "（アプリのインストールや登録は不要です。カメラ・マイクの許可が出たら「許可」を押してください）\n\n"
       + url + "\n\n"
       + "※画面を共有いただく場合は、パソコンからご参加のうえ、画面下の「画面共有（Share）」を押してください。\n"
+      + "※背景をぼかしたい場合は、参加前の画面でカメラアイコン横の「▼」から「Background blur」を選んでください（パソコンのみ）。\n"
       + "※URLの有効期限は" + SUPPORT_CALL_MINUTES + "分です。";
     await sendChatworkMessage(token, rid, body);
     try { await markSentFromCockpit(rid, body); } catch (e) { console.error(e); }
