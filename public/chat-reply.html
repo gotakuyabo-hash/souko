@@ -227,6 +227,16 @@
     <!-- シート類 -->
     <div id="modalOverlay" class="fixed inset-0 bg-black/50 z-40" style="display:none;" onclick="closeAllModals()"></div>
 
+    <!-- 画面共有通話（Daily.co） -->
+    <div id="supportCallOverlay" class="fixed inset-0 bg-black" style="display:none; z-index:60; flex-direction:column;">
+        <div class="flex gap-2 p-2 bg-slate-800 shrink-0">
+            <button onclick="copySupportCallUrl()" class="btn btn-sub flex-1 text-[13px]">📋 URLをコピー</button>
+            <button onclick="openSupportCallTab()" class="btn btn-sub flex-1 text-[13px]">↗ 別タブで開く</button>
+            <button onclick="closeSupportCall()" class="btn btn-sub flex-1 text-[13px]">✕ 終了</button>
+        </div>
+        <iframe id="supportCallFrame" allow="camera; microphone; fullscreen; display-capture; autoplay" class="flex-1 w-full" style="border:0;"></iframe>
+    </div>
+
     <div id="sheetActions" class="sheet">
         <div class="sheet-head"><div id="sheetActionsTitle" class="font-bold text-base truncate text-center"></div></div>
         <div id="sheetActionsBody"></div>
@@ -1495,6 +1505,7 @@
             }
             document.getElementById('sheetActionsBody').innerHTML =
                 sheetBtn('🔑', 'セラー情報を見る', `fetchSellerInfo('${rid}')`) +
+                sheetBtn('📞', '画面共有で通話（URLをこのルームに送る）', `startSupportCall('${rid}')`) +
                 sheetBtn(later ? '↩️' : '⏳', later ? '「後で対応」から外す' : '「後で対応」に入れる', `toggleLaterRoom('${rid}'); closeAllModals();`) +
                 sheetBtn('👤', roomOpenQuestions(rid).length ? '渡辺さんに別の質問をする' : '渡辺さんに聞く', `openAskForm('${key}')`) +
                 roomOpenQuestions(rid).map(q => sheetBtn('✖️', `渡辺さんへの質問を取り下げる（${esc(q.label || '')}）`, `cancelQuestion(${Number(q.no) || 0})`)).join('') +
@@ -1513,6 +1524,42 @@
                 sheetBtn('👤', `担当者名を変更（今：${esc(localStorage.getItem(STAFF_NAME_KEY) || '未設定')}）`, `changeStaffName()`) +
                 `<a href="https://www.chatwork.com/#!rid${rid}" target="_blank" rel="noopener" class="sheet-row"><span class="text-xl w-7 text-center">🌐</span><span>Chatworkで開く</span></a>`;
             openSheet('sheetActions');
+        };
+
+        // ===== 画面共有通話（Daily.co） =====
+        let supportCallUrl = '';
+        window.startSupportCall = async function(rid) {
+            if (!confirm('通話用のURLを作って、このルームに案内を送ります。よろしいですか？\n（URLの有効期限は60分）')) return;
+            closeAllModals();
+            showToast('通話ルームを作成中…');
+            try {
+                const d = await callApi('create_support_call', { room_id: rid });
+                supportCallUrl = d.url;
+                showToast('案内を送りました。通話画面を開きます');
+                openSupportCall(d.url);
+            } catch (e) {
+                alert('通話ルームの作成に失敗しました: ' + e.message);
+            }
+        };
+        function openSupportCall(url) {
+            const ov = document.getElementById('supportCallOverlay');
+            document.getElementById('supportCallFrame').src = url;
+            ov.style.display = 'flex';
+            lockBodyScroll();
+        }
+        window.closeSupportCall = function() {
+            if (!confirm('通話を終了しますか？')) return;
+            document.getElementById('supportCallFrame').src = 'about:blank';
+            document.getElementById('supportCallOverlay').style.display = 'none';
+            unlockBodyScroll();
+        };
+        window.copySupportCallUrl = async function() {
+            try { await navigator.clipboard.writeText(supportCallUrl); showToast('URLをコピーしました'); }
+            catch (e) { prompt('URLをコピーしてください', supportCallUrl); }
+        };
+        // スマホで画面内の通話がうまく動かない時用
+        window.openSupportCallTab = function() {
+            if (supportCallUrl) window.open(supportCallUrl, '_blank', 'noopener');
         };
 
         // ===== メッセージの編集・削除（今選んでいるアカウントが送ったものだけ） =====
