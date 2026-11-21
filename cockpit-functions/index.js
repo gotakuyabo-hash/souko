@@ -68,6 +68,8 @@ const CW_TOKEN_STAFF = defineSecret("CW_TOKEN_STAFF");
 const CW_TOKEN_MATSUSHITA = defineSecret("CW_TOKEN_MATSUSHITA");
 const LINE_CHANNEL_SECRET = defineSecret("LINE_CHANNEL_SECRET");
 const ALL_SECRETS = [APP_SECRET, OPENAI_API_KEY, CW_TOKEN_STAFF, CW_TOKEN_MATSUSHITA, LINE_CHANNEL_SECRET];
+// 画面共有通話（Daily.co）のAPIキー。api だけで使う
+const DAILY_API_KEY = defineSecret("DAILY_API_KEY");
 
 // 画面の「アカウント選択」の値 → トークン
 const ACCOUNTS = {
@@ -132,7 +134,7 @@ function getChatworkToken(account) {
 // 入口
 // ==============================
 exports.api = onRequest(
-  { region: REGION, cors: true, secrets: ALL_SECRETS, timeoutSeconds: 300, memory: "512MiB" },
+  { region: REGION, cors: true, secrets: [...ALL_SECRETS, DAILY_API_KEY], timeoutSeconds: 300, memory: "512MiB" },
   async (req, res) => {
     let p = {};
     try {
@@ -251,6 +253,8 @@ async function handleRequest(p) {
           try { await markChatworkRead(token, p.room_id, null); } catch (e) {}
           result.later = await setLater(p.account, [p.room_id], false);
         }
+      } else if (action === "create_support_call") {
+        result = await createSupportCall(token, p.room_id, p.send !== false);
       } else if (action === "get_reply_refs") {
         result = await getReplyRefs(token, p.refs);
       } else if (action === "ask_question") {
@@ -477,6 +481,52 @@ async function sendChatworkMessage(token, roomId, body) {
   if (!body) throw new Error("送信する本文が空です");
   await cw(token, "post", "/rooms/" + safeRid(roomId) + "/messages", { body: body, self_unread: "0" });
   return { success: true };
+}
+
+// ==============================
+// 画面共有通話（Daily.co）
+//   ルームを作って、セラー様のChatworkルームにURL付きの案内を送る
+//   ルームは1時間で期限切れ（期限が来たら通話も終了）。セラー様は登録不要でURLから参加できる
+// ==============================
+const SUPPORT_CALL_MINUTES = 60;
+
+async function createSupportCall(token, roomId, send) {
+  const rid = safeRid(roomId);
+  const key = DAILY_API_KEY.value();
+  if (!key) throw new Error("DAILY_API_KEY が登録されていません");
+
+  const res = await fetch("https://api.daily.co/v1/rooms", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      privacy: "public",
+      properties: {
+        exp: nowSec() + SUPPORT_CALL_MINUTES * 60,
+        eject_at_room_exp: true,
+        enable_screenshare: true,
+        enable_prejoin_ui: true
+      }
+    })
+  });
+  const text = await res.text();
+  if (res.status < 200 || res.status >= 300) throw new Error("通話ルームの作成に失敗しました (" + res.status + "): " + text);
+  const url = JSON.parse(text).url;
+
+  let posted = false;
+  if (send) {
+    const body =
+      "いつもお世話になっております。\n\n"
+      + "画面を共有いただきながら、一緒に設定を進めさせていただければと思います。\n"
+      + "パソコンのブラウザで下記URLを開き、お名前を入力して「参加」を押してください。\n"
+      + "（アプリのインストールや登録は不要です。カメラ・マイクの許可が出たら「許可」を押してください）\n\n"
+      + url + "\n\n"
+      + "参加後、画面下の「画面共有（Share）」から設定中の画面を選んでいただけますと幸いです。\n"
+      + "※URLの有効期限は" + SUPPORT_CALL_MINUTES + "分です。";
+    await sendChatworkMessage(token, rid, body);
+    try { await markSentFromCockpit(rid, body); } catch (e) { console.error(e); }
+    posted = true;
+  }
+  return { url, posted };
 }
 
 // このアカウント自身のID（自分のメッセージだけ編集・削除できるため）
