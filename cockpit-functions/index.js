@@ -516,11 +516,11 @@ async function createSupportCall(token, roomId, send) {
   if (send) {
     const body =
       "いつもお世話になっております。\n\n"
-      + "画面を共有いただきながら、一緒に設定を進めさせていただければと思います。\n"
-      + "パソコンのブラウザで下記URLを開き、お名前を入力して「参加」を押してください。\n"
+      + "通話のご案内です。\n"
+      + "下記URLを開き、お名前を入力して「参加」を押してください。\n"
       + "（アプリのインストールや登録は不要です。カメラ・マイクの許可が出たら「許可」を押してください）\n\n"
       + url + "\n\n"
-      + "参加後、画面下の「画面共有（Share）」から設定中の画面を選んでいただけますと幸いです。\n"
+      + "※画面を共有いただく場合は、パソコンからご参加のうえ、画面下の「画面共有（Share）」を押してください。\n"
       + "※URLの有効期限は" + SUPPORT_CALL_MINUTES + "分です。";
     await sendChatworkMessage(token, rid, body);
     try { await markSentFromCockpit(rid, body); } catch (e) { console.error(e); }
