@@ -146,6 +146,9 @@
         #dialogMessage { font-size: 0.875rem; color: var(--sub-color); white-space: pre-line; }
         .dialog-buttons { display: flex; gap: 8px; margin-top: 16px; }
         .dialog-buttons .btn { margin: 0; }
+        #editDialog { max-height: 90vh; overflow-y: auto; }
+        #editDialog .warn { font-size: 0.8rem; font-weight: bold; color: #b45309; background: #fef3c7; border-radius: 8px; padding: 6px 8px; margin-top: 6px; }
+        .item-btns { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
 
         /* ===== 請求台帳タブ ===== */
         :root { --bg:#f1f5f9; --card:#fff; --text:#1e293b; --sub:#64748b; --line:#e2e8f0; --main:#4f46e5; --ok:#059669; --warn:#b45309; --warnbg:#fef3c7; --okbg:#d1fae5; --red:#dc2626; }
@@ -323,6 +326,35 @@
             <button type="button" class="btn btn-secondary" id="dialogCancelBtn">キャンセル</button>
             <button type="button" class="btn" id="dialogOkBtn">OK</button>
         </div>
+    </dialog>
+    <dialog id="editDialog">
+        <form id="editForm" novalidate>
+            <p style="font-weight: bold;">記録を修正</p>
+            <div id="eWarn"></div>
+            <label for="eDate">日付</label>
+            <input type="date" id="eDate">
+            <label for="eType">種類</label>
+            <input type="text" id="eType" list="typeSuggest" autocomplete="off">
+            <datalist id="typeSuggest"></datalist>
+            <label for="eSeller">請求先（管理番号 または 名前）</label>
+            <input type="text" id="eSeller" list="sellerSuggest" autocomplete="off" spellcheck="false">
+            <label for="eTracking">送り状番号</label>
+            <input type="text" id="eTracking" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <div style="display: flex; gap: 8px;">
+                <div style="flex: 2;"><label for="eUnit">単価（円）</label><input type="number" id="eUnit" inputmode="numeric" step="1"></div>
+                <div style="flex: 1;"><label for="eQty">数量</label><input type="number" id="eQty" inputmode="numeric" min="1" step="1"></div>
+            </div>
+            <label for="eTax">税</label>
+            <select id="eTax"><option value="税込">税込</option><option value="税抜">税抜</option></select>
+            <label for="eMemo">メモ</label>
+            <textarea id="eMemo" rows="2"></textarea>
+            <p id="eTotal" class="hint" style="font-weight: bold;"></p>
+            <p id="eErr" class="hint" style="color: var(--danger-color); font-weight: bold;"></p>
+            <div class="dialog-buttons">
+                <button type="button" class="btn btn-secondary" id="eCancel">キャンセル</button>
+                <button type="submit" class="btn" id="eSave">保存する</button>
+            </div>
+        </form>
     </dialog>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -870,7 +902,10 @@
                         <span>${escapeHtml(item.memo || 'メモなし')}</span>
                         <div class="meta">${escapeHtml(item.date || '')}・${escapeHtml(item.by || '')}</div>
                     </div>
-                    ${item.status === 'billed' ? '' : `<button type="button" class="btn btn-danger btn-small" data-id="${escapeHtml(item.id)}">削除</button>`}
+                    <div class="item-btns">
+                        <button type="button" class="btn btn-secondary btn-small" data-act="edit" data-id="${escapeHtml(item.id)}">修正</button>
+                        ${item.status === 'billed' ? '' : `<button type="button" class="btn btn-danger btn-small" data-act="del" data-id="${escapeHtml(item.id)}">削除</button>`}
+                    </div>
                 </li>
             `).join('');
         }
@@ -878,6 +913,7 @@
             const btn = e.target.closest('button[data-id]');
             if (!btn) return;
             const id = btn.dataset.id;
+            if (btn.dataset.act === 'edit') { openEdit(id, 'scan'); return; }
             const item = currentData.find(x => x.id === id);
             const ok = await confirmBox(
                 "削除の確認",
@@ -1079,6 +1115,7 @@
                     <div class="row" style="justify-content:space-between;margin-top:4px">
                         <span class="muted">${yen(r.unitPrice)} × ${esc(r.quantity)}・記録：${esc(r.by || '')}</span>
                         <span class="row">
+                            <button class="mini sub" onclick="openEdit('${r._id}', 'ledger')">✏ 修正</button>
                             <button class="mini sub" onclick="toggleBilled('${r._id}')">${r.status === 'billed' ? '未請求に戻す' : '請求済みにする'}</button>
                             <button class="mini del" onclick="removeRec('${r._id}')">削除</button>
                         </span>
@@ -1338,6 +1375,121 @@
                 render();
             } catch (e) { alert('削除に失敗しました：' + e.message); }
         };
+
+        // ===== 登録済みの記録を修正 =====
+        const editDlg = $('editDialog');
+        const DEFAULT_TYPES = ['着払い立替', '補填', '補填・相殺', '保管料', 'イレギュラー発送'];
+        const isMinusType = t => MINUS_TYPES.indexOf(t) !== -1;
+        let editCtx = null;
+
+        // 請求先の入力（管理番号 or 名前）から kanriNo / shopName を決める
+        async function resolveSeller(input) {
+            const k = normalizeKanri(input);
+            const isKanri = looksLikeKanri(k);
+            let kanri = isKanri ? k : '', shop = isKanri ? '' : input;
+            try {
+                const s = (await callGas('get_seller_info', { chatwork_id: isKanri ? k : input })).seller || {};
+                if (!s.error && s.kanriNo) { kanri = String(s.kanriNo); shop = [s.shopName, s.name].filter(v => v && v !== '不明').join('・'); }
+            } catch (e) { /* 確認できなくても入力どおりで保存できる */ }
+            if (isKanri && !shop && !confirm(`管理番号「${kanri}」のセラーが見つかりませんでした。このまま設定しますか？`)) return null;
+            return { kanriNo: kanri, shopName: shop };
+        }
+
+        function editAmount() {
+            const t = $('eType').value.trim();
+            let u = Math.round(Number($('eUnit').value) || 0);
+            if (isMinusType(t)) u = -Math.abs(u);
+            const q = Math.round(Number($('eQty').value) || 0);
+            return { unitPrice: u, quantity: q, amount: u * q };
+        }
+        function updateEditTotal() {
+            const { amount } = editAmount();
+            const tax = $('eTax').value;
+            $('eTotal').textContent = `金額：${yen(amount)}（${tax}${tax === '税抜' ? '／税込 ' + yen(toInc(amount)) : ''}）`
+                + (isMinusType($('eType').value.trim()) ? '　※補填は差し引き（マイナス）で記録します' : '');
+        }
+        ['eUnit', 'eQty', 'eType', 'eTax'].forEach(id => $(id).addEventListener('input', updateEditTotal));
+        $('eTax').addEventListener('change', updateEditTotal);
+        $('eCancel').addEventListener('click', () => editDlg.close());
+
+        window.openEdit = function (id, from) {
+            const r = from === 'scan' ? currentData.find(x => x.id === id) : records.find(x => x._id === id);
+            if (!r) return;
+            editCtx = { id, from, r };
+            const qty = Number(r.quantity) || 1;
+            const unit = r.unitPrice != null && r.unitPrice !== '' ? Number(r.unitPrice) : (Number(r.amount) || 0) / qty;
+            $('eDate').value = r.date || '';
+            $('eType').value = r.type || '';
+            $('eSeller').value = r.kanriNo || r.shopName || r.roomName || '';
+            $('eTracking').value = r.trackingNo || '';
+            $('eUnit').value = isMinusType(r.type) ? Math.abs(unit) : unit;
+            $('eQty').value = qty;
+            $('eTax').value = (r.taxMode || '税抜') === '税込' ? '税込' : '税抜';
+            $('eMemo').value = r.memo || '';
+            $('eErr').textContent = '';
+            const types = [...new Set(DEFAULT_TYPES.concat(records.map(x => x.type), currentData.map(x => x.type)).filter(Boolean))];
+            $('typeSuggest').innerHTML = types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('');
+            const warns = [];
+            if (r.status === 'billed') warns.push('⚠ 請求済みの記録です。直した内容は請求担当者にも伝えてください。');
+            if (r.source === 'hokan') warns.push('⚠ 保管料は「対象月の保管料を取り込む」を押し直すと上書きされます（請求済みは除く）。');
+            $('eWarn').innerHTML = warns.map(w => `<div class="warn">${escapeHtml(w)}</div>`).join('');
+            updateEditTotal();
+            editDlg.showModal();
+        };
+
+        $('editForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!editCtx) return;
+            const { id, from, r } = editCtx;
+            const err = $('eErr');
+            err.textContent = '';
+            const date = $('eDate').value;
+            const type = $('eType').value.trim();
+            const unitRaw = $('eUnit').value.trim();
+            const { unitPrice, quantity, amount } = editAmount();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { err.textContent = '日付を入れてください'; return; }
+            if (!type) { err.textContent = '種類を入れてください'; return; }
+            if (unitRaw === '' || !Number.isInteger(Number(unitRaw))) { err.textContent = '単価は整数で入れてください'; return; }
+            if (!Number.isInteger(Number($('eQty').value)) || quantity < 1) { err.textContent = '数量は1以上の整数で入れてください'; return; }
+            const saveBtn2 = $('eSave');
+            saveBtn2.disabled = true;
+            try {
+                let kanriNo = r.kanriNo || '', shopName = r.shopName || '';
+                const sellerIn = $('eSeller').value.trim();
+                if (sellerIn !== (r.kanriNo || r.shopName || r.roomName || '')) {
+                    if (!sellerIn) { kanriNo = ''; shopName = ''; }
+                    else {
+                        const s = await resolveSeller(sellerIn);
+                        if (!s) return;
+                        kanriNo = s.kanriNo; shopName = s.shopName;
+                    }
+                }
+                const tracking = normalizeTracking($('eTracking').value);
+                const plain = {
+                    date, month: date.slice(0, 7), type, kanriNo, shopName, trackingNo: tracking,
+                    unitPrice, quantity, amount, taxMode: $('eTax').value, memo: $('eMemo').value.trim(),
+                    editedBy: staffName()
+                };
+                await withLogin(() => updateDoc(doc(db, 'billing_records', id), Object.assign({}, plain, { editedAt: serverTimestamp() })));
+                editDlg.close();
+                if (from === 'scan') {
+                    setStatus('修正しました', 'ok');
+                    loadHistory();
+                } else {
+                    const ym = document.getElementById('month').value;
+                    Object.assign(r, plain);
+                    if (plain.month !== ym) records = records.filter(x => x._id !== id);
+                    render();
+                    document.getElementById('msg').textContent = plain.month !== ym
+                        ? `修正しました（日付を変えたので ${plain.month} の台帳に移りました）`
+                        : '修正しました';
+                }
+            } catch (ex) {
+                err.textContent = '保存できませんでした：' + (ex?.message || ex);
+            } finally {
+                saveBtn2.disabled = false;
+            }
+        });
 
         window.markAllShown = async function () {
             const targets = shown().filter(r => r.status !== 'billed');
