@@ -2347,6 +2347,48 @@
             try { localStorage.setItem(HANDLED_CACHE_KEY + handledAcc, JSON.stringify({ map: handledMap, baselineAt: baselineAt })); } catch (e) {}
         }
 
+        // ===== 読み取り回数を減らす受け取り方 =====
+        //   ・全件は「1日1回だけ」読んで端末に保存（古いルーム・古い対応済み記録はめったに変わらない）
+        //   ・リアルタイムで受け取るのは「最近（FS_RECENT_DAYS日）動いたもの」だけ
+        //   → 開き直す・スマホがスリープから戻る たびに全件を読み直さなくなる
+        //   ※ Firestoreに複合インデックスが無い間は、今まで通り全件で受け取る（動きは変わらない）
+        const FS_RECENT_DAYS = 14;
+        const FS_OLD_TTL = 24 * 3600 * 1000;
+        const FS_OLD_KEY = 'cw_old_v1_';
+        async function fsOldSnapshot(f, col, acc) {
+            const key = FS_OLD_KEY + col + '_' + acc;
+            try {
+                const c = JSON.parse(localStorage.getItem(key));
+                if (c && c.map && Date.now() - c.at < FS_OLD_TTL) return c.map;
+            } catch (e) {}
+            const qs = await f.getDocs(f.query(f.collection(f.db, col), f.where('account', '==', acc)));
+            const map = {};
+            qs.forEach(d => { const x = d.data(); if (x.updatedAt && typeof x.updatedAt.toMillis === 'function') x.updatedAt = x.updatedAt.toMillis(); map[d.id] = x; });
+            try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), map: map })); } catch (e) {}
+            return map;
+        }
+        // old（全件の控え）＋ 最近の分のリアルタイム。onData(qs, 文書ID→データ, 最近の分の文書IDのSet)
+        function fsListenRecent(f, col, acc, field, since, old, onData, onErr) {
+            const base = f.query(f.collection(f.db, col), f.where('account', '==', acc));
+            let unsub = null, stopped = false;
+            const start = (q, useOld) => f.onSnapshot(q, qs => {
+                const map = useOld ? Object.assign({}, old) : {};
+                const ids = new Set();
+                if (useOld) qs.docChanges().forEach(ch => { if (ch.type === 'removed') { delete old[ch.doc.id]; delete map[ch.doc.id]; } });
+                qs.forEach(d => { map[d.id] = d.data(); ids.add(d.id); });
+                onData(qs, map, ids);
+            }, err => {
+                if (useOld && err && err.code === 'failed-precondition' && !stopped) {
+                    console.warn('複合インデックスがないため、全件で受け取ります（' + col + '）:', err.message);
+                    unsub = start(base, false);
+                    return;
+                }
+                onErr(err);
+            });
+            unsub = old ? start(f.query(base, f.where(field, '>=', since)), true) : start(base, false);
+            return () => { stopped = true; try { unsub && unsub(); } catch (e) {} };
+        }
+
         // Firestoreの対応状況をリアルタイムで受け取る（他のスタッフの操作もすぐ反映）
         function startHandledSync() {
             const acc = getAccount();
@@ -2373,15 +2415,22 @@
                     // 読めなかった時は、今の時刻を仮の基準にして続ける（未読のメッセージは表示される）
                     baselineAt = baselineAt || Math.floor(Date.now() / 1000);
                 }
+                let oldHandled = null;
+                try { oldHandled = await fsOldSnapshot(f, 'cw_handled', acc); } catch (e) { console.warn('対応状況の控えを読めませんでした（全件で受け取ります）:', e.message); }
+                const sinceDate = new Date(Date.now() - FS_RECENT_DAYS * 86400 * 1000);
                 await new Promise((resolve, reject) => {
                     let first = true;
-                    handledUnsub = f.onSnapshot(
-                        f.query(f.collection(f.db, 'cw_handled'), f.where('account', '==', acc)),
-                        qs => {
+                    handledUnsub = fsListenRecent(f, 'cw_handled', acc, 'updatedAt', sinceDate, oldHandled,
+                        (qs, docs, recentIds) => {
                             fsOk(qs);
                             const map = {};
-                            qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                            Object.keys(docs).forEach(id => { const x = docs[id]; map[String(x.roomId)] = x; });
                             if (handledAcc !== acc) return;
+                            // この端末で今保存したもの（サーバーの時刻が付くまでは「最近の分」に入らない）は、手元の内容を残す
+                            Object.keys(handledMap).forEach(rid => {
+                                const h = handledMap[rid];
+                                if (h && h._local && Date.now() - h._local < 120000 && !recentIds.has(`${acc}_${rid}`)) map[rid] = h;
+                            });
                             handledMap = map;
                             handledSynced = true;
                             saveHandledCache();
@@ -2416,7 +2465,7 @@
                 const data = { account: acc, roomId: rid, handledAt: opts.reopen ? 0 : (opts.at || now), reopen: !!opts.reopen, by: by, auto: false, updatedAt: f.serverTimestamp() };
                 batch.set(f.doc(f.db, 'cw_handled', `${acc}_${rid}`), data);
                 batch.set(f.doc(f.collection(f.db, 'cw_handled_log')), { account: acc, roomId: rid, roomName: window.roomNameMap[rid] || '', action: opts.logAction || (opts.reopen ? 'reopen' : 'done'), by: by, at: f.serverTimestamp() });
-                handledMap[rid] = Object.assign({}, data, { updatedAt: null });   // 画面にはすぐ反映
+                handledMap[rid] = Object.assign({}, data, { updatedAt: null, _local: Date.now() });   // 画面にはすぐ反映
             });
             saveHandledCache();
             await batch.commit();
@@ -2590,6 +2639,10 @@
             roomsAcc = acc;
             roomsReady = (async () => {
                 const f = await loadFirestore();
+                let oldRooms = null;
+                try { oldRooms = await fsOldSnapshot(f, 'cw_rooms', acc); } catch (e) { console.warn('ルームの控えを読めませんでした（全件で受け取ります）:', e.message); }
+                if (roomsAcc !== acc) return;
+                const sinceSec = Math.floor(Date.now() / 1000) - FS_RECENT_DAYS * 86400;
                 let gotStatus = false, gotRooms = false;
                 await new Promise(resolve => {
                     const done = () => { if (gotStatus && gotRooms) resolve(); };
@@ -2601,11 +2654,11 @@
                         gotStatus = true; done();
                         if (currentMode === 'burst' && fsActive()) { setLastUpdatedFs(); backToFsView(); }
                     }, err => { handleFsDenied(err); gotStatus = true; done(); }));
-                    roomsUnsubs.push(f.onSnapshot(f.query(f.collection(f.db, 'cw_rooms'), f.where('account', '==', acc)), qs => {
+                    roomsUnsubs.push(fsListenRecent(f, 'cw_rooms', acc, 'lastUpdate', sinceSec, oldRooms, (qs, docs) => {
                         fsOk(qs);
                         if (roomsAcc !== acc) return;
                         const map = {};
-                        qs.forEach(d => { const x = d.data(); map[String(x.roomId)] = x; });
+                        Object.keys(docs).forEach(id => { const x = docs[id]; map[String(x.roomId)] = x; });
                         roomsMeta = map;
                         const first = !gotRooms;
                         gotRooms = true; done();
