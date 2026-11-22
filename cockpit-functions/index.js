@@ -266,6 +266,7 @@ async function handleRequest(p) {
         result = {
           me_id: await getMeId(p.account, token),
           owner_ids: await getOwnerIds(),   // ラクロジスタッフ・松下のアカウント
+          my_ids: await getMyIds(),         // 自社の発言の色分け用（STAFF_ACCOUNT_IDS も含む）
           internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x)),
           quick_links: String(cfg.quickLinks || "")
         };
