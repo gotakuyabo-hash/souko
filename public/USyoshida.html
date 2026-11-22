@@ -178,6 +178,31 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .mini{padding:3px 8px;font-size:12px}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:6px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:9}
 #toast.show{opacity:1}
+/* ===== zaico在庫 ===== */
+.zseg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;width:max-content}
+.zseg button{border:0;border-radius:0;padding:8px 16px;background:transparent}
+.zseg button.on{background:var(--primary);color:var(--primary-ink);font-weight:700}
+.zc-tools{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.zc-tools input[type=search]{flex:1;min-width:220px;border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface)}
+#zcEdit.on{background:var(--primary);color:var(--primary-ink);border-color:var(--primary);font-weight:700}
+.zc-note{background:var(--tape-soft);border-radius:6px;padding:8px 12px;font-size:13px}
+.zc-list{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px}
+.zc-head{display:flex;justify-content:space-between;gap:8px;padding:9px 14px;border-left:8px solid var(--primary);align-items:baseline;flex-wrap:wrap}
+.zc-row{display:grid;grid-template-columns:1fr auto;gap:10px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;padding:10px 14px;align-items:center}
+.zc-row .t{font-weight:700}
+.zc-row .d{display:block;font-size:12px;color:var(--muted)}
+.zc-row .q{font-size:20px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2}
+.zc-row .q small{display:block;font-size:11px;color:var(--muted);font-weight:400}
+.zc-row.zero{opacity:.55}
+.zc-in{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:0 6px;margin-left:6px;background:var(--primary);color:var(--primary-ink)}
+.zc-line{display:grid;grid-template-columns:1fr 6em auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.zc-line small{display:block;color:var(--muted);font-size:12px}
+.zc-line.over small{color:var(--danger);font-weight:700}
+.zc-line input{border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%;text-align:right;background:var(--surface)}
+.zc-dl{display:grid;grid-template-columns:7em 1fr;margin:0}
+.zc-dl dt,.zc-dl dd{margin:0;padding:6px 0;border-bottom:1px solid var(--line)}
+.zc-dl dt{color:var(--muted);font-size:13px}
+
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
 
 @media (max-width:760px){
@@ -241,6 +266,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
       <button data-tab="hist" role="tab">検品書の履歴</button>
       <button data-tab="after" role="tab">出荷後の取り込み</button>
       <button data-tab="inq" role="tab">問い合わせ・保留・保管</button>
+      <button data-tab="zaico" role="tab">zaico在庫</button>
     </nav>
     <div id="tabWork">
     <div id="cwReq" class="panel" hidden></div>
@@ -336,6 +362,31 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <div id="storDoneList"></div>
       </div>
     </div>
+
+    <div id="tabZaico" hidden>
+      <div class="panel stack">
+        <div class="zc-tools">
+          <div class="zseg" id="zcScope" role="tablist" aria-label="表示するショップ">
+            <button data-s="mine" class="on">US吉田</button>
+            <button data-s="all">すべて</button>
+          </div>
+          <div class="zseg" id="zcHave" aria-label="在庫の絞り込み">
+            <button data-s="have" class="on">在庫あり</button>
+            <button data-s="all">0も表示</button>
+          </div>
+          <button id="zcReload" class="ghost">zaicoから読み直す</button>
+          <button id="zcEdit">在庫修正</button>
+        </div>
+        <div class="zc-tools">
+          <input id="zcQ" type="search" placeholder="商品名・バーコード・保管場所で探す（バーコードを読むと出庫指示に1点追加）" autocomplete="off">
+        </div>
+        <div id="zcEditNote" class="zc-note" hidden>在庫修正中です。商品をタップすると、在庫数・ショップ名を直す画面が開きます（出庫指示には入りません）。終わったら「修正を終える」を押してください。</div>
+        <div id="zcMeta" class="muted small"></div>
+        <div id="zcAlert"></div>
+      </div>
+      <div id="zcList"></div>
+      <div class="search-row" style="margin-top:10px"><button id="zcMore" class="ghost" hidden>さらに表示</button></div>
+    </div>
   </section>
 </main>
 
@@ -401,6 +452,38 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
   <div class="lab-foot">
     <button id="dlYamato" type="button" class="primary">ヤマトB2のCSVを保存</button>
     <button id="dlSagawa" type="button" class="primary">佐川e飛伝のCSVを保存</button>
+  </div>
+</dialog>
+
+<div id="zcBar" class="actionbar" hidden>
+  <span>出庫指示 <b id="zcBarN"></b></span>
+  <button id="zcBarClear" class="ghost">空にする</button>
+  <button id="zcBarGo" class="primary">内容を確認して送信</button>
+</div>
+
+<dialog id="dlgZcCart">
+  <div class="form">
+    <h2 style="margin:0;font-size:18px">zaicoに出庫指示を登録</h2>
+    <div id="zcLines"></div>
+    <label>zaicoの取引先名<input id="zcCust"></label>
+    <p class="muted small" style="margin:0">出庫予定日などは、まとまるくんの送信と同じ設定でzaicoに登録されます。送った内容は、まとまるくんの「zaico出庫履歴」タブにも残ります。</p>
+    <div class="btns"><button type="button" class="ghost" id="zcCartClose">閉じる</button><button type="button" class="primary" id="zcSend">zaicoに出庫指示を送信</button></div>
+  </div>
+</dialog>
+
+<dialog id="dlgZcItem">
+  <div class="form">
+    <h2 style="margin:0;font-size:18px">在庫修正</h2>
+    <div id="zcItemInfo"></div>
+    <label>在庫数<input id="zcItemQ" inputmode="decimal"></label>
+    <p id="zcItemDiff" class="small muted" style="margin:0;min-height:1.4em"></p>
+    <label>ショップ名（一覧から選ぶか、入力）<input id="zcItemShop" list="zcShopList" autocomplete="off"></label>
+    <datalist id="zcShopList"></datalist>
+    <p class="muted small" style="margin:0">変えた項目だけをzaicoに書き換えます。読み込んだあとにzaicoで入出庫があった場合は、書き換えずに止まります（その入出庫を消さないため）。</p>
+    <div class="btns" style="justify-content:space-between">
+      <button type="button" class="ghost" id="zcItemDel" style="color:var(--danger);border-color:var(--danger)">この商品をzaicoから削除</button>
+      <span style="display:flex;gap:8px"><button type="button" class="ghost" id="zcItemClose">閉じる</button><button type="button" class="primary" id="zcItemSave">zaicoに保存</button></span>
+    </div>
   </div>
 </dialog>
 
@@ -1753,7 +1836,10 @@ function switchTab(t){
   $('#tabHist').hidden = t!=='hist';
   $('#tabAfter').hidden = t!=='after';
   $('#tabInq').hidden = t!=='inq';
+  $('#tabZaico').hidden = t!=='zaico';
   $('#actionBar').hidden = t!=='work' || !state.groups.length;
+  zcRenderBar();
+  if (t==='zaico') zcOpen();
   if (t==='inq') loadInquiryList();
   if (t==='hist') loadHistory();
   if (t==='after') updateScopeInfo();
@@ -2847,6 +2933,326 @@ function convertEnglishAddressEx(en, z, zip7){
   return { addr: tail ? jp + ' ' + tail : jp, notes };
 }
 function convertEnglishAddress(en, z, zip7){ return convertEnglishAddressEx(en, z, zip7).addr; }
+
+/* ===== zaico在庫（US吉田の在庫を見る・出庫指示・在庫修正） =====
+   まとまるくん・依頼まとめ管理と同じFirebaseの関数を使う（zaicoのAPIキーは関数の中にあり、画面には出ない） */
+const ZC_LIST_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories';
+const ZC_SHIP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment';
+const ZC_EDIT_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiUpdateZaicoShop';
+const ZC_LOG_COL = 'zaico_shipment_logs';   // まとまるくんの「zaico出庫履歴」と同じ保存先
+const ZC_MY_SHOP = 'US吉田';                // zaicoの「ショップ名」がこの値の商品を「US吉田」で表示
+const ZC_SHOP_ATTR = 'ショップ名';
+const ZC_CACHE = 'us_zaico_inv_v1';
+const ZC = { items:[], at:null, loading:null, err:'', scope:'mine', have:'have', q:'', limit:200, cart:new Map(), edit:false, sending:false, cur:null };
+
+const zcHalf = v => String(v == null ? '' : v).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+const zcText = v => v == null ? '' : typeof v === 'object' ? String(v.name ?? v.title ?? v.label ?? v.value ?? '').trim() : String(v).trim();
+function zcAttr(x, name){
+  const a = x.optional_attributes ?? x.optionalAttributes;
+  if (Array.isArray(a)) { const f = a.find(o => o && zcText(o.name ?? o.title ?? o.label ?? o.optional_attribute_name ?? o.key) === name); return f ? zcText(f.value ?? f.val ?? f.content ?? f.text) : ''; }
+  if (a && typeof a === 'object') return zcText(a[name]);
+  return '';
+}
+const zcQty = x => { const n = Number(x.quantity); return isNaN(n) ? 0 : n; };
+const zcFmt = n => Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+function zcSaveCache(){ try{ localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: ZC.items })); }catch(e){} }
+function zcReadCache(){
+  try{ const c = JSON.parse(localStorage.getItem(ZC_CACHE) || 'null'); if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); return true; } }catch(e){}
+  return false;
+}
+function zcOpen(){ if (!ZC.at && !ZC.loading) { zcReadCache(); if (!ZC.at) { zcLoad(); return; } } zcRender(); }
+async function zcLoad(){
+  if (ZC.loading) return ZC.loading;
+  ZC.err = '';
+  ZC.loading = (async () => {
+    const all = []; let page = 1;
+    for (let guard = 0; page && guard < 200; guard++) {
+      $('#zcMeta').textContent = 'zaicoから読み込み中…（'+all.length+'件）';
+      let res, data;
+      try { res = await fetch(ZC_LIST_URL + '?page=' + page + '&pages=10'); }
+      catch(e){ throw new Error('zaico在庫一覧の関数につながりませんでした'); }
+      try { data = await res.json(); } catch(e){ throw new Error('zaico在庫一覧の関数から正しい返事がありませんでした（'+res.status+'）'); }
+      if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+      (data.items || []).forEach(x => all.push({ id:String(x.id), title:String(x.title || ''), code:zcHalf(x.code || '').trim(), place:String(x.place || '').trim(),
+        quantity:x.quantity ?? '', unit:x.unit || '', shop:zcAttr(x, ZC_SHOP_ATTR) }));
+      page = data.nextPage || null;
+    }
+    ZC.items = all; ZC.at = new Date(); zcSaveCache();
+  })();
+  if (!$('#tabZaico').hidden) $('#zcList').innerHTML = '<p class="muted">zaicoから読み込み中…</p>';
+  try { await ZC.loading; } catch(e){ ZC.err = e.message; } finally { ZC.loading = null; zcRender(); }
+}
+function zcVisible(){
+  const words = ZC.q.trim().toLowerCase().split(/[\s　]+/).filter(Boolean).map(zcHalf);
+  return ZC.items.filter(x =>
+    (ZC.scope === 'all' || x.shop === ZC_MY_SHOP) &&
+    (ZC.have === 'all' || zcQty(x) > 0 || ZC.cart.has(x.id)) &&
+    (!words.length || words.every(w => zcHalf(x.title+' '+x.code+' '+x.place+' '+x.shop).toLowerCase().includes(w))))
+    .sort((a,b) => a.title.localeCompare(b.title, 'ja'));
+}
+function zcRender(){
+  if ($('#tabZaico').hidden) return;
+  $('#zcMeta').textContent = ZC.loading ? 'zaicoから読み込み中…' : ZC.at
+    ? 'zaico '+ZC.items.length+'品目・'+ZC.at.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })+' に読み込み（最新にしたいときは「zaicoから読み直す」）' : '';
+  $('#zcAlert').innerHTML = ZC.err ? '<p class="st-ng small" style="margin:0">zaicoの在庫を読み込めませんでした：'+esc(ZC.err)+'</p>' : '';
+  if (!ZC.at) { $('#zcList').innerHTML = ''; $('#zcMore').hidden = true; zcRenderBar(); return; }
+  const list = zcVisible();
+  const total = list.reduce((s, x) => s + zcQty(x), 0);
+  const title = ZC.scope === 'all' ? 'すべてのショップ' : ZC_MY_SHOP;
+  $('#zcList').innerHTML = list.length
+    ? '<div class="zc-list"><div class="zc-head"><b>'+esc(title)+'</b><span class="muted small">'+list.length+'品目・在庫 '+zcFmt(total)+'</span></div>'
+      + list.slice(0, ZC.limit).map(x => { const q = zcQty(x), inc = ZC.cart.get(x.id);
+          return '<button type="button" class="zc-row'+(q <= 0 ? ' zero' : '')+'" data-id="'+esc(x.id)+'"><span><span class="t">'+esc(x.title || '（商品名なし）')+'</span>'
+            + (inc ? '<span class="zc-in">出庫指示 '+inc+'</span>' : '')
+            + '<span class="d">'+(x.code ? 'JAN '+esc(x.code) : '<span class="st-ng">バーコードなし</span>')+(x.place ? '・保管場所 '+esc(x.place) : '')
+            + (ZC.scope === 'all' ? '・'+esc(x.shop || 'ショップ不明') : '')+'</span></span>'
+            + '<span class="q">'+esc(zcFmt(q))+'<small>'+esc(x.unit || '')+' '+(ZC.edit ? 'タップで修正' : 'タップで出庫指示へ')+'</small></span></button>'; }).join('')
+      + '</div>'
+    : '<p class="muted" style="margin-top:12px">'+(ZC.q ? '当てはまる商品はありません。' : ZC.scope === 'mine' ? 'zaicoでショップ名が「'+esc(ZC_MY_SHOP)+'」の商品'+(ZC.have === 'have' ? 'で在庫のあるもの' : '')+'はありません。' : '商品がありません。')+'</p>';
+  $('#zcMore').hidden = list.length <= ZC.limit;
+  $('#zcMore').textContent = 'さらに表示（残り'+(list.length - ZC.limit)+'品目）';
+  zcRenderBar();
+}
+function zcRenderBar(){
+  const show = !$('#tabZaico').hidden && ZC.cart.size > 0 && !ZC.edit;
+  $('#zcBar').hidden = !show;
+  if (show) $('#zcBarN').textContent = ZC.cart.size+'商品・'+[...ZC.cart.values()].reduce((s,n) => s+n, 0)+'点';
+}
+function zcAdd(id){
+  const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
+  if (!x.code) { toast('バーコードがない商品は、zaicoに出庫指示を送れません（zaicoでバーコードを登録してください）', 5000); return; }
+  ZC.cart.set(x.id, (ZC.cart.get(x.id) || 0) + 1);
+  toast(x.title+'（出庫指示 '+ZC.cart.get(x.id)+'点）');
+}
+
+// ---- 操作 ----
+document.querySelectorAll('#zcScope button').forEach(b => b.onclick = () => {
+  ZC.scope = b.dataset.s; ZC.limit = 200;
+  document.querySelectorAll('#zcScope button').forEach(x => x.classList.toggle('on', x === b));
+  zcRender();
+});
+document.querySelectorAll('#zcHave button').forEach(b => b.onclick = () => {
+  ZC.have = b.dataset.s; ZC.limit = 200;
+  document.querySelectorAll('#zcHave button').forEach(x => x.classList.toggle('on', x === b));
+  zcRender();
+});
+$('#zcReload').onclick = () => zcLoad();
+$('#zcMore').onclick = () => { ZC.limit += 200; zcRender(); };
+$('#zcQ').addEventListener('input', e => { ZC.q = e.target.value; ZC.limit = 200; zcRender(); });
+$('#zcQ').addEventListener('keydown', e => {   // バーコードリーダーは最後にEnterを送る
+  if (e.key !== 'Enter' || e.isComposing) return;
+  e.preventDefault();
+  const c = zcHalf(e.target.value).replace(/\s/g, ''); if (!c) return;
+  const hits = ZC.items.filter(x => x.code === c);
+  const mine = hits.filter(x => ZC.scope === 'all' || x.shop === ZC_MY_SHOP);
+  const list = mine.length ? mine : hits;
+  if (!list.length) { toast('このバーコードの商品がzaicoにありません'); return; }
+  if (list.length > 1) { toast('同じバーコードの商品が複数あります。一覧から選んでください', 5000); return; }
+  e.target.value = ''; ZC.q = '';
+  if (ZC.edit) { zcRender(); zcOpenItem(list[0].id); }
+  else { zcAdd(list[0].id); zcRender(); }
+});
+$('#zcList').addEventListener('click', e => {
+  const b = e.target.closest('.zc-row'); if (!b) return;
+  if (ZC.edit) zcOpenItem(b.dataset.id); else { zcAdd(b.dataset.id); zcRender(); }
+});
+$('#zcEdit').onclick = () => {
+  ZC.edit = !ZC.edit;
+  $('#zcEdit').classList.toggle('on', ZC.edit);
+  $('#zcEdit').textContent = ZC.edit ? '修正を終える' : '在庫修正';
+  $('#zcEditNote').hidden = !ZC.edit;
+  zcRender();
+};
+$('#zcBarClear').onclick = () => { if (confirm('出庫指示の中身を空にしますか？')) { ZC.cart.clear(); zcRender(); } };
+$('#zcBarGo').onclick = zcOpenCart;
+$('#zcCartClose').onclick = () => { zcSyncCart(); $('#dlgZcCart').close(); zcRender(); };
+$('#zcItemClose').onclick = () => $('#dlgZcItem').close();
+
+// ---- 出庫指示 ----
+function zcOpenCart(){
+  if (!ZC.cart.size) return;
+  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x);
+  $('#zcLines').innerHTML = lines.map(({ x, n }) => '<div class="zc-line'+(n > zcQty(x) ? ' over' : '')+'" data-id="'+esc(x.id)+'">'
+    + '<div>'+esc(x.title)+'<small>JAN '+esc(x.code)+(x.place ? '・'+esc(x.place) : '')+'・在庫 '+esc(zcFmt(zcQty(x)))+(n > zcQty(x) ? '（在庫より多い）' : '')+'</small></div>'
+    + '<input class="zc-n" inputmode="numeric" value="'+n+'" aria-label="数量">'
+    + '<button type="button" class="ghost mini zc-del" aria-label="外す">×</button></div>').join('');
+  const shops = [...new Set(lines.map(l => l.x.shop).filter(Boolean))];
+  $('#zcCust').value = lsGet('us_zc_customer') || (shops.length === 1 ? shops[0] : ZC_MY_SHOP);
+  const b = $('#zcSend'); b.disabled = false; b.textContent = 'zaicoに出庫指示を送信';
+  $('#dlgZcCart').showModal();
+}
+$('#zcLines').addEventListener('click', e => {
+  const b = e.target.closest('.zc-del'); if (!b) return;
+  const row = b.closest('.zc-line'); ZC.cart.delete(row.dataset.id); row.remove();
+  if (!ZC.cart.size) { $('#dlgZcCart').close(); zcRender(); }
+});
+function zcSyncCart(){
+  document.querySelectorAll('#zcLines .zc-line').forEach(r => {
+    const n = parseInt(zcHalf(r.querySelector('.zc-n').value).replace(/[^\d]/g, ''), 10) || 0;
+    if (n > 0) ZC.cart.set(r.dataset.id, n); else ZC.cart.delete(r.dataset.id);
+  });
+}
+$('#zcSend').onclick = async () => {
+  if (ZC.sending) return;
+  zcSyncCart();
+  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x && l.n > 0 && l.x.code);
+  if (!lines.length) { toast('送る商品がありません'); return; }
+  const customerName = $('#zcCust').value.trim() || ZC_MY_SHOP;
+  const over = lines.filter(l => l.n > zcQty(l.x));
+  if (!confirm('取引先「'+customerName+'」として、'+lines.length+'商品・'+lines.reduce((s,l) => s+l.n, 0)+'点の出庫指示をzaicoに登録しますか？'
+    + (over.length ? '\n\n※在庫より多い商品があります：\n'+over.map(l => '・'+l.x.title+'（在庫 '+zcFmt(zcQty(l.x))+'／出庫 '+l.n+'）').join('\n') : ''))) return;
+  lsSet('us_zc_customer', customerName);
+  // まとまるくんと同じ形で送る（棚番がzaicoにない商品は「-」）
+  const items = lines.map(({ x, n }) => ({ barcode:x.code, productName:x.title, orderQty:n, multiplier:1, shelfNumber:x.place || '-', pickCount:n, inventoryId:x.id, status:'REGISTERED' }));
+  ZC.sending = true;
+  const b = $('#zcSend'); b.disabled = true; b.textContent = '送信中…';
+  try{
+    let res, data;
+    try {
+      res = await fetch(ZC_SHIP_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ items, customerName }) });
+      data = await res.json();
+    } catch(err) {
+      await zcSaveLog({ kind:'network', customerName, items, errorMessage:'通信エラー：'+err.message });
+      alert('通信エラーになりました。zaicoに登録されたか分からないため、続けて送り直さないでください（二重に出庫される可能性があります）。\nzaicoの出庫一覧を確認してください。（まとまるくんの「zaico出庫履歴」に記録しました）');
+      ZC.cart.clear(); $('#dlgZcCart').close(); return;
+    }
+    const failures = zcFailures(data, items);
+    if (data.success) {
+      const registered = Number(data.count), hasCount = data.count !== undefined && data.count !== null && !isNaN(registered);
+      const gap = !failures.length && hasCount && registered < items.length ? items.length - registered : 0;
+      await zcSaveLog({ kind:'success', customerName, slipNum:data.slipNum, items, failures, unknownGap:gap, registered: hasCount ? registered : null });
+      let msg = 'zaicoに出庫指示を登録しました。\n伝票番号：'+(data.slipNum || '-')+'（'+(hasCount ? registered : items.length)+'明細）';
+      if (failures.length) msg += '\n\n【登録できなかった商品 '+failures.length+'件】\n'+failures.map(f => '・'+(f.productName || f.barcode)+(f.reason ? '（'+f.reason+'）' : '')).join('\n')+'\n※まとまるくんの「zaico出庫履歴」に未対応として残しました。';
+      else if (gap) msg += '\n\n【注意】'+items.length+'明細のうち'+gap+'明細が登録されていません。zaicoの伝票を確認してください。';
+      alert(msg);
+      ZC.cart.clear(); $('#dlgZcCart').close();
+    } else {
+      await zcSaveLog({ kind:'error', customerName, slipNum:data.slipNum || '', items, failures, errorMessage:data.error || '送信できませんでした' });
+      toast('送信できませんでした：'+(data.error || ''), 8000);
+      b.disabled = false; b.textContent = 'zaicoに出庫指示を送信';
+    }
+  } finally { ZC.sending = false; zcRender(); }
+};
+function zcFailures(data, sent){
+  const raw = [];
+  ['missingBarcodes','notFound','not_found','skipped','skippedItems','failed','failedItems','missing','missingItems','unregistered','errors']
+    .forEach(k => { if (Array.isArray(data && data[k])) raw.push(...data[k]); });
+  const by = new Map(sent.map(it => [String(it.barcode), it])), seen = new Set(), out = [];
+  raw.forEach(x => {
+    const o = x && typeof x === 'object';
+    const bc = String(o ? (x.barcode || x.code || x.jan || '') : (x || '')).trim();
+    let name = o ? String(x.productName || x.title || x.name || '').trim() : '';
+    const reason = o ? String(x.reason || x.message || x.error || '').trim() : '';
+    const hit = bc ? by.get(bc) : null;
+    if (!name && hit) name = hit.productName;
+    const k = bc || name; if (!k || seen.has(k)) return; seen.add(k);
+    out.push({ barcode:bc, productName:name, shelfNumber: hit ? hit.shelfNumber : '', pickCount: hit ? hit.pickCount : '', reason });
+  });
+  return out;
+}
+async function zcSaveLog({ kind, customerName, slipNum = '', items, failures = [], unknownGap = 0, registered = null, errorMessage = '' }){
+  const now = new Date(), fail = new Map(failures.filter(f => f.barcode).map(f => [String(f.barcode), f]));
+  const rows = items.map(it => {
+    const base = { barcode:it.barcode, productName:it.productName, shelfNumber:it.shelfNumber, pickCount:it.pickCount, orderQty:it.orderQty, multiplier:1 };
+    const f = fail.get(String(it.barcode));
+    if (kind === 'network') return Object.assign(base, { result:'check', reason:'通信エラーのため、zaicoに登録されたか不明です' });
+    if (kind === 'error') return Object.assign(base, { result:'failed', reason:(f && f.reason) || errorMessage });
+    if (f) return Object.assign(base, { result:'failed', reason:f.reason || 'zaicoに商品がないなどの理由で登録されませんでした' });
+    if (unknownGap) return Object.assign(base, { result:'check', reason:'送信'+items.length+'明細のうち'+unknownGap+'明細が未登録。どれが未登録かzaicoで確認してください' });
+    return Object.assign(base, { result:'registered', reason:'' });
+  });
+  const cnt = r => rows.filter(x => x.result === r).length;
+  const counts = { registered:cnt('registered'), failed:cnt('failed'), notSent:0, check:cnt('check') };
+  const date = todayStr(), p2 = n => String(n).padStart(2, '0');
+  const log = {
+    id: date.replace(/-/g,'')+'-'+p2(now.getHours())+p2(now.getMinutes())+p2(now.getSeconds())+'-'+Math.random().toString(36).slice(2, 6),
+    createdAt: now.toISOString(), date, customerName, slipNum: slipNum ? String(slipNum) : '',
+    status: kind === 'success' ? (counts.failed || counts.check ? 'partial' : 'ok') : 'error',
+    kind, errorMessage, sentCount: items.length, registeredCountFromZaico: registered, counts,
+    sourceFiles: ['配送管理アプリ（zaico在庫）'], by: (state.user && state.user.email) || '', handled:false, items: rows
+  };
+  try { await db.collection(ZC_LOG_COL).doc(log.id).set(log); return true; }
+  catch(e){ console.warn('zaico出庫履歴を保存できませんでした', e); return false; }
+}
+
+// ---- 在庫修正（在庫数・ショップ名・削除） ----
+function zcOpenItem(id){
+  const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
+  ZC.cur = x;
+  const q0 = zcQty(x);
+  $('#zcItemInfo').innerHTML = '<b>'+esc(x.title)+'</b><dl class="zc-dl"><dt>バーコード</dt><dd>'+esc(x.code || '（なし）')+'</dd>'
+    + '<dt>ショップ名</dt><dd>'+(x.shop ? esc(x.shop) : '<span class="muted">（空欄）</span>')+'</dd>'
+    + '<dt>今の在庫数</dt><dd>'+esc(zcFmt(q0))+esc(x.unit || '')+' <span class="muted small">（'+(ZC.at ? esc(ZC.at.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })) : '')+' に読み込み）</span></dd></dl>';
+  $('#zcItemQ').value = zcFmt(q0);
+  $('#zcItemShop').value = x.shop;
+  $('#zcShopList').innerHTML = [...new Set(ZC.items.map(v => v.shop).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'ja')).map(v => '<option value="'+esc(v)+'">').join('');
+  $('#zcItemDiff').textContent = '';
+  ['#zcItemSave', '#zcItemDel'].forEach(s => $(s).disabled = false);
+  $('#zcItemSave').textContent = 'zaicoに保存'; $('#zcItemDel').textContent = 'この商品をzaicoから削除';
+  $('#dlgZcItem').showModal();
+  setTimeout(() => { $('#zcItemQ').focus(); $('#zcItemQ').select(); }, 50);
+}
+$('#zcItemQ').addEventListener('input', () => {
+  const x = ZC.cur; if (!x) return;
+  const t = zcHalf($('#zcItemQ').value).replace(/,/g, '').trim(), n = Number(t), q0 = zcQty(x);
+  $('#zcItemDiff').textContent = t === '' || isNaN(n) || n === q0 ? '' : '在庫数を '+zcFmt(q0)+' → '+zcFmt(n)+'（'+(n > q0 ? '+' : '')+zcFmt(n - q0)+'）にします';
+});
+['#zcItemQ', '#zcItemShop'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#zcItemSave').click(); } }));
+async function zcCallEdit(body){
+  const idToken = await state.user.getIdToken();
+  let res, data;
+  try { res = await fetch(ZC_EDIT_URL, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+idToken }, body: JSON.stringify(body) }); }
+  catch(e){ throw new Error('在庫修正の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
+  try { data = await res.json(); } catch(e){ throw new Error('関数から正しい返事がありませんでした（'+res.status+'）'); }
+  return data;
+}
+$('#zcItemSave').onclick = async () => {
+  const x = ZC.cur; if (!x) return;
+  const t = zcHalf($('#zcItemQ').value).replace(/,/g, '').trim(), n = Number(t), q0 = zcQty(x);
+  if (t === '' || isNaN(n) || n < 0) { toast('在庫数は0以上の数で入れてください'); return; }
+  const shop = $('#zcItemShop').value.trim();
+  const body = { inventoryId: x.id };
+  if (shop !== x.shop) {
+    if (shop && !ZC.items.some(v => v.shop === shop) && !confirm('「'+shop+'」は、まだどの商品にも使われていないショップ名です。新しいショップとして登録しますか？')) return;
+    body.shop = shop;
+  }
+  if (n !== q0) {
+    if (!confirm('「'+x.title+'」の在庫数を '+zcFmt(q0)+' → '+zcFmt(n)+' に変更します。よろしいですか？')) return;
+    body.quantity = n; body.expectQuantity = q0;
+  }
+  if (!('shop' in body) && !('quantity' in body)) { $('#dlgZcItem').close(); return; }
+  const b = $('#zcItemSave'); b.disabled = true; b.textContent = '保存中…';
+  try{
+    const data = await zcCallEdit(body);
+    if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 最新の数で確かめ直してもらう
+      x.quantity = data.currentQuantity; zcSaveCache(); zcRender(); zcOpenItem(x.id); alert(data.error); return;
+    }
+    if (!data.success) throw new Error(data.error || '変更できませんでした');
+    if ('shop' in body) x.shop = data.shop ?? body.shop;
+    if ('quantity' in body) x.quantity = data.quantity ?? body.quantity;
+    zcSaveCache(); $('#dlgZcItem').close(); zcRender();
+    toast([('quantity' in body) ? '在庫数を '+zcFmt(Number(x.quantity))+' に' : '', ('shop' in body) ? (body.shop ? 'ショップ名を「'+body.shop+'」に' : 'ショップ名を空欄に') : ''].filter(Boolean).join('、')+'しました');
+  }catch(e){ b.disabled = false; b.textContent = 'zaicoに保存'; toast('保存できませんでした：'+e.message, 8000); }
+};
+$('#zcItemDel').onclick = async () => {
+  const x = ZC.cur; if (!x) return;
+  const q0 = zcQty(x);
+  const head = '「'+x.title+'」をzaicoから削除します。\n'+(x.code ? 'バーコード '+x.code+'　' : '')+'在庫 '+zcFmt(q0)+(x.unit || '')+'\n\n削除すると元に戻せません（削除前の内容は記録に残します）。';
+  if (q0 > 0) {
+    const t = prompt(head+'\n\n⚠ まだ在庫が '+zcFmt(q0)+(x.unit || '')+' 残っています。\nそれでも削除する場合は「削除」と入力してください。', '');
+    if (t === null) return;
+    if (t.trim() !== '削除') { toast('「削除」と入力されなかったので、削除しませんでした'); return; }
+  } else if (!confirm(head+'\n\n削除してよろしいですか？')) return;
+  const b = $('#zcItemDel'); b.disabled = true; b.textContent = '削除中…';
+  try{
+    const data = await zcCallEdit({ inventoryId:x.id, delete:true, expectQuantity:q0 });
+    if (data.conflict && data.currentQuantity != null) { x.quantity = data.currentQuantity; zcSaveCache(); zcRender(); zcOpenItem(x.id); alert(data.error); return; }
+    if (!data.success) throw new Error(data.error || '削除できませんでした');
+    ZC.items = ZC.items.filter(v => v.id !== x.id); ZC.cart.delete(x.id);
+    zcSaveCache(); $('#dlgZcItem').close(); zcRender();
+    toast('「'+x.title+'」を削除しました');
+  }catch(e){ b.disabled = false; b.textContent = 'この商品をzaicoから削除'; toast('削除できませんでした：'+e.message, 8000); }
+};
 </script>
 </body>
 </html>
