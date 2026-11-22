@@ -222,6 +222,8 @@ details.bd table{margin-top:6px}
 .lz-box.zc .lz-h{border-left-color:var(--zc)}
 .incart{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:0 5px;margin-left:4px;background:var(--zc);color:#fff}
 .zbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--zc);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center;justify-content:center;z-index:9;flex-wrap:wrap}
+.zbar[hidden]{display:none}
+.more[hidden]{display:none}
 .zbar b{font-variant-numeric:tabular-nums}
 .zc-line{display:grid;grid-template-columns:1fr 5em auto;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .zc-line .lbl{font-size:13px;min-width:0}
@@ -1832,16 +1834,20 @@ const ZC_CACHE = 'irai_zaico_inv_v1';
 const ZC = { items: [], at: null, loading: null, err: '', hasGroup: false, hasShop: false, shop: '', q: '', filter: 'have', limit: 200, cart: new Map(), sending: false, progress: 0 };
 
 // 追加項目（optional_attributes）から値を取り出す。配列 [{name, value}] でも、{名前: 値} でも読めるようにする
+const zcText = v => v == null ? '' : typeof v === 'object' ? String(v.name ?? v.title ?? v.label ?? v.value ?? '').trim() : String(v).trim();
 function zcAttr(x, name) {
   const a = x.optional_attributes ?? x.optionalAttributes;
-  if (Array.isArray(a)) { const f = a.find(o => o && String(o.name ?? o.title ?? '').trim() === name); return f ? String(f.value ?? '').trim() : ''; }
-  if (a && typeof a === 'object') return String(a[name] ?? '').trim();
+  if (Array.isArray(a)) {
+    const f = a.find(o => o && zcText(o.name ?? o.title ?? o.label ?? o.optional_attribute_name ?? o.key) === name);
+    return f ? zcText(f.value ?? f.val ?? f.content ?? f.text) : '';
+  }
+  if (a && typeof a === 'object') return zcText(a[name]);
   return '';
 }
 function zcGroup(x) {
   const g = x.user_group ?? x.userGroup ?? x.group;
-  if (g && typeof g === 'object') return String(g.name ?? g.title ?? '').trim();
-  return String(g ?? '').trim();
+  if (Array.isArray(g)) return g.map(zcText).filter(Boolean).join('・');
+  return zcText(g);
 }
 // ショップの分け方：「ショップ名」欄があればそれ、なければzaicoのグループ
 const zcKey = x => x.shop ? 's:' + x.shop : x.group ? 'g:' + x.group : '-';
@@ -1850,7 +1856,7 @@ const zcKeyLabel = k => k === '-' ? 'ショップ・グループなし' : k.star
 function zcReadCache() {
   try {
     const c = JSON.parse(localStorage.getItem(ZC_CACHE) || 'null');
-    if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); ZC.hasGroup = !!c.hasGroup; ZC.hasShop = !!c.hasShop; return true; }
+    if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); ZC.hasGroup = !!c.hasGroup; ZC.hasShop = !!c.hasShop; ZC.fields = c.fields || null; return true; }
   } catch (e) {}
   return false;
 }
@@ -1861,13 +1867,14 @@ async function zcLoad(force) {
   ZC.err = ''; ZC.progress = 0;
   ZC.loading = (async () => {
     await Promise.resolve();   // 先に「読み込み中」を表示してから読み込む
-    const all = []; let page = 1, hasGroup = false, hasShop = false;
+    const all = []; let page = 1, hasGroup = false, hasShop = false, fields = null;
     for (let guard = 0; page && guard < 200; guard++) {
       let res, data;
       try { res = await fetch(`${ZC_LIST_URL}?page=${page}&pages=10`); }
       catch (e) { throw new Error('zaico在庫一覧の関数につながりませんでした'); }
       try { data = await res.json(); } catch (e) { throw new Error(`zaico在庫一覧の関数から正しい返事がありませんでした（${res.status}）`); }
       if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+      if (!fields && Array.isArray(data.fields)) fields = data.fields;
       (data.items || []).forEach(x => {
         if ('user_group' in x || 'userGroup' in x || 'group' in x) hasGroup = true;
         if ('optional_attributes' in x || 'optionalAttributes' in x) hasShop = true;
@@ -1877,8 +1884,8 @@ async function zcLoad(force) {
       ZC.progress = all.length; renderZc();
       page = data.nextPage || null;
     }
-    Object.assign(ZC, { items: all, at: new Date(), hasGroup, hasShop });
-    try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: all, hasGroup, hasShop })); } catch (e) { console.warn('zaico在庫を端末に保存できませんでした', e); }
+    Object.assign(ZC, { items: all, at: new Date(), hasGroup, hasShop, fields });
+    try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: all, hasGroup, hasShop, fields })); } catch (e) { console.warn('zaico在庫を端末に保存できませんでした', e); }
   })();
   render();
   try { await ZC.loading; } catch (e) { ZC.err = e.message; } finally { ZC.loading = null; render(); }
@@ -1905,7 +1912,9 @@ function renderZc() {
   const al = [];
   if (ZC.err) al.push(`zaicoの在庫を読み込めませんでした：${ZC.err}`);
   if (ZC.at && !ZC.loading && !ZC.hasGroup && !ZC.hasShop)
-    al.push('zaico在庫一覧の関数（apiListZaicoInventories）が「グループ」と「追加項目（ショップ名）」を返していないため、ショップごとに分けられません。関数で user_group と optional_attributes も返すようにしてください。');
+    al.push('zaico在庫一覧の関数（apiListZaicoInventories）が「グループ」と「追加項目（ショップ名）」を返していないため、ショップごとに分けられません。新しい関数をデプロイしてから「zaicoから読み直す」を押してください。');
+  else if (ZC.at && !ZC.loading && ZC.items.length && !ZC.items.some(x => x.group || x.shop))
+    al.push('zaicoの在庫を読みましたが、グループもショップ名も見つかりませんでした。' + (ZC.fields ? 'zaicoが返した項目：' + ZC.fields.join('、') + '（この内容を送ってもらえれば、読み取り方を合わせます）' : ''));
   $('zcAlerts').innerHTML = al.map(t => `<div class="alert">${esc(t)}</div>`).join('');
 
   if (!ZC.at) { $('zcList').innerHTML = ZC.loading ? '<div class="loading">zaicoから読み込み中…</div>' : ''; $('zcMore').hidden = true; return; }
