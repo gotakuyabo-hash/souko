@@ -1061,6 +1061,10 @@ async function suggestAiRules(p) {
  *   header … 列の見出し名（含まれていればOK。列がずれても追従します）
  *   yesno  … ◯×で表示したい時に指定（任意） { yes: "◯にする文字", no: "×にする文字" } ※空欄は×
  *   fixed  … 列を見ずに常に同じ値を表示（例: fixed: "◯"）
+ *
+ * ▼ 管理番号の列
+ *   kanriHeader … 見出し名（先頭が一致する列を使う。列が増えてもずれない）。見つからない時は kanriCol
+ *   kanriCol    … 列番号（A列=0）
  */
 const SELLER_SHEETS = [
   {
@@ -1072,21 +1076,21 @@ const SELLER_SHEETS = [
   },
   {
     sheetLabel: "シート2",
-    spreadsheetId: "1hsEfgrnPw7nBw9Er6tfO1_jZgbL7_PuIVmw34n8Dy0w", sheetName: "フォームの回答 1", kanriCol: 22,
+    spreadsheetId: "1hsEfgrnPw7nBw9Er6tfO1_jZgbL7_PuIVmw34n8Dy0w", sheetName: "フォームの回答 1", kanriCol: 22, kanriHeader: "アカウント名",
     extraFields: [
       { label: "動画撮影オプション", header: "動画オプション", yesno: { yes: "はい", no: "いいえ" } }
     ]
   },
   {
     sheetLabel: "シート3",
-    spreadsheetId: "1n_1x-OIfeqWdv9J0eOYVMcAjKEtOb9KHkiFO4zoXV2k", sheetName: "フォームの回答 1", kanriCol: 23,
+    spreadsheetId: "1n_1x-OIfeqWdv9J0eOYVMcAjKEtOb9KHkiFO4zoXV2k", sheetName: "フォームの回答 1", kanriCol: 23, kanriHeader: "アカウント名",
     extraFields: [
       { label: "動画撮影オプション", header: "動画撮影オプション", yesno: { yes: "利用する", no: "利用しない" } }
     ]
   },
   {
     sheetLabel: "シート4",
-    spreadsheetId: "1QFgSUeyvPFFtrTmla4lC3qEstpujfsjLdGw01yNoQtQ", sheetName: "フォームの回答 1", kanriCol: 18,
+    spreadsheetId: "1QFgSUeyvPFFtrTmla4lC3qEstpujfsjLdGw01yNoQtQ", sheetName: "フォームの回答 1", kanriCol: 18, kanriHeader: "アカウント名",
     extraFields: [
       { label: "動画撮影オプション", header: "動画撮影オプション", yesno: { yes: "利用する", no: "利用しない" } }
     ]
@@ -1181,9 +1185,14 @@ async function loadSellerRows(t, useCache) {
       if (h === "PW" || h.indexOf("パスワード") !== -1 || h.indexOf("rakko.tools") !== -1) colPass = c;
     });
     const extraCols = resolveExtraCols(conf.extraFields, headers);
+    let kanriCol = conf.kanriCol;
+    if (conf.kanriHeader) {
+      const hit = headers.findIndex(h => String(h).trim().indexOf(conf.kanriHeader) === 0);
+      if (hit !== -1) kanriCol = hit;
+    }
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const raw = row[conf.kanriCol];
+      const raw = row[kanriCol];
       if (raw === undefined || raw === null || raw === "") continue;
       const k = normalize(raw);
       if (k.length < 2) continue;
