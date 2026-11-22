@@ -525,6 +525,15 @@
                 if (d.me_id) { try { localStorage.setItem("cw_me_id_v1_" + getAccount(), String(d.me_id)); } catch (e) {} }
                 if (typeof d.quick_links === 'string') { quickLinksText = d.quick_links; try { localStorage.setItem(QUICK_LINKS_KEY, d.quick_links); } catch (e) {} }
                 if (!d.owner_ids) return;
+                // 自社の発言の色分け用：ラクロジスタッフ・松下のIDが手元の一覧に入っていなければ足す
+                //   （自動同期の表示では my_ids を受け取る機会がなく、端末の控えが空だと色が付かなかったため）
+                if (!isLine()) {
+                    const add = d.owner_ids.map(String).filter(id => !myIds.has(id));
+                    if (add.length) {
+                        updateMyIds([...myIds, ...add]);
+                        if (currentMode === 'burst') refreshCurrentView(false);
+                    }
+                }
                 const next = { owner: d.owner_ids.map(String), internal: (d.internal_room_ids || []).map(String) };
                 if (JSON.stringify(next) === JSON.stringify(mineCfg)) return;
                 mineCfg = next;
