@@ -538,6 +538,7 @@ exports.apiListZaicoInventories = onRequest(
             const pagesPerCall = Math.min(20, Math.max(1, parseInt(req.query.pages, 10) || 10)); // 1回で最大1,000件程度
             const items = [];
             let nextPage = null;
+            let fields = null;
 
             for (let page = startPage; page < startPage + pagesPerCall; page++) {
                 const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=${perPage}`;
@@ -557,14 +558,19 @@ exports.apiListZaicoInventories = onRequest(
                         place: pickText(inv.place || inv.location),
                         quantity: inv.quantity ?? inv.logical_quantity ?? "",
                         unit: pickText(inv.unit),
-                        category: pickText(inv.category)
+                        category: pickText(inv.category),
+                        // 依頼まとめ管理（irai.html）の「zaico在庫」でショップごとに分けるため
+                        // グループと追加項目（「ショップ名」など）もそのまま返す
+                        user_group: inv.user_group ?? inv.group ?? inv.user_groups ?? inv.groups ?? null,
+                        optional_attributes: inv.optional_attributes ?? inv.optional_attribute_values ?? inv.custom_fields ?? null
                     });
+                    if (!fields) fields = Object.keys(inv); // zaicoが返す項目名（うまく分けられないときの確認用）
                 }
                 if (list.length < perPage) { nextPage = null; break; }
                 nextPage = page + 1;
             }
 
-            res.json({ success: true, page: startPage, nextPage, count: items.length, items });
+            res.json({ success: true, page: startPage, nextPage, count: items.length, fields, items });
         } catch (error) {
             logger.error("zaico在庫一覧の取得でエラーが発生しました:", error);
             res.status(500).json({ success: false, error: error.message });
