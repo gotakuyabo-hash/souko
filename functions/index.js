@@ -579,9 +579,10 @@ exports.apiListZaicoInventories = onRequest(
 );
 
 // ==========================================
-// zaicoの「ショップ名」（追加項目）を1件ずつ書き換えるAPI（依頼まとめ管理 irai.html の「zaico在庫」から使う）
+// zaicoの商品1件の「ショップ名」（追加項目）と「数量」を書き換えるAPI（依頼まとめ管理 irai.html の「zaico在庫」から使う）
 // ・ログインした社内の人だけが使えるように、FirebaseのIDトークンを確認する
-// ・書き換えるのはショップ名だけ（ほかの追加項目や数量には触らない）
+// ・送られてきた項目だけを書き換える（ショップ名だけ／数量だけ／両方）。ほかの追加項目はそのまま
+// ・数量は「画面で見ていた数量（expectQuantity）」とzaicoの今の数量が違えば書き換えない（その間の入出庫を消さないため）
 // ・書き換えたあと、zaicoから読み直して本当に変わったか確かめてから返事をする
 // ==========================================
 const SHOP_ATTR_NAME = "ショップ名";
@@ -600,6 +601,7 @@ function readShop(inv) {
     if (a && typeof a === "object") return String(a[SHOP_ATTR_NAME] ?? "").trim();
     return "";
 }
+const readQty = (inv) => { const n = Number(inv.quantity ?? inv.logical_quantity); return isNaN(n) ? null : n; };
 
 exports.apiUpdateZaicoShop = onRequest(
     { region: "asia-northeast1", timeoutSeconds: 60, secrets: [zaicoApiTokenSecret] },
@@ -625,15 +627,21 @@ exports.apiUpdateZaicoShop = onRequest(
         const okEmail = SHOP_EDIT_ALLOWED_EMAILS.map(x => x.toLowerCase()).includes(email);
         const okDomain = SHOP_EDIT_ALLOWED_DOMAINS.some(d => email.endsWith("@" + d.toLowerCase()));
         if ((SHOP_EDIT_ALLOWED_EMAILS.length || SHOP_EDIT_ALLOWED_DOMAINS.length) && !okEmail && !okDomain) {
-            res.status(403).json({ success: false, error: `${email} にはショップ名を変更する許可がありません` });
+            res.status(403).json({ success: false, error: `${email} にはzaicoの商品を変更する許可がありません` });
             return;
         }
 
         try {
-            const id = String((req.body && req.body.inventoryId) || "").trim();
-            const shop = String((req.body && req.body.shop) || "").trim();
+            const b = req.body || {};
+            const id = String(b.inventoryId || "").trim();
             if (!/^\d+$/.test(id)) { res.status(400).json({ success: false, error: "在庫IDがありません" }); return; }
+            const wantShop = Object.prototype.hasOwnProperty.call(b, "shop");
+            const wantQty = Object.prototype.hasOwnProperty.call(b, "quantity");
+            if (!wantShop && !wantQty) { res.status(400).json({ success: false, error: "変更する項目がありません" }); return; }
+            const shop = wantShop ? String(b.shop || "").trim() : "";
             if (shop.length > 100) { res.status(400).json({ success: false, error: "ショップ名が長すぎます" }); return; }
+            const qty = wantQty ? Number(b.quantity) : null;
+            if (wantQty && (!isFinite(qty) || qty < 0)) { res.status(400).json({ success: false, error: "在庫数は0以上の数で入れてください" }); return; }
 
             const ZAICO_API_TOKEN = zaicoApiTokenSecret.value();
             const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories/${encodeURIComponent(id)}.json`;
@@ -646,44 +654,59 @@ exports.apiUpdateZaicoShop = onRequest(
                 return d.inventory || d.data || d;
             };
 
-            // ② 今の追加項目を読み、ショップ名だけ差し替える（ほかの追加項目はそのまま送り返す）
+            // ② 今の内容を読む
             const inv = await getInv();
-            const before = readShop(inv);
-            if (before === shop) { res.json({ success: true, verified: true, inventoryId: id, before, shop, unchanged: true }); return; }
-            const cur = inv.optional_attributes ?? inv.optional_attribute_values ?? null;
-            let attrs;
-            if (Array.isArray(cur)) {
-                attrs = cur.map(a => ({ name: attrName(a), value: attrValue(a) })).filter(a => a.name);
+            const beforeShop = readShop(inv), beforeQty = readQty(inv);
+            const payload = {};
+            if (wantQty && beforeQty !== qty) {
+                // 画面を開いてからzaicoの数量が変わっていたら、上書きしない
+                if (b.expectQuantity !== undefined && b.expectQuantity !== null && b.expectQuantity !== "" && Number(b.expectQuantity) !== beforeQty) {
+                    res.status(409).json({ success: false, conflict: true, inventoryId: id, currentQuantity: beforeQty,
+                        error: `zaicoの在庫数が ${b.expectQuantity} から ${beforeQty} に変わっています（その間に入出庫がありました）。読み直してから、もう一度入れてください` });
+                    return;
+                }
+                payload.quantity = String(qty);
+            }
+            if (wantShop && beforeShop !== shop) {
+                // ショップ名だけ差し替える（ほかの追加項目はそのまま送り返す）
+                const cur = inv.optional_attributes ?? inv.optional_attribute_values ?? null;
+                let attrs;
+                if (Array.isArray(cur)) attrs = cur.map(a => ({ name: attrName(a), value: attrValue(a) })).filter(a => a.name);
+                else if (cur && typeof cur === "object") attrs = Object.keys(cur).map(k => ({ name: k, value: String(cur[k] ?? "") }));
+                else attrs = [];
                 const hit = attrs.find(a => a.name === SHOP_ATTR_NAME);
                 if (hit) hit.value = shop; else attrs.push({ name: SHOP_ATTR_NAME, value: shop });
-            } else if (cur && typeof cur === "object") {
-                attrs = Object.keys(cur).map(k => ({ name: k, value: String(cur[k] ?? "") }));
-                const hit = attrs.find(a => a.name === SHOP_ATTR_NAME);
-                if (hit) hit.value = shop; else attrs.push({ name: SHOP_ATTR_NAME, value: shop });
-            } else {
-                attrs = [{ name: SHOP_ATTR_NAME, value: shop }];
+                payload.optional_attributes = attrs;
+            }
+            if (!Object.keys(payload).length) {
+                res.json({ success: true, verified: true, unchanged: true, inventoryId: id, shop: beforeShop, quantity: beforeQty });
+                return;
             }
 
             // ③ 書き換え（PUTが使えなければPATCHで）
-            const body = JSON.stringify({ optional_attributes: attrs });
+            const body = JSON.stringify(payload);
             let r = await fetch(url, { method: "PUT", headers, body });
             if (r.status === 404 || r.status === 405) r = await fetch(url, { method: "PATCH", headers, body });
             const rt = await r.text();
             if (!r.ok) throw new Error(`zaicoで書き換えられませんでした (${r.status}): ${rt.slice(0, 300)}`);
 
             // ④ 読み直して確かめる
-            const after = readShop(await getInv());
-            const verified = after === shop;
-            logger.info(`ショップ名を変更 ${id}: 「${before}」→「${shop}」 by ${email}（確認${verified ? "OK" : "NG：今「" + after + "」"}）`);
-            if (!verified) {
-                res.status(500).json({ success: false, verified: false, inventoryId: id, before, after, shop,
-                    error: `zaicoは受け付けましたが、ショップ名が「${after}」のままでした。送り方を調整する必要があります`,
-                    zaicoResponse: rt.slice(0, 500) });
+            const afterInv = await getInv();
+            const afterShop = readShop(afterInv), afterQty = readQty(afterInv);
+            const ng = [];
+            if (payload.optional_attributes && afterShop !== shop) ng.push(`ショップ名が「${afterShop}」のまま`);
+            if (payload.quantity !== undefined && afterQty !== qty) ng.push(`在庫数が ${afterQty} のまま`);
+            logger.info(`zaico商品を変更 ${id} by ${email}：` +
+                (payload.optional_attributes ? `ショップ名「${beforeShop}」→「${shop}」 ` : "") +
+                (payload.quantity !== undefined ? `在庫数 ${beforeQty}→${qty} ` : "") + (ng.length ? "（確認NG：" + ng.join("・") + "）" : "（確認OK）"));
+            if (ng.length) {
+                res.status(500).json({ success: false, verified: false, inventoryId: id, shop: afterShop, quantity: afterQty,
+                    error: `zaicoは受け付けましたが、${ng.join("・")}でした。送り方を調整する必要があります`, zaicoResponse: rt.slice(0, 500) });
                 return;
             }
-            res.json({ success: true, verified: true, inventoryId: id, before, shop });
+            res.json({ success: true, verified: true, inventoryId: id, before: { shop: beforeShop, quantity: beforeQty }, shop: afterShop, quantity: afterQty });
         } catch (error) {
-            logger.error("zaicoのショップ名変更でエラーが発生しました:", error);
+            logger.error("zaicoの商品変更でエラーが発生しました:", error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
