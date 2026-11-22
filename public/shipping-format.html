@@ -578,7 +578,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -1855,7 +1855,72 @@ function readZaicoInvCache() {
 function writeZaicoInvCache() {
   try { localStorage.setItem(ZAICO_INV_LS, JSON.stringify({ at: zaicoInvLoadedAt.toISOString(), items: zaicoInv })); } catch (e) { console.warn('在庫一覧を端末に保存できませんでした', e); }
 }
+/* ---------- zaicoの在庫の「写し」（zaico_inventory_cache）----------
+   依頼まとめ管理・配送管理アプリと同じものを見る。関数が10分ごと（7〜21時）に作り直し、
+   在庫修正・削除の直後はその商品だけ patches に入る。読めないときは今までどおりzaicoから直接取り寄せる */
+const URL_SYNC_ZAICO_INVENTORY = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiSyncZaicoInventory";
+const ZINV = { meta: null, base: null, baseV: null, patches: new Map(), on: false, failed: false, asked: false, ready: null, readyFn: null };
+function zinvStart() {
+  if (ZINV.on || ZINV.failed) return ZINV.ready;
+  ZINV.on = true;
+  ZINV.ready = new Promise(res => { ZINV.readyFn = res; });
+  const ref = doc(db, 'zaico_inventory_cache', 'current');
+  const fail = e => { console.warn('在庫の写しを読めないため、zaicoから直接取り寄せます', e); ZINV.failed = true; ZINV.on = false; if (ZINV.readyFn) ZINV.readyFn(false); };
+  onSnapshot(ref, async snap => {
+    const m = snap.data();
+    if (!m) {   // まだ写しがない → 作ってもらう（できるまで待つ）
+      if (!ZINV.asked) { ZINV.asked = true; fetch(URL_SYNC_ZAICO_INVENTORY, { method: 'POST' }).catch(fail); }
+      return;
+    }
+    ZINV.meta = m;
+    if (ZINV.baseV !== m.v) {
+      const ps = await getDocs(collection(ref, 'parts'));
+      const parts = ps.docs.map(d => d.data()).filter(p => p.v === m.v).sort((a, b) => a.i - b.i);
+      if (parts.length !== m.parts || ZINV.meta.v !== m.v) return;   // 書き込みの途中
+      ZINV.base = JSON.parse(parts.map(p => p.s).join('')); ZINV.baseV = m.v;
+    }
+    zinvApply();
+  }, fail);
+  onSnapshot(collection(ref, 'patches'), snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? ZINV.patches.delete(c.doc.id) : ZINV.patches.set(c.doc.id, c.doc.data()));
+    zinvApply();
+  }, fail);
+  return ZINV.ready;
+}
+// 写し＋そのあとの変更を合わせて zaicoInv にする（開いている画面があれば描き直す）
+function zinvApply() {
+  if (!ZINV.base || !ZINV.meta) return;
+  const map = new Map(ZINV.base.map(x => [String(x.id), x]));
+  ZINV.patches.forEach((p, id) => { if (!(Number(p.at) > Number(ZINV.meta.v))) return; if (p.item) map.set(id, p.item); else map.delete(id); });
+  zaicoInv = [...map.values()].map(x => ({ id: x.id, title: String(x.title || ''), code: String(x.code || '').trim(),
+    place: String(x.place || '').trim(), quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || '' }));
+  zaicoInvLoadedAt = new Date(ZINV.meta.at || Number(ZINV.meta.v));
+  writeZaicoInvCache();
+  if (ZINV.readyFn) { ZINV.readyFn(true); ZINV.readyFn = null; }
+  try { if (zp) renderZaicoPicker(); } catch (e) {}
+  try { if (typeof renderZaicoInvTable === 'function' && document.getElementById('zaicoInvArea') && zaicoInvMasters.length) renderZaicoInvTable(); } catch (e) {}   // 商品マスタタブで一覧を出しているときだけ
+}
 async function loadZaicoInventories(force = false) {
+  if (!ZINV.failed) {
+    if (force) {
+      if (zaicoInvProgress) zaicoInvProgress(0);
+      try {
+        const res = await fetch(URL_SYNC_ZAICO_INVENTORY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: 'まとまるくん' }) });
+        const d = await res.json();
+        if (!d.success) throw new Error(d.error || '更新できませんでした');
+      } catch (e) { console.warn('在庫の写しを更新できなかったので、zaicoから直接取り寄せます', e); return loadZaicoInventoriesDirect(true); }
+    }
+    const ok = await Promise.race([zinvStart(), new Promise(r => setTimeout(() => r(null), 60000))]);
+    if (ok && !force) return zaicoInv;
+    if (force && ZINV.baseV) {   // 作り直した写しが届くまで少し待つ
+      for (let i = 0; i < 30 && ZINV.meta && Date.now() - Number(ZINV.meta.v) > 120000; i++) await new Promise(r => setTimeout(r, 1000));
+      return zaicoInv;
+    }
+    if (ok) return zaicoInv;
+  }
+  return loadZaicoInventoriesDirect(force);
+}
+async function loadZaicoInventoriesDirect(force = false) {
   if (!force && !zaicoInvLoadedAt) readZaicoInvCache(); // 前回読み込んだ一覧があればすぐ使う
   if (zaicoInvLoadedAt && !force) return zaicoInv;
   if (zaicoInvLoading) return zaicoInvLoading;
