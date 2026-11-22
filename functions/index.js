@@ -606,6 +606,46 @@ function readShop(inv) {
 }
 // zaicoのエラーを、画面でわかる日本語にする
 const zaicoErrJa = (t) => /stocktaking/i.test(String(t)) ? "zaicoで棚卸の最中のため、変更・削除できません。zaicoで棚卸を終えてから、もう一度お試しください" : "";
+const readCode = (inv) => String(inv.code ?? inv.inventory_code ?? "").trim();
+const ZAICO_CODE_LOG_COL = "zaico_code_changes";
+// バーコード（QRコード・バーコードの値）を変えたら、まとまるくんの商品マスタ（product_masters）も新しい値に直す
+// ・単品：barcode が前の値のSKU
+// ・セット品：中身（components）の barcode が前の値のもの
+// ・前の値がほかのzaico商品にも付いているときは、この商品のIDでつながっているものだけ（別の商品を書き換えないため）
+async function fixProductMasters(oldCode, newCode, inventoryId, oldShared) {
+    const db = admin.firestore();
+    const col = db.collection("product_masters");
+    const touched = new Map();   // ドキュメントID → { ref, data }
+    const mine = (bc, zid) => !!oldCode && bc === oldCode && (!oldShared || String(zid || "") === String(inventoryId));
+    const singles = [];
+    if (oldCode) (await col.where("barcode", "==", oldCode).get()).forEach(d => singles.push(d));
+    singles.forEach(d => {
+        const m = d.data();
+        if (m.isSet) return;
+        if (!mine(String(m.barcode || "").trim(), m.zaicoItemId)) return;
+        touched.set(d.id, { ref: d.ref, data: { barcode: newCode, zaicoItemId: String(inventoryId) }, sku: d.id });
+    });
+    let sets = 0;
+    (await col.where("isSet", "==", true).get()).forEach(d => {
+        const m = d.data();
+        if (!Array.isArray(m.components)) return;
+        let hit = false;
+        const comps = m.components.map(c => {
+            const bc = String(c && c.barcode || "").trim();
+            if (!mine(bc, c && c.zaicoItemId) || bc === newCode) return c;
+            hit = true;
+            return Object.assign({}, c, { barcode: newCode, zaicoItemId: String(inventoryId) });
+        });
+        if (hit) { touched.set(d.id, { ref: d.ref, data: { components: comps }, sku: d.id, isSet: true }); sets++; }
+    });
+    const list = [...touched.values()];
+    for (let i = 0; i < list.length; i += 400) {
+        const batch = db.batch();
+        list.slice(i, i + 400).forEach(t => batch.set(t.ref, Object.assign({}, t.data, { updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: "zaicoバーコード変更" }), { merge: true }));
+        await batch.commit();
+    }
+    return { skus: list.filter(t => !t.isSet).map(t => t.sku), sets: list.filter(t => t.isSet).map(t => t.sku) };
+}
 const readQty = (inv) => { const n = Number(inv.quantity ?? inv.logical_quantity); return isNaN(n) ? null : n; };
 
 exports.apiUpdateZaicoShop = onRequest(
@@ -643,7 +683,11 @@ exports.apiUpdateZaicoShop = onRequest(
             const wantDelete = b.delete === true;
             const wantShop = Object.prototype.hasOwnProperty.call(b, "shop");
             const wantQty = Object.prototype.hasOwnProperty.call(b, "quantity");
-            if (!wantDelete && !wantShop && !wantQty) { res.status(400).json({ success: false, error: "変更する項目がありません" }); return; }
+            const wantCode = Object.prototype.hasOwnProperty.call(b, "code");
+            const code = wantCode ? String(b.code || "").trim() : "";
+            if (wantCode && !code) { res.status(400).json({ success: false, error: "バーコードを空欄にはできません" }); return; }
+            if (code.length > 100) { res.status(400).json({ success: false, error: "バーコードが長すぎます" }); return; }
+            if (!wantDelete && !wantShop && !wantQty && !wantCode) { res.status(400).json({ success: false, error: "変更する項目がありません" }); return; }
             const shop = wantShop ? String(b.shop || "").trim() : "";
             if (shop.length > 100) { res.status(400).json({ success: false, error: "ショップ名が長すぎます" }); return; }
             const qty = wantQty ? Number(b.quantity) : null;
@@ -662,7 +706,7 @@ exports.apiUpdateZaicoShop = onRequest(
 
             // ② 今の内容を読む
             const inv = await getInv();
-            const beforeShop = readShop(inv), beforeQty = readQty(inv);
+            const beforeShop = readShop(inv), beforeQty = readQty(inv), beforeCode = readCode(inv);
 
             // ── 削除 ──
             if (wantDelete) {
@@ -695,6 +739,7 @@ exports.apiUpdateZaicoShop = onRequest(
                     res.status(500).json({ success: false, inventoryId: id, error: "zaicoは削除を受け付けましたが、まだ商品が残っています。zaicoの画面で確認してください" });
                     return;
                 }
+                await writeInvPatch(id, null, email);
                 res.json({ success: true, deleted: true, inventoryId: id, backupId: logRef.id });
                 return;
             }
@@ -707,6 +752,15 @@ exports.apiUpdateZaicoShop = onRequest(
                     return;
                 }
                 payload.quantity = String(qty);
+            }
+            if (wantCode && beforeCode !== code) {
+                // 画面を開いてからzaicoのバーコードが変わっていたら、上書きしない
+                if (b.expectCode !== undefined && b.expectCode !== null && String(b.expectCode).trim() !== beforeCode) {
+                    res.status(409).json({ success: false, conflict: true, inventoryId: id, currentQuantity: beforeQty, currentCode: beforeCode,
+                        error: `zaicoのバーコードが「${b.expectCode}」から「${beforeCode}」に変わっています。読み直してから、もう一度入れてください` });
+                    return;
+                }
+                payload.code = code;
             }
             if (wantShop && beforeShop !== shop) {
                 // ショップ名だけ差し替える（ほかの追加項目はそのまま送り返す）
@@ -732,21 +786,125 @@ exports.apiUpdateZaicoShop = onRequest(
 
             // ④ 読み直して確かめる
             const afterInv = await getInv();
-            const afterShop = readShop(afterInv), afterQty = readQty(afterInv);
+            const afterShop = readShop(afterInv), afterQty = readQty(afterInv), afterCode = readCode(afterInv);
             const ng = [];
+            if (payload.code !== undefined && afterCode !== code) ng.push(`バーコードが「${afterCode}」のまま`);
             if (payload.optional_attributes && afterShop !== shop) ng.push(`ショップ名が「${afterShop}」のまま`);
             if (payload.quantity !== undefined && afterQty !== qty) ng.push(`在庫数が ${afterQty} のまま`);
             logger.info(`zaico商品を変更 ${id} by ${email}：` +
                 (payload.optional_attributes ? `ショップ名「${beforeShop}」→「${shop}」 ` : "") +
-                (payload.quantity !== undefined ? `在庫数 ${beforeQty}→${qty} ` : "") + (ng.length ? "（確認NG：" + ng.join("・") + "）" : "（確認OK）"));
+                (payload.quantity !== undefined ? `在庫数 ${beforeQty}→${qty} ` : "") +
+                (payload.code !== undefined ? `バーコード「${beforeCode}」→「${code}」 ` : "") + (ng.length ? "（確認NG：" + ng.join("・") + "）" : "（確認OK）"));
             if (ng.length) {
                 res.status(500).json({ success: false, verified: false, inventoryId: id, shop: afterShop, quantity: afterQty,
                     error: `zaicoは受け付けましたが、${ng.join("・")}でした。送り方を調整する必要があります`, zaicoResponse: rt.slice(0, 500) });
                 return;
             }
-            res.json({ success: true, verified: true, inventoryId: id, before: { shop: beforeShop, quantity: beforeQty }, shop: afterShop, quantity: afterQty });
+            await writeInvPatch(id, slimInv(afterInv), email);   // 在庫の写しにもすぐ反映
+            // バーコードを変えたら、まとまるくんの商品マスタも直して、変更の記録を残す
+            let masters = null, masterError = "";
+            if (payload.code !== undefined) {
+                try { masters = await fixProductMasters(beforeCode, code, id, b.oldCodeShared === true); }
+                catch (e) { masterError = e.message; logger.error("商品マスタのバーコードを直せませんでした:", e); }
+                try {
+                    await admin.firestore().collection(ZAICO_CODE_LOG_COL).add({
+                        inventoryId: id, title: String(inv.title || inv.name || ""), before: beforeCode, after: code,
+                        masters: masters || null, masterError, by: email, at: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch (e) { logger.warn("バーコード変更の記録を残せませんでした:", e.message); }
+            }
+            res.json({ success: true, verified: true, inventoryId: id, before: { shop: beforeShop, quantity: beforeQty, code: beforeCode },
+                shop: afterShop, quantity: afterQty, code: afterCode, masters, masterError });
         } catch (error) {
             logger.error("zaicoの商品変更でエラーが発生しました:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+);
+
+// ==========================================
+// zaicoの在庫一覧の「写し」を Firestore に置く（まとまるくん・依頼まとめ管理・配送管理アプリが同じものを見る）
+//   zaico_inventory_cache/current            … { v, parts, count, at, by }（v は作り始めた時刻のミリ秒）
+//   zaico_inventory_cache/current/parts/p0… … 一覧をJSONにして分けて入れる（1つのドキュメントは1MBまでのため）
+//   zaico_inventory_cache/current/patches/{在庫ID} … 写しを作ったあとに変えた商品（item が null なら削除）
+// アプリは parts を読んだあと、v より新しい patches を上から当てて使う
+// ==========================================
+const ZINV_COL = "zaico_inventory_cache";
+const ZINV_PART = 200000;   // 1つに入れる文字数（日本語が多くても1MBを超えないように）
+const zinvRef = () => admin.firestore().collection(ZINV_COL).doc("current");
+function slimInv(inv) {
+    return {
+        id: String(inv.id || inv.inventory_id || ""), title: pickText(inv.title || inv.name),
+        code: String(inv.code || inv.inventory_code || "").trim(), place: pickText(inv.place || inv.location),
+        quantity: inv.quantity ?? inv.logical_quantity ?? "", unit: pickText(inv.unit), category: pickText(inv.category),
+        shop: readShop(inv)
+    };
+}
+async function syncZaicoInventory(by) {
+    const token = zaicoApiTokenSecret.value();
+    const start = Date.now();
+    const items = [];
+    for (let page = 1; page <= 1000; page++) {
+        const url = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}/inventories.json?page=${page}&per_page=100`;
+        const r = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${token}` } });
+        if (!r.ok) throw new Error(`zaico在庫一覧の取得に失敗しました (page ${page}, ${r.status}): ${(await r.text()).slice(0, 300)}`);
+        const data = await r.json();
+        const list = data.inventories || data.data || [];
+        list.forEach(inv => items.push(slimInv(inv)));
+        if (list.length < 100) break;
+    }
+    const json = JSON.stringify(items);
+    const n = Math.max(1, Math.ceil(json.length / ZINV_PART));
+    const db = admin.firestore(), ref = zinvRef();
+    const batch = db.batch();
+    for (let i = 0; i < n; i++) batch.set(ref.collection("parts").doc("p" + i), { v: start, i, s: json.slice(i * ZINV_PART, (i + 1) * ZINV_PART) });
+    for (let i = n; i < n + 10; i++) batch.delete(ref.collection("parts").doc("p" + i));   // 前より短くなったときの残りを消す
+    batch.set(ref, { v: start, parts: n, count: items.length, at: new Date().toISOString(), by: by || "" });
+    await batch.commit();
+    // 写しに入った変更（作り始める前の patches）は片付ける
+    const old = await ref.collection("patches").where("at", "<=", start).get();
+    for (let i = 0; i < old.docs.length; i += 400) {
+        const b = db.batch();
+        old.docs.slice(i, i + 400).forEach(d => b.delete(d.ref));
+        await b.commit();
+    }
+    logger.info(`zaico在庫の写しを更新しました：${items.length}件（${n}分割）by ${by || ""}`);
+    return { count: items.length, v: start };
+}
+// 在庫修正・削除のあと、その商品だけ写しに反映する（item が null なら削除）
+async function writeInvPatch(id, item, by) {
+    try {
+        await zinvRef().collection("patches").doc(String(id)).set({ at: Date.now(), item: item || null, by: by || "" });
+    } catch (e) { logger.warn("在庫の写しに反映できませんでした:", e.message); }
+}
+
+// 定期更新（朝7時〜夜9時のあいだ、10分ごと）
+exports.scheduledZaicoInventorySync = onSchedule(
+    { schedule: "every 10 minutes from 07:00 to 21:00", timeZone: "Asia/Tokyo", region: "asia-northeast1",
+      timeoutSeconds: 540, memory: "512MiB", secrets: [zaicoApiTokenSecret] },
+    async () => {
+        try { await syncZaicoInventory("定期更新"); }
+        catch (e) { logger.error("zaico在庫の写しの定期更新でエラーが発生しました:", e); }
+    }
+);
+
+// 手動更新（各アプリの「zaicoから読み直す」）。30秒以内に更新したばかりなら、作り直さずにそのまま返す
+exports.apiSyncZaicoInventory = onRequest(
+    { region: "asia-northeast1", timeoutSeconds: 540, memory: "512MiB", secrets: [zaicoApiTokenSecret] },
+    async (req, res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+        try {
+            const meta = await zinvRef().get();
+            const m = meta.exists ? meta.data() : null;
+            if (m && Date.now() - Number(m.v || 0) < 30 * 1000) { res.json({ success: true, skipped: true, count: m.count, v: m.v }); return; }
+            const by = String((req.body && req.body.by) || "手動更新").slice(0, 100);
+            const r = await syncZaicoInventory(by);
+            res.json({ success: true, count: r.count, v: r.v });
+        } catch (error) {
+            logger.error("zaico在庫の写しの更新でエラーが発生しました:", error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
