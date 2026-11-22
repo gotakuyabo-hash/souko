@@ -1,2482 +1,666 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>依頼まとめ管理</title>
-<link rel="icon" href="data:,">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#EDF0F3; --surface:#FFFFFF; --ink:#1B2433; --sub:#5B6576; --line:#D5DBE3;
-  --shopee:#D9480F; --domestic:#2B8A3E; --rs:#364FC7; --all:#1B2433;
-  --late:#C92A2A; --ok:#2B8A3E;
-}
-*{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);
-  font-family:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
-  font-size:15px;line-height:1.55;-webkit-text-size-adjust:100%}
-button,input,textarea{font:inherit;color:inherit}
-button{cursor:pointer}
-:focus-visible{outline:3px solid #74A3FF;outline-offset:2px}
-
-.wrap{max-width:860px;margin:0 auto;padding:12px 12px 80px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 2px 12px}
-.top h1{font-size:20px;margin:0;font-weight:700}
-.top .meta{font-size:12px;color:var(--sub)}
-.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px}
-.btn:active{transform:translateY(1px)}
-
-/* フォーム切替：未対応件数を大きく */
-.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
-.tab{--c:var(--all);border:2px solid var(--c);background:var(--surface);border-radius:10px;
-  padding:8px 6px 6px;text-align:left;display:flex;flex-direction:column;gap:0;min-width:0}
-.tab .lb{font-size:12px;color:var(--c);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tab .num{font-size:28px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
-.tab .num small{font-size:11px;font-weight:400;color:var(--sub);margin-left:2px}
-.tab[aria-pressed="true"]{background:var(--c);color:#fff}
-.tab[aria-pressed="true"] .lb,.tab[aria-pressed="true"] .num small{color:#fff}
-.tab[data-f="shopee"]{--c:var(--shopee)} .tab[data-f="domestic"]{--c:var(--domestic)} .tab[data-f="rs"]{--c:var(--rs)}
-
-.bar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
-.seg button{border:0;background:transparent;padding:7px 12px}
-.seg button[aria-pressed="true"]{background:var(--ink);color:#fff}
-.search{flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface)}
-.chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:none}
-.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;white-space:nowrap;font-size:13px}
-.chip[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
-.chip span{opacity:.7;margin-left:4px}
-
-.alert{background:#FFF4E6;border:1px solid #FFC078;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:8px}
-
-/* 一覧：左端の色帯でフォームを区別 */
-.list{display:flex;flex-direction:column;gap:6px}
-.item{display:grid;grid-template-columns:6px 1fr auto;background:var(--surface);border-radius:8px;
-  border:1px solid var(--line);overflow:hidden}
-.item .strip{background:var(--c)}
-.item[data-f="shopee"]{--c:var(--shopee)} .item[data-f="domestic"]{--c:var(--domestic)} .item[data-f="rs"]{--c:var(--rs)}
-.item .body{padding:9px 10px;min-width:0;text-align:left;border:0;background:transparent}
-.item .l1{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--sub)}
-.type{color:var(--c);font-weight:700;font-size:13px}
-.age.late{color:var(--late);font-weight:700}
-.item .l2{font-weight:700;margin-top:1px}
-.item .l3{font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.item .l3 b{color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
-.item.is-done{opacity:.6}
-.quick{border:0;border-left:1px solid var(--line);background:transparent;padding:0 14px;font-size:13px;min-width:64px}
-.quick.do{color:var(--ok);font-weight:700}
-.empty{text-align:center;color:var(--sub);padding:40px 10px}
-.more{display:block;margin:10px auto}
-
-/* 詳細シート */
-.sheet-bg{position:fixed;inset:0;background:rgba(27,36,51,.45);display:none;z-index:10}
-/* 画面の真ん中に出す（スマホのアドレスバーがあっても下が切れないよう、見えている高さ dvh で計算） */
-.sheet{position:fixed;left:50%;top:50%;width:min(640px,94vw);max-height:86vh;max-height:86dvh;overflow:auto;overscroll-behavior:contain;
-  background:var(--surface);border-radius:14px;z-index:11;box-shadow:0 10px 40px rgba(27,36,51,.25);
-  transform:translate(-50%,-46%);opacity:0;visibility:hidden;transition:transform .2s ease,opacity .2s ease,visibility .2s;
-  padding:0 16px calc(24px + env(safe-area-inset-bottom))}
-.sheet.open{transform:translate(-50%,-50%);opacity:1;visibility:visible}
-@media (prefers-reduced-motion:reduce){.sheet{transition:none}}
-.sheet-h{position:sticky;top:0;background:var(--surface);padding:14px 0 10px;border-bottom:3px solid var(--c);
-  display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.sheet[data-f="shopee"]{--c:var(--shopee)} .sheet[data-f="domestic"]{--c:var(--domestic)} .sheet[data-f="rs"]{--c:var(--rs)}
-.sheet-h h2{margin:0;font-size:18px}
-.sheet-h .sub{font-size:12px;color:var(--sub)}
-.close{border:0;background:transparent;font-size:24px;line-height:1;padding:2px 6px}
-dl{margin:12px 0 0;display:grid;grid-template-columns:7.5em 1fr;gap:0}
-dt,dd{padding:8px 0;border-bottom:1px solid var(--line);margin:0}
-dt{color:var(--sub);font-size:13px;padding-right:8px}
-dd{white-space:pre-wrap;word-break:break-all}
-dd.copy{cursor:copy}
-dd a{color:var(--rs)}
-.hint{font-size:12px;color:var(--sub);margin:6px 0 0}
-.note{margin-top:14px}
-.note label{font-size:13px;color:var(--sub);display:block;margin-bottom:4px}
-.note-row{display:flex;gap:6px}
-.note-row input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-.primary{background:var(--ok);color:#fff;border:0;border-radius:8px;padding:11px 18px;font-weight:700;flex:1}
-.primary.undo{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
-.link{align-self:center;font-size:13px;color:var(--sub)}
-
-.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;
-  border-radius:10px;padding:10px 14px;font-size:14px;display:none;gap:12px;align-items:center;z-index:20;max-width:92vw}
-.toast button{background:transparent;border:0;color:#9EC5FE;font-weight:700;padding:0}
-.loading{color:var(--sub);text-align:center;padding:40px}
-.pending{color:#B35C00;font-weight:700}
-.err{color:var(--late);font-weight:700}
-.login{max-width:360px;margin:18vh auto 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px;text-align:center}
-.login h1{font-size:20px;margin:0 0 6px}
-.login p{color:var(--sub);font-size:14px;margin:0 0 18px}
-.login .primary{width:100%}
-.user{font-size:12px;color:var(--sub)}
-.user button{border:0;background:transparent;color:var(--rs);padding:0;font-size:12px}
-.hk-ok{color:var(--ok);font-weight:700}
-
-/* 画面切替（依頼／保管在庫／保管料請求） */
-.views{display:flex;margin-bottom:10px}
-.views .seg{width:100%}
-.views .seg button{flex:1;padding:9px 6px;font-weight:700}
-
-/* 保管在庫パネル（依頼の詳細の中） */
-.hk{margin-top:16px;border:2px solid var(--shopee);border-radius:10px;padding:12px}
-.hk h3{margin:0 0 6px;font-size:15px;color:var(--shopee)}
-.hk p{margin:4px 0;font-size:13px}
-.hk-row{display:grid;grid-template-columns:1fr 5.5em auto;gap:6px;margin-bottom:6px;align-items:center}
-.hk-row.out{grid-template-columns:1fr 5.5em}
-.hk-row .lbl{font-size:13px;min-width:0}
-.hk-row .lbl small{display:block;color:var(--sub);font-size:12px}
-.hk input,.lotform input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0;width:100%;background:var(--surface)}
-.num-in{text-align:right;font-variant-numeric:tabular-nums}
-.mini{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 10px;font-size:13px}
-.mini.danger{color:var(--late)}
-.field{display:block;margin-top:10px}
-.field span{display:block;font-size:13px;color:var(--sub);margin-bottom:3px}
-
-/* 保管在庫一覧 */
-.seller{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden}
-.seller-h{display:flex;justify-content:space-between;gap:8px;padding:9px 12px;border-left:6px solid var(--shopee);align-items:baseline;flex-wrap:wrap}
-.seller-h b{font-size:15px}
-.seller-h .sum{font-size:13px;color:var(--sub)}
-.lot{display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 12px;border:0;border-top:1px solid var(--line);
-  align-items:center;width:100%;text-align:left;background:transparent}
-.lot .p{font-weight:700}
-.lot .d{font-size:12px;color:var(--sub)}
-.lot .q{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
-.lot .q small{font-size:11px;color:var(--sub);font-weight:400}
-.lot.zero{opacity:.5}
-.badge{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:0 5px;margin-left:4px}
-.badge.fee{background:#FFE3E3;color:var(--late)}
-.badge.free{background:#E6FCF5;color:var(--ok)}
-.pend-row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:4px 0;border-top:1px dashed #FFC078}
-.pend-row button.open{border:0;background:transparent;text-align:left;padding:0;color:var(--ink);flex:1;min-width:0}
-
-/* 保管料請求 */
-.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
-table.bill{width:100%;border-collapse:collapse;font-size:14px}
-table.bill th,table.bill td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;white-space:nowrap}
-table.bill th{font-size:12px;color:var(--sub);font-weight:400}
-table.bill .n{text-align:right;font-variant-numeric:tabular-nums}
-table.bill tfoot td{font-weight:700;border-bottom:0}
-details.bd{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-top:6px;padding:6px 10px}
-details.bd summary{cursor:pointer;font-size:14px}
-details.bd table{margin-top:6px}
-.month{border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:var(--surface)}
-.hist{font-size:13px;margin:6px 0 0;padding:0;list-style:none}
-.hist li{padding:6px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
-.paste textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;margin-top:6px;resize:vertical}
-.total{font-size:13px;color:var(--sub);margin:4px 0 8px;text-align:right}
-.share{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 12px;border-top:1px solid var(--line);
-  border-left:6px solid var(--shopee);font-size:12px;color:var(--sub);background:#FAFBFC}
-.share a{color:var(--rs);font-weight:700}
-.share .warn{color:#B35C00;font-weight:700}
-#hkRows .hk-oid{display:none;grid-column:1/-1;margin-top:-2px}
-#hkRows.oid .hk-oid{display:block}
-.oid-toggle{display:flex;gap:6px;align-items:center;font-size:13px;margin:6px 0}
-.oid-toggle input{width:auto}
-.badge.cancel{background:#E7F5FF;color:var(--rs)}
-.hk-code{grid-column:1/-1;display:flex;gap:6px}
-.hk-code input{flex:1}
-.hk-exp-w{grid-column:1/-1;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--sub)}
-.hk-exp-w input{flex:1}
-.badge.exp{background:#FFF4E6;color:#B35C00}
-.hk-hits{grid-column:1/-1;display:flex;flex-direction:column;gap:4px}
-.hk-hits:empty{display:none}
-.hk-hit{display:flex;gap:8px;align-items:center;text-align:left;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:6px 8px;font-size:13px;width:100%}
-.hk-hit img{width:40px;height:40px;object-fit:contain;flex:none;background:#fff;border-radius:4px}
-.hk-hit small{display:block;color:var(--sub);font-size:11px}
-.credit{font-size:10px;color:var(--sub);text-align:right}
-.credit a{color:var(--sub)}
-.fixbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;font-size:13px;color:var(--sub)}
-.fixbar + .hk{margin-top:6px}
-/* 依頼の取り消し */
-.cxl{color:var(--late);font-weight:700}
-.item.is-cancel{opacity:.55}
-.item.is-cancel .l2{text-decoration:line-through}
-.cxl-box{margin-top:14px;background:#FFF5F5;border:1px solid #FFA8A8;border-radius:8px;padding:10px 12px;font-size:13px}
-.cxl-box b{color:var(--late)}
-/* ラザダくん在庫 */
-:root{--lz:#1A3A8F}
-.sheet[data-f="lz"]{--c:var(--lz)}
-.lzsel{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);max-width:100%;font-weight:700}
-.lz-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:10px}
-.lz-h{display:flex;justify-content:space-between;gap:8px;padding:9px 12px;border-left:6px solid var(--lz);align-items:baseline;flex-wrap:wrap}
-.lz-h b{font-size:15px}
-.lz-h .sum{font-size:13px;color:var(--sub)}
-.lz-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:9px 12px;border:0;border-top:1px solid var(--line);width:100%;text-align:left;background:transparent;align-items:center}
-.lz-row .p{font-weight:700}
-.lz-row .d{font-size:12px;color:var(--sub)}
-.lz-row .q{font-size:20px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2}
-.lz-row .q small{display:block;font-size:11px;color:var(--sub);font-weight:400}
-.lz-row.neg{background:#FFF5F5}
-.lz-row.neg .av{color:var(--late);font-weight:700}
-.lz-row.zero{opacity:.55}
-.lotform select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;background:var(--surface)}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-/* zaico在庫 */
-:root{--zc:#0B7285}
-.sheet[data-f="zc"]{--c:var(--zc)}
-.lz-box.zc .lz-h{border-left-color:var(--zc)}
-.incart{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:0 5px;margin-left:4px;background:var(--zc);color:#fff}
-.zbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--zc);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center;justify-content:center;z-index:9;flex-wrap:wrap}
-.zbar[hidden]{display:none}
-.more[hidden]{display:none}
-#zcEditMode[aria-pressed="true"]{background:var(--zc);color:#fff;border-color:var(--zc);font-weight:700}
-.alert[hidden]{display:none}
-.zbar b{font-variant-numeric:tabular-nums}
-.zc-line{display:grid;grid-template-columns:1fr 5em auto;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
-.zc-line .lbl{font-size:13px;min-width:0}
-.zc-line .lbl small{display:block;color:var(--sub);font-size:12px}
-.zc-line input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;text-align:right}
-.zc-line.over .lbl small{color:var(--late);font-weight:700}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>倉庫管理システム 総合ポータル</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { 
+            background: #0f172a; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            padding: 20px 10px; 
+            color: #f8fafc;
+            min-height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        .app-icon {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            padding: 14px 10px;
+            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            aspect-ratio: 1 / 1;
+            position: relative;
+            /* スクロールは許可（長押し後だけスクリプト側でスクロールを止める） */
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.15s;
+        }
+        /* 長押し中（ドラッグ開始直前）の押し込み表現 */
+        .app-icon.pressing {
+            transform: scale(0.94);
+            background: rgba(255, 255, 255, 0.16);
+        }
+        /* ドラッグ中の元アイコン */
+        .app-icon.dragging {
+            opacity: 0.25;
+            transform: scale(0.92);
+        }
+        /* 指に追従する複製アイコン */
+        .drag-ghost {
+            position: fixed;
+            z-index: 100;
+            pointer-events: none;
+            margin: 0;
+            opacity: 0.95;
+            transform: scale(1.1);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+            background: rgba(51, 65, 85, 0.95);
+            border: 1px solid rgba(96, 165, 250, 0.7);
+            transition: none;
+        }
+        /* 差し込み位置の表示（左右どちらに入るか） */
+        .app-icon.drop-before::before,
+        .app-icon.drop-after::after {
+            content: "";
+            position: absolute;
+            top: 10%;
+            bottom: 10%;
+            width: 4px;
+            border-radius: 2px;
+            background: #3b82f6;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+        }
+        .app-icon.drop-before::before { left: -7px; }
+        .app-icon.drop-after::after { right: -7px; }
+        /* カテゴリ末尾へのドロップ表示 */
+        .grid-drop-target {
+            outline: 2px dashed #3b82f6;
+            outline-offset: 4px;
+            border-radius: 12px;
+        }
+        body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
+        .app-emoji {
+            font-size: 2.2rem;
+            margin-bottom: 6px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+            pointer-events: none;
+        }
+        .app-title {
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #f1f5f9;
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+            pointer-events: none;
+        }
+        .notification-badge {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background-color: #ef4444;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: bold;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            pointer-events: none;
+            border: 1.5px solid #0f172a;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .app-icon { transition: none; }
+        }
+    </style>
 </head>
 <body>
-<div id="loginView" class="login" hidden>
-  <h1>依頼まとめ管理</h1>
-  <p id="loginMsg">社内のGoogleアカウントでログインしてください。</p>
-  <button class="primary" id="loginBtn">Googleでログイン</button>
-</div>
+    <div style="max-width: 600px; margin: 0 auto;">
+        <header class="mb-6 px-2 flex justify-between items-center">
+            <div>
+                <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">📱 倉庫ポータル</h1>
+                <p class="text-[11px] text-slate-400">タップで起動 ＆ 長押しして動かすと並び替え</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="openAddCategoryModal()" class="bg-emerald-600/85 hover:bg-emerald-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-full transition shadow">
+                    ＋ カテゴリ
+                </button>
+                <button onclick="resetDefault()" class="bg-slate-700/80 hover:bg-slate-700 text-slate-300 text-[11px] px-3 py-1.5 rounded-full transition" title="初期配置に戻す">
+                    初期化
+                </button>
+            </div>
+        </header>
 
-<div class="wrap" id="appView" hidden>
-  <div class="top">
-    <div>
-      <h1>依頼まとめ管理</h1>
-      <div class="meta" id="meta">読み込み中…</div>
+        <div id="portal-container"></div>
     </div>
-    <div style="text-align:right">
-      <button class="btn" id="syncNow">今すぐ更新</button>
-      <div class="user" style="margin-top:4px"><span id="userEmail"></span>　<button id="logout">ログアウト</button></div>
-    </div>
-  </div>
 
-  <div class="views"><div class="seg" id="views">
-    <button data-v="req" aria-pressed="true">依頼</button>
-    <button data-v="stock" aria-pressed="false">保管在庫</button>
-    <button data-v="bill" aria-pressed="false">保管料請求</button>
-    <button data-v="lz" aria-pressed="false">ラザダ在庫</button>
-    <button data-v="zc" aria-pressed="false">zaico在庫</button>
-  </div></div>
-
-  <div id="reqView">
-  <div class="tabs" id="tabs"></div>
-
-  <div class="bar">
-    <div class="seg" id="status">
-      <button data-s="open" aria-pressed="true">未対応</button>
-      <button data-s="done" aria-pressed="false">対応済</button>
-      <button data-s="cancel" aria-pressed="false">取消</button>
-      <button data-s="all" aria-pressed="false">すべて</button>
-    </div>
-    <input class="search" id="q" type="search" placeholder="注文番号・管理番号・名前・商品名で検索">
-  </div>
-  <div class="chips" id="chips"></div>
-  <div id="alerts"></div>
-  <div class="list" id="list"><div class="loading">読み込み中…</div></div>
-  <button class="btn more" id="more" hidden>さらに表示</button>
-  <p class="hint" style="text-align:center">対応済は直近120日分を表示しています。それより前はシートで確認できます。</p>
-  </div>
-
-  <div id="stockView" hidden>
-    <div class="bar">
-      <input class="search" id="sq" type="search" placeholder="管理番号・セラー名・商品名で検索">
-      <div class="seg" id="sfilter">
-        <button data-s="have" aria-pressed="true">在庫あり</button>
-        <button data-s="all" aria-pressed="false">すべて</button>
-      </div>
-      <button class="btn" id="addLot">＋手動で入庫</button>
-      <button class="btn" id="newShare">＋セラー用シートを作る</button>
-      <button class="btn" id="exportNow">セラー用シートを今すぐ更新</button>
-    </div>
-    <div id="stockAlerts"></div>
-    <div id="stockList"></div>
-  </div>
-
-  <div id="billView" hidden>
-    <div class="bar">
-      <label for="billMonth" style="font-size:13px;color:var(--sub)">請求月</label>
-      <input class="month" type="month" id="billMonth">
-      <button class="btn" id="billCopy">集計をコピー</button>
-      <button class="btn" id="billCsv">内訳をCSVで保存</button>
-    </div>
-    <p class="hint" id="billRule"></p>
-    <div id="billBody"></div>
-  </div>
-
-  <div id="lzView" hidden>
-    <div class="bar">
-      <select class="lzsel" id="lzSeller" aria-label="セラー"></select>
-      <button class="btn" id="lzReload">最新にする</button>
-      <button class="btn" id="lzOutBtn" style="background:var(--lz);color:#fff;border-color:var(--lz);font-weight:700">手動出庫</button>
-    </div>
-    <div class="bar">
-      <input class="search" id="lzq" type="search" placeholder="商品名・商品コードで探す（バーコードを読むと出庫画面が開きます）">
-      <div class="seg" id="lzfilter">
-        <button data-s="have" aria-pressed="true">在庫あり</button>
-        <button data-s="all" aria-pressed="false">すべて</button>
-      </div>
-    </div>
-    <div class="meta hint" id="lzMeta" style="margin:0 2px 8px"></div>
-    <div id="lzAlerts"></div>
-    <div id="lzList"></div>
-    <h3 style="font-size:15px;margin:16px 2px 6px">手動出庫の履歴<span class="hint" id="lzHistCount" style="margin-left:8px"></span></h3>
-    <div id="lzHist"></div>
-    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量 − 手動出庫（ラザダくんの「在庫」タブと同じ計算です）。ここで出庫すると、ラザダくんの手動出庫シートに記録され、ラザダくん側の画面にもすぐ反映されます。</p>
-  </div>
-
-  <div id="zcView" hidden>
-    <div class="bar">
-      <select class="lzsel" id="zcShop" aria-label="ショップ"></select>
-      <button class="btn" id="zcReload">zaicoから読み直す</button>
-      <button class="btn" id="zcEditMode" aria-pressed="false">ショップ名・在庫数を変更</button>
-    </div>
-    <div class="alert" id="zcEditNote" hidden>ショップ名・在庫数の変更中です。商品をタップすると、変更する画面が開きます（出庫指示には入りません）。終わったら「変更を終える」を押してください。</div>
-    <div class="bar">
-      <input class="search" id="zcq" type="search" placeholder="商品名・バーコード・保管場所で探す（バーコードを読むと出庫指示に追加）">
-      <div class="seg" id="zcfilter">
-        <button data-s="have" aria-pressed="true">在庫あり</button>
-        <button data-s="all" aria-pressed="false">すべて</button>
-      </div>
-    </div>
-    <div class="meta hint" id="zcMeta" style="margin:0 2px 8px"></div>
-    <div id="zcAlerts"></div>
-    <div id="zcList"></div>
-    <button class="btn more" id="zcMore" hidden>さらに表示</button>
-    <p class="hint">商品をタップするか、検索欄でバーコードを読むと「出庫指示」に入ります。まとめて内容を確認してから、zaicoに1枚の出庫指示として登録します（まとまるくんと同じ仕組みで、「zaico出庫履歴」にも残ります）。</p>
-  </div>
-  <div class="zbar" id="zcBar" hidden>
-    <span>出庫指示 <b id="zcBarN"></b></span>
-    <button class="btn" id="zcBarClear">空にする</button>
-    <button class="primary" id="zcBarGo" style="background:var(--zc);flex:0 1 auto">内容を確認して送信</button>
-  </div>
-</div>
-
-<div class="sheet-bg" id="bg"></div>
-<div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
-<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo" hidden>元に戻す</button></div>
-
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-// ===== Firebaseの設定（souko-2de57） =====
-const firebaseConfig = {
-  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
-  authDomain: "souko-2de57.firebaseapp.com",
-  projectId: "souko-2de57",
-  storageBucket: "souko-2de57.firebasestorage.app",
-  messagingSenderId: "642116656086",
-  appId: "1:642116656086:web:139cc5558a4ef6ebda6277",
-  measurementId: "G-8WG8GWQGCR"
-};
-// =========================================
-// ===== GASのウェブアプリURL（「今すぐ更新」ボタン用） =====
-// ===== 保管在庫シート書き出しGASのウェブアプリURL（「セラー用シートを今すぐ更新」ボタン用） =====
-const EXPORT_URL = "https://script.google.com/macros/s/AKfycby4qkkn5M5RWNyc5wUmKTwzhSuxaZy1cdC4guM-HvOukLBZhypasiXzLfp2x0RQo1iX/exec";
-// =========================================
-const SYNC_URL = "https://script.google.com/macros/s/AKfycbyStZxpa5W-3pPABmJXTxQKEaWhOfAqarjnLOGXxRGhHhF9E3XOys-MRBFgluzxty2i1A/exec";
-// =========================================
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-// ===== 保管料の設定 =====
-const HOKAN_RATE = 80;           // 1点あたりの保管料（円／月）
-const HOKAN_FREE_MONTHS = 1;     // 保管日からこの月数までは無料
-const PALLET_RATE = 3500;        // パレット契約の1パレットあたり月額（円・税抜）の標準
-const HOKAN_FORMS = ['shopee'];  // 保管依頼を扱うフォーム
-// 種別名に「保管」が入っていれば保管依頼、さらに「出荷・発送・出庫」が入っていれば保管品出荷依頼として扱う
-// 「Amazon返品」も在庫を減らす依頼（出庫）として扱う
-const isHokanIn  = r => HOKAN_FORMS.includes(r.form) && /保管/.test(r.type || '') && !/出荷|発送|出庫/.test(r.type || '') && !/Amazon\s*返品|アマゾン\s*返品/i.test(r.type || '');
-const isHokanOut = r => HOKAN_FORMS.includes(r.form) &&
-  ((/保管/.test(r.type || '') && /出荷|発送|出庫/.test(r.type || '')) || /Amazon\s*返品|アマゾン\s*返品/i.test(r.type || ''));
-// =========================================
-
-const FORM_ORDER = [['shopee', 'Shopee'], ['domestic', '国内EC'], ['rs', '注文配送']];
-const S = { cancels: {}, sellers: new Map(), lots: new Map(), skip: {}, lotsErr: '', view: 'req', sq: '', sfilter: 'have', billMonth: '', reqs: new Map(), acts: new Map(), form: 'all', status: 'open', type: 'all', q: '', limit: 100, user: null, unsubs: [], loaded: { reqs: false, acts: false } };
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const DAY = 86400000;
-const ymd = d => d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-const todayYmd = () => ymd(new Date());
-const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-const half = v => String(v ?? '').replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-const toNum = v => { const m = half(v).replace(/,/g, '').match(/\d+/); return m ? Number(m[0]) : 0; };
-const norm = v => half(v).toLowerCase().replace(/[\s　]/g, '');
-const isJan = v => /^(\d{8}|\d{13})$/.test(String(v || '').trim());
-const yen = n => n.toLocaleString('ja-JP') + '円';
-// 賞味期限：「2026/12/31」「2026-12-31」「2026.12.31」「2026年12月31日」を 2026-12-31 にそろえる（読めなければ空）
-const toYmd = v => { const m = half(v).trim().match(/^(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?$/); return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : ''; };
-const EXP_SOON_DAYS = 30;        // 賞味期限がこの日数以内なら「期限間近」と表示
-function expBadge(exp) {
-  if (!exp) return '';
-  const d = Math.round((Date.parse(exp) - Date.parse(todayYmd())) / DAY);
-  if (d < 0) return '<span class="badge fee">賞味期限切れ</span>';
-  if (d <= EXP_SOON_DAYS) return `<span class="badge exp">期限まで${d}日</span>`;
-  return '';
-}
-const expText = exp => exp ? `賞味期限 ${exp}` : '';
-function addMonths(s, n) {
-  const [y, m, d] = s.split('-').map(Number);
-  const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(y, m - 1 + n, Math.min(d, last))).toISOString().slice(0, 10);
-}
-const daysSince = s => Math.max(0, Math.round((Date.parse(todayYmd()) - Date.parse(s)) / DAY));
-const monthEnd = ym => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
-const prevMonth = () => { const [y, m] = todayYmd().split('-').map(Number); return addMonths(`${y}-${String(m).padStart(2, '0')}-01`, -1).slice(0, 7); };
-const feeStart = l => addMonths(l.inDate, HOKAN_FREE_MONTHS);              // この日から保管料がかかる
-const remainAt = (l, date) => (l.qtyIn || 0) - (l.outs || []).filter(o => !date || o.date <= date).reduce((s, o) => s + o.qty, 0);
-const remain = l => remainAt(l);
-const sellerKey = r => String(r.user || r.name || '').trim();
-const liveLots = () => [...S.lots.values()].filter(l => !l.deleted);
-const lotsOf = seller => liveLots().filter(l => l.seller === seller).sort((a, b) => a.inDate.localeCompare(b.inDate));
-// 在庫が多くても速く引けるよう、依頼IDごとの索引を作っておく（在庫が変わったら作り直し）
-let IDX = null;
-function idx() {
-  if (IDX) return IDX;
-  const ins = new Map(), outs = new Map();
-  liveLots().forEach(l => {
-    if (l.reqId) (ins.get(l.reqId) || ins.set(l.reqId, []).get(l.reqId)).push(l);
-    (l.outs || []).forEach(o => { if (o.reqId) (outs.get(o.reqId) || outs.set(o.reqId, []).get(o.reqId)).push({ ...o, lot: l }); });
-  });
-  return IDX = { ins, outs };
-}
-const lotsIn = reqId => idx().ins.get(reqId) || [];
-const outsOf = reqId => idx().outs.get(reqId) || [];
-
-// 「・2609142JPHBDGE「商品名」」のように、Order IDのあとに商品名が続く行を読み取る（数量がなければ1点）
-const OID_RE = /^(\d{6}[0-9A-Z]{6,10})(?![0-9A-Z])/i;
-function parseOidLine(raw) {
-  const line = String(raw || '').trim().replace(/^[・•●○■□◆◇▶►\-*]+[\s　]*/, '');
-  const m = half(line).match(OID_RE);
-  if (!m || isJan(half(m[1]))) return null;               // 8桁・13桁の数字だけならJANとして扱う
-  let rest = line.slice(m[0].length).replace(/^[\s　:：、,，\-]+/, '').trim();
-  let qty = 1;
-  const q = half(rest).match(/^(.*?)[\s　]*(?:[x×X＊*][\s　]*(\d+)\s*(?:個|点|枚|本|セット|pcs)?|(\d+)\s*(?:個|点|枚|本|セット|pcs))$/i);
-  if (q && q[1].trim()) { qty = Number(q[2] || q[3]) || 1; rest = rest.slice(0, q[1].length).trim(); }
-  const b = rest.match(/^[「『"“](.*)[」』"”]$/);
-  const product = (b ? b[1] : rest).trim();
-  return product ? { product, qty, orderId: half(m[1]).toUpperCase() } : null;
-}
-
-// 依頼の項目から「商品名と数量」を読み取る（読み取れない分は画面で入力）
-function parseItems(r) {
-  const fs = (r.fields || []).filter(f => f.v && !/^https?:\/\//.test(f.v));
-  const isQ = k => /数量|個数|点数|入数/.test(k);
-  const isP = k => !isQ(k) && /商品|品名|アイテム|SKU|内容/i.test(k);
-  const ps = fs.filter(f => isP(f.k)), qs = fs.filter(f => isQ(f.k));
-  const lines = v => String(v).split(/\r?\n/).map(t => t.trim()).filter(Boolean).map(t => {
-    const o = parseOidLine(t); if (o) return o;
-    const m = half(t).match(/^(.*?)[\s　]*(?:[x×X＊*]|数量[:：]?)[\s　]*(\d+)\s*(?:個|点|枚|本|セット|pcs)?$/i)
-           || half(t).match(/^(.*?)[\s　]+(\d+)\s*(?:個|点|枚|本|セット|pcs)$/i);
-    return m ? { product: m[1].trim(), qty: Number(m[2]) } : { product: t, qty: 0 };
-  });
-  let items;
-  if (ps.length && ps.length === qs.length) items = ps.map((p, i) => ({ product: String(p.v).trim(), qty: toNum(qs[i].v) }));
-  else if (ps.length) items = ps.flatMap(p => lines(p.v));
-  else items = [{ product: String(r.product || '').trim(), qty: qs.length ? toNum(qs[0].v) : 0 }];
-  if (items.length === 1 && !items[0].qty && qs.length === 1) items[0].qty = toNum(qs[0].v);
-  return items.filter(i => i.product || i.qty);
-}
-
-// 出荷依頼の商品名から、どの在庫を減らすか決める（古い保管日から順に）。迷う場合は null
-function planOut(r, items) {
-  const pool = lotsOf(sellerKey(r)).filter(l => remain(l) > 0).map(l => ({ l, left: remain(l) }));
-  const plan = new Map();
-  if (!items.length) return null;
-  for (const it of items) {
-    const n = norm(it.product);
-    if (!it.qty || !n) return null;
-    let c = pool.filter(p => norm(p.l.product) === n);
-    if (!c.length) c = pool.filter(p => { const m = norm(p.l.product); return m && (m.includes(n) || n.includes(m)); });
-    if (new Set(c.map(p => norm(p.l.product))).size !== 1) return null;
-    let need = it.qty;
-    for (const p of c) {
-      const t = Math.min(need, p.left);
-      if (t > 0) { plan.set(p.l.id, (plan.get(p.l.id) || 0) + t); p.left -= t; need -= t; }
-      if (!need) break;
-    }
-    if (need) return null;
-  }
-  return [...plan].map(([id, qty]) => ({ id, qty }));
-}
-
-// ---------- 保管在庫の書き込み ----------
-async function addLots(r, items, inDate) {
-  // Firestoreは1回にまとめて書ける件数に上限があるので、400件ずつに分けて保存
-  for (let i = 0; i < items.length; i += 400) {
-    const b = writeBatch(db);
-    items.slice(i, i + 400).forEach(it => b.set(doc(collection(db, 'hokan_lots')), {
-      seller: r ? sellerKey(r) : it.seller, sellerName: r ? (r.name || '') : (it.sellerName || ''),
-      product: it.product, qtyIn: it.qty, inDate, reqId: r ? r.id : '', outs: [], memo: '', orderId: it.orderId || '', jan: it.jan || '', model: it.model || '', expiry: it.expiry || '',
-      by: S.user.email, at: serverTimestamp()
-    }));
-    await b.commit();
-    if (items.length > 400) toast(`登録中… ${Math.min(i + 400, items.length)}／${items.length}件`);
-  }
-}
-
-// Excel・スプレッドシートからコピーした表を読み取る（商品名と数量。見出し行や数量のない行は飛ばす）
-function parsePaste(text) {
-  const merged = new Map();
-  const put = (product, jan, qty, orderId = '', expiry = '') => {
-    const key = product + '\t' + jan + '\t' + orderId + '\t' + expiry;     // Order ID・賞味期限が違えば別の行にする
-    const m = merged.get(key) || { product, code: jan, qty: 0, orderId, expiry };
-    m.qty += qty; merged.set(key, m);
-  };
-  String(text).split(/\r?\n/).forEach(raw => {
-    const line = raw.trim();
-    if (!line) return;
-    // Order ID＋商品名の行（キャンセル品の一覧など）
-    if (!line.includes('\t')) { const o = parseOidLine(line); if (o) { put(o.product, '', o.qty, o.orderId); return; } }
-    // 1行に「商品名 1個」「商品名 ×2」のように書いた形（タブ区切りでない行）
-    if (!line.includes('\t')) {
-      const h = half(line);
-      const m = h.match(/^(.*?)[\s　]*(?:[x×X＊*]|数量[:：]?)[\s　]*([\d,]+)\s*(?:個|点|枚|本|セット|pcs)?$/i)
-             || h.match(/^(.*?)[\s　]*([\d,]+)\s*(?:個|点|枚|本|セット|pcs)$/i);
-      if (m && m[1].trim()) {
-        const words = line.slice(0, m[1].length).trim().split(/[\s　]+/);
-        const ji = words.findIndex(w => isJan(half(w)));          // 8桁・13桁の数字はJANとして扱う
-        const jan = ji >= 0 ? half(words.splice(ji, 1)[0]) : '';
-        const ei = words.findIndex(w => toYmd(w));                  // 日付の形は賞味期限として扱う
-        const expiry = ei >= 0 ? toYmd(words.splice(ei, 1)[0]) : '';
-        const product = words.join(' ').trim(), qty = toNum(m[2]);
-        if (product && qty) { put(product, jan, qty, '', expiry); return; }
-      }
-    }
-    const cols = (line.includes('\t') ? line.split('\t') : line.split(/[,，]/)).map(c => c.trim()).filter(Boolean);
-    if (cols.length < 2) return;
-    let qi = -1;
-    // 日付の列は賞味期限として扱う（数量の列より右にあってもOK）
-    const ei = cols.findIndex(c => toYmd(c));
-    const expiry = ei >= 0 ? toYmd(cols.splice(ei, 1)[0]) : '';
-    for (let i = cols.length - 1; i >= 1; i--) if (/^[0-9０-９,，]+\s*(個|点|枚|本|セット|pcs)?$/i.test(cols[i])) { qi = i; break; }
-    if (qi < 0) return;
-    const head = cols.slice(0, qi);
-    const ji = head.findIndex(c => isJan(half(c)));               // 8桁・13桁の数字の列はJANとして扱う
-    const jan = ji >= 0 ? half(head.splice(ji, 1)[0]) : '';
-    const qty = toNum(cols[qi]), product = head.join(' ').trim();
-    if (!qty || !product) return;
-    put(product, jan, qty, '', expiry);
-  });
-  return [...merged.values()];
-}
-const pasteBox = () => `<details class="bd paste" style="margin:8px 0"><summary>Excel・スプレッドシートからまとめて貼り付け</summary>
-  <textarea id="hkPaste" rows="6" placeholder="「商品名」「数量」の列をコピーして貼り付けるか、「商品名 1個」のように1行ずつ書いて貼り付けてください（JAN・賞味期限（2026/12/31 の形）があれば一緒に読み込みます。見出し行があっても大丈夫です）"></textarea>
-  <div class="actions" style="margin-top:6px"><button class="mini" id="hkPasteGo">下の表に読み込む</button></div></details>`;
-function rowsTotal() {
-  const rows = [...document.querySelectorAll('#hkRows .hk-row')].map(x => ({ p: x.querySelector('.hk-p').value.trim(), q: toNum(x.querySelector('.hk-q').value) })).filter(x => x.p || x.q);
-  if ($('hkTotal')) $('hkTotal').textContent = rows.length ? `${rows.length}商品・合計${rows.reduce((s, x) => s + x.q, 0)}点` : '';
-}
-function bindRows(onChange) {
-  const sh = $('sheet');
-  if (!$('hkRows')) return;
-  const changed = () => { if (onChange) onChange(); rowsTotal(); };
-  $('hkAdd').onclick = () => { $('hkRows').insertAdjacentHTML('beforeend', itemRow()); changed(); };
-  $('hkRows').onclick = e => {
-    const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); changed(); return; }
-    const f = e.target.closest('.hk-find'); if (f) findProduct(f.closest('.hk-row'), f);
-  };
-  $('hkRows').onkeydown = e => {   // JAN・型番の欄でEnter（バーコードリーダーも）→ すぐ検索
-    if (e.key === 'Enter' && e.target.classList.contains('hk-c')) { e.preventDefault(); const row = e.target.closest('.hk-row'); findProduct(row, row.querySelector('.hk-find')); }
-  };
-  $('hkRows').oninput = e => { if (e.target.classList.contains('hk-c')) e.target.dataset.jan = ''; rowsTotal(); };
-  if ($('hkCancel')) $('hkCancel').onchange = () => $('hkRows').classList.toggle('oid', $('hkCancel').checked);
-  if ($('hkPasteGo')) $('hkPasteGo').onclick = () => {
-    const items = parsePaste($('hkPaste').value);
-    if (!items.length) { toast('商品名と数量を読み取れませんでした。「商品名」「数量」の2列をコピーするか、「商品名 1個」の形で貼り付けてください'); return; }
-    const filled = [...document.querySelectorAll('#hkRows .hk-row')].some(x => x.querySelector('.hk-p').value.trim() || x.querySelector('.hk-q').value.trim());
-    if (filled) $('hkRows').insertAdjacentHTML('beforeend', items.map(itemRow).join(''));
-    else $('hkRows').innerHTML = items.map(itemRow).join('');
-    if (items.some(i => i.orderId) && $('hkCancel')) { $('hkCancel').checked = true; $('hkRows').classList.add('oid'); }
-    $('hkPaste').value = '';
-    $('hkPaste').closest('details').open = false;
-    changed();
-    toast(`${items.length}商品を読み込みました。内容を確認して登録してください`);
-  };
-  rowsTotal();
-}
-async function applyOut(plan, info) {
-  await runTransaction(db, async tx => {
-    const got = [];
-    for (const p of plan) got.push([p, await tx.get(doc(db, 'hokan_lots', p.id))]);
-    for (const [p, s] of got) {
-      if (!s.exists()) throw new Error('在庫が見つかりません');
-      const l = s.data();
-      if (remain(l) < p.qty) throw new Error(`「${l.product}」の残りが足りません（残り${remain(l)}点）`);
-    }
-    for (const [p, s] of got) tx.update(s.ref, { outs: [...(s.data().outs || []), {
-      id: uid(), date: info.date, qty: p.qty, reqId: info.reqId || '', memo: info.memo || '', by: S.user.email, at: new Date().toISOString() }] });
-  });
-}
-async function removeOuts(lotIds, test) {
-  await runTransaction(db, async tx => {
-    const got = [];
-    for (const id of lotIds) got.push(await tx.get(doc(db, 'hokan_lots', id)));
-    for (const s of got) if (s.exists()) tx.update(s.ref, { outs: (s.data().outs || []).filter(o => !test(o)) });
-  });
-}
-// セラーの共有設定（hokan_sellers）。ドキュメントIDは管理番号（「/」は「_」に置き換え）
-const sellerDocId = k => String(k).replace(/\//g, '_');
-const sellerInfo = k => S.sellers.get(sellerDocId(k)) || {};
-// セラーごとの料金の決め方（共有設定で選ぶ）：item＝1点ごと（標準）／pallet＝パレット契約（月額）／none＝保管料なし
-const feeMode = k => { const m = sellerInfo(k).feeMode; return m === 'pallet' || m === 'none' ? m : 'item'; };
-const palletFee = k => { const d = sellerInfo(k); return (Number(d.pallets) || 0) * (Number(d.palletRate) || 0); };
-function feeLabel(k) {
-  const m = feeMode(k), d = sellerInfo(k);
-  if (m === 'pallet') return `パレット契約 ${Number(d.pallets) || 0}枚 × ${yen(Number(d.palletRate) || 0)}／月`;
-  if (m === 'none') return '保管料なし（別請求など）';
-  return `1点 月${HOKAN_RATE}円（${HOKAN_FREE_MONTHS}ヶ月無料）`;
-}
-function shareLine(seller) {
-  const d = sellerInfo(seller);
-  const parts = [];
-  if (feeMode(seller) !== 'item') parts.push(`<b>${esc(feeLabel(seller))}</b>`);
-  // シートの状態：作成済み・共有済み／作成済み・未共有／未作成
-  if (d.sheetUrl && d.mails) parts.push(`<span class="badge free" style="margin:0">作成済み・共有済み</span>`);
-  else if (d.sheetUrl) parts.push(`<span class="badge fee" style="margin:0">作成済み・セラー未共有</span>`);
-  else if (d.mails) parts.push('<span class="warn">未作成（次の更新で作ります）</span>');
-  else parts.push('<span class="warn">未作成・共有メール未設定</span>');
-  if (d.sheetUrl) parts.push(`<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">シートを開く</a>${d.updatedAt ? `　更新 ${esc(String(d.updatedAt).slice(5, 16).replace('T', ' '))}` : ''}`);
-  if (d.error) parts.push(`<span class="err">${esc(d.error)}</span>`);
-  return `<div class="share"><span>${parts.join('　')}</span><button class="mini" data-share="${esc(seller)}">共有設定</button></div>`;
-}
-const sumQty = a => a.reduce((s, x) => s + x.qty, 0);
-
-// 完了にするときの在庫処理。画面で入力してもらう必要があれば false
-async function stockOnDone(r) {
-  if (isHokanIn(r) && !lotsIn(r.id).length) {
-    const oid = reqOrderId(r);
-    const items = parseItems(r).filter(i => i.product && i.qty > 0).map(i => ({ ...i, orderId: i.orderId || oid }));
-    if (!items.length) { openSheet(r); toast('数量を読み取れませんでした。下の「保管在庫」に数量を入れて登録してください'); return false; }
-    await addLots(r, items, todayYmd());
-    return `在庫に${sumQty(items)}点登録`;
-  }
-  if (isHokanOut(r) && !outsOf(r.id).length) {
-    const plan = planOut(r, parseItems(r));
-    if (!plan) { openSheet(r); toast('減らす在庫を自動で決められませんでした。下の「保管在庫」で数量を入れてください'); return false; }
-    await applyOut(plan, { date: todayYmd(), reqId: r.id });
-    return `在庫を${sumQty(plan)}点出庫`;
-  }
-  return '';
-}
-// 未対応に戻すときの在庫処理
-async function stockOnUndo(r, silent) {
-  const ins = lotsIn(r.id), outs = outsOf(r.id);
-  if (isHokanIn(r) && ins.length) {
-    if (ins.some(l => (l.outs || []).length)) { if (!silent) toast('この入庫分はすでに出庫があるため、在庫はそのまま残しました'); return; }
-    if (silent || confirm(`登録した在庫（${sumQty(ins.map(l => ({ qty: l.qtyIn })))}点）も取り消しますか？`))
-      await Promise.all(ins.map(l => deleteDoc(doc(db, 'hokan_lots', l.id))));
-  }
-  if (isHokanOut(r) && outs.length) {
-    if (silent || confirm(`出庫した在庫（${sumQty(outs)}点）を元に戻しますか？`))
-      await removeOuts([...new Set(outs.map(o => o.lot.id))], o => o.reqId === r.id);
-  }
-}
-
-const todayJST = () => new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-
-// ---------- ログイン ----------
-$('loginBtn').onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch(e => $('loginMsg').textContent = 'ログインできませんでした：' + e.message);
-$('logout').onclick = () => signOut(auth);
-
-onAuthStateChanged(auth, user => {
-  S.unsubs.forEach(u => u()); S.unsubs = [];
-  S.loaded = { reqs: false, acts: false };
-  S.user = user;
-  lzReset();
-  if (typeof zinvStop === 'function') { zinvStop(); }
-  $('loginView').hidden = !!user;
-  $('appView').hidden = !user;
-  if (!user) return;
-  $('userEmail').textContent = user.email;
-  listen();
-});
-
-function listen() {
-  const denied = e => {
-    $('list').innerHTML = `<div class="alert">${e.code === 'permission-denied'
-      ? 'このアカウントには閲覧の許可がありません。管理者に追加を依頼してください。'
-      : '読み込みに失敗しました：' + esc(e.message)}</div>`;
-  };
-  S.unsubs.push(onSnapshot(collection(db, 'irai_requests'), snap => {
-    snap.docChanges().forEach(c => c.type === 'removed' ? S.reqs.delete(c.doc.id) : S.reqs.set(c.doc.id, c.doc.data()));
-    S.loaded.reqs = true;
-    render();
-  }, denied));
-  S.unsubs.push(onSnapshot(collection(db, 'irai_actions'), snap => {
-    snap.docChanges().forEach(c => c.type === 'removed' ? S.acts.delete(c.doc.id) : S.acts.set(c.doc.id, c.doc.data()));
-    S.loaded.acts = true;
-    render();
-  }, denied));
-  S.unsubs.push(onSnapshot(collection(db, 'hokan_lots'), snap => {
-    snap.docChanges().forEach(c => c.type === 'removed' ? S.lots.delete(c.doc.id) : S.lots.set(c.doc.id, { id: c.doc.id, ...c.doc.data() }));
-    IDX = null;
-    S.lotsErr = '';
-    render();
-  }, e => { S.lotsErr = e.code === 'permission-denied' ? '保管在庫（hokan_lots）を読み書きする許可がありません。Firestoreのルールに追加してください。' : '保管在庫を読み込めませんでした：' + e.message; render(); }));
-  S.unsubs.push(onSnapshot(collection(db, 'hokan_sellers'), snap => {
-    snap.docChanges().forEach(c => c.type === 'removed' ? S.sellers.delete(c.doc.id) : S.sellers.set(c.doc.id, c.doc.data()));
-    render();
-  }, () => {}));
-  S.unsubs.push(onSnapshot(doc(db, 'settings', 'hokan_skip'), d => { S.skip = (d.data() || {}).ids || {}; render(); }, () => {}));
-  // 取り消した依頼（settings/irai_cancel の ids に 依頼ID → 理由・日付・操作した人）
-  S.unsubs.push(onSnapshot(doc(db, 'settings', 'irai_cancel'), d => { S.cancels = (d.data() || {}).ids || {}; render(); }, () => {}));
-  S.unsubs.push(onSnapshot(doc(db, 'irai_meta', 'status'), d => {
-    const m = d.data() || {};
-    $('meta').textContent = m.syncedAt ? 'シート同期 ' + m.syncedAt.slice(5) : 'シート同期 待機中';
-    $('alerts').innerHTML = (m.errors || []).map(e => `<div class="alert">同期できなかったシートがあります：${esc(e)}</div>`).join('');
-  }, () => {}));
-}
-
-// アプリで操作した内容（シート反映前）を上書きして表示
-function effective(r) {
-  const a = S.acts.get(r.id);
-  let e = r;
-  if (a) {
-    const fix = a.userFix ? { user: a.userFix, userOrig: r.user, nameOrig: r.name, name: a.nameFix || r.name, userFix: a.userFix, nameFix: a.nameFix || '' } : {};
-    e = { ...r, done: a.done, doneDate: a.doneDate, note: a.note ?? r.note, pending: true, error: a.error || '', ...fix };
-  }
-  const c = S.cancels[r.id];   // 取り消した依頼は「対応済」と同じく未対応から外し、取消として表示
-  if (c) e = { ...e, done: true, doneDate: c.date || e.doneDate, canceled: true, cancelReason: c.reason || '', cancelBy: c.by || '', cancelDate: c.date || '' };
-  return e;
-}
-// 状態の絞り込み：未対応／対応済（取消を除く）／取消／すべて
-const statusOk = r => S.status === 'all' || (S.status === 'open' ? !r.done : S.status === 'cancel' ? !!r.canceled : (r.done && !r.canceled));
-function allRecs() { return [...S.reqs.values()].map(effective); }
-function find(id) { const r = S.reqs.get(id); return r ? effective(r) : null; }
-
-function ageText(t) {
-  if (!t) return { txt: '', late: false };
-  const d = Math.floor((Date.now() - t) / DAY);
-  return { txt: d <= 0 ? '今日' : d + '日前', late: d >= 2 };
-}
-
-function filtered(recs) {
-  const q = S.q.trim().toLowerCase();
-  const list = recs.filter(r =>
-    (S.form === 'all' || r.form === S.form) &&
-    statusOk(r) &&
-    (S.type === 'all' || r.type === S.type) &&
-    (!q || [r.order, r.user, r.name, r.email, r.product, r.note, r.cancelReason, ...(r.fields || []).map(f => f.v)].join(' ').toLowerCase().includes(q))
-  );
-  list.sort((a, b) => S.status === 'open' ? a.t - b.t : b.t - a.t);
-  return list;
-}
-
-// ---------- 未対応件数をチェックリストアプリ用に保存（settings/irai_summary） ----------
-let summaryTimer = null, lastSummary = '';
-function saveSummary(recs) {
-  if (!S.loaded.reqs || !S.loaded.acts || !S.user) return;
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-  const forms = {};
-  recs.forEach(r => {
-    const f = forms[r.form] ||= { pending: 0, today: 0 };
-    if (!r.done) f.pending++;
-    if (r.t && new Date(r.t).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) === today) f.today++;
-  });
-  clearTimeout(summaryTimer);
-  summaryTimer = setTimeout(() => {
-    const json = JSON.stringify(forms);
-    if (json === lastSummary) return;
-    lastSummary = json;
-    setDoc(doc(db, 'settings', 'irai_summary'), { forms, at: serverTimestamp(), by: S.user.email })
-      .catch(e => console.warn('未対応件数の保存に失敗', e));
-  }, 2000);
-}
-
-function render() {
-  const recs = allRecs();
-  saveSummary(recs);
-  document.querySelectorAll('#views button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === S.view));
-  $('reqView').hidden = S.view !== 'req';
-  $('stockView').hidden = S.view !== 'stock';
-  $('billView').hidden = S.view !== 'bill';
-  $('lzView').hidden = S.view !== 'lz';
-  $('zcView').hidden = S.view !== 'zc';
-  $('zcBar').hidden = !(S.view === 'zc' && ZC.cart.size && !ZC.editMode);
-  if (S.view === 'req') renderReq(recs);
-  else if (S.view === 'stock') renderStock(recs);
-  else if (S.view === 'lz') renderLz();
-  else if (S.view === 'zc') renderZc();
-  else renderBill();
-
-  const sh = $('sheet'), openId = sh.dataset.id;
-  if (openId && sh.classList.contains('open')) {
-    if (sh.dataset.kind === 'lot') { if (S.lots.has(openId)) fillLotSheet(openId); }
-    else { const r = find(openId); if (r) fillSheet(r); }
-  }
-}
-
-function renderReq(recs) {
-  const open = f => recs.filter(r => !r.done && (f === 'all' || r.form === f)).length;
-  const tabs = [['all', 'すべて'], ...FORM_ORDER];
-  $('tabs').innerHTML = tabs.map(([k, lb]) =>
-    `<button class="tab" data-f="${k}" aria-pressed="${S.form === k}"><span class="lb">${esc(lb)}</span><span class="num">${open(k)}<small>件</small></span></button>`).join('');
-
-  const base = recs.filter(r => (S.form === 'all' || r.form === S.form) && statusOk(r));
-  const types = {};
-  base.forEach(r => types[r.type] = (types[r.type] || 0) + 1);
-  if (S.type !== 'all' && !types[S.type]) S.type = 'all';
-  $('chips').innerHTML = `<button class="chip" data-t="all" aria-pressed="${S.type === 'all'}">すべての種別<span>${base.length}</span></button>` +
-    Object.keys(types).sort((a, b) => types[b] - types[a]).map(t =>
-      `<button class="chip" data-t="${esc(t)}" aria-pressed="${S.type === t}">${esc(t)}<span>${types[t]}</span></button>`).join('');
-
-  document.querySelectorAll('#status button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === S.status));
-
-  const list = filtered(recs);
-  const shown = list.slice(0, S.limit);
-  $('list').innerHTML = shown.length ? shown.map(itemHtml).join('') :
-    `<div class="empty">${S.status === 'open' && !S.q ? '未対応の依頼はありません。' : S.status === 'cancel' && !S.q ? '取り消した依頼はありません。' : '条件に合う依頼はありません。検索語や種別を変えてみてください。'}</div>`;
-  $('more').hidden = list.length <= S.limit;
-  $('more').textContent = `さらに表示（残り${list.length - S.limit}件）`;
-}
-
-function statusTag(r) {
-  if (r.error) return `<span class="err">${esc(r.error)}</span>`;
-  if (r.pending) return `<span class="pending">シート反映待ち</span>`;
-  return '';
-}
-
-function hokanTag(r) {
-  if (r.canceled) return '';
-  if (isHokanIn(r)) return lotsIn(r.id).length ? '<span class="hk-ok">在庫登録済</span>' : (r.done ? '<span class="pending">在庫未登録</span>' : '');
-  if (isHokanOut(r)) return outsOf(r.id).length ? '<span class="hk-ok">出庫済</span>' : (r.done ? '<span class="pending">在庫未出庫</span>' : '');
-  return '';
-}
-
-function itemHtml(r) {
-  const a = ageText(r.t);
-  const who = [r.user, r.name].filter(Boolean).join('　');
-  const doneTag = r.canceled ? `<span class="cxl">取消 ${esc(r.cancelDate)}</span>` : r.done ? `<span>済 ${esc(r.doneDate)}</span>` : '';
-  return `<div class="item ${r.done ? 'is-done' : ''} ${r.canceled ? 'is-cancel' : ''}" data-f="${r.form}">
-    <div class="strip"></div>
-    <button class="body" data-open="${esc(r.id)}">
-      <div class="l1"><span class="type">${esc(r.type)}</span><span>${esc(r.formLabel)}</span>
-        <span class="age ${!r.done && a.late ? 'late' : ''}">${a.txt}</span>${doneTag}${statusTag(r)}${hokanTag(r)}</div>
-      <div class="l2">${esc(who || '（名前なし）')}</div>
-      <div class="l3">${r.canceled && r.cancelReason ? `理由：${esc(r.cancelReason)}　` : ''}${r.order ? `<b>${esc(r.order)}</b>　` : ''}${esc(r.product)}</div>
-    </button>
-    <button class="quick ${r.done ? '' : 'do'}" data-quick="${esc(r.id)}">${r.done ? '戻す' : '完了'}</button>
-  </div>`;
-}
-
-// ---------- 詳細 ----------
-function openSheet(r) {
-  $('sheet').dataset.id = r.id;
-  $('sheet').dataset.kind = 'req';
-  $('sheet').dataset.dirty = '';
-  fillSheet(r, true);
-  $('bg').style.display = 'block';
-  requestAnimationFrame(() => $('sheet').classList.add('open'));
-}
-function fillSheet(r, force) {
-  if (!force && sheetBusy()) return; // 入力中は書き換えない
-  const rows = [['受付日時', r.ts], ['管理番号', r.user + (r.userOrig ? `（依頼時は ${r.userOrig}・修正済み）` : '')], ['名前', r.name], ['メール', r.email],
-    ...(r.fields || []).map(f => [f.k, f.v])].filter(x => x[1]);
-  const isUrl = v => /^https?:\/\//.test(v);
-  const val = v => isUrl(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">ファイルを開く</a>` : esc(v);
-  $('sheet').dataset.f = r.form;
-  $('sheet').innerHTML = `
-    <div class="sheet-h">
-      <div><h2>${esc(r.type)}</h2><div class="sub">${esc(r.formLabel)}　${r.canceled ? '<span class="cxl">取消 ' + esc(r.cancelDate) + '</span>' : r.done ? '対応済 ' + esc(r.doneDate) : '未対応・' + ageText(r.t).txt}　${statusTag(r)}</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button>
-    </div>
-    ${r.canceled ? `<div class="cxl-box"><b>この依頼は取り消し済みです</b><br>
-      取消日 ${esc(r.cancelDate)}${r.cancelBy ? `　操作 ${esc(r.cancelBy)}` : ''}${r.cancelReason ? `<br>理由：${esc(r.cancelReason)}` : ''}</div>` : ''}
-    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${isUrl(v) ? '' : 'copy'}" data-copy="${esc(v)}">${val(v)}</dd>`).join('')}</dl>
-    <p class="hint">項目をタップするとコピーできます。</p>
-    ${r.noteLabel ? `<div class="note"><label for="noteIn">${esc(r.noteLabel)}</label>
-      <div class="note-row"><input id="noteIn" value="${esc(r.note || '')}"><button class="btn" id="saveNote">保存</button></div></div>` : ''}
-    ${r.canceled ? '' : hokanPanel(r)}
-    <div class="actions">
-      <button class="primary ${r.done ? 'undo' : ''}" id="toggleDone">${r.canceled ? '取り消しをやめる（未対応に戻す）' : r.done ? '未対応に戻す' : '完了にする'}</button>
-      <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">シートで開く</a>
-    </div>
-    ${r.canceled ? '' : `<div class="actions" style="margin-top:10px;justify-content:flex-end"><button class="mini danger" id="cancelReq">この依頼を取り消す</button></div>`}`;
-  $('closeSheet').onclick = closeSheet;
-  $('toggleDone').onclick = () => { closeSheet(); toggleDone(r.id); };
-  if ($('cancelReq')) $('cancelReq').onclick = () => cancelReq(r.id);
-  if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
-  bindHokanPanel(r);
-}
-function closeSheet() { const sh = $('sheet'); sh.classList.remove('open'); sh.dataset.id = ''; sh.dataset.kind = ''; sh.dataset.edit = ''; sh.dataset.dirty = ''; $('bg').style.display = 'none'; }
-function showSheet() { $('bg').style.display = 'block'; requestAnimationFrame(() => $('sheet').classList.add('open')); }
-function sheetBusy() {
-  const sh = $('sheet'), ae = document.activeElement;
-  return sh.dataset.dirty === '1' || (ae && sh.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName));
-}
-function refill() { $('sheet').dataset.dirty = ''; if (document.activeElement) document.activeElement.blur(); render(); }
-
-// ---------- 依頼の詳細に出す「保管在庫」欄 ----------
-const itemRow = (it = {}) => `<div class="hk-row">
-  <input class="hk-p" placeholder="商品名" value="${esc(it.product || '')}">
-  <input class="hk-q num-in" inputmode="numeric" placeholder="数量" value="${it.qty || ''}">
-  <button class="mini hk-del" aria-label="この行を消す">×</button>
-  <div class="hk-code"><input class="hk-c" placeholder="JAN・型番（入れて🔍で商品名を検索）" value="${esc(it.code || it.jan || it.model || '')}" data-jan="${esc(it.jan || '')}">
-    <button class="mini hk-find" aria-label="ネットで商品を検索">🔍 検索</button></div>
-  <div class="hk-hits"></div>
-  <label class="hk-exp-w">賞味期限<input class="hk-exp" type="date" value="${esc(it.expiry || '')}" aria-label="賞味期限（任意）"><small>任意</small></label>
-  <input class="hk-oid" placeholder="キャンセル品のOrder ID" value="${esc(it.orderId || '')}"></div>`;
-const oidToggle = (on = false) => `<label class="oid-toggle"><input type="checkbox" id="hkCancel" ${on ? 'checked' : ''}> キャンセル品として登録する（Order IDを入れる）</label>`;
-// 依頼に書かれているOrder ID（注文番号の欄、または「Order ID」「注文番号」などの項目）
-function reqOrderId(r) {
-  const f = (r.fields || []).find(x => /order\s*id|オーダー\s*id|注文番号|注文id/i.test(x.k || '') && String(x.v || '').trim());
-  return String(r.order || (f ? f.v : '') || '').trim();
-}
-// 登録欄の行を読み取る（キャンセル品にチェックがあるときだけ Order ID を付ける）
-function readRows(extra = {}) {
-  const withOid = $('hkCancel') && $('hkCancel').checked;
-  return [...document.querySelectorAll('#hkRows .hk-row')].map(x => {
-    const ci = x.querySelector('.hk-c'), code = half(ci.value).trim();
-    return { ...extra,
-      product: x.querySelector('.hk-p').value.trim(), qty: toNum(x.querySelector('.hk-q').value),
-      jan: isJan(code) ? code : (ci.dataset.jan || ''), model: isJan(code) ? '' : code,
-      expiry: x.querySelector('.hk-exp').value || '',
-      orderId: withOid ? x.querySelector('.hk-oid').value.trim() : '' };
-  }).filter(i => i.product || i.qty);
-}
-
-// JAN・型番からネットで商品を探す（書き出しGASがYahoo!ショッピングの商品検索APIを呼ぶ）
-async function findProduct(row, btn) {
-  const ci = row.querySelector('.hk-c'), code = half(ci.value).trim(), box = row.querySelector('.hk-hits');
-  if (!code) { toast('JANか型番を入れてください'); ci.focus(); return; }
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) { toast('EXPORT_URL が設定されていません'); return; }
-  btn.disabled = true; btn.textContent = '検索中…';
-  try {
-    const idToken = await S.user.getIdToken();
-    const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, action: 'lookup', code }) });
-    const r = await res.json();
-    if (!r.ok) { box.innerHTML = ''; toast(r.message || '検索できませんでした'); return; }
-    if (!r.items.length) { box.innerHTML = '<p class="hint">見つかりませんでした。商品名を手で入れてください。</p>'; return; }
-    box.innerHTML = r.items.map((h, i) => `<button class="hk-hit" data-i="${i}">${h.image ? `<img src="${esc(h.image)}" alt="" loading="lazy">` : ''}
-        <span>${esc(h.clean || h.name)}<small>${esc([h.brand, h.jan && 'JAN ' + h.jan].filter(Boolean).join('・'))}</small></span></button>`).join('')
-      + '<div class="credit"><a href="https://developer.yahoo.co.jp/sitemap/" target="_blank" rel="noopener">Web Services by Yahoo! JAPAN</a></div>';
-    box.querySelectorAll('.hk-hit').forEach(b => b.onclick = () => {
-      const h = r.items[+b.dataset.i];
-      row.querySelector('.hk-p').value = h.clean || h.name;
-      if (h.jan && !isJan(code)) ci.dataset.jan = h.jan;     // 型番で探したときは、見つかったJANも一緒に記録
-      box.innerHTML = '';
-      $('sheet').dataset.dirty = '1';
-      rowsTotal();
-      const q = row.querySelector('.hk-q'); if (!q.value) q.focus();
-    });
-  } catch (e) {
-    toast('検索できませんでした。少し待ってから、もう一度お試しください。');
-  } finally {
-    btn.disabled = false; btn.textContent = '🔍 検索';
-  }
-}
-
-function hokanPanel(r) {
-  const body = hokanPanelBody(r);
-  if (!body) return '';
-  return `<div class="fixbar"><span>管理番号 <b>${esc(sellerKey(r) || 'なし')}</b>${r.userOrig ? `（依頼時は ${esc(r.userOrig)}）` : ''}　${esc(r.name || '')}</span>
-    <button class="mini" id="hkFix">管理番号を直す</button></div>` + body;
-}
-
-// 間違った管理番号で依頼されたとき：この依頼だけ正しい番号に直す（入庫済みなら在庫も移す）
-async function fixSeller(r) {
-  const cur = sellerKey(r), orig = r.userOrig || r.user;
-  const k = (prompt(`正しい管理番号を入れてください（今：${cur}）\n依頼時の番号に戻すときは「${orig}」を入れてください。`, cur) || '').trim();
-  if (!k || k === cur) return;
-  if (isHokanOut(r) && outsOf(r.id).length) { toast('すでに出庫済みです。先に「未対応に戻す」を押してから直してください'); return; }
-  const guess = sellerInfo(k).name || (lotsOf(k)[0] || {}).sellerName || (k === orig ? (r.nameOrig || '') : '') || '';
-  const name = (prompt('セラー名を確認してください', guess || r.name || '') ?? '').trim();
-  const back = k === (r.userOrig || '');
-  try {
-    await writeAction(r, back ? { userFix: '', nameFix: '' } : { userFix: k, nameFix: name });
-    const ins = lotsIn(r.id);
-    if (ins.length) {                                  // この依頼で入れた在庫も、正しいセラーに移す
-      const b = writeBatch(db);
-      ins.forEach(l => b.update(doc(db, 'hokan_lots', l.id), { seller: k, sellerName: name || l.sellerName || '' }));
-      await b.commit();
-    }
-    toast(`管理番号を ${k} に直しました` + (ins.length ? `（在庫${ins.length}件も移しました）` : ''));
-    refill();
-  } catch (e) { toast('直せませんでした：' + e.message); }
-}
-
-function hokanPanelBody(r) {
-  if (!isHokanIn(r) && !isHokanOut(r)) return '';
-  const who = esc(sellerKey(r) || '（管理番号なし）');
-  if (isHokanIn(r)) {
-    const ins = lotsIn(r.id);
-    if (ins.length) return `<div class="hk"><h3>保管在庫：登録済み</h3>
-      ${ins.map(l => `<div class="pend-row" style="border-top:1px solid var(--line)"><span style="font-size:13px">${esc(l.product)}　${l.qtyIn}点（残り${remain(l)}点）　保管日 ${esc(l.inDate)}${l.expiry ? `　賞味期限 ${esc(l.expiry)}${expBadge(l.expiry)}` : ''}${l.orderId ? `　Order ID ${esc(l.orderId)}` : ''}</span>
-        <button class="mini" data-editlot="${esc(l.id)}">✏️ 編集</button></div>`).join('')}
-      <p class="hint">「編集」から商品名・数量・保管日・賞味期限などを直せます。</p></div>`;
-    const items = parseItems(r);
-    const withOid = !!reqOrderId(r) || items.some(i => i.orderId);
-    return `<div class="hk lotform-req"><h3>保管在庫に登録（${who}）</h3>
-      ${pasteBox()}
-      ${oidToggle(withOid)}
-      <div id="hkRows" class="${withOid ? 'oid' : ''}">${(items.length ? items : [{}]).map(it => itemRow({ ...it, orderId: it.orderId || reqOrderId(r) })).join('')}</div>
-      <div class="total" id="hkTotal"></div>
-      <button class="mini" id="hkAdd">＋商品を追加</button>
-      <label class="field"><span>保管日（入庫した日）</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
-      <div class="actions"><button class="primary" id="hkReg">${r.done ? '在庫に登録する' : '在庫に登録して完了'}</button></div>
-      <p class="hint">保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。</p></div>`;
-  }
-  const outs = outsOf(r.id);
-  if (outs.length) return `<div class="hk"><h3>保管在庫：出庫済み</h3>
-    ${outs.map(o => `<p>${esc(o.lot.product)}　−${o.qty}点　出庫日 ${esc(o.date)}</p>`).join('')}
-    <p class="hint">取り消すときは「未対応に戻す」を押してください。</p></div>`;
-  const want = parseItems(r);
-  const lots = lotsOf(sellerKey(r)).filter(l => remain(l) > 0);
-  const plan = new Map((planOut(r, want) || []).map(p => [p.id, p.qty]));
-  return `<div class="hk lotform-req"><h3>保管在庫から出庫（${who}）</h3>
-    ${want.length ? `<p>依頼内容：${want.map(i => esc(i.product) + (i.qty ? ' ×' + i.qty : '')).join('、')}</p>` : ''}
-    ${lots.length ? lots.map(l => `<div class="hk-row out">
-        <div class="lbl">${esc(l.product)}<small>保管日 ${esc(l.inDate)}${l.expiry ? '・賞味期限 ' + esc(l.expiry) : ''}・残り${remain(l)}点${expBadge(l.expiry)}</small></div>
-        <input class="hk-o num-in" data-lot="${esc(l.id)}" inputmode="numeric" value="${plan.get(l.id) || 0}" aria-label="${esc(l.product)}の出庫数"></div>`).join('')
-      : '<p>このセラーの保管在庫がありません。管理番号が間違っていないか確認してください（上の「管理番号を直す」で直せます）。</p>'}
-    ${lots.length ? `<label class="field"><span>出庫日</span><input type="date" id="hkDate" value="${todayYmd()}"></label>
-    <div class="actions"><button class="primary" id="hkOut">${r.done ? '出庫する' : '出庫して完了'}</button></div>` : ''}
-  </div>`;
-}
-
-function bindHokanPanel(r) {
-  const sh = $('sheet');
-  if ($('hkFix')) $('hkFix').onclick = () => fixSeller(r);
-  bindRows(() => { sh.dataset.dirty = '1'; });
-  if ($('hkReg')) $('hkReg').onclick = async () => {
-    const items = readRows();
-    if (!items.length || items.some(i => !i.product || !i.qty)) { toast('商品名と数量（1以上）を入れてください'); return; }
-    const date = $('hkDate').value; if (!date) { toast('保管日を入れてください'); return; }
-    try {
-      await addLots(r, items, date);
-      if (!r.done) await writeAction(r, { done: true, doneDate: todayJST() });
-      toast(`在庫に${sumQty(items)}点登録しました`); refill();
-      promptSheetIfNone(r);
-    } catch (e) { toast('保存できませんでした：' + e.message); }
-  };
-  if ($('hkOut')) $('hkOut').onclick = async () => {
-    const plan = [...document.querySelectorAll('.hk-o')].map(x => ({ id: x.dataset.lot, qty: toNum(x.value) })).filter(p => p.qty > 0);
-    if (!plan.length) { toast('出庫する数量を入れてください'); return; }
-    const date = $('hkDate').value; if (!date) { toast('出庫日を入れてください'); return; }
-    try {
-      await applyOut(plan, { date, reqId: r.id });
-      if (!r.done) await writeAction(r, { done: true, doneDate: todayJST() });
-      toast(`在庫を${sumQty(plan)}点出庫しました`); refill();
-    } catch (e) { toast('出庫できませんでした：' + e.message); }
-  };
-}
-
-// ---------- 保管在庫の画面 ----------
-function renderStock(recs) {
-  const al = [];
-  if (S.lotsErr) al.push(`<div class="alert">${esc(S.lotsErr)}</div>`);
-  const miss = recs.filter(r => r.done && !r.canceled && !S.skip[r.id] &&
-    ((isHokanIn(r) && !lotsIn(r.id).length) || (isHokanOut(r) && !outsOf(r.id).length))).sort((a, b) => a.t - b.t);
-  if (miss.length) al.push(`<div class="alert"><b>完了済みなのに在庫に反映していない依頼が${miss.length}件あります。</b>開いて登録・出庫するか、反映不要なら「対象外」を押してください。
-    ${miss.slice(0, 30).map(r => `<div class="pend-row"><button class="open" data-req="${esc(r.id)}">${esc(r.type)}　${esc([r.user, r.name].filter(Boolean).join(' '))}　<small>${esc(r.doneDate || '')}</small></button>
-      <button class="mini" data-skip="${esc(r.id)}">対象外</button></div>`).join('')}</div>`);
-  $('stockAlerts').innerHTML = al.join('');
-
-  const q = S.sq.trim().toLowerCase(), today = todayYmd();
-  const groups = new Map();
-  liveLots().forEach(l => {
-    const rem = remain(l);
-    if (S.sfilter === 'have' && rem <= 0) return;
-    if (q && ![l.seller, l.sellerName, l.product, l.orderId, l.jan, l.model, l.expiry].join(' ').toLowerCase().includes(q)) return;
-    if (!groups.has(l.seller)) groups.set(l.seller, []);
-    groups.get(l.seller).push(l);
-  });
-  // 共有設定だけあって、在庫がまだない（または表示条件に合わない）セラーも出す
-  S.sellers.forEach(d => {
-    if (!d.seller || groups.has(d.seller)) return;
-    if (q && ![d.seller, d.name].join(' ').toLowerCase().includes(q)) return;
-    groups.set(d.seller, []);
-  });
-  if (!groups.size) {
-    $('stockList').innerHTML = `<div class="empty">${q ? '条件に合う在庫はありません。' : '保管在庫はまだありません。保管依頼を完了にするか、「＋手動で入庫」から登録してください。'}</div>`;
-    return;
-  }
-  $('stockList').innerHTML = [...groups].sort((a, b) => a[0].localeCompare(b[0], 'ja')).map(([seller, lots]) => {
-    lots.sort((a, b) => a.inDate.localeCompare(b.inDate));
-    const total = lots.reduce((s, l) => s + remain(l), 0);
-    const itemMode = feeMode(seller) === 'item';
-    const fee = itemMode ? lots.filter(l => feeStart(l) <= today).reduce((s, l) => s + remain(l), 0) : 0;
-    const title = (lots[0] && lots[0].sellerName) || sellerInfo(seller).name || seller;
-    if (!lots.length) return `<div class="seller"><div class="seller-h"><span><b>${esc(title)}</b>　<span class="sum">${esc(seller)}</span></span>
-      <span class="sum">${lotsOf(seller).some(l => remain(l) > 0) ? '在庫あり' : lotsOf(seller).length ? '残りの在庫はありません' : '在庫はまだありません'}</span></div>
-      ${shareLine(seller)}</div>`;
-    return `<div class="seller"><div class="seller-h"><span><b>${esc(title)}</b>　<span class="sum">${esc(seller)}</span></span>
-      <span class="sum">残り ${total}点${fee ? `／保管料対象 ${fee}点` : ''}</span></div>
-      ${shareLine(seller)}
-      ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
-        return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span><span class="p">${esc(l.product)}</span>
-          <span class="d">${l.jan || l.model ? `${esc([l.jan && 'JAN ' + l.jan, l.model && '型番 ' + l.model].filter(Boolean).join('・'))}　` : ''}${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${l.expiry ? `　賞味期限 ${esc(l.expiry)}` : ''}${rem > 0 ? expBadge(l.expiry) : ''}${rem > 0 && itemMode ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
-          <span class="q">${rem}<small>／${l.qtyIn}点</small></span></button>`; }).join('')}</div>`;
-  }).join('');
-}
-
-function openLotSheet(id, edit) {
-  const sh = $('sheet');
-  sh.dataset.id = id; sh.dataset.kind = 'lot'; sh.dataset.dirty = ''; sh.dataset.edit = edit ? '1' : '';
-  fillLotSheet(id, true);
-  showSheet();
-}
-function fillLotSheet(id, force) {
-  if (!force && sheetBusy()) return;
-  const l = S.lots.get(id); if (!l) return;
-  const rem = remain(l), req = l.reqId ? find(l.reqId) : null;
-  const sh = $('sheet');
-  sh.dataset.f = 'shopee';
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>${esc(l.product)}</h2><div class="sub">${esc(l.sellerName || '')}　${esc(l.seller)}　残り${rem}点／${l.qtyIn}点</div></div>
-      <div style="display:flex;gap:4px;align-items:center"><button class="mini" id="lotEdit">✏️ 編集</button><button class="close" id="closeSheet" aria-label="閉じる">×</button></div></div>
-    <dl>
-      <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
-      <dt>保管料</dt><dd>${feeMode(l.seller) === 'item' ? `${esc(feeStart(l))} から 1点あたり月${HOKAN_RATE}円（税抜）` : esc(feeLabel(l.seller)) + '（税抜）'}</dd>
-      ${l.expiry ? `<dt>賞味期限</dt><dd>${esc(l.expiry)}　${expBadge(l.expiry) || '（期限内）'}</dd>` : ''}
-      ${l.jan ? `<dt>JAN</dt><dd class="copy" data-copy="${esc(l.jan)}">${esc(l.jan)}</dd>` : ''}
-      ${l.model ? `<dt>型番</dt><dd class="copy" data-copy="${esc(l.model)}">${esc(l.model)}</dd>` : ''}
-      ${l.orderId ? `<dt>Order ID</dt><dd class="copy" data-copy="${esc(l.orderId)}">${esc(l.orderId)}（キャンセル品）</dd>` : ''}
-      ${l.memo ? `<dt>メモ</dt><dd>${esc(l.memo)}</dd>` : ''}
-      <dt>元の依頼</dt><dd>${req ? `<button class="mini" id="lotReq">${esc(req.type)}を開く</button>` : (l.reqId ? '（表示期間外）' : '手動で入庫')}</dd>
-    </dl>
-    <div class="hk lotform">
-      <h3>手動で出庫</h3>
-      <div class="hk-row out"><label class="lbl" for="loQty">出庫する数（残り${rem}点）</label><input id="loQty" class="num-in" inputmode="numeric" value="${rem > 0 ? 1 : 0}"></div>
-      <label class="field"><span>出庫日</span><input type="date" id="loDate" value="${todayYmd()}"></label>
-      <label class="field"><span>メモ（任意・注文番号など）</span><input id="loMemo"></label>
-      <div class="actions"><button class="primary" id="loOut" ${rem > 0 ? '' : 'disabled'}>出庫する</button></div>
-    </div>
-    <h3 style="font-size:15px;margin:16px 0 0">出庫の履歴</h3>
-    ${(l.outs || []).length ? `<ul class="hist">${[...l.outs].sort((a, b) => b.date.localeCompare(a.date)).map(o => `<li><span>${esc(o.date)}　−${o.qty}点　${esc(o.reqId ? '依頼から' : '手動')}${o.memo ? '　' + esc(o.memo) : ''}</span>
-      <button class="mini danger" data-cancel="${esc(o.id)}">取り消す</button></li>`).join('')}</ul>` : '<p class="hint">まだ出庫はありません。</p>'}
-    <details class="bd lotform" id="leBox" style="margin-top:16px" ${sh.dataset.edit === '1' ? 'open' : ''}><summary><b>✏️ 入庫した商品の情報を編集する</b>（商品名・数量・保管日・賞味期限など）・削除</summary>
-      <label class="field"><span>管理番号（間違っていたら直す）</span><input id="leS" value="${esc(l.seller)}"></label>
-      <label class="field"><span>セラー名</span><input id="leSN" value="${esc(l.sellerName || '')}"></label>
-      <label class="field"><span>商品名</span><input id="leP" value="${esc(l.product)}"></label>
-      <label class="field"><span>入庫数</span><input id="leQ" class="num-in" inputmode="numeric" value="${l.qtyIn}"></label>
-      <label class="field"><span>保管日</span><input type="date" id="leD" value="${esc(l.inDate)}"></label>
-      <label class="field"><span>賞味期限（任意）</span><input type="date" id="leE" value="${esc(l.expiry || '')}"></label>
-      <label class="field"><span>JAN（任意）</span><input id="leJ" inputmode="numeric" value="${esc(l.jan || '')}"></label>
-      <label class="field"><span>型番（任意）</span><input id="leMd" value="${esc(l.model || '')}"></label>
-      <label class="field"><span>キャンセル品のOrder ID（任意）</span><input id="leO" value="${esc(l.orderId || '')}"></label>
-      <label class="field"><span>メモ</span><input id="leM" value="${esc(l.memo || '')}"></label>
-      <div class="actions"><button class="primary" id="leSave">保存する</button><button class="mini danger" id="leDel">この在庫を削除</button></div>
-    </details>`;
-  $('closeSheet').onclick = closeSheet;
-  $('leBox').ontoggle = () => { sh.dataset.edit = $('leBox').open ? '1' : ''; };
-  $('lotEdit').onclick = () => { $('leBox').open = true; sh.dataset.edit = '1'; $('leBox').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => $('leP').focus(), 300); };
-  if ($('lotReq')) $('lotReq').onclick = () => openSheet(req);
-  $('loOut').onclick = async () => {
-    const qty = toNum($('loQty').value), date = $('loDate').value;
-    if (!qty) { toast('出庫する数を入れてください'); return; }
-    if (!date) { toast('出庫日を入れてください'); return; }
-    try { await applyOut([{ id, qty }], { date, memo: $('loMemo').value.trim() }); toast(`${qty}点出庫しました`); refill(); }
-    catch (e) { toast('出庫できませんでした：' + e.message); }
-  };
-  sh.querySelectorAll('[data-cancel]').forEach(b => b.onclick = async () => {
-    if (!confirm('この出庫を取り消して、在庫を元に戻しますか？')) return;
-    try { await removeOuts([id], o => o.id === b.dataset.cancel); toast('出庫を取り消しました'); refill(); }
-    catch (e) { toast('取り消せませんでした：' + e.message); }
-  });
-  $('leSave').onclick = async () => {
-    const qtyIn = toNum($('leQ').value), inDate = $('leD').value, product = $('leP').value.trim();
-    const seller = $('leS').value.trim(), sellerName = $('leSN').value.trim();
-    if (!seller) { toast('管理番号を入れてください'); return; }
-    const used = sumQty(l.outs || []);
-    if (!product || !qtyIn || !inDate) { toast('商品名・入庫数・保管日を入れてください'); return; }
-    if (qtyIn < used) { toast(`すでに${used}点出庫しているため、入庫数は${used}以上にしてください`); return; }
-    try { await updateDoc(doc(db, 'hokan_lots', id), { seller, sellerName, product, qtyIn, inDate, memo: $('leM').value.trim(), orderId: $('leO').value.trim(), jan: half($('leJ').value).trim(), model: $('leMd').value.trim(), expiry: $('leE').value || '' }); sh.dataset.edit = ''; toast('保存しました'); refill(); }
-    catch (e) { toast('保存できませんでした：' + e.message); }
-  };
-  $('leDel').onclick = async () => {
-    if (!confirm(`「${l.product}」（残り${rem}点）を在庫から削除しますか？出庫の履歴も消え、保管料の計算からも外れます。`)) return;
-    try { await deleteDoc(doc(db, 'hokan_lots', id)); closeSheet(); toast('削除しました'); }
-    catch (e) { toast('削除できませんでした：' + e.message); }
-  };
-}
-
-// 保管依頼を完了したとき、まだセラー用シートがないセラーなら作成画面を出す
-function promptSheetIfNone(r) {
-  const k = sellerKey(r);
-  if (!k || !isHokanIn(r)) return;
-  const d = sellerInfo(k);
-  if (d.sheetUrl || d.noSheet) return;
-  setTimeout(() => openShareSheet(k, { name: r.name || '', notice: true }), 300);
-}
-
-function openShareSheet(seller, opt = {}) {
-  const sh = $('sheet'), d = sellerInfo(seller);
-  const name = d.name || opt.name || (lotsOf(seller)[0] || {}).sellerName || '';
-  sh.dataset.id = 'share'; sh.dataset.kind = 'share'; sh.dataset.dirty = '1'; sh.dataset.f = 'shopee';
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>セラー用シートの共有設定</h2><div class="sub">${esc(seller)}</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
-    ${opt.notice ? `<div class="alert" style="margin-top:10px">このセラーさんには、まだセラー用シートがありません。メールを入れて「保存してシートを作成」を押すと、在庫を見られるシートを作って共有します。
-      <div class="actions" style="margin-top:6px"><button class="mini" id="shLater">あとで作る</button><button class="mini" id="shNever">このセラーはシートを作らない</button></div></div>` : ''}
-    <div class="lotform">
-      <label class="field"><span>セラー名（シートに表示されます）</span><input id="shN" value="${esc(name)}"></label>
-      <label class="field"><span>共有するメール（複数は , 区切り）</span><input id="shM" type="email" multiple value="${esc(d.mails || '')}" placeholder="seller@example.com"></label>
-      <div class="hk" style="margin-top:12px">
-        <h3>保管料の決め方</h3>
-        <label class="oid-toggle"><input type="radio" name="shFee" value="item" ${feeMode(seller) === 'item' ? 'checked' : ''}> 1点ごと（標準：保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた分 × ${HOKAN_RATE}円）</label>
-        <label class="oid-toggle"><input type="radio" name="shFee" value="pallet" ${feeMode(seller) === 'pallet' ? 'checked' : ''}> パレット契約（パレット枚数 × 単価 の月額）</label>
-        <div id="shPallet" style="display:${feeMode(seller) === 'pallet' ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 6px">
-          <label class="field" style="margin:0"><span>パレット枚数</span><input id="shPn" class="num-in" inputmode="numeric" value="${esc(d.pallets ?? '')}"></label>
-          <label class="field" style="margin:0"><span>1パレットの月額（税抜）</span><input id="shPr" class="num-in" inputmode="numeric" value="${esc(d.palletRate || PALLET_RATE)}"></label>
+    <!-- カテゴリ追加モーダル -->
+    <div id="categoryModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl text-slate-100">
+            <h3 class="font-bold text-sm mb-3">新規カテゴリの追加</h3>
+            <input type="text" id="newCategoryName" placeholder="カテゴリ名（例: 特殊ツール）" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs mb-4 text-slate-100 focus:outline-none focus:border-blue-500">
+            <div class="flex justify-end gap-2">
+                <button onclick="closeAddCategoryModal()" class="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg hover:bg-slate-700">キャンセル</button>
+                <button onclick="addCategory()" class="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-500 font-bold">追加する</button>
+            </div>
         </div>
-        <label class="oid-toggle"><input type="radio" name="shFee" value="none" ${feeMode(seller) === 'none' ? 'checked' : ''}> 保管料なし（別の契約で請求するなど）</label>
-        <p class="hint">パレット契約・保管料なしのセラーは、1点ごとの保管料はかかりません。在庫の記録と出庫は今までどおりです。</p>
-      </div>
-      <p class="hint">保存すると、次の更新でセラー用シートが作られ、閲覧者として共有されます。すぐに反映したいときは「セラー用シートを今すぐ更新」を押してください。</p>
-      <dl>
-        <dt>セラー用シート</dt><dd>${d.sheetUrl ? `<a href="${esc(d.sheetUrl)}" target="_blank" rel="noopener">開く</a>` : 'まだ作成されていません'}</dd>
-        <dt>シート上の点数</dt><dd>${d.qty ?? '-'}点</dd>
-        <dt>今月の保管料</dt><dd>${d.fee != null ? yen(Number(d.fee)) : '-'}（見込み）</dd>
-        <dt>最終更新</dt><dd>${esc(d.updatedAt || '-')}</dd>
-        ${d.error ? `<dt>エラー</dt><dd class="err">${esc(d.error)}</dd>` : ''}
-      </dl>
-      <div class="actions">
-        <button class="primary" id="shMake">${d.sheetUrl ? '保存してシートを更新' : '保存してシートを作成'}</button>
-        <button class="mini" id="shSave">保存だけする</button>
-      </div>
-      ${d.sheetUrl ? `<div class="actions"><button class="mini" id="shGuide">セラーさんへの案内文をコピー</button></div>` : ''}
-      <details class="bd" style="margin-top:14px"><summary>間違って作った管理番号をまとめる・削除する</summary>
-        <p class="hint">管理番号を間違えて依頼され、別のセラーとして登録されてしまったときに使います。</p>
-        <div class="actions">
-          <button class="mini" id="shMerge">正しい管理番号にまとめる</button>
-          <button class="mini danger" id="shDel">この管理番号を削除</button>
-        </div>
-      </details>
-    </div>`;
-  $('closeSheet').onclick = closeSheet;
-  if ($('shLater')) $('shLater').onclick = closeSheet;
-  if ($('shNever')) $('shNever').onclick = async () => {
-    try {
-      await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)), { seller, name: $('shN').value.trim(), noSheet: true, by: S.user.email, at: serverTimestamp() }, { merge: true });
-      closeSheet(); toast('このセラーは次からシート作成を表示しません（共有設定からいつでも作れます）');
-    } catch (e) { toast('保存できませんでした：' + e.message); }
-  };
-  sh.querySelectorAll('input[name="shFee"]').forEach(x => x.onchange = () => {
-    $('shPallet').style.display = sh.querySelector('input[name="shFee"]:checked').value === 'pallet' ? 'grid' : 'none';
-  });
-  const save = async () => {
-    const mails = $('shM').value.split(/[,，、\s]+/).map(m => m.trim()).filter(Boolean);
-    const bad = mails.filter(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m));
-    if (bad.length) { toast('メールアドレスの形を確認してください：' + bad.join(', ')); return false; }
-    const mode = (document.querySelector('input[name="shFee"]:checked') || {}).value || 'item';
-    if (mode === 'pallet' && (!toNum($('shPn').value) || !toNum($('shPr').value))) { toast('パレット枚数と1パレットの月額を入れてください'); return false; }
-    try {
-      await setDoc(doc(db, 'hokan_sellers', sellerDocId(seller)),
-        { seller, name: $('shN').value.trim(), mails: mails.join(', '), feeMode: mode, noSheet: false,
-          pallets: mode === 'pallet' ? toNum($('shPn').value) : 0, palletRate: mode === 'pallet' ? toNum($('shPr').value) : 0,
-          by: S.user.email, at: serverTimestamp() }, { merge: true });
-      return true;
-    } catch (e) { toast('保存できませんでした：' + e.message); return false; }
-  };
-  $('shSave').onclick = async () => { if (await save()) { closeSheet(); toast('共有設定を保存しました'); } };
-  $('shMake').onclick = async () => {
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) { toast('EXPORT_URL が設定されていません'); return; }
-    if (!(await save())) return;
-    const b = $('shMake'); b.disabled = true; b.textContent = '作成中…（10〜30秒ほどかかります）';
-    try {
-      const idToken = await S.user.getIdToken();
-      const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, seller }) });
-      const r = await res.json();
-      if (!r.ok) { toast(r.message || 'シートを作成できませんでした'); b.disabled = false; b.textContent = '保存してもう一度試す'; return; }
-      S.sellers.set(sellerDocId(seller), { ...sellerInfo(seller), sheetUrl: r.url });
-      openShareSheet(seller);
-      toast(d.sheetUrl ? 'シートを更新しました' : 'シートを作成しました。案内文をコピーしてセラーさんに送れます');
-    } catch (e) {
-      toast('作成できませんでした。少し待ってから、もう一度お試しください。');
-      b.disabled = false; b.textContent = '保存してもう一度試す';
-    }
-  };
-  if ($('shGuide')) $('shGuide').onclick = () => copy(guideText(seller));
-  $('shMerge').onclick = () => mergeSeller(seller);
-  $('shDel').onclick = () => deleteSeller(seller);
-  showSheet();
-}
+    </div>
 
-function guideFee(seller) {
-  const m = feeMode(seller), d = sellerInfo(seller);
-  if (m === 'pallet') return `【保管料について】
-・ご契約どおり、パレット${Number(d.pallets) || 0}枚 × ${(Number(d.palletRate) || 0).toLocaleString('ja-JP')}円（税抜）を毎月ご請求いたします。
-・シートでは、お預かりしている商品の数量をご確認いただけます。`;
-  if (m === 'none') return `【保管料について】
-・保管料は、ご契約の内容に沿ってご請求いたします。`;
-  return `【保管料について】
-・保管日から${HOKAN_FREE_MONTHS}ヶ月を過ぎた商品は、1点あたり月${HOKAN_RATE}円（税抜）の保管料がかかります。
-・毎月末時点の残数で計算し、翌月にご請求いたします。
-・シートの「状態」が「保管料対象」になっている商品が対象です。
-　「今月の保管料（見込み）」もあわせてご確認ください。`;
-}
+    <script>
+        // =========================================================
+        // 保存データについて
+        //  ・端末に保存するのは「並び順・カテゴリ割り当て・追加カテゴリ」だけ
+        //  ・ツールの名前／説明／リンク先は、毎回下の defaultData（コード）から読む
+        //  → コードを書き換えれば、全端末に「初期化なし」で反映されます
+        //  ・コードから消したツールは、端末からも自動で消えます
+        // =========================================================
+        const STORAGE_KEY = 'warehouse_portal_v8_layout';
+        const LEGACY_KEY  = 'warehouse_portal_v7_data'; // 旧バージョンの保存データ（並び順を引き継ぐ）
 
-// セラーさんへの案内文（共有設定の内容とシートURLを差し込む）
-function guideText(seller) {
-  const d = sellerInfo(seller);
-  const name = d.name || (lotsOf(seller)[0] || {}).sellerName || seller;
-  return `${name}様
+        const defaultData = {
+            categories: [
+                { id: "shipping", name: "🚚 出荷ツール" },
+                { id: "communication", name: "💬 連絡ツール" },
+                { id: "others", name: "🛠️ その他ツール" }
+            ],
+                       cards: [
+                { id: "shipping-format", category: "shipping", title: "📑 まとまるくん", desc: "受注CSV・ヤマト・佐川CSV整形、検品シート印刷", href: "shipping-format.html", badge: 0 },
+                { id: "shipping-simulator", category: "shipping", title: "🔀 振り分けくん", desc: "ステータス変更（220更新）、タイムスタンプ自動入力", href: "shipping-simulator.html", badge: 0 },
+                { id: "option-list", category: "shipping", title: "🎥 撮影オプション", desc: "動画撮影オプション加入セラーの一覧・管理番号で加入確認", href: "option-list.html", badge: 0 },
+                { id: "notes", category: "communication", title: "📒 連絡くん", desc: "共有ノート・スタッフ間依頼・資材発注依頼", href: "notes.html", badge: 0 },
+                { id: "checklist", category: "communication", title: "✅ 日次くん", desc: "出勤時〜終業時までのチェックリスト・出荷件数集計", href: "checklist.html", badge: 0 },
+                { id: "chat-reply", category: "communication", title: "💬 バーストくん", desc: "未読ルーム一斉表示・スタッフ間連絡アプリ連携", href: "chat-reply.html", badge: 0 },
+                { id: "denpyo-post", category: "others", title: "🧾 請求くん", desc: "スマホカメラで着払いバーコードを読み取り、金額・メモと共に記録", href: "denpyo-post.html", badge: 0 },
+                { id: "Ailogexport", category: "others", title: "🤖 AIログ", desc: "AI返信の添削ログの確認・ダウンロード、AI文章ルールの改善", href: "Ailogexport.html", badge: 0 },
+                { id: "bunkatusku", category: "shipping", title: "🧩 分割くん吉原", desc: "Shopeeパッキングリストを分割・和名変換し、検品書とピックリストを作成（吉原）", href: "bunkatusku.html", badge: 0 },
+                { id: "bunkatuedaban", category: "shipping", title: "💊 分割くんmedi", desc: "Shopeeパッキングリストを分割・和名変換し、検品書とピックリストを作成（medi）", href: "bunkatuedaban.html", badge: 0 },
+                { id: "USyoshida", category: "shipping", title: "🗽 USくん", desc: "倉庫追跡番号で配送管理シートを検索し、検品書・送り状データ作成", href: "USyoshida.html", badge: 0 },
+                { id: "cloudfanding", category: "others", title: "🎁 クラファンくん", desc: "クラファンの見積作成と、佐川・ヤマトの送り状CSV出力", href: "cloudfanding.html", badge: 0 },
+                { id: "timer", category: "others", title: "⏱️ ストップウォッチくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html", badge: 0 },
+                { id: "label", category: "others", title: "🏷️ ラベルくん", desc: "処理済みラベル・QRコード作成", href: "label.html", badge: 0 },
+                { id: "syntyoku", category: "others", title: "📈 進捗くん", desc: "当日の作業の進み具合をひと目で確認", href: "sintyoku.html", badge: 0 },
+                { id: "henso", category: "others", title: "↩️ 返送くん", desc: "US返送を処理するアプリ", href: "henso.html", badge: 0 },
+                { id: "shopeesheet", category: "shipping", title: "🛒 ラザダくん", desc: "Lazada・Shopeeの配送管理（未出荷件数、ラベル印刷、出荷・入庫・在庫）", href: "shopeesheet.html", badge: 0 },
+                { id: "irai", category: "shipping", title: "📥 依頼くん", desc: "Shopee・RSショップ・自己配の3つの依頼フォームをまとめて管理", href: "irai.html", badge: 0 },
+                { id: "shift-board", category: "communication", title: "📅 シフトボード", desc: "本日のシフト表示（Googleスプレッドシート連携）", href: "https://script.google.com/macros/s/AKfycbwRaVGBxpCnScOImA2kuHZxCfKDbMCDn-aVfSHlJB5-OsyeLWhfMdoI6cvTLDSSW6qRsA/exec?board=today", badge: 0 },
+                { id: "meeting", category: "communication", title: "📝 議事録", desc: "定例会議の議事録・共有事項・議題管理および前週出荷実績（Firestore同期）", href: "meeting.html", badge: 0 },
+                { id: "onboarding", category: "others", title: "🤝 入会くん", desc: "Shopee発送代行の新規お申込み管理（管理番号・ログイン情報・手続きチェック・ご案内文コピー）", href: "onboarding.html", badge: 0 }
+            ]
+        };
 
-いつもラクロジをご利用いただき、ありがとうございます。
-お預かりしている商品の在庫を、いつでもご確認いただけるシートをご用意しました。
+        // ---------- 保存データの読み書き ----------
 
-▼保管在庫シート
-${d.sheetUrl || ''}
-${d.mails ? `
-※ご登録のメールアドレス（${d.mails}）で共有しております。
-　Googleにログインした状態で開いてください。
-` : ''}
-【シートの見方】
-・商品ごとに、保管日・入庫数・出庫数・残数を確認いただけます。
-・シートは1時間ごとに自動で更新されます。
+        // 端末に保存されている配置情報を読む（なければ旧データから引き継ぐ）
+        function loadLayout() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.order)) return parsed;
+                }
+                const legacy = localStorage.getItem(LEGACY_KEY);
+                if (legacy) {
+                    const old = JSON.parse(legacy);
+                    if (old && Array.isArray(old.categories) && Array.isArray(old.cards)) {
+                        const defaultCatIds = defaultData.categories.map(c => c.id);
+                        const layout = {
+                            categories: old.categories.map(c => defaultCatIds.includes(c.id) ? { id: c.id } : { id: c.id, name: c.name }),
+                            order: old.cards.map(c => ({ id: c.id, category: c.category })),
+                            deletedCategoryIds: defaultCatIds.filter(id => !old.categories.some(c => c.id === id))
+                        };
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+                        return layout;
+                    }
+                }
+            } catch (e) {
+                console.error("Data load error:", e);
+            }
+            return null;
+        }
 
-${guideFee(seller)}
+        // コードの定義 ＋ 端末の配置情報 → 画面に出すデータを組み立てる
+        function loadData() {
+            const layout = loadLayout();
+            const defaultCats = defaultData.categories;
+            const cardDefs = defaultData.cards;
 
-【出荷のご依頼について】
-・これまでどおり、依頼フォームの「保管品出荷依頼」からお申し込みください。
-・商品名は、シートの「商品名」をそのままコピーしてご記入いただくと、
-　スムーズに出荷手続きができます。
+            if (!layout) {
+                return {
+                    categories: defaultCats.map(c => ({ ...c })),
+                    cards: cardDefs.map(c => ({ ...c }))
+                };
+            }
 
-ご不明な点がありましたら、お気軽にお問い合わせください。
-引き続きどうぞよろしくお願いいたします。`;
-}
+            const deleted = layout.deletedCategoryIds || [];
 
-// ---------- 間違って作った管理番号の整理 ----------
-async function callExport(body) {
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) throw new Error('EXPORT_URL が設定されていません');
-  const idToken = await S.user.getIdToken();
-  const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, ...body }) });
-  const r = await res.json();
-  if (!r.ok) throw new Error(r.message || '処理できませんでした');
-  return r;
-}
-const trashSheet = url => url ? callExport({ action: 'trash', url }) : Promise.resolve();
+            // カテゴリ：保存順を優先。既定カテゴリの名前は常にコードから取る
+            const categories = [];
+            layout.categories.forEach(c => {
+                const def = defaultCats.find(d => d.id === c.id);
+                if (def) categories.push({ ...def });
+                else if (c.name) categories.push({ id: c.id, name: c.name });
+            });
+            // コードに新しく追加された既定カテゴリ（ユーザーが削除したもの以外）を末尾に追加
+            defaultCats.forEach(d => {
+                if (!categories.some(c => c.id === d.id) && !deleted.includes(d.id)) {
+                    categories.push({ ...d });
+                }
+            });
+            if (categories.length === 0) categories.push({ ...defaultCats[0] });
 
-// from の在庫と設定を to にまとめて、from を消す
-async function mergeSeller(from) {
-  const to = (prompt(`まとめ先の「正しい管理番号」を入れてください。\n${from} の在庫をすべて移して、${from} は一覧から消します。`) || '').trim();
-  if (!to || to === from) return;
-  const lots = lotsOf(from), dF = sellerInfo(from), dT = sellerInfo(to);
-  const toName = dT.name || (lotsOf(to)[0] || {}).sellerName || dF.name || '';
-  if (!confirm(`${from}（${dF.name || ''}）の在庫${lots.length}件を、${to}（${toName}）に移します。よろしいですか？`)) return;
-  let keepSheet = false;
-  if (dF.sheetUrl && !dT.sheetUrl) {
-    keepSheet = confirm(`${from} のセラー用シートを、${to} のシートとして引き継ぎますか？\n\n・OK：引き継ぐ（共有先のメールもそのまま）\n・キャンセル：このシートはゴミ箱に入れる`);
-  }
-  try {
-    for (let i = 0; i < lots.length; i += 400) {
-      const b = writeBatch(db);
-      lots.slice(i, i + 400).forEach(l => b.update(doc(db, 'hokan_lots', l.id), { seller: to, sellerName: toName || l.sellerName || '' }));
-      await b.commit();
-    }
-    if (keepSheet) {
-      await setDoc(doc(db, 'hokan_sellers', sellerDocId(to)), {
-        seller: to, name: toName, sheetUrl: dF.sheetUrl, mails: dF.mails || '', feeMode: dF.feeMode || 'item',
-        pallets: dF.pallets || 0, palletRate: dF.palletRate || 0, noSheet: false, by: S.user.email, at: serverTimestamp() }, { merge: true });
-    } else if (dF.sheetUrl) {
-      await trashSheet(dF.sheetUrl);
-    }
-    await deleteDoc(doc(db, 'hokan_sellers', sellerDocId(from)));
-    closeSheet();
-    toast(`${from} を ${to} にまとめました。セラー用シートは次の更新で反映されます`);
-  } catch (e) { toast('まとめられませんでした：' + e.message); }
-}
+            const catExists = id => categories.some(c => c.id === id);
+            const fallbackCat = (id) => catExists(id) ? id : categories[0].id;
 
-// 在庫がない管理番号を一覧から消す（シートがあればゴミ箱へ）
-async function deleteSeller(k) {
-  if (lotsOf(k).length) { toast('この管理番号には在庫の記録が残っています。「正しい管理番号にまとめる」を使ってください'); return; }
-  const d = sellerInfo(k);
-  if (!confirm(`${k}（${d.name || ''}）を一覧から削除します。` + (d.sheetUrl ? '\nセラー用シートもゴミ箱に入れます（30日以内ならドライブから戻せます）。' : '') + '\nよろしいですか？')) return;
-  try {
-    if (d.sheetUrl) await trashSheet(d.sheetUrl);
-    await deleteDoc(doc(db, 'hokan_sellers', sellerDocId(k)));
-    closeSheet(); toast(`${k} を削除しました`);
-  } catch (e) { toast('削除できませんでした：' + e.message); }
-}
+            // ツール：保存された並び順に、コードの最新定義を当てはめる
+            const cards = [];
+            layout.order.forEach(o => {
+                const def = cardDefs.find(d => d.id === o.id);
+                if (!def) return; // コードから消えたツールは表示しない
+                if (cards.some(c => c.id === def.id)) return;
+                cards.push({ ...def, category: fallbackCat(o.category) });
+            });
+            // コードに新しく追加されたツールを、既定カテゴリの末尾に追加
+            cardDefs.forEach(def => {
+                if (!cards.some(c => c.id === def.id)) {
+                    cards.push({ ...def, category: fallbackCat(def.category) });
+                }
+            });
 
-async function exportNow() {
-  const b = $('exportNow');
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) {
-    toast('EXPORT_URL（書き出しGASのウェブアプリURL）が設定されていません'); return;
-  }
-  b.disabled = true; b.textContent = '更新中…';
-  try {
-    const idToken = await S.user.getIdToken();
-    const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken }) });
-    const r = await res.json();
-    toast(r.ok ? `セラー用シートを更新しました（${r.updated}件）` : (r.message || '更新できなかったセラーがあります'));
-  } catch (e) {
-    toast('更新できませんでした。少し待ってから、もう一度お試しください。');
-  } finally {
-    b.disabled = false; b.textContent = 'セラー用シートを今すぐ更新';
-  }
-}
+            return { categories, cards, deletedCategoryIds: deleted };
+        }
 
-function openNewLotSheet() {
-  const sh = $('sheet');
-  const sellers = new Map();
-  // 候補：すべてのフォームの依頼・共有設定だけのセラー・在庫のあるセラー
-  allRecs().filter(r => sellerKey(r)).forEach(r => { if (!sellers.get(sellerKey(r))) sellers.set(sellerKey(r), r.name || ''); });
-  S.sellers.forEach(d => { if (d.seller) sellers.set(d.seller, d.name || sellers.get(d.seller) || ''); });
-  liveLots().forEach(l => sellers.set(l.seller, l.sellerName || sellers.get(l.seller) || ''));
-  sh.dataset.id = 'new'; sh.dataset.kind = 'new'; sh.dataset.dirty = '1'; sh.dataset.f = 'shopee';
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>手動で入庫</h2><div class="sub">依頼フォームを通さずに預かった在庫を登録します</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
-    <div class="lotform">
-      <label class="field"><span>管理番号（セラー）</span><input id="nlS" list="nlSellers" autocomplete="off"></label>
-      <datalist id="nlSellers">${[...sellers].map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join('')}</datalist>
-      <label class="field"><span>セラー名</span><input id="nlN"></label>
-      <div class="hk" style="margin-top:12px">${pasteBox()}${oidToggle()}<div id="hkRows">${itemRow()}</div><div class="total" id="hkTotal"></div><button class="mini" id="hkAdd">＋商品を追加</button></div>
-      <label class="field"><span>保管日（入庫した日）</span><input type="date" id="nlD" value="${todayYmd()}"></label>
-      <div class="actions"><button class="primary" id="nlSave">在庫に登録する</button></div>
-    </div>`;
-  $('closeSheet').onclick = closeSheet;
-  $('nlS').oninput = () => { const n = sellers.get($('nlS').value.trim()); if (n && !$('nlN').value) $('nlN').value = n; };
-  bindRows();
-  $('nlSave').onclick = async () => {
-    const seller = $('nlS').value.trim(), sellerName = $('nlN').value.trim(), inDate = $('nlD').value;
-    const items = readRows({ seller, sellerName });
-    if (!seller) { toast('管理番号を入れてください'); return; }
-    if (!items.length || items.some(i => !i.product || !i.qty)) { toast('商品名と数量（1以上）を入れてください'); return; }
-    if (!inDate) { toast('保管日を入れてください'); return; }
-    if (items.length >= 20 && !confirm(`${seller} に ${items.length}商品・合計${sumQty(items)}点を登録します。よろしいですか？`)) return;
-    $('nlSave').disabled = true;
-    try { await addLots(null, items, inDate); closeSheet(); toast(`在庫に${sumQty(items)}点登録しました`); }
-    catch (e) { $('nlSave').disabled = false; toast('保存できませんでした：' + e.message); }
-  };
-  showSheet();
-}
+        // 画面データから「配置情報だけ」を取り出して保存
+        function saveData(data) {
+            const defaultCatIds = defaultData.categories.map(c => c.id);
+            const layout = {
+                categories: data.categories.map(c => defaultCatIds.includes(c.id) ? { id: c.id } : { id: c.id, name: c.name }),
+                order: data.cards.map(c => ({ id: c.id, category: c.category })),
+                deletedCategoryIds: data.deletedCategoryIds || []
+            };
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+            } catch (e) {
+                console.error("Data save error:", e);
+            }
+            render();
+        }
 
-// ---------- 保管料請求の画面 ----------
-function billData() {
-  const ym = S.billMonth || prevMonth(), cut = monthEnd(ym);
-  const rows = new Map();
-  const get = (k, name) => {
-    if (!rows.has(k)) rows.set(k, { seller: k, name: name || sellerInfo(k).name || '', mode: feeMode(k), qty: 0, amount: 0, lots: [] });
-    const g = rows.get(k); if (!g.name && name) g.name = name; return g;
-  };
-  liveLots().forEach(l => {
-    if (l.inDate > cut) return;
-    const rem = remainAt(l, cut), mode = feeMode(l.seller);
-    if (rem <= 0 || mode === 'none') return;
-    if (mode === 'item' && feeStart(l) > cut) return;
-    const g = get(l.seller, l.sellerName);
-    const amount = mode === 'item' ? rem * HOKAN_RATE : 0;
-    g.qty += rem; g.amount += amount;
-    g.lots.push({ product: l.product, jan: l.jan || '', model: l.model || '', orderId: l.orderId || '', inDate: l.inDate, expiry: l.expiry || '', rem, amount });
-  });
-  // パレット契約は、在庫の数に関係なく「枚数 × 単価」の月額
-  S.sellers.forEach(d => { if (d.seller && feeMode(d.seller) === 'pallet' && palletFee(d.seller) > 0) get(d.seller, d.name); });
-  rows.forEach(g => { if (g.mode === 'pallet') { const d = sellerInfo(g.seller); g.pallets = Number(d.pallets) || 0; g.palletRate = Number(d.palletRate) || 0; g.amount = palletFee(g.seller); } });
-  const list = [...rows.values()].filter(g => g.amount > 0).sort((a, b) => a.seller.localeCompare(b.seller, 'ja'));
-  list.forEach(g => g.lots.sort((a, b) => a.inDate.localeCompare(b.inDate)));
-  return { ym, cut, list };
-}
-const billQty = g => g.mode === 'pallet' ? `パレット${g.pallets}枚` : `${g.qty}点`;
-function renderBill() {
-  const { ym, cut, list } = billData();
-  if ($('billMonth').value !== ym) $('billMonth').value = ym;
-  $('billRule').textContent = `${cut} 時点で、保管日から${HOKAN_FREE_MONTHS}ヶ月以上たっている在庫の残り点数 × ${HOKAN_RATE}円 で計算しています。パレット契約のセラーは「枚数 × 単価」の月額で、「保管料なし」のセラーは含みません（金額はすべて税抜・月ごとの請求）。`;
-  if (S.lotsErr) { $('billBody').innerHTML = `<div class="alert">${esc(S.lotsErr)}</div>`; return; }
-  if (!list.length) { $('billBody').innerHTML = `<div class="empty">${esc(ym)} の保管料の対象はありません。</div>`; return; }
-  const ta = list.reduce((s, g) => s + g.amount, 0);
-  $('billBody').innerHTML = `<div class="tbl"><table class="bill">
-      <thead><tr><th>管理番号</th><th>セラー名</th><th class="n">対象</th><th class="n">保管料（税抜）</th></tr></thead>
-      <tbody>${list.map(g => `<tr><td>${esc(g.seller)}</td><td>${esc(g.name)}${g.mode === 'pallet' ? '<span class="badge cancel">パレット契約</span>' : ''}</td>
-        <td class="n">${billQty(g)}</td><td class="n">${yen(g.amount)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="3">合計（${list.length}セラー）</td><td class="n">${yen(ta)}</td></tr></tfoot>
-    </table></div>
-    ${list.map(g => `<details class="bd"><summary>${esc(g.name || g.seller)}　の内訳${g.mode === 'pallet' ? `（パレット${g.pallets}枚 × ${yen(g.palletRate)}）` : `（${g.lots.length}件）`}</summary>
-      ${g.lots.length ? `<div class="tbl"><table class="bill"><thead><tr><th>商品名</th><th>保管日</th><th class="n">月末の残り</th><th class="n">保管料</th></tr></thead>
-      <tbody>${g.lots.map(x => `<tr><td>${esc(x.product)}</td><td>${esc(x.inDate)}</td><td class="n">${x.rem}点</td><td class="n">${g.mode === 'pallet' ? '-' : yen(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">月末時点の在庫はありません。</p>'}</details>`).join('')}`;
-}
-function billCopy() {
-  const { ym, list } = billData();
-  if (!list.length) { toast('コピーする対象がありません'); return; }
-  const tsv = [['請求月', '管理番号', 'セラー名', '契約', '数量', '単位', '単価（税抜）', '保管料（税抜）'].join('\t'),
-    ...list.map(g => g.mode === 'pallet'
-      ? [ym, g.seller, g.name, 'パレット契約', g.pallets, 'パレット', g.palletRate, g.amount].join('\t')
-      : [ym, g.seller, g.name, '1点ごと', g.qty, '点', HOKAN_RATE, g.amount].join('\t'))].join('\n');
-  copy(tsv);
-}
-function billCsv() {
-  const { ym, list } = billData();
-  if (!list.length) { toast('保存する対象がありません'); return; }
-  const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['請求月', '管理番号', 'セラー名', '契約', '商品名', 'JAN', '型番', 'キャンセル品のOrder ID', '保管日', '月末の残り', '単価（税抜）', '保管料（税抜）', '賞味期限'].map(q).join(',')];
-  list.forEach(g => {
-    if (g.mode === 'pallet') lines.push([ym, g.seller, g.name, `パレット契約（${g.pallets}枚）`, '（月額）', '', '', '', '', '', g.palletRate, g.amount, ''].map(q).join(','));
-    g.lots.forEach(x => lines.push([ym, g.seller, g.name, g.mode === 'pallet' ? 'パレット契約' : '1点ごと', x.product, x.jan, x.model, x.orderId, x.inDate, x.rem,
-      g.mode === 'pallet' ? '' : HOKAN_RATE, g.mode === 'pallet' ? '' : x.amount, x.expiry].map(q).join(',')));
-  });
-  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `保管料_${ym}.csv`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
+        function parseTitle(title) {
+            const match = title.match(/^([\p{Emoji}\u2600-\u27BF\uFE0F\u200D]+)\s*(.*)$/u);
+            if (match) {
+                return { emoji: match[1], name: match[2] };
+            }
+            return { emoji: "📦", name: title };
+        }
 
-// ========== ラザダくん（配送管理シート shopeesheet.html）の在庫を見る・手動出庫する ==========
-// ラザダくんと同じGAS（getData／addManualOut／deleteManualOut）と、同じFirestoreの保存（delivery_cache）を使う。
-// ここで出庫するとラザダくんの「手動出庫シート」に記録され、ラザダくん側の画面にも自動で反映される。
-const LZ_API = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec'; // ラザダくんの API_URL と同じ
-const LZ_SELLERS = 'deliverySellers';   // ラザダくんのセラー一覧
-const LZ_CACHE = 'delivery_cache';      // ラザダくんの保存場所（セラーごと）
-const LZ_PART = 250000;
-const LZ_CLIENT = 'irai_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-const LZ_DESTS = ['Shopee', 'Lazada', 'Amazon', 'サンプル', '返品・破損'];
-const LZ = { sellers: [], sellersLoaded: false, sellersErr: '', sid: '', D: null, v: 0, checking: false, writing: false, err: '', q: '', filter: 'have', unsub: null, token: 0 };
-const lzStore = (k, v) => { try { if (v === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, v); } catch (e) { return ''; } };
-const lzCode = s => half(s).replace(/\s/g, '');   // 全角→半角・空白を取る（ラザダくんと同じ）
-const lzSeller = () => LZ.sellers.find(x => x.id === LZ.sid) || {};
-const lzMD = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? Number(m[2]) + '/' + Number(m[3]) : String(s || ''); };
+        // ---------- 画面描画 ----------
 
-function lzReset() {
-  if (LZ.unsub) { LZ.unsub(); LZ.unsub = null; }
-  Object.assign(LZ, { sellers: [], sellersLoaded: false, sellersErr: '', sid: '', D: null, v: 0, checking: false, writing: false, err: '' });
-}
+        function render() {
+            const data = loadData();
+            const container = document.getElementById('portal-container');
+            container.innerHTML = '';
 
-async function lzRun(sheetId, fn, ...args) {
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(LZ_API)) throw new Error('LZ_API（ラザダくんのGASのURL）が設定されていません');
-  const idToken = await S.user.getIdToken();
-  let res;
-  try {
-    res = await fetch(LZ_API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ idToken, sheetId, fn, args }) });
-  } catch (e) { throw new Error('ラザダくんのGASにつながりません'); }
-  let j;
-  try { j = await res.json(); } catch (e) { throw new Error('ラザダくんのGASの返事が読めません'); }
-  if (!j.ok) throw new Error(j.error || '処理に失敗しました');
-  return j.result;
-}
+            data.categories.forEach((cat, catIndex) => {
+                const section = document.createElement('section');
+                section.className = 'mb-6 bg-slate-900/50 border border-slate-800/80 rounded-2xl p-3.5 backdrop-blur';
 
-// ---- Firestoreの保存（ラザダくんと同じ形） ----
-async function lzReadCache(sid) {
-  const ref = doc(db, LZ_CACHE, sid);
-  const m = await getDoc(ref);
-  if (!m.exists()) return null;
-  const meta = m.data();
-  const ps = await getDocs(collection(ref, 'parts'));
-  const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a, b) => a.i - b.i);
-  if (!meta.parts || parts.length !== meta.parts) return null;
-  return { v: meta.v, data: JSON.parse(parts.map(p => p.s).join('')) };
-}
-async function lzSaveCache() {
-  const sid = LZ.sid, D = LZ.D, seller = lzSeller();
-  if (!sid || !D) return;
-  const json = JSON.stringify(D), v = Date.now(), n = Math.max(1, Math.ceil(json.length / LZ_PART));
-  try {
-    const ref = doc(db, LZ_CACHE, sid);
-    const b = writeBatch(db);
-    for (let i = 0; i < n; i++) b.set(doc(ref, 'parts', 'p' + i), { i, v, s: json.slice(i * LZ_PART, (i + 1) * LZ_PART) });
-    for (let i = n; i < n + 10; i++) b.delete(doc(ref, 'parts', 'p' + i));
-    b.set(ref, { v, parts: n, sheetId: seller.sheetId || '', client: LZ_CLIENT, by: S.user.email, at: serverTimestamp() });
-    LZ.v = v;
-    await b.commit();
-  } catch (e) { console.warn('ラザダくんの保存に書けませんでした', e); }
-}
-// ラザダくん側で入庫・出荷・出庫があったら、自動で差し替える
-function lzWatch(sid) {
-  if (LZ.unsub) { LZ.unsub(); LZ.unsub = null; }
-  if (!sid) return;
-  LZ.unsub = onSnapshot(doc(db, LZ_CACHE, sid), snap => {
-    const m = snap.data();
-    if (!m || m.client === LZ_CLIENT || m.v <= LZ.v || sid !== LZ.sid || LZ.writing) return;
-    lzReadCache(sid).then(c => {
-      if (!c || sid !== LZ.sid || c.v <= LZ.v || LZ.writing) return;
-      LZ.v = c.v; LZ.D = c.data; render();
-    }).catch(e => console.warn(e));
-  }, e => console.warn(e));
-}
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'flex justify-between items-center mb-3 px-1';
 
-// ---- 読み込み ----
-async function lzLoadSellers() {
-  LZ.sellersLoaded = true;
-  try {
-    const snap = await getDocs(collection(db, LZ_SELLERS));
-    LZ.sellers = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.sheetId)
-      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
-    LZ.sellersErr = '';
-    const saved = lzStore('lzSeller');
-    const cur = LZ.sellers.find(x => x.id === saved) || LZ.sellers.find(x => /lazada/i.test(x.platform || '')) || LZ.sellers[0];
-    if (cur) lzSelect(cur.id); else render();
-  } catch (e) {
-    LZ.sellersErr = e.code === 'permission-denied' ? 'ラザダくんのセラー一覧（deliverySellers）を読む許可がありません。Firestoreのルールを確認してください。' : 'セラー一覧を読み込めませんでした：' + e.message;
-    render();
-  }
-}
-function lzSelect(id) {
-  lzStore('lzSeller', id);
-  Object.assign(LZ, { sid: id, D: null, v: 0, err: '' });
-  lzWatch(id);
-  lzLoad();
-}
-// 1. 保存済みの内容をすぐ表示 → 2. 裏でシートの最新を読む（ラザダくんと同じ流れ）
-async function lzLoad() {
-  const sid = LZ.sid, seller = lzSeller();
-  if (!sid || !seller.sheetId) { render(); return; }
-  const tk = ++LZ.token;
-  if (!LZ.D) {
-    render();
-    const c = await lzReadCache(sid).catch(e => { console.warn(e); return null; });
-    if (c && tk === LZ.token && !LZ.D) { LZ.v = c.v; LZ.D = c.data; }
-  }
-  LZ.checking = true; render();
-  const startV = LZ.v;
-  try {
-    const fresh = await lzRun(seller.sheetId, 'getData');
-    if (tk !== LZ.token) return;
-    // 読んでいる間にラザダくん側で新しく保存されたら、そちらを優先（古い内容で上書きしない）
-    if (LZ.v === startV && !LZ.writing) {
-      LZ.D = fresh; LZ.err = '';
-      if (!startV) lzSaveCache();   // まだ保存がなかったセラーだけ保存しておく
-    }
-  } catch (e) {
-    if (tk !== LZ.token) return;
-    LZ.err = (LZ.D ? 'シートの最新を読めませんでした（保存済みの内容を表示しています）：' : '読み込めませんでした：') + e.message;
-  } finally {
-    if (tk === LZ.token) { LZ.checking = false; render(); }
-  }
-}
+                const titleHeading = document.createElement('h2');
+                titleHeading.className = 'text-xs font-bold text-slate-300 tracking-wide';
+                titleHeading.textContent = cat.name;
+                headerDiv.appendChild(titleHeading);
 
-// ---- 在庫の計算（ラザダくんの「在庫」タブと同じルール） ----
-// 商品コードが一致するものを同じ商品として数える（コードがないものだけ商品名の完全一致）
-function lzStock(D) {
-  const names = new Map();
-  [...(D.inbound || []), ...(D.stock || [])].forEach(b => { const c = lzCode(b.code), n = String(b.name || '').trim(); if (c && n) names.set(n, c); });
-  const codeOf = (code, name) => lzCode(code) || names.get(String(name || '').trim()) || '';
-  const key = (code, name) => { const c = codeOf(code, name); return c ? 'c:' + c : 'n:' + String(name || '').trim(); };
-  const map = new Map();
-  const get = (code, name) => {
-    const k = key(code, name);
-    if (!map.has(k)) map.set(k, { key: k, name: String(name || '').trim(), code: codeOf(code, name), inQty: 0, pend: 0, out: 0, man: 0, resv: 0, inSheet: false });
-    return map.get(k);
-  };
-  (D.stock || []).forEach(st => { const x = get(st.code, st.name); x.inSheet = true; x.name = String(st.name || '').trim(); });
-  (D.inbound || []).forEach(b => {
-    const x = get(b.code, b.name);
-    if (b.inQty !== '' && b.inQty != null) x.inQty += Number(b.inQty) || 0;
-    else if (!b.inDate) x.pend += Number(b.planned) || 0;
-  });
-  (D.orders || []).forEach(o => {
-    const x = map.get(key(o.code, o.item)); if (!x) return;
-    if (o.shipped) x.out += Number(o.qty) || 0; else x.resv += Number(o.qty) || 0;
-  });
-  const man = (D.manual || []).map(m => ({ ...m, qty: Number(m.qty) || 0 }));
-  man.forEach(m => { get(m.code, m.name).man += m.qty; });
-  const rows = [...map.values()].map(x => ({ ...x, stock: x.inQty - x.out - x.man, avail: x.inQty - x.out - x.man - x.resv }));
-  return { rows, man, key };
-}
+                const catControls = document.createElement('div');
+                catControls.className = 'flex items-center gap-1';
 
-// ---- 画面 ----
-function renderLz() {
-  if (!S.user) return;
-  if (!LZ.sellersLoaded) lzLoadSellers();
-  const sel = $('lzSeller');
-  const sig = LZ.sellers.map(x => x.id + x.name + x.platform).join('|');
-  if (sel.dataset.sig !== sig) {
-    sel.innerHTML = LZ.sellers.map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.platform ? '（' + esc(x.platform) + '）' : ''}</option>`).join('');
-    sel.dataset.sig = sig;
-  }
-  sel.hidden = !LZ.sellers.length;
-  if (LZ.sid) sel.value = LZ.sid;
+                if (catIndex > 0) catControls.appendChild(createSmallButton('▲', () => moveCategory(catIndex, -1)));
+                if (catIndex < data.categories.length - 1) catControls.appendChild(createSmallButton('▼', () => moveCategory(catIndex, 1)));
+                if (data.categories.length > 1) catControls.appendChild(createSmallButton('×', () => deleteCategory(cat.id), 'text-rose-400 hover:bg-rose-950/50 text-[10px] w-6 h-6 flex items-center justify-center rounded'));
 
-  const D = LZ.D;
-  $('lzMeta').textContent = D ? `${D.title || ''}　${D.loadedAt ? D.loadedAt + ' のシート' : ''}${LZ.writing ? '・シートに記録中…' : LZ.checking ? '・最新を確認中…' : ''}` : '';
-  const al = [];
-  if (LZ.sellersErr) al.push(LZ.sellersErr);
-  if (LZ.err) al.push(LZ.err);
-  if (LZ.sellersLoaded && !LZ.sellersErr && !LZ.sellers.length && !LZ.sid) al.push('ラザダくんにセラーが登録されていません。ラザダくんの「セラー管理」から追加してください。');
-  $('lzAlerts').innerHTML = al.map(t => `<div class="alert">${esc(t)}</div>`).join('');
+                headerDiv.appendChild(catControls);
+                section.appendChild(headerDiv);
 
-  if (!D) {
-    $('lzList').innerHTML = LZ.sid || !LZ.sellersLoaded ? '<div class="loading">読み込み中…</div>' : '';
-    $('lzHist').innerHTML = ''; $('lzHistCount').textContent = '';
-    return;
-  }
-  const { rows, man, key } = lzStock(D);
-  const q = LZ.q.trim().toLowerCase(), qc = lzCode(q).toLowerCase();
-  const hit = r => !q || r.name.toLowerCase().includes(q) || (qc && r.code.toLowerCase().includes(qc));
-  const list = rows.filter(r => hit(r) && (LZ.filter === 'all' || r.stock !== 0 || r.resv || r.pend))
-    .sort((a, b) => (a.avail < 0 ? 0 : 1) - (b.avail < 0 ? 0 : 1) || (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
-  const total = list.reduce((s, r) => s + r.stock, 0);
-  $('lzList').innerHTML = list.length ? `<div class="lz-box"><div class="lz-h"><b>${esc(lzSeller().name || D.title || '')}</b><span class="sum">${list.length}品目・在庫 ${total}点</span></div>
-    ${list.map(r => `<button class="lz-row ${r.avail < 0 ? 'neg' : ''} ${r.stock <= 0 && !r.resv ? 'zero' : ''}" data-lzkey="${esc(r.key)}">
-      <span><span class="p">${esc(r.name || '（商品名なし）')}</span>${r.inSheet ? '' : '<span class="badge exp">在庫シート未登録</span>'}
-        <span class="d" style="display:block">${r.code ? esc(r.code) + '　' : ''}入庫 ${r.inQty}・出荷 ${r.out}${r.man ? '・手動出庫 ' + r.man : ''}${r.resv ? `・未出荷の注文 ${r.resv}・<span class="av">引当後 ${r.avail}</span>` : ''}${r.pend ? '・入荷待ち ' + r.pend : ''}</span></span>
-      <span class="q">${r.stock}<small>在庫・タップで出庫</small></span></button>`).join('')}</div>`
-    : `<div class="empty">${q ? '当てはまる商品はありません。' : LZ.filter === 'have' ? '在庫のある商品はありません。「すべて」で0点の商品も見られます。' : '商品がありません。'}</div>`;
+                const gridDiv = document.createElement('div');
+                gridDiv.className = 'grid grid-cols-4 gap-2.5 sm:gap-3';
+                gridDiv.dataset.categoryId = cat.id;
 
-  // 手動出庫の履歴（新しい順・最大50件）
-  const nameOf = new Map(rows.map(r => [r.key, r.name]));
-  const hl = man.filter(m => !q || [m.name, m.code, m.dest, m.note, m.staff].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (Number(b.row) - Number(a.row)));
-  $('lzHistCount').textContent = hl.length ? `${hl.length}件・合計 ${hl.reduce((s, m) => s + m.qty, 0)}点` : '';
-  $('lzHist').innerHTML = hl.length ? `<div class="tbl"><table class="bill"><thead><tr><th>出庫日</th><th>商品</th><th class="n">数量</th><th>出庫先</th><th>担当</th><th>備考</th><th></th></tr></thead><tbody>
-    ${hl.slice(0, 50).map(m => `<tr><td>${esc(lzMD(m.date))}</td><td style="white-space:normal">${esc(nameOf.get(key(m.code, m.name)) || m.name)}${m.code ? `<div class="hint" style="margin:0">${esc(m.code)}</div>` : ''}</td>
-      <td class="n"><b>${m.qty}</b></td><td>${esc(m.dest)}</td><td>${esc(m.staff)}</td><td style="white-space:normal">${esc(m.note)}</td>
-      <td><button class="mini danger" data-lzdel="${esc(m.row)}">取り消し</button></td></tr>`).join('')}</tbody></table></div>${hl.length > 50 ? '<p class="hint">古い履歴はラザダくんで確認できます。</p>' : ''}`
-    : `<p class="hint">${q ? '当てはまる手動出庫はありません。' : 'まだ手動出庫はありません。'}</p>`;
-}
+                const catCards = data.cards.filter(card => card.category === cat.id);
 
-// ---- 手動出庫 ----
-function openLzOut(presetKey) {
-  const D = LZ.D;
-  if (!D) { toast('在庫を読み込み中です。少し待ってください'); return; }
-  if (!D.hasManualApi) { toast('ラザダくんのGASが手動出庫に対応していません。新しいGASのコードで「新バージョン」としてデプロイしてください'); return; }
-  const { rows } = lzStock(D);
-  const list = rows.slice().sort((a, b) => (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
-  if (!list.length) { toast('商品がありません。先にラザダくんで入庫を登録してください'); return; }
-  const dests = [...new Set([...LZ_DESTS, ...(D.manual || []).map(m => m.dest)].filter(Boolean))];
-  const sid = LZ.sid, seller = lzSeller();
-  const sh = $('sheet');
-  sh.dataset.id = 'lz'; sh.dataset.kind = 'lz'; sh.dataset.dirty = '1'; sh.dataset.f = 'lz';
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>ラザダくん 手動出庫</h2><div class="sub">${esc(seller.name || D.title || '')}${seller.platform ? '（' + esc(seller.platform) + '）' : ''}　注文シートにない出庫を在庫から引きます</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
-    <div class="lotform">
-      <label class="field"><span>商品コード（バーコード可）</span><input id="lzoC" autocomplete="off" placeholder="読むと下の商品が選ばれます"></label>
-      <label class="field"><span>商品</span><select id="lzoI"><option value="">選んでください</option>
-        ${list.map(r => `<option value="${esc(r.key)}" ${r.key === presetKey ? 'selected' : ''}>${esc((r.code ? r.code + '　' : '') + r.name)}（在庫 ${r.stock}）</option>`).join('')}</select></label>
-      <p class="hint" id="lzoHint"></p>
-      <div class="two">
-        <label class="field"><span>出庫数</span><input id="lzoQ" class="num-in" inputmode="numeric"></label>
-        <label class="field"><span>出庫日</span><input type="date" id="lzoD" value="${todayYmd()}"></label>
-      </div>
-      <div class="two">
-        <label class="field"><span>出庫先・用途</span><input id="lzoDest" list="lzoDests" autocomplete="off" value="${esc(lzStore('lastManDest') || 'Shopee')}"></label>
-        <label class="field"><span>担当者</span><input id="lzoS" autocomplete="off" value="${esc(lzStore('lastStaff'))}"></label>
-      </div>
-      <datalist id="lzoDests">${dests.map(d => `<option value="${esc(d)}">`).join('')}</datalist>
-      <label class="field"><span>備考（任意・Order IDなど）</span><input id="lzoN" autocomplete="off"></label>
-      <div class="actions"><button class="primary" id="lzoGo" style="background:var(--lz)">出庫する</button></div>
-    </div>`;
-  $('closeSheet').onclick = closeSheet;
-  const pick = () => list.find(x => x.key === $('lzoI').value);
-  const hint = () => {
-    const r = pick(), h = $('lzoHint');
-    h.style.color = '';
-    h.textContent = r ? `在庫 ${r.stock}点・未出荷の注文 ${r.resv || 0}点・引当後 ${r.avail}点` : '';
-  };
-  const byCode = () => {
-    const c = lzCode($('lzoC').value);
-    if ($('lzoC').value !== c) $('lzoC').value = c;
-    if (!c) return false;
-    const r = list.find(x => x.code === c);
-    if (r) { $('lzoI').value = r.key; hint(); return true; }
-    $('lzoHint').textContent = 'このコードの商品が見つかりません'; $('lzoHint').style.color = '#B35C00';
-    return false;
-  };
-  $('lzoC').oninput = byCode;
-  $('lzoC').onkeydown = e => {   // バーコードリーダーのEnterでは登録せず、出庫数へ進む
-    if (e.key !== 'Enter' || e.isComposing) return;
-    e.preventDefault();
-    (byCode() ? $('lzoQ') : $('lzoI')).focus();
-  };
-  $('lzoI').onchange = hint;
-  hint();
-  $('lzoGo').onclick = async () => {
-    const r = pick(), qty = toNum($('lzoQ').value), date = $('lzoD').value;
-    if (!r) { toast('商品を選んでください'); return; }
-    if (!(qty > 0)) { toast('出庫数を1以上で入れてください'); return; }
-    if (!date) { toast('出庫日を入れてください'); return; }
-    if (qty > r.stock && !confirm(`在庫（${r.stock}点）より多く出庫します。よろしいですか？`)) return;
-    if (sid !== LZ.sid) { toast('セラーが切り替わりました。もう一度開いてください'); closeSheet(); return; }
-    const staff = $('lzoS').value.trim(), dest = $('lzoDest').value.trim();
-    if (staff) lzStore('lastStaff', staff);
-    if (dest) lzStore('lastManDest', dest);
-    const rec = { code: r.code, name: r.name, qty, date, dest, staff, note: $('lzoN').value.trim() };
-    const b = $('lzoGo'); b.disabled = true; b.textContent = 'シートに記録中…';
-    LZ.writing = true; render();
-    try {
-      const res = await lzRun(seller.sheetId, 'addManualOut', rec);
-      let msg = `${r.name} を ${qty}点 出庫しました`;
-      const sk = (res && res.fix && res.fix.skipped) || [];
-      if (sk.length) msg += `（在庫シートの出庫数が手入力の商品：${sk.slice(0, 3).join('、')}${sk.length > 3 ? ' ほか' : ''}）`;
-      if (sid === LZ.sid) {
-        if (res && res.data) { LZ.D = res.data; await lzSaveCache(); }   // ラザダくんの画面にも反映
-        else { LZ.D.manual = (LZ.D.manual || []).concat([{ row: -Date.now(), id: '', ...rec }]); setTimeout(lzLoad, 0); }
-      }
-      closeSheet(); toast(msg);
-    } catch (e) {
-      b.disabled = false; b.textContent = '出庫する';
-      toast('出庫できませんでした：' + e.message);
-    } finally { LZ.writing = false; render(); }
-  };
-  showSheet();
-  setTimeout(() => (presetKey ? $('lzoQ') : $('lzoC')).focus(), 250);
-}
+                if (catCards.length === 0) {
+                    const emptyMsg = document.createElement('p');
+                    emptyMsg.className = 'text-[11px] text-slate-500 col-span-4 py-3 text-center pointer-events-none';
+                    emptyMsg.textContent = 'アイコンをここにドロップ';
+                    gridDiv.appendChild(emptyMsg);
+                } else {
+                    catCards.forEach((card) => {
+                        const parsed = parseTitle(card.title);
+                        const appEl = document.createElement('div');
+                        appEl.className = 'app-icon';
+                        appEl.dataset.cardId = card.id;
+                        appEl.title = card.desc || '';
 
-async function lzDelOut(row) {
-  const D = LZ.D; if (!D) return;
-  const m = (D.manual || []).find(x => String(x.row) === String(row));
-  if (!m) return;
-  if (Number(m.row) < 0) { toast('この出庫はまだシートに反映中です。少し待ってからもう一度押してください'); return; }
-  if (!confirm(`「${m.name} ×${m.qty}」（${lzMD(m.date)}）の手動出庫を取り消しますか？\n手動出庫シートの行を消して、在庫に戻します。`)) return;
-  const sid = LZ.sid, seller = lzSeller();
-  LZ.writing = true; render();
-  try {
-    const res = await lzRun(seller.sheetId, 'deleteManualOut', { row: m.row, id: m.id });
-    if (sid === LZ.sid) {
-      if (res && res.data) { LZ.D = res.data; await lzSaveCache(); }
-      else { LZ.D.manual = (LZ.D.manual || []).filter(x => x.row !== m.row); setTimeout(lzLoad, 0); }
-    }
-    toast('手動出庫を取り消しました');
-  } catch (e) { toast('取り消せませんでした：' + e.message); }
-  finally { LZ.writing = false; render(); }
-}
+                        appEl.addEventListener('click', () => {
+                            if (suppressClick || drag.active) return;
+                            window.location.href = card.href;
+                        });
+                        appEl.addEventListener('pointerdown', (e) => onPointerDown(e, appEl, card.id));
+                        appEl.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// ========== zaicoの在庫（ショップごと）を見る・出庫指示を登録する ==========
-// まとまるくん（shipping-format.html）と同じFirebaseの関数を使う（zaicoのAPIキーは関数の中にあり、画面には出ない）
-const ZC_LIST_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories';
-const ZC_SHIP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment';
-const ZC_SHOP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiUpdateZaicoShop';   // ショップ名の変更
-const ZC_LOG_COL = 'zaico_shipment_logs';      // まとまるくんの「zaico出庫履歴」と同じ保存先
-const ZC_SHOP_ATTR = 'ショップ名';             // zaicoの追加項目の名前（入っていればこれでショップを分ける）
-const ZC_CACHE = 'irai_zaico_inv_v1';
-const ZC = { items: [], at: null, loading: null, err: '', hasGroup: false, hasShop: false, shop: '', q: '', filter: 'have', limit: 200, cart: new Map(), sending: false, progress: 0, editMode: false };
+                        let badgeHtml = '';
+                        if (card.badge && card.badge > 0) {
+                            badgeHtml = `<div class="notification-badge">${card.badge > 99 ? '99+' : card.badge}</div>`;
+                        }
 
-// 追加項目（optional_attributes）から値を取り出す。配列 [{name, value}] でも、{名前: 値} でも読めるようにする
-const zcText = v => v == null ? '' : typeof v === 'object' ? String(v.name ?? v.title ?? v.label ?? v.value ?? '').trim() : String(v).trim();
-function zcAttr(x, name) {
-  const a = x.optional_attributes ?? x.optionalAttributes;
-  if (Array.isArray(a)) {
-    const f = a.find(o => o && zcText(o.name ?? o.title ?? o.label ?? o.optional_attribute_name ?? o.key) === name);
-    return f ? zcText(f.value ?? f.val ?? f.content ?? f.text) : '';
-  }
-  if (a && typeof a === 'object') return zcText(a[name]);
-  return '';
-}
-function zcGroup(x) {
-  const g = x.user_group ?? x.userGroup ?? x.group;
-  if (Array.isArray(g)) return g.map(zcText).filter(Boolean).join('・');
-  return zcText(g);
-}
-// ショップの分け方：zaicoの「ショップ名」欄だけで分ける（空欄はまとめて「ショップ名なし（不明）」）
-const zcKey = x => x.shop ? 's:' + x.shop : '-';
-const zcKeyLabel = k => k === '-' ? 'ショップ不明' : k.slice(2);
+                        appEl.innerHTML = `
+                            ${badgeHtml}
+                            <div class="app-emoji">${parsed.emoji}</div>
+                            <div class="app-title">${parsed.name}</div>
+                        `;
+                        gridDiv.appendChild(appEl);
+                    });
+                }
 
-function zcReadCache() {
-  try {
-    const c = JSON.parse(localStorage.getItem(ZC_CACHE) || 'null');
-    if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); ZC.hasGroup = !!c.hasGroup; ZC.hasShop = !!c.hasShop; ZC.fields = c.fields || null; return true; }
-  } catch (e) {}
-  return false;
-}
-// ---- 在庫の写し（zaico_inventory_cache）を見る。読めないときは zaico から直接取り寄せる ----
-const ZINV_SYNC_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiSyncZaicoInventory';
-const ZINV = { meta: null, base: null, baseV: null, patches: new Map(), on: false, failed: false, asked: false, unsubs: [] };
-function zinvStop() { ZINV.unsubs.forEach(u => { try { u(); } catch (e) {} }); ZINV.unsubs = []; ZINV.on = false; }
-function zinvStart() {
-  if (ZINV.on || ZINV.failed || !S.user) return;
-  ZINV.on = true;
-  const ref = doc(db, 'zaico_inventory_cache', 'current');
-  const fail = e => { console.warn('在庫の写しを読めないため、zaicoから直接取り寄せます', e); ZINV.failed = true; zinvStop(); zcLoadDirect(!ZC.at); };
-  ZINV.unsubs.push(onSnapshot(ref, async snap => {
-    const m = snap.data();
-    if (!m) { if (!ZINV.asked) { ZINV.asked = true; zcSyncNow(); } return; }   // まだ写しがない → 作ってもらう
-    ZINV.meta = m;
-    if (ZINV.baseV !== m.v) {
-      const ps = await getDocs(collection(ref, 'parts'));
-      const parts = ps.docs.map(d => d.data()).filter(p => p.v === m.v).sort((a, b) => a.i - b.i);
-      if (parts.length !== m.parts || ZINV.meta.v !== m.v) return;   // 書き込みの途中
-      ZINV.base = JSON.parse(parts.map(p => p.s).join('')); ZINV.baseV = m.v;
-    }
-    zinvApply();
-  }, fail));
-  ZINV.unsubs.push(onSnapshot(collection(ref, 'patches'), snap => {
-    snap.docChanges().forEach(c => c.type === 'removed' ? ZINV.patches.delete(c.doc.id) : ZINV.patches.set(c.doc.id, c.doc.data()));
-    zinvApply();
-  }, fail));
-}
-// 写し＋そのあとの変更（patches）を合わせて、画面の一覧にする
-function zinvApply() {
-  if (!ZINV.base || !ZINV.meta) return;
-  const map = new Map(ZINV.base.map(x => [String(x.id), x]));
-  ZINV.patches.forEach((p, id) => { if (!(Number(p.at) > Number(ZINV.meta.v))) return; if (p.item) map.set(id, p.item); else map.delete(id); });
-  ZC.items = [...map.values()].map(x => ({ id: String(x.id), title: String(x.title || ''), code: half(x.code || '').trim(), place: String(x.place || '').trim(),
-    quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || '', group: '', shop: String(x.shop || '').trim() }));
-  ZC.at = new Date(ZINV.meta.at || Number(ZINV.meta.v)); ZC.hasShop = true; ZC.err = '';
-  zcSaveCache();
-  render();
-}
-// 「zaicoから読み直す」：関数に写しを作り直してもらう（できたら自動で画面が変わる）
-async function zcSyncNow() {
-  if (ZC.syncing) return;
-  ZC.syncing = true; render();
-  try {
-    const res = await fetch(ZINV_SYNC_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: S.user ? S.user.email : '' }) });
-    const d = await res.json();
-    if (!d.success) throw new Error(d.error || '更新できませんでした');
-    toast(d.skipped ? 'さっき更新したばかりなので、そのままの在庫を表示しています' : `zaicoの最新の在庫にしました（${d.count}品目）`);
-  } catch (e) {
-    toast('写しを更新できなかったので、zaicoから直接読み込みます：' + e.message);
-    ZC.syncing = false; return zcLoadDirect(true);
-  } finally { ZC.syncing = false; render(); }
-}
-async function zcLoad(force) {
-  if (!ZINV.failed) {
-    if (!ZC.at) zcReadCache();
-    zinvStart();
-    if (force) await zcSyncNow(); else render();
-    return;
-  }
-  return zcLoadDirect(force);
-}
-async function zcLoadDirect(force) {
-  if (!force && !ZC.at) zcReadCache();
-  if (ZC.at && !force) { render(); return; }
-  if (ZC.loading) return ZC.loading;
-  ZC.err = ''; ZC.progress = 0;
-  ZC.loading = (async () => {
-    await Promise.resolve();   // 先に「読み込み中」を表示してから読み込む
-    const all = []; let page = 1, hasGroup = false, hasShop = false, fields = null;
-    for (let guard = 0; page && guard < 200; guard++) {
-      let res, data;
-      try { res = await fetch(`${ZC_LIST_URL}?page=${page}&pages=10`); }
-      catch (e) { throw new Error('zaico在庫一覧の関数につながりませんでした'); }
-      try { data = await res.json(); } catch (e) { throw new Error(`zaico在庫一覧の関数から正しい返事がありませんでした（${res.status}）`); }
-      if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
-      if (!fields && Array.isArray(data.fields)) fields = data.fields;
-      (data.items || []).forEach(x => {
-        if ('user_group' in x || 'userGroup' in x || 'group' in x) hasGroup = true;
-        if ('optional_attributes' in x || 'optionalAttributes' in x) hasShop = true;
-        all.push({ id: String(x.id), title: String(x.title || ''), code: half(x.code || '').trim(), place: String(x.place || '').trim(),
-          quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || '', group: zcGroup(x), shop: zcAttr(x, ZC_SHOP_ATTR) });
-      });
-      ZC.progress = all.length; renderZc();
-      page = data.nextPage || null;
-    }
-    Object.assign(ZC, { items: all, at: new Date(), hasGroup, hasShop, fields });
-    try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: all, hasGroup, hasShop, fields })); } catch (e) { console.warn('zaico在庫を端末に保存できませんでした', e); }
-  })();
-  render();
-  try { await ZC.loading; } catch (e) { ZC.err = e.message; } finally { ZC.loading = null; render(); }
-}
-const zcQty = x => { const n = Number(x.quantity); return isNaN(n) ? 0 : n; };
-const zcFmt = n => Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+                section.appendChild(gridDiv);
+                container.appendChild(section);
+            });
+        }
 
-function renderZc() {
-  if (!S.user) return;
-  if (!ZINV.on && !ZINV.failed) zcLoad(false);
-  else if (ZINV.failed && !ZC.at && !ZC.loading && !ZC.err) zcLoadDirect(false);
-  // ショップの選択肢（件数つき）
-  const counts = new Map();
-  ZC.items.forEach(x => { const k = zcKey(x); counts.set(k, (counts.get(k) || 0) + 1); });
-  if (!counts.has('-')) counts.set('-', 0);   // 「ショップ不明」はいつも選べるようにする（いちばん下）
-  const keys = [...counts.keys()].sort((a, b) => (a === '-') - (b === '-') || a.localeCompare(b, 'ja'));
-  if (!ZC.shop) ZC.shop = lzStore('zcShop');
-  if (ZC.shop && ZC.shop !== '*' && (!counts.has(ZC.shop) || !/^(s:|-$)/.test(ZC.shop)) && ZC.items.length) ZC.shop = '';   // 前のグループ選択（g:…）が残っていたら外す
-  const sel = $('zcShop');
-  const opts = `<option value="">ショップを選んでください</option><option value="*">すべてのショップ</option>` +
-    keys.map(k => `<option value="${esc(k)}">${esc(zcKeyLabel(k))}（${counts.get(k)}品目）</option>`).join('');
-  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
-  sel.value = ZC.shop;
+        function createSmallButton(text, onClick, className = 'text-[10px] w-6 h-6 flex items-center justify-center bg-slate-800 hover:bg-slate-700 rounded text-slate-300') {
+            const btn = document.createElement('button');
+            btn.className = className;
+            btn.textContent = text;
+            btn.onclick = (e) => { e.stopPropagation(); onClick(); };
+            return btn;
+        }
 
-  $('zcMeta').textContent = ZC.syncing ? 'zaicoから最新の在庫を取り寄せています…（1〜2分かかることがあります）' : ZC.loading ? `zaicoから読み込み中…（${ZC.progress}件）` : ZC.at ? `zaico ${ZC.items.length}品目・${ZC.at.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 時点${ZINV.failed ? '' : '（10分ごとに自動で更新・ほかのアプリでの変更もすぐ反映）'}` : '';
-  const al = [];
-  if (ZC.err) al.push(`zaicoの在庫を読み込めませんでした：${ZC.err}`);
-  if (ZC.at && !ZC.loading && !ZC.hasShop)
-    al.push('zaico在庫一覧の関数（apiListZaicoInventories）が「追加項目（ショップ名）」を返していないため、ショップごとに分けられません。新しい関数をデプロイしてから「zaicoから読み直す」を押してください。');
-  else if (ZC.at && !ZC.loading && ZC.items.length && !ZC.items.some(x => x.shop))
-    al.push('zaicoの在庫を読みましたが、ショップ名が入った商品が見つかりませんでした。' + (ZC.fields ? 'zaicoが返した項目：' + ZC.fields.join('、') + '（この内容を送ってもらえれば、読み取り方を合わせます）' : ''));
-  $('zcAlerts').innerHTML = al.map(t => `<div class="alert">${esc(t)}</div>`).join('');
+        // ---------- 並び替え（スマホ・PC共通） ----------
+        //  スマホ：長押し（0.4秒）でつかむ → 指を動かして離す
+        //          長押し前に指を動かした場合は普通のスクロール
+        //  PC    ：クリックしたまま少し動かすとつかむ
 
-  if (!ZC.at) { $('zcList').innerHTML = (ZC.loading || ZC.syncing || ZINV.on) && !ZC.err ? '<div class="loading">zaicoの在庫を読み込み中…</div>' : ''; $('zcMore').hidden = true; return; }
-  if (!ZC.shop && !ZC.q.trim()) {
-    $('zcList').innerHTML = '<div class="empty">上でショップを選ぶと、そのショップの在庫が出ます（検索欄で全ショップから探すこともできます）。</div>';
-    $('zcMore').hidden = true; return;
-  }
-  const words = ZC.q.trim().toLowerCase().split(/[\s　]+/).filter(Boolean).map(w => half(w));
-  const list = ZC.items.filter(x =>
-    (ZC.shop === '*' || !ZC.shop || zcKey(x) === ZC.shop) &&
-    (ZC.filter === 'all' || zcQty(x) > 0 || ZC.cart.has(x.id)) &&
-    (!words.length || words.every(w => half(`${x.title} ${x.code} ${x.place} ${x.shop} ${x.category}`).toLowerCase().includes(w))))
-    .sort((a, b) => a.title.localeCompare(b.title, 'ja'));
-  const total = list.reduce((s, x) => s + zcQty(x), 0);
-  const title = ZC.shop && ZC.shop !== '*' ? zcKeyLabel(ZC.shop) : (ZC.shop === '*' ? 'すべてのショップ' : '検索結果（全ショップ）');
-  const showShop = ZC.shop === '*' || !ZC.shop;
-  $('zcList').innerHTML = list.length ? `<div class="lz-box zc"><div class="lz-h"><b>${esc(title)}</b><span class="sum">${list.length}品目・在庫 ${zcFmt(total)}</span></div>
-    ${list.slice(0, ZC.limit).map(x => { const q = zcQty(x), inc = ZC.cart.get(x.id);
-      return `<button class="lz-row ${q <= 0 ? 'zero' : ''}" data-zcid="${esc(x.id)}">
-      <span><span class="p">${esc(x.title || '（商品名なし）')}</span>${inc ? `<span class="incart">出庫指示 ${inc}</span>` : ''}
-        <span class="d" style="display:block">${x.code ? 'JAN ' + esc(x.code) : '<span style="color:var(--late)">バーコードなし</span>'}${x.place ? '・保管場所 ' + esc(x.place) : ''}${showShop ? '・' + esc(zcKeyLabel(zcKey(x))) : ''}</span></span>
-      <span class="q">${esc(zcFmt(q))}<small>${esc(x.unit || '')} ${ZC.editMode ? 'タップで変更' : 'タップで出庫指示へ'}</small></span></button>`; }).join('')}</div>`
-    : `<div class="empty">${ZC.q ? '当てはまる商品はありません。' : ZC.filter === 'have' ? '在庫のある商品はありません。「すべて」で0の商品も見られます。' : '商品がありません。'}</div>`;
-  $('zcMore').hidden = list.length <= ZC.limit;
-  $('zcMore').textContent = `さらに表示（残り${list.length - ZC.limit}品目）`;
-  $('zcBarN').textContent = `${ZC.cart.size}商品・${[...ZC.cart.values()].reduce((s, n) => s + n, 0)}点`;
-}
+        const LONG_PRESS_MS = 400;
+        const MOVE_TOLERANCE = 8;   // 長押し判定中に許す指のブレ(px)
+        const EDGE_SCROLL_ZONE = 70; // 画面の上下端から何pxで自動スクロールするか
 
-function zcAdd(id, n) {
-  const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
-  if (!x.code) { toast('バーコードがない商品は、zaicoに出庫指示を送れません（zaicoでバーコードを登録してください）'); return; }
-  const next = (ZC.cart.get(x.id) || 0) + n;
-  if (next <= 0) ZC.cart.delete(x.id); else ZC.cart.set(x.id, next);
-  toast(`${x.title}（出庫指示 ${ZC.cart.get(x.id) || 0}点）`);
-}
+        const drag = {
+            pending: false, active: false,
+            cardId: null, sourceEl: null, ghost: null,
+            pointerId: null, pointerType: '',
+            startX: 0, startY: 0, lastX: 0, lastY: 0,
+            offsetX: 0, offsetY: 0,
+            timer: null, scrollRaf: null,
+            target: null // { type: 'card', id, after } または { type: 'grid', categoryId }
+        };
+        let suppressClick = false;
 
-// ---- ショップ名・在庫数の変更（zaicoの商品1件を書き換える） ----
-function openZcShopEdit(id) {
-  const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
-  const shops = [...new Set(ZC.items.map(v => v.shop).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
-  const q0 = zcQty(x);
-  const sh = $('sheet');
-  sh.dataset.id = 'zcshop'; sh.dataset.kind = 'zcshop'; sh.dataset.dirty = '1'; sh.dataset.f = 'zc';
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>ショップ名・在庫数・バーコードを変更</h2><div class="sub">${esc(x.title)}</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
-    <dl>
-      <dt>バーコード</dt><dd>${esc(x.code || '（なし）')}</dd>
-      <dt>今のショップ名</dt><dd>${x.shop ? esc(x.shop) : '<span class="hint" style="margin:0">（空欄）</span>'}</dd>
-      <dt>今の在庫数</dt><dd>${esc(zcFmt(q0))}${esc(x.unit || '')}<span class="hint" style="margin:0">（${ZC.at ? esc(ZC.at.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + ' に読み込み' : ''}）</span></dd>
-    </dl>
-    <div class="lotform">
-      <label class="field"><span>ショップ名（一覧から選ぶか、入力）</span><input id="zcsN" list="zcsList" autocomplete="off" value="${esc(x.shop)}"></label>
-      <datalist id="zcsList">${shops.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-      <label class="field"><span>在庫数</span><input id="zcsQ" class="num-in" inputmode="decimal" value="${esc(zcFmt(q0))}"></label>
-      <p class="hint" id="zcsDiff"></p>
-      <label class="field"><span>QRコード・バーコードの値（変えると、まとまるくんの商品マスタも自動で直します）</span><input id="zcsC" autocomplete="off" value="${esc(x.code)}"></label>
-      <p class="hint" id="zcsCodeHint"></p>
-      <p class="hint">変えた項目だけをzaicoに書き換えます。在庫数は、読み込んだあとにzaicoで入出庫があった場合は書き換えずに止まります（その入出庫を消さないため）。</p>
-      <div class="actions"><button class="primary" id="zcsSave" style="background:var(--zc)">zaicoに保存</button>
-        ${x.shop ? '<button class="mini danger" id="zcsClear">ショップ名を消す</button>' : ''}</div>
-      <div class="actions" style="margin-top:18px;justify-content:flex-end"><button class="mini danger" id="zcsDel">この商品をzaicoから削除</button></div>
-    </div>`;
-  const diff = () => {
-    const t = half($('zcsQ').value).replace(/,/g, '').trim(), n = Number(t);
-    $('zcsDiff').textContent = t === '' || isNaN(n) ? '' : n === q0 ? '' : `在庫数を ${zcFmt(q0)} → ${zcFmt(n)}（${n > q0 ? '+' : ''}${zcFmt(n - q0)}）にします`;
-  };
-  const codeHint = () => {
-    const c = half($('zcsC').value).trim(), h = $('zcsCodeHint');
-    const dup = c && c !== x.code ? ZC.items.filter(v => v.id !== x.id && v.code === c) : [];
-    h.style.color = dup.length ? 'var(--late)' : '';
-    h.textContent = !c ? 'バーコードは空欄にできません' : c === x.code ? '' : dup.length
-      ? `⚠ 同じバーコードの商品がほかにあります：${dup.slice(0, 2).map(v => v.title).join('、')}${dup.length > 2 ? ' ほか' : ''}` : `バーコードを「${x.code || '（なし）'}」→「${c}」に変えます`;
-  };
-  $('closeSheet').onclick = closeSheet;
-  $('zcsQ').oninput = diff;
-  $('zcsC').oninput = codeHint;
-  $('zcsSave').onclick = () => {
-    const t = half($('zcsQ').value).replace(/,/g, '').trim(), n = Number(t);
-    if (t === '' || isNaN(n) || n < 0) { toast('在庫数は0以上の数で入れてください'); return; }
-    const c = half($('zcsC').value).trim();
-    if (!c) { toast('バーコードは空欄にできません'); return; }
-    zcSaveItem(x, { shop: $('zcsN').value.trim(), quantity: n, code: c });
-  };
-  if ($('zcsClear')) $('zcsClear').onclick = () => { if (confirm(`「${x.title}」のショップ名を消して、空欄にしますか？`)) zcSaveItem(x, { shop: '' }); };
-  $('zcsDel').onclick = () => zcDeleteItem(x);
-  [$('zcsN'), $('zcsQ'), $('zcsC')].forEach(el => el.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('zcsSave').click(); } });
-  showSheet();
-  setTimeout(() => { $('zcsQ').focus(); $('zcsQ').select(); }, 250);
-}
-async function zcSaveItem(x, want) {
-  const q0 = zcQty(x), body = { inventoryId: x.id };
-  if ('shop' in want && want.shop !== x.shop) {
-    if (want.shop && !ZC.items.some(v => v.shop === want.shop) && !confirm(`「${want.shop}」は、まだどの商品にも使われていないショップ名です。新しいショップとして登録しますか？`)) return;
-    body.shop = want.shop;
-  }
-  if ('quantity' in want && want.quantity !== q0) {
-    if (!confirm(`「${x.title}」の在庫数を ${zcFmt(q0)} → ${zcFmt(want.quantity)} に変更します。よろしいですか？`)) return;
-    body.quantity = want.quantity; body.expectQuantity = q0;
-  }
-  if ('code' in want && want.code && want.code !== x.code) {
-    const dup = ZC.items.filter(v => v.id !== x.id && v.code === want.code);
-    if (!confirm(`「${x.title}」のバーコードを変更します。\n\n前：${x.code || '（なし）'}\n後：${want.code}\n\nまとまるくんの商品マスタで前のバーコードを使っているSKU・セット品も、新しいバーコードに自動で直します。`
-      + (dup.length ? `\n\n⚠ 同じバーコードの商品がほかに${dup.length}件あります（${dup.slice(0, 3).map(v => v.title).join('、')}）。同じバーコードが2つあると、出庫指示でどちらか分からなくなります。` : '')
-      + '\n\nよろしいですか？')) return;
-    body.code = want.code; body.expectCode = x.code;
-    body.oldCodeShared = !!x.code && ZC.items.some(v => v.id !== x.id && v.code === x.code);   // 前のバーコードがほかの商品にも付いていれば、マスタはIDでつながっているものだけ直す
-  }
-  if (!('shop' in body) && !('quantity' in body) && !('code' in body)) { closeSheet(); return; }
-  const b = $('zcsSave'); b.disabled = true; b.textContent = '保存中…';
-  try {
-    const idToken = await S.user.getIdToken();
-    let res, data;
-    try {
-      res = await fetch(ZC_SHOP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify(body) });
-    } catch (e) { throw new Error('変更用の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
-    try { data = await res.json(); } catch (e) { throw new Error(`関数から正しい返事がありませんでした（${res.status}）`); }
-    if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 画面の数量を最新にして、もう一度入れてもらう
-      x.quantity = data.currentQuantity; if (data.currentCode != null) x.code = data.currentCode; zcSaveCache(); render(); openZcShopEdit(x.id);
-      alert(data.error); return;
-    }
-    if (!data.success) throw new Error(data.error || '変更できませんでした');
-    if ('shop' in body) x.shop = data.shop ?? body.shop;
-    if ('quantity' in body) x.quantity = data.quantity ?? body.quantity;
-    if ('code' in body) x.code = data.code ?? body.code;
-    zcSaveCache();
-    closeSheet();
-    let msg = [('shop' in body) ? (body.shop ? `ショップ名を「${body.shop}」に` : 'ショップ名を空欄に') : '', ('quantity' in body) ? `在庫数を ${zcFmt(Number(x.quantity))} に` : '', ('code' in body) ? `バーコードを「${x.code}」に` : ''].filter(Boolean).join('、') + 'しました';
-    if ('code' in body) {
-      const m = data.masters;
-      if (data.masterError) msg += `。まとまるくんの商品マスタは直せませんでした（${data.masterError}）。商品マスタで手で直してください`;
-      else if (m && (m.skus.length || m.sets.length)) msg += `。まとまるくんの商品マスタも直しました（SKU ${m.skus.length}件${m.sets.length ? '・セット品 ' + m.sets.length + '件' : ''}）`;
-      else msg += body.oldCodeShared ? '。前のバーコードがほかの商品にも付いていたため、商品マスタは直していません。必要なら商品マスタで手で直してください' : '。まとまるくんの商品マスタには、前のバーコードのSKUはありませんでした';
-      alert(msg);
-    } else toast(msg);
-    render();
-  } catch (e) {
-    b.disabled = false; b.textContent = 'zaicoに保存';
-    toast('保存できませんでした：' + e.message);
-  }
-}
-// ---- 削除（元に戻せないので、在庫が残っているときは「削除」と入力してもらう） ----
-async function zcDeleteItem(x) {
-  const q0 = zcQty(x);
-  const head = `「${x.title}」をzaicoから削除します。\n${x.code ? 'バーコード ' + x.code + '　' : ''}在庫 ${zcFmt(q0)}${x.unit || ''}${x.shop ? '　ショップ ' + x.shop : ''}\n\n削除すると元に戻せません（削除前の内容は記録に残します）。`;
-  if (q0 > 0) {
-    const t = prompt(head + `\n\n⚠ まだ在庫が ${zcFmt(q0)}${x.unit || ''} 残っています。\nそれでも削除する場合は「削除」と入力してください。`, '');
-    if (t === null) return;
-    if (t.trim() !== '削除') { toast('「削除」と入力されなかったので、削除しませんでした'); return; }
-  } else if (!confirm(head + '\n\n削除してよろしいですか？')) return;
-  const b = $('zcsDel'); b.disabled = true; b.textContent = '削除中…';
-  try {
-    const idToken = await S.user.getIdToken();
-    let res, data;
-    try {
-      res = await fetch(ZC_SHOP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify({ inventoryId: x.id, delete: true, expectQuantity: q0 }) });
-    } catch (e) { throw new Error('変更用の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
-    try { data = await res.json(); } catch (e) { throw new Error(`関数から正しい返事がありませんでした（${res.status}）`); }
-    if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 最新の数量で確かめ直してもらう
-      x.quantity = data.currentQuantity; zcSaveCache(); render(); openZcShopEdit(x.id);
-      alert(data.error); return;
-    }
-    if (!data.success) throw new Error(data.error || '削除できませんでした');
-    ZC.items = ZC.items.filter(v => v.id !== x.id);
-    ZC.cart.delete(x.id);
-    zcSaveCache();
-    closeSheet();
-    toast(`「${x.title}」を削除しました`);
-    render();
-  } catch (e) {
-    b.disabled = false; b.textContent = 'この商品をzaicoから削除';
-    toast('削除できませんでした：' + e.message);
-  }
-}
-function zcSaveCache() {
-  try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: ZC.items, hasGroup: ZC.hasGroup, hasShop: ZC.hasShop, fields: ZC.fields })); } catch (e) {}
-}
+        function onPointerDown(e, el, cardId) {
+            if (e.button !== undefined && e.button !== 0) return;
+            if (drag.pending || drag.active) return;
 
-// 出庫指示の内容を確認して送信
-function openZcCart() {
-  if (!ZC.cart.size) return;
-  const sh = $('sheet');
-  sh.dataset.id = 'zc'; sh.dataset.kind = 'zc'; sh.dataset.dirty = '1'; sh.dataset.f = 'zc';
-  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x);
-  const shops = [...new Set(lines.map(l => zcKeyLabel(zcKey(l.x))))];
-  const defName = (shops.length === 1 && shops[0] !== zcKeyLabel('-') ? shops[0] : '') || lzStore('zcCustomer');
-  sh.innerHTML = `
-    <div class="sheet-h"><div><h2>zaicoに出庫指示を登録</h2><div class="sub">${esc(shops.join('、'))}　${lines.length}商品</div></div>
-      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
-    <div class="lotform">
-      <div id="zcLines">${lines.map(({ x, n }) => `<div class="zc-line ${n > zcQty(x) ? 'over' : ''}" data-id="${esc(x.id)}">
-        <div class="lbl">${esc(x.title)}<small>JAN ${esc(x.code)}${x.place ? '・' + esc(x.place) : ''}・在庫 ${esc(zcFmt(zcQty(x)))}${n > zcQty(x) ? '（在庫より多い）' : ''}</small></div>
-        <input class="zc-n" inputmode="numeric" value="${n}" aria-label="${esc(x.title)}の数量">
-        <button class="mini zc-del" aria-label="外す">×</button></div>`).join('')}</div>
-      <label class="field"><span>zaicoの取引先名</span><input id="zcCust" value="${esc(defName)}" placeholder="例：ショップ名・セラー名"></label>
-      <p class="hint">出庫予定日などは、まとまるくんの送信と同じ設定でzaicoに登録されます。登録した内容は、まとまるくんの「zaico出庫履歴」タブにも残ります。</p>
-      <div class="actions"><button class="primary" id="zcSend" style="background:var(--zc)">zaicoに出庫指示を送信</button></div>
-    </div>`;
-  $('closeSheet').onclick = () => { zcSyncCart(); closeSheet(); render(); };
-  $('zcLines').onclick = e => { const b = e.target.closest('.zc-del'); if (!b) return; const row = b.closest('.zc-line'); ZC.cart.delete(row.dataset.id); row.remove(); if (!ZC.cart.size) { closeSheet(); render(); } };
-  $('zcSend').onclick = zcSend;
-  showSheet();
-}
-function zcSyncCart() {
-  document.querySelectorAll('#zcLines .zc-line').forEach(r => { const n = toNum(r.querySelector('.zc-n').value); if (n > 0) ZC.cart.set(r.dataset.id, n); else ZC.cart.delete(r.dataset.id); });
-}
+            drag.pending = true;
+            drag.cardId = cardId;
+            drag.sourceEl = el;
+            drag.pointerId = e.pointerId;
+            drag.pointerType = e.pointerType;
+            drag.startX = drag.lastX = e.clientX;
+            drag.startY = drag.lastY = e.clientY;
 
-async function zcSend() {
-  if (ZC.sending) return;
-  zcSyncCart();
-  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x && l.n > 0 && l.x.code);
-  if (!lines.length) { toast('送る商品がありません'); return; }
-  const customerName = $('zcCust').value.trim() || '保管品出庫';
-  const over = lines.filter(l => l.n > zcQty(l.x));
-  if (!confirm(`取引先「${customerName}」として、${lines.length}商品・${lines.reduce((s, l) => s + l.n, 0)}点の出庫指示をzaicoに登録しますか？` +
-    (over.length ? `\n\n※在庫より多い商品があります：\n${over.map(l => `・${l.x.title}（在庫 ${zcFmt(zcQty(l.x))}／出庫 ${l.n}）`).join('\n')}` : ''))) return;
-  lzStore('zcCustomer', customerName);
-  // まとまるくんと同じ形で送る（棚番がzaicoにない商品は「-」）
-  const items = lines.map(({ x, n }) => ({ barcode: x.code, productName: x.title, orderQty: n, multiplier: 1, shelfNumber: x.place || '-', pickCount: n, inventoryId: x.id, status: 'REGISTERED' }));
-  ZC.sending = true;
-  const b = $('zcSend'); b.disabled = true; b.textContent = '送信中…';
-  try {
-    let res, data;
-    try {
-      res = await fetch(ZC_SHIP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items, customerName }) });
-      data = await res.json();
-    } catch (err) {
-      await zcSaveLog({ kind: 'network', customerName, items, errorMessage: '通信エラー：' + err.message });
-      alert('通信エラーになりました。zaicoに登録されたか分からないため、続けて送り直さないでください（二重に出庫される可能性があります）。\nzaicoの出庫一覧を確認してください。（まとまるくんの「zaico出庫履歴」に記録しました）');
-      ZC.cart.clear(); closeSheet(); return;
-    }
-    const failures = zcFailures(data, items);
-    if (data.success) {
-      const registered = Number(data.count), hasCount = data.count !== undefined && data.count !== null && !isNaN(registered);
-      const gap = !failures.length && hasCount && registered < items.length ? items.length - registered : 0;
-      await zcSaveLog({ kind: 'success', customerName, slipNum: data.slipNum, items, failures, unknownGap: gap, registered: hasCount ? registered : null });
-      let msg = `zaicoに出庫指示を登録しました。\n伝票番号：${data.slipNum || '-'}（${hasCount ? registered : items.length}明細）`;
-      if (failures.length) msg += `\n\n【登録できなかった商品 ${failures.length}件】\n${failures.map(f => `・${f.productName || f.barcode}${f.reason ? `（${f.reason}）` : ''}`).join('\n')}\n※まとまるくんの「zaico出庫履歴」に未対応として残しました。`;
-      else if (gap) msg += `\n\n【注意】${items.length}明細のうち${gap}明細が登録されていません。zaicoの伝票を確認してください。`;
-      alert(msg);
-      ZC.cart.clear(); closeSheet();
-    } else {
-      await zcSaveLog({ kind: 'error', customerName, slipNum: data.slipNum || '', items, failures, errorMessage: data.error || '送信できませんでした' });
-      toast('送信できませんでした：' + (data.error || ''));
-      b.disabled = false; b.textContent = 'zaicoに出庫指示を送信';
-    }
-  } finally { ZC.sending = false; render(); }
-}
-// 関数から返ってきた「登録できなかった商品」（まとまるくんと同じ読み方）
-function zcFailures(data, sent) {
-  const raw = [];
-  ['missingBarcodes', 'notFound', 'not_found', 'skipped', 'skippedItems', 'failed', 'failedItems', 'missing', 'missingItems', 'unregistered', 'errors']
-    .forEach(k => { if (Array.isArray(data && data[k])) raw.push(...data[k]); });
-  const by = new Map(sent.map(it => [String(it.barcode), it])), seen = new Set(), out = [];
-  raw.forEach(x => {
-    const o = x && typeof x === 'object';
-    const bc = String(o ? (x.barcode || x.code || x.jan || '') : (x || '')).trim();
-    let name = o ? String(x.productName || x.title || x.name || '').trim() : '';
-    const reason = o ? String(x.reason || x.message || x.error || '').trim() : '';
-    const hit = bc ? by.get(bc) : null;
-    if (!name && hit) name = hit.productName;
-    const k = bc || name; if (!k || seen.has(k)) return; seen.add(k);
-    out.push({ barcode: bc, productName: name, shelfNumber: hit ? hit.shelfNumber : '', pickCount: hit ? hit.pickCount : '', reason });
-  });
-  return out;
-}
-// まとまるくんの「zaico出庫履歴」（zaico_shipment_logs）に同じ形で残す
-async function zcSaveLog({ kind, customerName, slipNum = '', items, failures = [], unknownGap = 0, registered = null, errorMessage = '' }) {
-  const now = new Date(), fail = new Map(failures.filter(f => f.barcode).map(f => [String(f.barcode), f]));
-  const rows = items.map(it => {
-    const base = { barcode: it.barcode, productName: it.productName, shelfNumber: it.shelfNumber, pickCount: it.pickCount, orderQty: it.orderQty, multiplier: 1 };
-    const f = fail.get(String(it.barcode));
-    if (kind === 'network') return { ...base, result: 'check', reason: '通信エラーのため、zaicoに登録されたか不明です' };
-    if (kind === 'error') return { ...base, result: 'failed', reason: (f && f.reason) || errorMessage };
-    if (f) return { ...base, result: 'failed', reason: f.reason || 'zaicoに商品がないなどの理由で登録されませんでした' };
-    if (unknownGap) return { ...base, result: 'check', reason: `送信${items.length}明細のうち${unknownGap}明細が未登録。どれが未登録かzaicoで確認してください` };
-    return { ...base, result: 'registered', reason: '' };
-  });
-  const cnt = r => rows.filter(x => x.result === r).length;
-  const counts = { registered: cnt('registered'), failed: cnt('failed'), notSent: 0, check: cnt('check') };
-  const pad = n => String(n).padStart(2, '0');
-  const date = ymd(now);
-  const log = {
-    id: `${date.replace(/-/g, '')}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${Math.random().toString(36).slice(2, 6)}`,
-    createdAt: now.toISOString(), date, customerName, slipNum: slipNum ? String(slipNum) : '',
-    status: kind === 'success' ? (counts.failed || counts.check ? 'partial' : 'ok') : 'error',
-    kind, errorMessage, sentCount: items.length, registeredCountFromZaico: registered, counts,
-    sourceFiles: ['依頼まとめ管理（zaico在庫）'], by: S.user ? S.user.email : '', handled: false, items: rows
-  };
-  try { await setDoc(doc(db, ZC_LOG_COL, log.id), log); return true; }
-  catch (e) { console.warn('zaico出庫履歴を保存できませんでした', e); return false; }
-}
+            if (e.pointerType !== 'mouse') {
+                el.classList.add('pressing');
+                drag.timer = setTimeout(() => {
+                    if (drag.pending) startDrag();
+                }, LONG_PRESS_MS);
+            }
+        }
 
-// ---------- 操作（Firestoreに記録 → GASがシートへ反映） ----------
-function writeAction(r, patch) {
-  return setDoc(doc(db, 'irai_actions', r.id), {
-    form: r.form,
-    done: r.done,
-    doneDate: r.doneDate || '',
-    note: r.note ?? null,
-    userFix: r.userFix || '',     // 管理番号の修正（間違えて依頼されたとき）
-    nameFix: r.nameFix || '',
-    ...patch,
-    by: S.user.email,
-    at: serverTimestamp()
-  });
-}
-// ---------- 依頼の取り消し（セラー都合のキャンセル・重複依頼など） ----------
-// 記録は settings/irai_cancel に残し、シート側は「完了」として反映（未対応の件数から外れる）
-const cancelRef = () => doc(db, 'settings', 'irai_cancel');
-async function cancelReq(id) {
-  const r = find(id); if (!r || r.canceled) return;
-  const reason = prompt(`この依頼を取り消します。\n${r.type}　${[r.user, r.name].filter(Boolean).join(' ')}\n\n理由（任意。例：セラー様都合でキャンセル、重複依頼）`, '');
-  if (reason === null) return;                         // キャンセルを押したら何もしない
-  try {
-    if (lotsIn(r.id).length || outsOf(r.id).length) await stockOnUndo(r, false);   // 在庫に反映済みなら戻すか確認
-    const date = todayJST();
-    await setDoc(cancelRef(), { ids: { [r.id]: { reason: reason.trim(), date, by: S.user.email, at: new Date().toISOString() } } }, { merge: true });
-    if (!r.done) await writeAction(r, { done: true, doneDate: date });
-    closeSheet();
-    toast('依頼を取り消しました', () => restoreReq(id, true));
-  } catch (e) { toast('取り消せませんでした：' + e.message); }
-}
-// 取り消しをやめて「未対応」に戻す
-async function restoreReq(id, isUndo) {
-  const r = find(id); if (!r || !r.canceled) return;
-  if (!isUndo && !confirm('取り消しをやめて、この依頼を「未対応」に戻しますか？')) return;
-  try {
-    await updateDoc(cancelRef(), new FieldPath('ids', id), deleteField());
-    await writeAction(r, { done: false, doneDate: '' });
-    toast('取り消しをやめて、未対応に戻しました');
-  } catch (e) { toast('戻せませんでした：' + e.message); }
-}
+        function startDrag() {
+            drag.pending = false;
+            drag.active = true;
+            clearTimeout(drag.timer);
 
-async function toggleDone(id, isUndo) {
-  const r = find(id); if (!r) return;
-  if (r.canceled) { await restoreReq(id); return; }
-  const next = !r.done;
-  try {
-    let msg = '';
-    if (next) { msg = await stockOnDone(r); if (msg === false) return; }
-    else await stockOnUndo(r, isUndo);
-    await writeAction(r, { done: next, doneDate: next ? todayJST() : '' });
-    if (!isUndo) toast((next ? '完了にしました' : '未対応に戻しました') + (msg ? `（${msg}）` : ''), () => toggleDone(id, true));
-    if (next && !isUndo) promptSheetIfNone(r);
-  } catch (e) { toast('保存できませんでした：' + e.message); }
-}
-function saveNote(id, v) {
-  const r = find(id); if (!r) return;
-  writeAction(r, { note: v })
-    .then(() => { document.activeElement.blur(); toast(r.noteLabel + 'を保存しました'); })
-    .catch(e => toast('保存できませんでした：' + e.message));
-}
+            const el = drag.sourceEl;
+            el.classList.remove('pressing');
+            const rect = el.getBoundingClientRect();
+            drag.offsetX = drag.startX - rect.left;
+            drag.offsetY = drag.startY - rect.top;
 
-let toastTimer;
-function toast(msg, undo) {
-  $('toastMsg').textContent = msg;
-  $('toastUndo').hidden = !undo;
-  $('toastUndo').onclick = () => { $('toast').style.display = 'none'; undo && undo(); };
-  $('toast').style.display = 'flex';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $('toast').style.display = 'none', undo ? 5000 : 2500);
-}
-function copy(text) {
-  const done = () => toast('コピーしました');
-  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done).catch(fallback);
-  else fallback();
-  function fallback() {
-    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
-    t.select(); try { document.execCommand('copy'); done(); } catch (e) {} t.remove();
-  }
-}
+            const ghost = el.cloneNode(true);
+            ghost.classList.add('drag-ghost');
+            ghost.style.width = rect.width + 'px';
+            ghost.style.height = rect.height + 'px';
+            document.body.appendChild(ghost);
+            drag.ghost = ghost;
+            moveGhost(drag.lastX, drag.lastY);
 
-// ---------- 今すぐ更新（GASで同期を実行） ----------
-async function syncNow() {
-  const b = $('syncNow');
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(SYNC_URL)) {
-    toast('「今すぐ更新」のURL（SYNC_URL）が設定されていません。GASのウェブアプリURLを入れてください。');
-    return;
-  }
-  b.disabled = true; b.textContent = '更新中…';
-  try {
-    const idToken = await S.user.getIdToken();
-    const res = await fetch(SYNC_URL, { method: 'POST', body: JSON.stringify({ idToken }) });
-    const r = await res.json();
-    if (r.ok) toast('シートの最新内容を反映しました');
-    else toast(r.message || ('一部のシートを同期できませんでした：' + (r.errors || []).join('／')));
-  } catch (e) {
-    toast('更新できませんでした。通信状況を確認して、もう一度お試しください。');
-  } finally {
-    b.disabled = false; b.textContent = '今すぐ更新';
-  }
-}
+            el.classList.add('dragging');
+            document.body.classList.add('is-dragging');
+            if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
 
-// ---------- リンクの #shopee などで、開くフォームを選ぶ ----------
-function formFromHash() {
-  const k = decodeURIComponent(location.hash.slice(1));
-  if (k === 'hokan') { S.view = 'stock'; return true; }
-  if (k === 'hokan-bill') { S.view = 'bill'; return true; }
-  if (k === 'lazada') { S.view = 'lz'; return true; }
-  if (k === 'zaico') { S.view = 'zc'; return true; }
-  if (!FORM_ORDER.some(([f]) => f === k)) return false;
-  S.view = 'req'; S.form = k; S.status = 'open'; S.type = 'all'; S.limit = 100;
-  return true;
-}
-formFromHash();
-window.addEventListener('hashchange', () => { if (formFromHash()) render(); });
+            updateDropTarget(drag.lastX, drag.lastY);
+            autoScrollLoop();
+        }
 
-// ---------- イベント ----------
-$('syncNow').onclick = syncNow;
-$('views').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.v; render(); };
-$('sq').oninput = e => { S.sq = e.target.value; render(); };
-$('sfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.sfilter = b.dataset.s;
-  document.querySelectorAll('#sfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); render(); };
-$('addLot').onclick = openNewLotSheet;
-$('stockList').onclick = e => {
-  const sh = e.target.closest('[data-share]'); if (sh) { openShareSheet(sh.dataset.share); return; }
-  const b = e.target.closest('[data-lot]'); if (b) openLotSheet(b.dataset.lot);
-};
-$('exportNow').onclick = exportNow;
-// ラザダ在庫
-$('lzSeller').onchange = e => lzSelect(e.target.value);
-$('lzReload').onclick = () => { if (LZ.sid) lzLoad(); };
-$('lzOutBtn').onclick = () => openLzOut('');
-$('lzq').oninput = e => { LZ.q = e.target.value; renderLz(); };
-$('lzq').onkeydown = e => {   // バーコードリーダーは最後にEnterを送る → コードが一致すれば出庫画面を開く
-  if (e.key !== 'Enter' || e.isComposing || !LZ.D) return;
-  e.preventDefault();
-  const c = lzCode(e.target.value); if (!c) return;
-  const r = lzStock(LZ.D).rows.find(x => x.code === c);
-  if (r) openLzOut(r.key); else toast('このコードの商品が見つかりません');
-};
-$('lzfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; LZ.filter = b.dataset.s;
-  document.querySelectorAll('#lzfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderLz(); };
-$('lzList').onclick = e => { const b = e.target.closest('[data-lzkey]'); if (b) openLzOut(b.dataset.lzkey); };
-$('lzHist').onclick = e => { const b = e.target.closest('[data-lzdel]'); if (b) lzDelOut(b.dataset.lzdel); };
-// zaico在庫
-$('zcShop').onchange = e => { ZC.shop = e.target.value; lzStore('zcShop', ZC.shop); ZC.limit = 200; renderZc(); };
-$('zcReload').onclick = () => zcLoad(true);
-$('zcq').oninput = e => { ZC.q = e.target.value; ZC.limit = 200; renderZc(); };
-$('zcq').onkeydown = e => {   // バーコードを読んだら（Enter）、その商品を出庫指示に1点追加
-  if (e.key !== 'Enter' || e.isComposing) return;
-  e.preventDefault();
-  const c = half(e.target.value).replace(/\s/g, ''); if (!c) return;
-  const hits = ZC.items.filter(x => x.code === c);
-  const inShop = hits.filter(x => !ZC.shop || zcKey(x) === ZC.shop);
-  const x = inShop[0] || hits[0];
-  if (!x) { toast('このバーコードの商品がzaicoにありません'); return; }
-  if ((inShop.length || hits.length) > 1) toast('同じバーコードの商品が複数あります。一覧から選んでください');
-  else if (ZC.editMode) { e.target.value = ''; ZC.q = ''; renderZc(); openZcShopEdit(x.id); }
-  else { zcAdd(x.id, 1); e.target.value = ''; ZC.q = ''; renderZc(); }
-};
-$('zcfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; ZC.filter = b.dataset.s;
-  document.querySelectorAll('#zcfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderZc(); };
-$('zcList').onclick = e => { const b = e.target.closest('[data-zcid]'); if (!b) return; if (ZC.editMode) openZcShopEdit(b.dataset.zcid); else { zcAdd(b.dataset.zcid, 1); render(); } };
-$('zcEditMode').onclick = () => {
-  ZC.editMode = !ZC.editMode;
-  $('zcEditMode').setAttribute('aria-pressed', ZC.editMode);
-  $('zcEditMode').textContent = ZC.editMode ? '変更を終える' : 'ショップ名・在庫数を変更';
-  $('zcEditNote').hidden = !ZC.editMode;
-  render();
-};
-$('zcMore').onclick = () => { ZC.limit += 200; renderZc(); };
-$('zcBarClear').onclick = () => { if (confirm('出庫指示の中身を空にしますか？')) { ZC.cart.clear(); render(); } };
-$('zcBarGo').onclick = openZcCart;
-$('newShare').onclick = () => {
-  const k = (prompt('セラーの管理番号を入れてください（依頼フォームと同じ番号）') || '').trim();
-  if (k) openShareSheet(k);
-};
-$('stockAlerts').onclick = async e => {
-  const o = e.target.closest('[data-req]'); if (o) { const r = find(o.dataset.req); if (r) openSheet(r); return; }
-  const k = e.target.closest('[data-skip]');
-  if (k) setDoc(doc(db, 'settings', 'hokan_skip'), { ids: { [k.dataset.skip]: true } }, { merge: true })
-    .then(() => toast('対象外にしました')).catch(err => toast('保存できませんでした：' + err.message));
-};
-$('billMonth').onchange = e => { S.billMonth = e.target.value; render(); };
-$('billCopy').onclick = billCopy;
-$('billCsv').onclick = billCsv;
-$('sheet').addEventListener('input', e => { if (e.target.closest('.lotform-req, .lotform')) $('sheet').dataset.dirty = '1'; });
-$('tabs').onclick = e => { const b = e.target.closest('.tab'); if (!b) return; S.form = b.dataset.f; S.type = 'all'; S.limit = 100; render(); };
-$('status').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.status = b.dataset.s; S.type = 'all'; S.limit = 100; render(); };
-$('chips').onclick = e => { const b = e.target.closest('.chip'); if (!b) return; S.type = b.dataset.t; S.limit = 100; render(); };
-$('q').oninput = e => { S.q = e.target.value; S.limit = 100; render(); };
-$('more').onclick = () => { S.limit += 100; render(); };
-$('list').onclick = e => {
-  const q = e.target.closest('[data-quick]'); if (q) { toggleDone(q.dataset.quick); return; }
-  const o = e.target.closest('[data-open]'); if (o) { const r = find(o.dataset.open); if (r) openSheet(r); }
-};
-$('sheet').onclick = e => {
-  const el = e.target.closest('[data-editlot]'); if (el) { openLotSheet(el.dataset.editlot, true); return; }
-  const d = e.target.closest('dd.copy'); if (d) copy(d.dataset.copy);
-};
-$('bg').onclick = closeSheet;
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
-</script>
+        function moveGhost(x, y) {
+            if (!drag.ghost) return;
+            drag.ghost.style.left = (x - drag.offsetX) + 'px';
+            drag.ghost.style.top = (y - drag.offsetY) + 'px';
+        }
+
+        function clearDropMarkers() {
+            document.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+            document.querySelectorAll('.grid-drop-target').forEach(el => el.classList.remove('grid-drop-target'));
+        }
+
+        // 指の位置から「どこに入れるか」を決める
+        function updateDropTarget(x, y) {
+            clearDropMarkers();
+            drag.target = null;
+            const under = document.elementFromPoint(x, y);
+            if (!under) return;
+
+            const icon = under.closest('.app-icon');
+            if (icon && !icon.classList.contains('drag-ghost')) {
+                if (icon.dataset.cardId === drag.cardId) return;
+                const r = icon.getBoundingClientRect();
+                const after = x > r.left + r.width / 2;
+                icon.classList.add(after ? 'drop-after' : 'drop-before');
+                drag.target = { type: 'card', id: icon.dataset.cardId, after };
+                return;
+            }
+
+            const section = under.closest('section');
+            const grid = section ? section.querySelector('[data-category-id]') : null;
+            if (grid) {
+                grid.classList.add('grid-drop-target');
+                drag.target = { type: 'grid', categoryId: grid.dataset.categoryId };
+            }
+        }
+
+        // 画面の上下端に指があるときは自動でスクロール
+        function autoScrollLoop() {
+            if (!drag.active) return;
+            const h = window.innerHeight;
+            let dy = 0;
+            if (drag.lastY < EDGE_SCROLL_ZONE) dy = -Math.ceil((EDGE_SCROLL_ZONE - drag.lastY) / 6);
+            else if (drag.lastY > h - EDGE_SCROLL_ZONE) dy = Math.ceil((drag.lastY - (h - EDGE_SCROLL_ZONE)) / 6);
+            if (dy !== 0) {
+                window.scrollBy(0, dy);
+                updateDropTarget(drag.lastX, drag.lastY);
+            }
+            drag.scrollRaf = requestAnimationFrame(autoScrollLoop);
+        }
+
+        function onPointerMove(e) {
+            if (e.pointerId !== drag.pointerId) return;
+            drag.lastX = e.clientX;
+            drag.lastY = e.clientY;
+
+            if (drag.pending) {
+                const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+                if (drag.pointerType === 'mouse') {
+                    if (dist > 5) startDrag();
+                } else if (dist > MOVE_TOLERANCE) {
+                    cancelPending(); // 長押し前に動いた → スクロールとして扱う
+                }
+                return;
+            }
+            if (drag.active) {
+                moveGhost(e.clientX, e.clientY);
+                updateDropTarget(e.clientX, e.clientY);
+            }
+        }
+
+        function cancelPending() {
+            clearTimeout(drag.timer);
+            if (drag.sourceEl) drag.sourceEl.classList.remove('pressing');
+            drag.pending = false;
+            drag.cardId = null;
+            drag.sourceEl = null;
+            drag.pointerId = null;
+        }
+
+        function onPointerUp(e) {
+            if (e.pointerId !== drag.pointerId) return;
+            if (drag.pending) { cancelPending(); return; }
+            if (!drag.active) return;
+            finishDrag(e.type !== 'pointercancel');
+        }
+
+        function finishDrag(commit) {
+            cancelAnimationFrame(drag.scrollRaf);
+            const target = drag.target;
+            const cardId = drag.cardId;
+
+            if (drag.ghost) drag.ghost.remove();
+            if (drag.sourceEl) drag.sourceEl.classList.remove('dragging');
+            document.body.classList.remove('is-dragging');
+            clearDropMarkers();
+
+            drag.active = false;
+            drag.ghost = null;
+            drag.sourceEl = null;
+            drag.cardId = null;
+            drag.pointerId = null;
+            drag.target = null;
+
+            // 指を離した直後のタップ判定で画面遷移しないようにする
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 350);
+
+            if (!commit || !target) return;
+            if (target.type === 'card') placeCard(cardId, target.id, target.after);
+            else if (target.type === 'grid') moveCardToCategoryEnd(cardId, target.categoryId);
+        }
+
+        // ドラッグ中だけスクロールを止める（長押し前はふつうにスクロールできる）
+        document.addEventListener('touchmove', (e) => {
+            if (drag.active) e.preventDefault();
+        }, { passive: false });
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
+        window.addEventListener('blur', () => { if (drag.active) finishDrag(false); else if (drag.pending) cancelPending(); });
+
+        // ---------- データ操作 ----------
+
+        function moveCategory(index, direction) {
+            const data = loadData();
+            const targetIndex = index + direction;
+            if (targetIndex < 0 || targetIndex >= data.categories.length) return;
+            const temp = data.categories[index];
+            data.categories[index] = data.categories[targetIndex];
+            data.categories[targetIndex] = temp;
+            saveData(data);
+        }
+
+        function deleteCategory(catId) {
+            const data = loadData();
+            if (data.cards.some(c => c.category === catId)) {
+                alert('このカテゴリに属するツールが存在するため削除できません。');
+                return;
+            }
+            if (confirm('このカテゴリを削除しますか？')) {
+                data.categories = data.categories.filter(c => c.id !== catId);
+                if (defaultData.categories.some(c => c.id === catId)) {
+                    data.deletedCategoryIds = [...new Set([...(data.deletedCategoryIds || []), catId])];
+                }
+                saveData(data);
+            }
+        }
+
+        // 対象アイコンの前（after=true なら後ろ）に入れる
+        function placeCard(sourceId, targetId, after) {
+            if (sourceId === targetId) return;
+            const data = loadData();
+            const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
+            const targetCard = data.cards.find(c => c.id === targetId);
+            if (sourceIdx === -1 || !targetCard) return;
+
+            const [sourceCard] = data.cards.splice(sourceIdx, 1);
+            sourceCard.category = targetCard.category;
+            const targetIdx = data.cards.findIndex(c => c.id === targetId);
+            data.cards.splice(after ? targetIdx + 1 : targetIdx, 0, sourceCard);
+            saveData(data);
+        }
+
+        // カテゴリの末尾に入れる
+        function moveCardToCategoryEnd(sourceId, targetCatId) {
+            const data = loadData();
+            const sourceIdx = data.cards.findIndex(c => c.id === sourceId);
+            if (sourceIdx === -1) return;
+            const [sourceCard] = data.cards.splice(sourceIdx, 1);
+            sourceCard.category = targetCatId;
+            data.cards.push(sourceCard);
+            saveData(data);
+        }
+
+        function openAddCategoryModal() {
+            document.getElementById('newCategoryName').value = '';
+            document.getElementById('categoryModal').classList.remove('hidden');
+        }
+        function closeAddCategoryModal() { document.getElementById('categoryModal').classList.add('hidden'); }
+        function addCategory() {
+            const name = document.getElementById('newCategoryName').value.trim();
+            if (!name) return;
+            const data = loadData();
+            data.categories.push({ id: 'cat_' + Date.now(), name: name });
+            saveData(data);
+            closeAddCategoryModal();
+        }
+
+        function resetDefault() {
+            if (confirm('初期状態に戻しますか？')) {
+                try {
+                    localStorage.removeItem(STORAGE_KEY);
+                    localStorage.removeItem(LEGACY_KEY);
+                } catch (e) {
+                    console.error("Reset error:", e);
+                }
+                render();
+            }
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === STORAGE_KEY && !drag.active) {
+                render();
+            }
+        });
+
+        render();
+    </script>
 </body>
 </html>
