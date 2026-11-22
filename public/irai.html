@@ -1856,7 +1856,7 @@ function zcGroup(x) {
 }
 // ショップの分け方：zaicoの「ショップ名」欄だけで分ける（空欄はまとめて「ショップ名なし（不明）」）
 const zcKey = x => x.shop ? 's:' + x.shop : '-';
-const zcKeyLabel = k => k === '-' ? 'ショップ名なし（不明）' : k.slice(2);
+const zcKeyLabel = k => k === '-' ? 'ショップ不明' : k.slice(2);
 
 function zcReadCache() {
   try {
@@ -1904,9 +1904,10 @@ function renderZc() {
   // ショップの選択肢（件数つき）
   const counts = new Map();
   ZC.items.forEach(x => { const k = zcKey(x); counts.set(k, (counts.get(k) || 0) + 1); });
+  if (!counts.has('-')) counts.set('-', 0);   // 「ショップ不明」はいつも選べるようにする（いちばん下）
   const keys = [...counts.keys()].sort((a, b) => (a === '-') - (b === '-') || a.localeCompare(b, 'ja'));
   if (!ZC.shop) ZC.shop = lzStore('zcShop');
-  if (ZC.shop && ZC.shop !== '*' && !counts.has(ZC.shop) && ZC.items.length) ZC.shop = '';
+  if (ZC.shop && ZC.shop !== '*' && (!counts.has(ZC.shop) || !/^(s:|-$)/.test(ZC.shop)) && ZC.items.length) ZC.shop = '';   // 前のグループ選択（g:…）が残っていたら外す
   const sel = $('zcShop');
   const opts = `<option value="">ショップを選んでください</option><option value="*">すべてのショップ</option>` +
     keys.map(k => `<option value="${esc(k)}">${esc(zcKeyLabel(k))}（${counts.get(k)}品目）</option>`).join('');
@@ -1931,7 +1932,7 @@ function renderZc() {
   const list = ZC.items.filter(x =>
     (ZC.shop === '*' || !ZC.shop || zcKey(x) === ZC.shop) &&
     (ZC.filter === 'all' || zcQty(x) > 0 || ZC.cart.has(x.id)) &&
-    (!words.length || words.every(w => half(`${x.title} ${x.code} ${x.place} ${x.shop} ${x.group} ${x.category}`).toLowerCase().includes(w))))
+    (!words.length || words.every(w => half(`${x.title} ${x.code} ${x.place} ${x.shop} ${x.category}`).toLowerCase().includes(w))))
     .sort((a, b) => a.title.localeCompare(b.title, 'ja'));
   const total = list.reduce((s, x) => s + zcQty(x), 0);
   const title = ZC.shop && ZC.shop !== '*' ? zcKeyLabel(ZC.shop) : (ZC.shop === '*' ? 'すべてのショップ' : '検索結果（全ショップ）');
