@@ -856,10 +856,19 @@ async function syncZaicoInventory(by) {
     const json = JSON.stringify(items);
     const n = Math.max(1, Math.ceil(json.length / ZINV_PART));
     const db = admin.firestore(), ref = zinvRef();
+    // 前回と中身が同じなら書き込まない（書き込むと、開いている全アプリが写しを読み直すため）
+    const h = require("crypto").createHash("md5").update(json).digest("base64");
+    const metaSnap = await ref.get();
+    const prev = metaSnap.exists ? metaSnap.data() : null;
+    if (prev && prev.h === h) {
+        logger.info(`zaico在庫に変化なし：${items.length}件（書き込みなし）by ${by || ""}`);
+        return { count: items.length, v: prev.v, unchanged: true };
+    }
     const batch = db.batch();
     for (let i = 0; i < n; i++) batch.set(ref.collection("parts").doc("p" + i), { v: start, i, s: json.slice(i * ZINV_PART, (i + 1) * ZINV_PART) });
-    for (let i = n; i < n + 10; i++) batch.delete(ref.collection("parts").doc("p" + i));   // 前より短くなったときの残りを消す
-    batch.set(ref, { v: start, parts: n, count: items.length, at: new Date().toISOString(), by: by || "" });
+    const prevParts = prev ? Number(prev.parts || 0) : n + 10;
+    for (let i = n; i < prevParts; i++) batch.delete(ref.collection("parts").doc("p" + i));   // 前より短くなったときの残りを消す
+    batch.set(ref, { v: start, h, parts: n, count: items.length, at: new Date().toISOString(), by: by || "" });
     await batch.commit();
     // 写しに入った変更（作り始める前の patches）は片付ける
     const old = await ref.collection("patches").where("at", "<=", start).get();
