@@ -473,10 +473,12 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 
 <dialog id="dlgZcItem">
   <div class="form">
-    <h2 style="margin:0;font-size:18px">在庫修正</h2>
+    <h2 style="margin:0;font-size:18px">在庫修正（在庫数・バーコード・ショップ名）</h2>
     <div id="zcItemInfo"></div>
     <label>在庫数<input id="zcItemQ" inputmode="decimal"></label>
     <p id="zcItemDiff" class="small muted" style="margin:0;min-height:1.4em"></p>
+    <label>QRコード・バーコードの値（変えると、まとまるくんの商品マスタも自動で直します）<input id="zcItemCode" autocomplete="off"></label>
+    <p id="zcItemCodeHint" class="small muted" style="margin:0;min-height:1.4em"></p>
     <label>ショップ名（一覧から選ぶか、入力）<input id="zcItemShop" list="zcShopList" autocomplete="off"></label>
     <datalist id="zcShopList"></datalist>
     <p class="muted small" style="margin:0">変えた項目だけをzaicoに書き換えます。読み込んだあとにzaicoで入出庫があった場合は、書き換えずに止まります（その入出庫を消さないため）。</p>
@@ -554,7 +556,7 @@ auth.onAuthStateChanged(async u => {
   $('#btnSettings').hidden = !u;
   $('#btnLogout').hidden = !u;
   $('#userName').textContent = u ? (u.displayName || u.email) : '';
-  if (!u) { $('#actionBar').hidden = true; stopCwReq(); return; }
+  if (!u) { $('#actionBar').hidden = true; stopCwReq(); if (typeof zinvStop === 'function') zinvStop(); return; }
   await loadConfig();
 });
 
@@ -2960,8 +2962,62 @@ function zcReadCache(){
   try{ const c = JSON.parse(localStorage.getItem(ZC_CACHE) || 'null'); if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); return true; } }catch(e){}
   return false;
 }
-function zcOpen(){ if (!ZC.at && !ZC.loading) { zcReadCache(); if (!ZC.at) { zcLoad(); return; } } zcRender(); }
-async function zcLoad(){
+// ---- 在庫の写し（zaico_inventory_cache）を見る。読めないときは zaico から直接取り寄せる ----
+const ZINV_SYNC_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiSyncZaicoInventory';
+const ZINV = { meta:null, base:null, baseV:null, patches:new Map(), on:false, failed:false, asked:false, unsubs:[] };
+function zinvStop(){ ZINV.unsubs.forEach(u => { try{ u(); }catch(e){} }); ZINV.unsubs = []; ZINV.on = false; }
+function zinvStart(){
+  if (ZINV.on || ZINV.failed || !state.user) return;
+  ZINV.on = true;
+  const ref = db.collection('zaico_inventory_cache').doc('current');
+  const fail = e => { console.warn('在庫の写しを読めないため、zaicoから直接取り寄せます', e); ZINV.failed = true; zinvStop(); if (!ZC.at) zcLoadDirect(); };
+  ZINV.unsubs.push(ref.onSnapshot(async snap => {
+    const m = snap.data();
+    if (!m) { if (!ZINV.asked) { ZINV.asked = true; zcSyncNow(); } return; }   // まだ写しがない → 作ってもらう
+    ZINV.meta = m;
+    if (ZINV.baseV !== m.v) {
+      const ps = await ref.collection('parts').get();
+      const parts = ps.docs.map(d => d.data()).filter(p => p.v === m.v).sort((a,b) => a.i - b.i);
+      if (parts.length !== m.parts || ZINV.meta.v !== m.v) return;   // 書き込みの途中
+      ZINV.base = JSON.parse(parts.map(p => p.s).join('')); ZINV.baseV = m.v;
+    }
+    zinvApply();
+  }, fail));
+  ZINV.unsubs.push(ref.collection('patches').onSnapshot(snap => {
+    snap.docChanges().forEach(c => c.type === 'removed' ? ZINV.patches.delete(c.doc.id) : ZINV.patches.set(c.doc.id, c.doc.data()));
+    zinvApply();
+  }, fail));
+}
+function zinvApply(){
+  if (!ZINV.base || !ZINV.meta) return;
+  const map = new Map(ZINV.base.map(x => [String(x.id), x]));
+  ZINV.patches.forEach((p, id) => { if (!(Number(p.at) > Number(ZINV.meta.v))) return; if (p.item) map.set(id, p.item); else map.delete(id); });
+  ZC.items = [...map.values()].map(x => ({ id:String(x.id), title:String(x.title || ''), code:zcHalf(x.code || '').trim(), place:String(x.place || '').trim(),
+    quantity:x.quantity ?? '', unit:x.unit || '', shop:String(x.shop || '').trim() }));
+  ZC.at = new Date(ZINV.meta.at || Number(ZINV.meta.v)); ZC.err = '';
+  zcSaveCache(); zcRender();
+}
+async function zcSyncNow(){
+  if (ZC.syncing) return;
+  ZC.syncing = true; zcRender();
+  try{
+    const res = await fetch(ZINV_SYNC_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ by: (state.user && state.user.email) || '' }) });
+    const d = await res.json();
+    if (!d.success) throw new Error(d.error || '更新できませんでした');
+    toast(d.skipped ? 'さっき更新したばかりなので、そのままの在庫を表示しています' : 'zaicoの最新の在庫にしました（'+d.count+'品目）');
+  }catch(e){
+    toast('写しを更新できなかったので、zaicoから直接読み込みます：'+e.message, 6000);
+    ZC.syncing = false; return zcLoadDirect();
+  }finally{ ZC.syncing = false; zcRender(); }
+}
+function zcOpen(){
+  if (!ZC.at) zcReadCache();
+  if (!ZINV.failed) zinvStart();
+  else if (!ZC.at && !ZC.loading) zcLoadDirect();
+  zcRender();
+}
+async function zcLoad(){ if (ZINV.failed) return zcLoadDirect(); zinvStart(); return zcSyncNow(); }
+async function zcLoadDirect(){
   if (ZC.loading) return ZC.loading;
   ZC.err = '';
   ZC.loading = (async () => {
@@ -2992,10 +3048,10 @@ function zcVisible(){
 }
 function zcRender(){
   if ($('#tabZaico').hidden) return;
-  $('#zcMeta').textContent = ZC.loading ? 'zaicoから読み込み中…' : ZC.at
-    ? 'zaico '+ZC.items.length+'品目・'+ZC.at.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })+' に読み込み（最新にしたいときは「zaicoから読み直す」）' : '';
+  $('#zcMeta').textContent = ZC.syncing ? 'zaicoから最新の在庫を取り寄せています…（1〜2分かかることがあります）' : ZC.loading ? 'zaicoから読み込み中…' : ZC.at
+    ? 'zaico '+ZC.items.length+'品目・'+ZC.at.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })+' 時点'+(ZINV.failed ? '（最新にしたいときは「zaicoから読み直す」）' : '（10分ごとに自動で更新・ほかのアプリでの変更もすぐ反映）') : '';
   $('#zcAlert').innerHTML = ZC.err ? '<p class="st-ng small" style="margin:0">zaicoの在庫を読み込めませんでした：'+esc(ZC.err)+'</p>' : '';
-  if (!ZC.at) { $('#zcList').innerHTML = ''; $('#zcMore').hidden = true; zcRenderBar(); return; }
+  if (!ZC.at) { $('#zcList').innerHTML = (ZC.syncing || ZC.loading || ZINV.on) && !ZC.err ? '<p class="muted">zaicoの在庫を読み込み中…</p>' : ''; $('#zcMore').hidden = true; zcRenderBar(); return; }
   const list = zcVisible();
   const total = list.reduce((s, x) => s + zcQty(x), 0);
   const title = ZC.scope === 'all' ? 'すべてのショップ' : ZC_MY_SHOP;
@@ -3185,6 +3241,8 @@ function zcOpenItem(id){
     + '<dt>今の在庫数</dt><dd>'+esc(zcFmt(q0))+esc(x.unit || '')+' <span class="muted small">（'+(ZC.at ? esc(ZC.at.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })) : '')+' に読み込み）</span></dd></dl>';
   $('#zcItemQ').value = zcFmt(q0);
   $('#zcItemShop').value = x.shop;
+  $('#zcItemCode').value = x.code;
+  $('#zcItemCodeHint').textContent = '';
   $('#zcShopList').innerHTML = [...new Set(ZC.items.map(v => v.shop).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'ja')).map(v => '<option value="'+esc(v)+'">').join('');
   $('#zcItemDiff').textContent = '';
   ['#zcItemSave', '#zcItemDel'].forEach(s => $(s).disabled = false);
@@ -3197,7 +3255,15 @@ $('#zcItemQ').addEventListener('input', () => {
   const t = zcHalf($('#zcItemQ').value).replace(/,/g, '').trim(), n = Number(t), q0 = zcQty(x);
   $('#zcItemDiff').textContent = t === '' || isNaN(n) || n === q0 ? '' : '在庫数を '+zcFmt(q0)+' → '+zcFmt(n)+'（'+(n > q0 ? '+' : '')+zcFmt(n - q0)+'）にします';
 });
-['#zcItemQ', '#zcItemShop'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#zcItemSave').click(); } }));
+$('#zcItemCode').addEventListener('input', () => {
+  const x = ZC.cur; if (!x) return;
+  const c = zcHalf($('#zcItemCode').value).trim(), h = $('#zcItemCodeHint');
+  const dup = c && c !== x.code ? ZC.items.filter(v => v.id !== x.id && v.code === c) : [];
+  h.className = 'small ' + (dup.length || !c ? 'st-ng' : 'muted');
+  h.textContent = !c ? 'バーコードは空欄にできません' : c === x.code ? '' : dup.length
+    ? '⚠ 同じバーコードの商品がほかにあります：'+dup.slice(0, 2).map(v => v.title).join('、')+(dup.length > 2 ? ' ほか' : '') : 'バーコードを「'+(x.code || '（なし）')+'」→「'+c+'」に変えます';
+});
+['#zcItemQ', '#zcItemShop', '#zcItemCode'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#zcItemSave').click(); } }));
 async function zcCallEdit(body){
   const idToken = await state.user.getIdToken();
   let res, data;
@@ -3220,18 +3286,37 @@ $('#zcItemSave').onclick = async () => {
     if (!confirm('「'+x.title+'」の在庫数を '+zcFmt(q0)+' → '+zcFmt(n)+' に変更します。よろしいですか？')) return;
     body.quantity = n; body.expectQuantity = q0;
   }
-  if (!('shop' in body) && !('quantity' in body)) { $('#dlgZcItem').close(); return; }
+  const code = zcHalf($('#zcItemCode').value).trim();
+  if (!code) { toast('バーコードは空欄にできません'); return; }
+  if (code !== x.code) {
+    const dup = ZC.items.filter(v => v.id !== x.id && v.code === code);
+    if (!confirm('「'+x.title+'」のバーコードを変更します。\n\n前：'+(x.code || '（なし）')+'\n後：'+code
+      + '\n\nまとまるくんの商品マスタで前のバーコードを使っているSKU・セット品も、新しいバーコードに自動で直します。'
+      + (dup.length ? '\n\n⚠ 同じバーコードの商品がほかに'+dup.length+'件あります（'+dup.slice(0, 3).map(v => v.title).join('、')+'）。同じバーコードが2つあると、出庫指示でどちらか分からなくなります。' : '')
+      + '\n\nよろしいですか？')) return;
+    body.code = code; body.expectCode = x.code;
+    body.oldCodeShared = !!x.code && ZC.items.some(v => v.id !== x.id && v.code === x.code);   // 前のバーコードがほかの商品にも付いていれば、マスタはIDでつながっているものだけ直す
+  }
+  if (!('shop' in body) && !('quantity' in body) && !('code' in body)) { $('#dlgZcItem').close(); return; }
   const b = $('#zcItemSave'); b.disabled = true; b.textContent = '保存中…';
   try{
     const data = await zcCallEdit(body);
     if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 最新の数で確かめ直してもらう
-      x.quantity = data.currentQuantity; zcSaveCache(); zcRender(); zcOpenItem(x.id); alert(data.error); return;
+      x.quantity = data.currentQuantity; if (data.currentCode != null) x.code = data.currentCode; zcSaveCache(); zcRender(); zcOpenItem(x.id); alert(data.error); return;
     }
     if (!data.success) throw new Error(data.error || '変更できませんでした');
+    if ('code' in body) x.code = data.code ?? body.code;
     if ('shop' in body) x.shop = data.shop ?? body.shop;
     if ('quantity' in body) x.quantity = data.quantity ?? body.quantity;
     zcSaveCache(); $('#dlgZcItem').close(); zcRender();
-    toast([('quantity' in body) ? '在庫数を '+zcFmt(Number(x.quantity))+' に' : '', ('shop' in body) ? (body.shop ? 'ショップ名を「'+body.shop+'」に' : 'ショップ名を空欄に') : ''].filter(Boolean).join('、')+'しました');
+    let msg = [('quantity' in body) ? '在庫数を '+zcFmt(Number(x.quantity))+' に' : '', ('code' in body) ? 'バーコードを「'+x.code+'」に' : '', ('shop' in body) ? (body.shop ? 'ショップ名を「'+body.shop+'」に' : 'ショップ名を空欄に') : ''].filter(Boolean).join('、')+'しました';
+    if ('code' in body) {
+      const m = data.masters;
+      if (data.masterError) msg += '。まとまるくんの商品マスタは直せませんでした（'+data.masterError+'）。商品マスタで手で直してください';
+      else if (m && (m.skus.length || m.sets.length)) msg += '。まとまるくんの商品マスタも直しました（SKU '+m.skus.length+'件'+(m.sets.length ? '・セット品 '+m.sets.length+'件' : '')+'）';
+      else msg += body.oldCodeShared ? '。前のバーコードがほかの商品にも付いていたため、商品マスタは直していません。必要なら商品マスタで手で直してください' : '。まとまるくんの商品マスタには、前のバーコードのSKUはありませんでした';
+      alert(msg);
+    } else toast(msg);
   }catch(e){ b.disabled = false; b.textContent = 'zaicoに保存'; toast('保存できませんでした：'+e.message, 8000); }
 };
 $('#zcItemDel').onclick = async () => {
