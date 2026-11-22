@@ -604,6 +604,8 @@ function readShop(inv) {
     if (a && typeof a === "object") return String(a[SHOP_ATTR_NAME] ?? "").trim();
     return "";
 }
+// zaicoのエラーを、画面でわかる日本語にする
+const zaicoErrJa = (t) => /stocktaking/i.test(String(t)) ? "zaicoで棚卸の最中のため、変更・削除できません。zaicoで棚卸を終えてから、もう一度お試しください" : "";
 const readQty = (inv) => { const n = Number(inv.quantity ?? inv.logical_quantity); return isNaN(n) ? null : n; };
 
 exports.apiUpdateZaicoShop = onRequest(
@@ -682,7 +684,7 @@ exports.apiUpdateZaicoShop = onRequest(
                 const dt = await dr.text();
                 if (!dr.ok && dr.status !== 404) {
                     await logRef.update({ status: "failed", error: dt.slice(0, 500) });
-                    throw new Error(`zaicoで削除できませんでした (${dr.status}): ${dt.slice(0, 300)}`);
+                    throw new Error(zaicoErrJa(dt) || `zaicoで削除できませんでした (${dr.status}): ${dt.slice(0, 300)}`);
                 }
                 // 本当に消えたか確かめる
                 const chk = await fetch(url, { method: "GET", headers });
@@ -708,13 +710,12 @@ exports.apiUpdateZaicoShop = onRequest(
             }
             if (wantShop && beforeShop !== shop) {
                 // ショップ名だけ差し替える（ほかの追加項目はそのまま送り返す）
+                // ※zaico v2 の書き込みは { "項目名": "値" } のオブジェクト形式（配列だと400エラー）
                 const cur = inv.optional_attributes ?? inv.optional_attribute_values ?? null;
-                let attrs;
-                if (Array.isArray(cur)) attrs = cur.map(a => ({ name: attrName(a), value: attrValue(a) })).filter(a => a.name);
-                else if (cur && typeof cur === "object") attrs = Object.keys(cur).map(k => ({ name: k, value: String(cur[k] ?? "") }));
-                else attrs = [];
-                const hit = attrs.find(a => a.name === SHOP_ATTR_NAME);
-                if (hit) hit.value = shop; else attrs.push({ name: SHOP_ATTR_NAME, value: shop });
+                const attrs = {};
+                if (Array.isArray(cur)) cur.forEach(a => { const k = attrName(a); if (k) attrs[k] = attrValue(a); });
+                else if (cur && typeof cur === "object") Object.keys(cur).forEach(k => { const v = cur[k]; attrs[k] = v === null || v === undefined ? "" : String(typeof v === "object" ? (v.value ?? v.name ?? "") : v); });
+                attrs[SHOP_ATTR_NAME] = shop;
                 payload.optional_attributes = attrs;
             }
             if (!Object.keys(payload).length) {
@@ -727,7 +728,7 @@ exports.apiUpdateZaicoShop = onRequest(
             let r = await fetch(url, { method: "PUT", headers, body });
             if (r.status === 404 || r.status === 405) r = await fetch(url, { method: "PATCH", headers, body });
             const rt = await r.text();
-            if (!r.ok) throw new Error(`zaicoで書き換えられませんでした (${r.status}): ${rt.slice(0, 300)}`);
+            if (!r.ok) throw new Error(zaicoErrJa(rt) || `zaicoで書き換えられませんでした (${r.status}): ${rt.slice(0, 300)}`);
 
             // ④ 読み直して確かめる
             const afterInv = await getInv();
