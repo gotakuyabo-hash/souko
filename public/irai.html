@@ -198,6 +198,36 @@ details.bd table{margin-top:6px}
 .item.is-cancel .l2{text-decoration:line-through}
 .cxl-box{margin-top:14px;background:#FFF5F5;border:1px solid #FFA8A8;border-radius:8px;padding:10px 12px;font-size:13px}
 .cxl-box b{color:var(--late)}
+/* ラザダくん在庫 */
+:root{--lz:#1A3A8F}
+.sheet[data-f="lz"]{--c:var(--lz)}
+.lzsel{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);max-width:100%;font-weight:700}
+.lz-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:10px}
+.lz-h{display:flex;justify-content:space-between;gap:8px;padding:9px 12px;border-left:6px solid var(--lz);align-items:baseline;flex-wrap:wrap}
+.lz-h b{font-size:15px}
+.lz-h .sum{font-size:13px;color:var(--sub)}
+.lz-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:9px 12px;border:0;border-top:1px solid var(--line);width:100%;text-align:left;background:transparent;align-items:center}
+.lz-row .p{font-weight:700}
+.lz-row .d{font-size:12px;color:var(--sub)}
+.lz-row .q{font-size:20px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2}
+.lz-row .q small{display:block;font-size:11px;color:var(--sub);font-weight:400}
+.lz-row.neg{background:#FFF5F5}
+.lz-row.neg .av{color:var(--late);font-weight:700}
+.lz-row.zero{opacity:.55}
+.lotform select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;background:var(--surface)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* zaico在庫 */
+:root{--zc:#0B7285}
+.sheet[data-f="zc"]{--c:var(--zc)}
+.lz-box.zc .lz-h{border-left-color:var(--zc)}
+.incart{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:0 5px;margin-left:4px;background:var(--zc);color:#fff}
+.zbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--zc);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center;justify-content:center;z-index:9;flex-wrap:wrap}
+.zbar b{font-variant-numeric:tabular-nums}
+.zc-line{display:grid;grid-template-columns:1fr 5em auto;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.zc-line .lbl{font-size:13px;min-width:0}
+.zc-line .lbl small{display:block;color:var(--sub);font-size:12px}
+.zc-line input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;text-align:right}
+.zc-line.over .lbl small{color:var(--late);font-weight:700}
 </style>
 </head>
 <body>
@@ -223,6 +253,8 @@ details.bd table{margin-top:6px}
     <button data-v="req" aria-pressed="true">依頼</button>
     <button data-v="stock" aria-pressed="false">保管在庫</button>
     <button data-v="bill" aria-pressed="false">保管料請求</button>
+    <button data-v="lz" aria-pressed="false">ラザダ在庫</button>
+    <button data-v="zc" aria-pressed="false">zaico在庫</button>
   </div></div>
 
   <div id="reqView">
@@ -269,6 +301,51 @@ details.bd table{margin-top:6px}
     <p class="hint" id="billRule"></p>
     <div id="billBody"></div>
   </div>
+
+  <div id="lzView" hidden>
+    <div class="bar">
+      <select class="lzsel" id="lzSeller" aria-label="セラー"></select>
+      <button class="btn" id="lzReload">最新にする</button>
+      <button class="btn" id="lzOutBtn" style="background:var(--lz);color:#fff;border-color:var(--lz);font-weight:700">手動出庫</button>
+    </div>
+    <div class="bar">
+      <input class="search" id="lzq" type="search" placeholder="商品名・商品コードで探す（バーコードを読むと出庫画面が開きます）">
+      <div class="seg" id="lzfilter">
+        <button data-s="have" aria-pressed="true">在庫あり</button>
+        <button data-s="all" aria-pressed="false">すべて</button>
+      </div>
+    </div>
+    <div class="meta hint" id="lzMeta" style="margin:0 2px 8px"></div>
+    <div id="lzAlerts"></div>
+    <div id="lzList"></div>
+    <h3 style="font-size:15px;margin:16px 2px 6px">手動出庫の履歴<span class="hint" id="lzHistCount" style="margin-left:8px"></span></h3>
+    <div id="lzHist"></div>
+    <p class="hint">在庫＝入庫数量の合計 − 出荷済み注文の数量 − 手動出庫（ラザダくんの「在庫」タブと同じ計算です）。ここで出庫すると、ラザダくんの手動出庫シートに記録され、ラザダくん側の画面にもすぐ反映されます。</p>
+  </div>
+
+  <div id="zcView" hidden>
+    <div class="bar">
+      <select class="lzsel" id="zcShop" aria-label="ショップ"></select>
+      <button class="btn" id="zcReload">zaicoから読み直す</button>
+    </div>
+    <div class="bar">
+      <input class="search" id="zcq" type="search" placeholder="商品名・バーコード・保管場所で探す（バーコードを読むと出庫指示に追加）">
+      <div class="seg" id="zcfilter">
+        <button data-s="have" aria-pressed="true">在庫あり</button>
+        <button data-s="all" aria-pressed="false">すべて</button>
+      </div>
+    </div>
+    <div class="meta hint" id="zcMeta" style="margin:0 2px 8px"></div>
+    <div id="zcAlerts"></div>
+    <div id="zcList"></div>
+    <button class="btn more" id="zcMore" hidden>さらに表示</button>
+    <p class="hint">商品をタップするか、検索欄でバーコードを読むと「出庫指示」に入ります。まとめて内容を確認してから、zaicoに1枚の出庫指示として登録します（まとまるくんと同じ仕組みで、「zaico出庫履歴」にも残ります）。</p>
+  </div>
+  <div class="zbar" id="zcBar" hidden>
+    <span>出庫指示 <b id="zcBarN"></b></span>
+    <button class="btn" id="zcBarClear">空にする</button>
+    <button class="primary" id="zcBarGo" style="background:var(--zc);flex:0 1 auto">内容を確認して送信</button>
+  </div>
 </div>
 
 <div class="sheet-bg" id="bg"></div>
@@ -278,7 +355,7 @@ details.bd table{margin-top:6px}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ===== Firebaseの設定（souko-2de57） =====
 const firebaseConfig = {
@@ -606,6 +683,7 @@ onAuthStateChanged(auth, user => {
   S.unsubs.forEach(u => u()); S.unsubs = [];
   S.loaded = { reqs: false, acts: false };
   S.user = user;
+  lzReset();
   $('loginView').hidden = !!user;
   $('appView').hidden = !user;
   if (!user) return;
@@ -712,8 +790,13 @@ function render() {
   $('reqView').hidden = S.view !== 'req';
   $('stockView').hidden = S.view !== 'stock';
   $('billView').hidden = S.view !== 'bill';
+  $('lzView').hidden = S.view !== 'lz';
+  $('zcView').hidden = S.view !== 'zc';
+  $('zcBar').hidden = !(S.view === 'zc' && ZC.cart.size);
   if (S.view === 'req') renderReq(recs);
   else if (S.view === 'stock') renderStock(recs);
+  else if (S.view === 'lz') renderLz();
+  else if (S.view === 'zc') renderZc();
   else renderBill();
 
   const sh = $('sheet'), openId = sh.dataset.id;
@@ -1430,6 +1513,550 @@ function billCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ========== ラザダくん（配送管理シート shopeesheet.html）の在庫を見る・手動出庫する ==========
+// ラザダくんと同じGAS（getData／addManualOut／deleteManualOut）と、同じFirestoreの保存（delivery_cache）を使う。
+// ここで出庫するとラザダくんの「手動出庫シート」に記録され、ラザダくん側の画面にも自動で反映される。
+const LZ_API = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec'; // ラザダくんの API_URL と同じ
+const LZ_SELLERS = 'deliverySellers';   // ラザダくんのセラー一覧
+const LZ_CACHE = 'delivery_cache';      // ラザダくんの保存場所（セラーごと）
+const LZ_PART = 250000;
+const LZ_CLIENT = 'irai_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+const LZ_DESTS = ['Shopee', 'Lazada', 'Amazon', 'サンプル', '返品・破損'];
+const LZ = { sellers: [], sellersLoaded: false, sellersErr: '', sid: '', D: null, v: 0, checking: false, writing: false, err: '', q: '', filter: 'have', unsub: null, token: 0 };
+const lzStore = (k, v) => { try { if (v === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, v); } catch (e) { return ''; } };
+const lzCode = s => half(s).replace(/\s/g, '');   // 全角→半角・空白を取る（ラザダくんと同じ）
+const lzSeller = () => LZ.sellers.find(x => x.id === LZ.sid) || {};
+const lzMD = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? Number(m[2]) + '/' + Number(m[3]) : String(s || ''); };
+
+function lzReset() {
+  if (LZ.unsub) { LZ.unsub(); LZ.unsub = null; }
+  Object.assign(LZ, { sellers: [], sellersLoaded: false, sellersErr: '', sid: '', D: null, v: 0, checking: false, writing: false, err: '' });
+}
+
+async function lzRun(sheetId, fn, ...args) {
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(LZ_API)) throw new Error('LZ_API（ラザダくんのGASのURL）が設定されていません');
+  const idToken = await S.user.getIdToken();
+  let res;
+  try {
+    res = await fetch(LZ_API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ idToken, sheetId, fn, args }) });
+  } catch (e) { throw new Error('ラザダくんのGASにつながりません'); }
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error('ラザダくんのGASの返事が読めません'); }
+  if (!j.ok) throw new Error(j.error || '処理に失敗しました');
+  return j.result;
+}
+
+// ---- Firestoreの保存（ラザダくんと同じ形） ----
+async function lzReadCache(sid) {
+  const ref = doc(db, LZ_CACHE, sid);
+  const m = await getDoc(ref);
+  if (!m.exists()) return null;
+  const meta = m.data();
+  const ps = await getDocs(collection(ref, 'parts'));
+  const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a, b) => a.i - b.i);
+  if (!meta.parts || parts.length !== meta.parts) return null;
+  return { v: meta.v, data: JSON.parse(parts.map(p => p.s).join('')) };
+}
+async function lzSaveCache() {
+  const sid = LZ.sid, D = LZ.D, seller = lzSeller();
+  if (!sid || !D) return;
+  const json = JSON.stringify(D), v = Date.now(), n = Math.max(1, Math.ceil(json.length / LZ_PART));
+  try {
+    const ref = doc(db, LZ_CACHE, sid);
+    const b = writeBatch(db);
+    for (let i = 0; i < n; i++) b.set(doc(ref, 'parts', 'p' + i), { i, v, s: json.slice(i * LZ_PART, (i + 1) * LZ_PART) });
+    for (let i = n; i < n + 10; i++) b.delete(doc(ref, 'parts', 'p' + i));
+    b.set(ref, { v, parts: n, sheetId: seller.sheetId || '', client: LZ_CLIENT, by: S.user.email, at: serverTimestamp() });
+    LZ.v = v;
+    await b.commit();
+  } catch (e) { console.warn('ラザダくんの保存に書けませんでした', e); }
+}
+// ラザダくん側で入庫・出荷・出庫があったら、自動で差し替える
+function lzWatch(sid) {
+  if (LZ.unsub) { LZ.unsub(); LZ.unsub = null; }
+  if (!sid) return;
+  LZ.unsub = onSnapshot(doc(db, LZ_CACHE, sid), snap => {
+    const m = snap.data();
+    if (!m || m.client === LZ_CLIENT || m.v <= LZ.v || sid !== LZ.sid || LZ.writing) return;
+    lzReadCache(sid).then(c => {
+      if (!c || sid !== LZ.sid || c.v <= LZ.v || LZ.writing) return;
+      LZ.v = c.v; LZ.D = c.data; render();
+    }).catch(e => console.warn(e));
+  }, e => console.warn(e));
+}
+
+// ---- 読み込み ----
+async function lzLoadSellers() {
+  LZ.sellersLoaded = true;
+  try {
+    const snap = await getDocs(collection(db, LZ_SELLERS));
+    LZ.sellers = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.sheetId)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+    LZ.sellersErr = '';
+    const saved = lzStore('lzSeller');
+    const cur = LZ.sellers.find(x => x.id === saved) || LZ.sellers.find(x => /lazada/i.test(x.platform || '')) || LZ.sellers[0];
+    if (cur) lzSelect(cur.id); else render();
+  } catch (e) {
+    LZ.sellersErr = e.code === 'permission-denied' ? 'ラザダくんのセラー一覧（deliverySellers）を読む許可がありません。Firestoreのルールを確認してください。' : 'セラー一覧を読み込めませんでした：' + e.message;
+    render();
+  }
+}
+function lzSelect(id) {
+  lzStore('lzSeller', id);
+  Object.assign(LZ, { sid: id, D: null, v: 0, err: '' });
+  lzWatch(id);
+  lzLoad();
+}
+// 1. 保存済みの内容をすぐ表示 → 2. 裏でシートの最新を読む（ラザダくんと同じ流れ）
+async function lzLoad() {
+  const sid = LZ.sid, seller = lzSeller();
+  if (!sid || !seller.sheetId) { render(); return; }
+  const tk = ++LZ.token;
+  if (!LZ.D) {
+    render();
+    const c = await lzReadCache(sid).catch(e => { console.warn(e); return null; });
+    if (c && tk === LZ.token && !LZ.D) { LZ.v = c.v; LZ.D = c.data; }
+  }
+  LZ.checking = true; render();
+  const startV = LZ.v;
+  try {
+    const fresh = await lzRun(seller.sheetId, 'getData');
+    if (tk !== LZ.token) return;
+    // 読んでいる間にラザダくん側で新しく保存されたら、そちらを優先（古い内容で上書きしない）
+    if (LZ.v === startV && !LZ.writing) {
+      LZ.D = fresh; LZ.err = '';
+      if (!startV) lzSaveCache();   // まだ保存がなかったセラーだけ保存しておく
+    }
+  } catch (e) {
+    if (tk !== LZ.token) return;
+    LZ.err = (LZ.D ? 'シートの最新を読めませんでした（保存済みの内容を表示しています）：' : '読み込めませんでした：') + e.message;
+  } finally {
+    if (tk === LZ.token) { LZ.checking = false; render(); }
+  }
+}
+
+// ---- 在庫の計算（ラザダくんの「在庫」タブと同じルール） ----
+// 商品コードが一致するものを同じ商品として数える（コードがないものだけ商品名の完全一致）
+function lzStock(D) {
+  const names = new Map();
+  [...(D.inbound || []), ...(D.stock || [])].forEach(b => { const c = lzCode(b.code), n = String(b.name || '').trim(); if (c && n) names.set(n, c); });
+  const codeOf = (code, name) => lzCode(code) || names.get(String(name || '').trim()) || '';
+  const key = (code, name) => { const c = codeOf(code, name); return c ? 'c:' + c : 'n:' + String(name || '').trim(); };
+  const map = new Map();
+  const get = (code, name) => {
+    const k = key(code, name);
+    if (!map.has(k)) map.set(k, { key: k, name: String(name || '').trim(), code: codeOf(code, name), inQty: 0, pend: 0, out: 0, man: 0, resv: 0, inSheet: false });
+    return map.get(k);
+  };
+  (D.stock || []).forEach(st => { const x = get(st.code, st.name); x.inSheet = true; x.name = String(st.name || '').trim(); });
+  (D.inbound || []).forEach(b => {
+    const x = get(b.code, b.name);
+    if (b.inQty !== '' && b.inQty != null) x.inQty += Number(b.inQty) || 0;
+    else if (!b.inDate) x.pend += Number(b.planned) || 0;
+  });
+  (D.orders || []).forEach(o => {
+    const x = map.get(key(o.code, o.item)); if (!x) return;
+    if (o.shipped) x.out += Number(o.qty) || 0; else x.resv += Number(o.qty) || 0;
+  });
+  const man = (D.manual || []).map(m => ({ ...m, qty: Number(m.qty) || 0 }));
+  man.forEach(m => { get(m.code, m.name).man += m.qty; });
+  const rows = [...map.values()].map(x => ({ ...x, stock: x.inQty - x.out - x.man, avail: x.inQty - x.out - x.man - x.resv }));
+  return { rows, man, key };
+}
+
+// ---- 画面 ----
+function renderLz() {
+  if (!S.user) return;
+  if (!LZ.sellersLoaded) lzLoadSellers();
+  const sel = $('lzSeller');
+  const sig = LZ.sellers.map(x => x.id + x.name + x.platform).join('|');
+  if (sel.dataset.sig !== sig) {
+    sel.innerHTML = LZ.sellers.map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.platform ? '（' + esc(x.platform) + '）' : ''}</option>`).join('');
+    sel.dataset.sig = sig;
+  }
+  sel.hidden = !LZ.sellers.length;
+  if (LZ.sid) sel.value = LZ.sid;
+
+  const D = LZ.D;
+  $('lzMeta').textContent = D ? `${D.title || ''}　${D.loadedAt ? D.loadedAt + ' のシート' : ''}${LZ.writing ? '・シートに記録中…' : LZ.checking ? '・最新を確認中…' : ''}` : '';
+  const al = [];
+  if (LZ.sellersErr) al.push(LZ.sellersErr);
+  if (LZ.err) al.push(LZ.err);
+  if (LZ.sellersLoaded && !LZ.sellersErr && !LZ.sellers.length && !LZ.sid) al.push('ラザダくんにセラーが登録されていません。ラザダくんの「セラー管理」から追加してください。');
+  $('lzAlerts').innerHTML = al.map(t => `<div class="alert">${esc(t)}</div>`).join('');
+
+  if (!D) {
+    $('lzList').innerHTML = LZ.sid || !LZ.sellersLoaded ? '<div class="loading">読み込み中…</div>' : '';
+    $('lzHist').innerHTML = ''; $('lzHistCount').textContent = '';
+    return;
+  }
+  const { rows, man, key } = lzStock(D);
+  const q = LZ.q.trim().toLowerCase(), qc = lzCode(q).toLowerCase();
+  const hit = r => !q || r.name.toLowerCase().includes(q) || (qc && r.code.toLowerCase().includes(qc));
+  const list = rows.filter(r => hit(r) && (LZ.filter === 'all' || r.stock !== 0 || r.resv || r.pend))
+    .sort((a, b) => (a.avail < 0 ? 0 : 1) - (b.avail < 0 ? 0 : 1) || (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
+  const total = list.reduce((s, r) => s + r.stock, 0);
+  $('lzList').innerHTML = list.length ? `<div class="lz-box"><div class="lz-h"><b>${esc(lzSeller().name || D.title || '')}</b><span class="sum">${list.length}品目・在庫 ${total}点</span></div>
+    ${list.map(r => `<button class="lz-row ${r.avail < 0 ? 'neg' : ''} ${r.stock <= 0 && !r.resv ? 'zero' : ''}" data-lzkey="${esc(r.key)}">
+      <span><span class="p">${esc(r.name || '（商品名なし）')}</span>${r.inSheet ? '' : '<span class="badge exp">在庫シート未登録</span>'}
+        <span class="d" style="display:block">${r.code ? esc(r.code) + '　' : ''}入庫 ${r.inQty}・出荷 ${r.out}${r.man ? '・手動出庫 ' + r.man : ''}${r.resv ? `・未出荷の注文 ${r.resv}・<span class="av">引当後 ${r.avail}</span>` : ''}${r.pend ? '・入荷待ち ' + r.pend : ''}</span></span>
+      <span class="q">${r.stock}<small>在庫・タップで出庫</small></span></button>`).join('')}</div>`
+    : `<div class="empty">${q ? '当てはまる商品はありません。' : LZ.filter === 'have' ? '在庫のある商品はありません。「すべて」で0点の商品も見られます。' : '商品がありません。'}</div>`;
+
+  // 手動出庫の履歴（新しい順・最大50件）
+  const nameOf = new Map(rows.map(r => [r.key, r.name]));
+  const hl = man.filter(m => !q || [m.name, m.code, m.dest, m.note, m.staff].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (Number(b.row) - Number(a.row)));
+  $('lzHistCount').textContent = hl.length ? `${hl.length}件・合計 ${hl.reduce((s, m) => s + m.qty, 0)}点` : '';
+  $('lzHist').innerHTML = hl.length ? `<div class="tbl"><table class="bill"><thead><tr><th>出庫日</th><th>商品</th><th class="n">数量</th><th>出庫先</th><th>担当</th><th>備考</th><th></th></tr></thead><tbody>
+    ${hl.slice(0, 50).map(m => `<tr><td>${esc(lzMD(m.date))}</td><td style="white-space:normal">${esc(nameOf.get(key(m.code, m.name)) || m.name)}${m.code ? `<div class="hint" style="margin:0">${esc(m.code)}</div>` : ''}</td>
+      <td class="n"><b>${m.qty}</b></td><td>${esc(m.dest)}</td><td>${esc(m.staff)}</td><td style="white-space:normal">${esc(m.note)}</td>
+      <td><button class="mini danger" data-lzdel="${esc(m.row)}">取り消し</button></td></tr>`).join('')}</tbody></table></div>${hl.length > 50 ? '<p class="hint">古い履歴はラザダくんで確認できます。</p>' : ''}`
+    : `<p class="hint">${q ? '当てはまる手動出庫はありません。' : 'まだ手動出庫はありません。'}</p>`;
+}
+
+// ---- 手動出庫 ----
+function openLzOut(presetKey) {
+  const D = LZ.D;
+  if (!D) { toast('在庫を読み込み中です。少し待ってください'); return; }
+  if (!D.hasManualApi) { toast('ラザダくんのGASが手動出庫に対応していません。新しいGASのコードで「新バージョン」としてデプロイしてください'); return; }
+  const { rows } = lzStock(D);
+  const list = rows.slice().sort((a, b) => (a.code || '~').localeCompare(b.code || '~') || a.name.localeCompare(b.name, 'ja'));
+  if (!list.length) { toast('商品がありません。先にラザダくんで入庫を登録してください'); return; }
+  const dests = [...new Set([...LZ_DESTS, ...(D.manual || []).map(m => m.dest)].filter(Boolean))];
+  const sid = LZ.sid, seller = lzSeller();
+  const sh = $('sheet');
+  sh.dataset.id = 'lz'; sh.dataset.kind = 'lz'; sh.dataset.dirty = '1'; sh.dataset.f = 'lz';
+  sh.innerHTML = `
+    <div class="sheet-h"><div><h2>ラザダくん 手動出庫</h2><div class="sub">${esc(seller.name || D.title || '')}${seller.platform ? '（' + esc(seller.platform) + '）' : ''}　注文シートにない出庫を在庫から引きます</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    <div class="lotform">
+      <label class="field"><span>商品コード（バーコード可）</span><input id="lzoC" autocomplete="off" placeholder="読むと下の商品が選ばれます"></label>
+      <label class="field"><span>商品</span><select id="lzoI"><option value="">選んでください</option>
+        ${list.map(r => `<option value="${esc(r.key)}" ${r.key === presetKey ? 'selected' : ''}>${esc((r.code ? r.code + '　' : '') + r.name)}（在庫 ${r.stock}）</option>`).join('')}</select></label>
+      <p class="hint" id="lzoHint"></p>
+      <div class="two">
+        <label class="field"><span>出庫数</span><input id="lzoQ" class="num-in" inputmode="numeric"></label>
+        <label class="field"><span>出庫日</span><input type="date" id="lzoD" value="${todayYmd()}"></label>
+      </div>
+      <div class="two">
+        <label class="field"><span>出庫先・用途</span><input id="lzoDest" list="lzoDests" autocomplete="off" value="${esc(lzStore('lastManDest') || 'Shopee')}"></label>
+        <label class="field"><span>担当者</span><input id="lzoS" autocomplete="off" value="${esc(lzStore('lastStaff'))}"></label>
+      </div>
+      <datalist id="lzoDests">${dests.map(d => `<option value="${esc(d)}">`).join('')}</datalist>
+      <label class="field"><span>備考（任意・Order IDなど）</span><input id="lzoN" autocomplete="off"></label>
+      <div class="actions"><button class="primary" id="lzoGo" style="background:var(--lz)">出庫する</button></div>
+    </div>`;
+  $('closeSheet').onclick = closeSheet;
+  const pick = () => list.find(x => x.key === $('lzoI').value);
+  const hint = () => {
+    const r = pick(), h = $('lzoHint');
+    h.style.color = '';
+    h.textContent = r ? `在庫 ${r.stock}点・未出荷の注文 ${r.resv || 0}点・引当後 ${r.avail}点` : '';
+  };
+  const byCode = () => {
+    const c = lzCode($('lzoC').value);
+    if ($('lzoC').value !== c) $('lzoC').value = c;
+    if (!c) return false;
+    const r = list.find(x => x.code === c);
+    if (r) { $('lzoI').value = r.key; hint(); return true; }
+    $('lzoHint').textContent = 'このコードの商品が見つかりません'; $('lzoHint').style.color = '#B35C00';
+    return false;
+  };
+  $('lzoC').oninput = byCode;
+  $('lzoC').onkeydown = e => {   // バーコードリーダーのEnterでは登録せず、出庫数へ進む
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    (byCode() ? $('lzoQ') : $('lzoI')).focus();
+  };
+  $('lzoI').onchange = hint;
+  hint();
+  $('lzoGo').onclick = async () => {
+    const r = pick(), qty = toNum($('lzoQ').value), date = $('lzoD').value;
+    if (!r) { toast('商品を選んでください'); return; }
+    if (!(qty > 0)) { toast('出庫数を1以上で入れてください'); return; }
+    if (!date) { toast('出庫日を入れてください'); return; }
+    if (qty > r.stock && !confirm(`在庫（${r.stock}点）より多く出庫します。よろしいですか？`)) return;
+    if (sid !== LZ.sid) { toast('セラーが切り替わりました。もう一度開いてください'); closeSheet(); return; }
+    const staff = $('lzoS').value.trim(), dest = $('lzoDest').value.trim();
+    if (staff) lzStore('lastStaff', staff);
+    if (dest) lzStore('lastManDest', dest);
+    const rec = { code: r.code, name: r.name, qty, date, dest, staff, note: $('lzoN').value.trim() };
+    const b = $('lzoGo'); b.disabled = true; b.textContent = 'シートに記録中…';
+    LZ.writing = true; render();
+    try {
+      const res = await lzRun(seller.sheetId, 'addManualOut', rec);
+      let msg = `${r.name} を ${qty}点 出庫しました`;
+      const sk = (res && res.fix && res.fix.skipped) || [];
+      if (sk.length) msg += `（在庫シートの出庫数が手入力の商品：${sk.slice(0, 3).join('、')}${sk.length > 3 ? ' ほか' : ''}）`;
+      if (sid === LZ.sid) {
+        if (res && res.data) { LZ.D = res.data; await lzSaveCache(); }   // ラザダくんの画面にも反映
+        else { LZ.D.manual = (LZ.D.manual || []).concat([{ row: -Date.now(), id: '', ...rec }]); setTimeout(lzLoad, 0); }
+      }
+      closeSheet(); toast(msg);
+    } catch (e) {
+      b.disabled = false; b.textContent = '出庫する';
+      toast('出庫できませんでした：' + e.message);
+    } finally { LZ.writing = false; render(); }
+  };
+  showSheet();
+  setTimeout(() => (presetKey ? $('lzoQ') : $('lzoC')).focus(), 250);
+}
+
+async function lzDelOut(row) {
+  const D = LZ.D; if (!D) return;
+  const m = (D.manual || []).find(x => String(x.row) === String(row));
+  if (!m) return;
+  if (Number(m.row) < 0) { toast('この出庫はまだシートに反映中です。少し待ってからもう一度押してください'); return; }
+  if (!confirm(`「${m.name} ×${m.qty}」（${lzMD(m.date)}）の手動出庫を取り消しますか？\n手動出庫シートの行を消して、在庫に戻します。`)) return;
+  const sid = LZ.sid, seller = lzSeller();
+  LZ.writing = true; render();
+  try {
+    const res = await lzRun(seller.sheetId, 'deleteManualOut', { row: m.row, id: m.id });
+    if (sid === LZ.sid) {
+      if (res && res.data) { LZ.D = res.data; await lzSaveCache(); }
+      else { LZ.D.manual = (LZ.D.manual || []).filter(x => x.row !== m.row); setTimeout(lzLoad, 0); }
+    }
+    toast('手動出庫を取り消しました');
+  } catch (e) { toast('取り消せませんでした：' + e.message); }
+  finally { LZ.writing = false; render(); }
+}
+
+// ========== zaicoの在庫（ショップごと）を見る・出庫指示を登録する ==========
+// まとまるくん（shipping-format.html）と同じFirebaseの関数を使う（zaicoのAPIキーは関数の中にあり、画面には出ない）
+const ZC_LIST_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories';
+const ZC_SHIP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment';
+const ZC_LOG_COL = 'zaico_shipment_logs';      // まとまるくんの「zaico出庫履歴」と同じ保存先
+const ZC_SHOP_ATTR = 'ショップ名';             // zaicoの追加項目の名前（入っていればこれでショップを分ける）
+const ZC_CACHE = 'irai_zaico_inv_v1';
+const ZC = { items: [], at: null, loading: null, err: '', hasGroup: false, hasShop: false, shop: '', q: '', filter: 'have', limit: 200, cart: new Map(), sending: false, progress: 0 };
+
+// 追加項目（optional_attributes）から値を取り出す。配列 [{name, value}] でも、{名前: 値} でも読めるようにする
+function zcAttr(x, name) {
+  const a = x.optional_attributes ?? x.optionalAttributes;
+  if (Array.isArray(a)) { const f = a.find(o => o && String(o.name ?? o.title ?? '').trim() === name); return f ? String(f.value ?? '').trim() : ''; }
+  if (a && typeof a === 'object') return String(a[name] ?? '').trim();
+  return '';
+}
+function zcGroup(x) {
+  const g = x.user_group ?? x.userGroup ?? x.group;
+  if (g && typeof g === 'object') return String(g.name ?? g.title ?? '').trim();
+  return String(g ?? '').trim();
+}
+// ショップの分け方：「ショップ名」欄があればそれ、なければzaicoのグループ
+const zcKey = x => x.shop ? 's:' + x.shop : x.group ? 'g:' + x.group : '-';
+const zcKeyLabel = k => k === '-' ? 'ショップ・グループなし' : k.startsWith('s:') ? k.slice(2) : 'グループ：' + k.slice(2);
+
+function zcReadCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(ZC_CACHE) || 'null');
+    if (c && Array.isArray(c.items) && c.at) { ZC.items = c.items; ZC.at = new Date(c.at); ZC.hasGroup = !!c.hasGroup; ZC.hasShop = !!c.hasShop; return true; }
+  } catch (e) {}
+  return false;
+}
+async function zcLoad(force) {
+  if (!force && !ZC.at) zcReadCache();
+  if (ZC.at && !force) { render(); return; }
+  if (ZC.loading) return ZC.loading;
+  ZC.err = ''; ZC.progress = 0;
+  ZC.loading = (async () => {
+    await Promise.resolve();   // 先に「読み込み中」を表示してから読み込む
+    const all = []; let page = 1, hasGroup = false, hasShop = false;
+    for (let guard = 0; page && guard < 200; guard++) {
+      let res, data;
+      try { res = await fetch(`${ZC_LIST_URL}?page=${page}&pages=10`); }
+      catch (e) { throw new Error('zaico在庫一覧の関数につながりませんでした'); }
+      try { data = await res.json(); } catch (e) { throw new Error(`zaico在庫一覧の関数から正しい返事がありませんでした（${res.status}）`); }
+      if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+      (data.items || []).forEach(x => {
+        if ('user_group' in x || 'userGroup' in x || 'group' in x) hasGroup = true;
+        if ('optional_attributes' in x || 'optionalAttributes' in x) hasShop = true;
+        all.push({ id: String(x.id), title: String(x.title || ''), code: half(x.code || '').trim(), place: String(x.place || '').trim(),
+          quantity: x.quantity ?? '', unit: x.unit || '', category: x.category || '', group: zcGroup(x), shop: zcAttr(x, ZC_SHOP_ATTR) });
+      });
+      ZC.progress = all.length; renderZc();
+      page = data.nextPage || null;
+    }
+    Object.assign(ZC, { items: all, at: new Date(), hasGroup, hasShop });
+    try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: all, hasGroup, hasShop })); } catch (e) { console.warn('zaico在庫を端末に保存できませんでした', e); }
+  })();
+  render();
+  try { await ZC.loading; } catch (e) { ZC.err = e.message; } finally { ZC.loading = null; render(); }
+}
+const zcQty = x => { const n = Number(x.quantity); return isNaN(n) ? 0 : n; };
+const zcFmt = n => Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+
+function renderZc() {
+  if (!S.user) return;
+  if (!ZC.at && !ZC.loading && !ZC.err) { zcLoad(false); if (!ZC.at) return; }
+  // ショップの選択肢（件数つき）
+  const counts = new Map();
+  ZC.items.forEach(x => { const k = zcKey(x); counts.set(k, (counts.get(k) || 0) + 1); });
+  const keys = [...counts.keys()].sort((a, b) => (a === '-') - (b === '-') || a.localeCompare(b, 'ja'));
+  if (!ZC.shop) ZC.shop = lzStore('zcShop');
+  if (ZC.shop && ZC.shop !== '*' && !counts.has(ZC.shop) && ZC.items.length) ZC.shop = '';
+  const sel = $('zcShop');
+  const opts = `<option value="">ショップを選んでください</option><option value="*">すべてのショップ</option>` +
+    keys.map(k => `<option value="${esc(k)}">${esc(zcKeyLabel(k))}（${counts.get(k)}品目）</option>`).join('');
+  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
+  sel.value = ZC.shop;
+
+  $('zcMeta').textContent = ZC.loading ? `zaicoから読み込み中…（${ZC.progress}件）` : ZC.at ? `zaico ${ZC.items.length}品目・${ZC.at.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} に読み込み（最新にしたいときは「zaicoから読み直す」）` : '';
+  const al = [];
+  if (ZC.err) al.push(`zaicoの在庫を読み込めませんでした：${ZC.err}`);
+  if (ZC.at && !ZC.loading && !ZC.hasGroup && !ZC.hasShop)
+    al.push('zaico在庫一覧の関数（apiListZaicoInventories）が「グループ」と「追加項目（ショップ名）」を返していないため、ショップごとに分けられません。関数で user_group と optional_attributes も返すようにしてください。');
+  $('zcAlerts').innerHTML = al.map(t => `<div class="alert">${esc(t)}</div>`).join('');
+
+  if (!ZC.at) { $('zcList').innerHTML = ZC.loading ? '<div class="loading">zaicoから読み込み中…</div>' : ''; $('zcMore').hidden = true; return; }
+  if (!ZC.shop && !ZC.q.trim()) {
+    $('zcList').innerHTML = '<div class="empty">上でショップを選ぶと、そのショップの在庫が出ます（検索欄で全ショップから探すこともできます）。</div>';
+    $('zcMore').hidden = true; return;
+  }
+  const words = ZC.q.trim().toLowerCase().split(/[\s　]+/).filter(Boolean).map(w => half(w));
+  const list = ZC.items.filter(x =>
+    (ZC.shop === '*' || !ZC.shop || zcKey(x) === ZC.shop) &&
+    (ZC.filter === 'all' || zcQty(x) > 0 || ZC.cart.has(x.id)) &&
+    (!words.length || words.every(w => half(`${x.title} ${x.code} ${x.place} ${x.shop} ${x.group} ${x.category}`).toLowerCase().includes(w))))
+    .sort((a, b) => a.title.localeCompare(b.title, 'ja'));
+  const total = list.reduce((s, x) => s + zcQty(x), 0);
+  const title = ZC.shop && ZC.shop !== '*' ? zcKeyLabel(ZC.shop) : (ZC.shop === '*' ? 'すべてのショップ' : '検索結果（全ショップ）');
+  const showShop = ZC.shop === '*' || !ZC.shop;
+  $('zcList').innerHTML = list.length ? `<div class="lz-box zc"><div class="lz-h"><b>${esc(title)}</b><span class="sum">${list.length}品目・在庫 ${zcFmt(total)}</span></div>
+    ${list.slice(0, ZC.limit).map(x => { const q = zcQty(x), inc = ZC.cart.get(x.id);
+      return `<button class="lz-row ${q <= 0 ? 'zero' : ''}" data-zcid="${esc(x.id)}">
+      <span><span class="p">${esc(x.title || '（商品名なし）')}</span>${inc ? `<span class="incart">出庫指示 ${inc}</span>` : ''}
+        <span class="d" style="display:block">${x.code ? 'JAN ' + esc(x.code) : '<span style="color:var(--late)">バーコードなし</span>'}${x.place ? '・保管場所 ' + esc(x.place) : ''}${showShop ? '・' + esc(zcKeyLabel(zcKey(x))) : ''}</span></span>
+      <span class="q">${esc(zcFmt(q))}<small>${esc(x.unit || '')} タップで出庫指示へ</small></span></button>`; }).join('')}</div>`
+    : `<div class="empty">${ZC.q ? '当てはまる商品はありません。' : ZC.filter === 'have' ? '在庫のある商品はありません。「すべて」で0の商品も見られます。' : '商品がありません。'}</div>`;
+  $('zcMore').hidden = list.length <= ZC.limit;
+  $('zcMore').textContent = `さらに表示（残り${list.length - ZC.limit}品目）`;
+  $('zcBarN').textContent = `${ZC.cart.size}商品・${[...ZC.cart.values()].reduce((s, n) => s + n, 0)}点`;
+}
+
+function zcAdd(id, n) {
+  const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
+  if (!x.code) { toast('バーコードがない商品は、zaicoに出庫指示を送れません（zaicoでバーコードを登録してください）'); return; }
+  const next = (ZC.cart.get(x.id) || 0) + n;
+  if (next <= 0) ZC.cart.delete(x.id); else ZC.cart.set(x.id, next);
+  toast(`${x.title}（出庫指示 ${ZC.cart.get(x.id) || 0}点）`);
+}
+
+// 出庫指示の内容を確認して送信
+function openZcCart() {
+  if (!ZC.cart.size) return;
+  const sh = $('sheet');
+  sh.dataset.id = 'zc'; sh.dataset.kind = 'zc'; sh.dataset.dirty = '1'; sh.dataset.f = 'zc';
+  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x);
+  const shops = [...new Set(lines.map(l => zcKeyLabel(zcKey(l.x))))];
+  const defName = lzStore('zcCustomer') || (shops.length === 1 && !shops[0].startsWith('グループ') && shops[0] !== 'ショップ・グループなし' ? shops[0] : '');
+  sh.innerHTML = `
+    <div class="sheet-h"><div><h2>zaicoに出庫指示を登録</h2><div class="sub">${esc(shops.join('、'))}　${lines.length}商品</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    <div class="lotform">
+      <div id="zcLines">${lines.map(({ x, n }) => `<div class="zc-line ${n > zcQty(x) ? 'over' : ''}" data-id="${esc(x.id)}">
+        <div class="lbl">${esc(x.title)}<small>JAN ${esc(x.code)}${x.place ? '・' + esc(x.place) : ''}・在庫 ${esc(zcFmt(zcQty(x)))}${n > zcQty(x) ? '（在庫より多い）' : ''}</small></div>
+        <input class="zc-n" inputmode="numeric" value="${n}" aria-label="${esc(x.title)}の数量">
+        <button class="mini zc-del" aria-label="外す">×</button></div>`).join('')}</div>
+      <label class="field"><span>zaicoの取引先名</span><input id="zcCust" value="${esc(defName)}" placeholder="例：ショップ名・セラー名"></label>
+      <p class="hint">出庫予定日などは、まとまるくんの送信と同じ設定でzaicoに登録されます。登録した内容は、まとまるくんの「zaico出庫履歴」タブにも残ります。</p>
+      <div class="actions"><button class="primary" id="zcSend" style="background:var(--zc)">zaicoに出庫指示を送信</button></div>
+    </div>`;
+  $('closeSheet').onclick = () => { zcSyncCart(); closeSheet(); render(); };
+  $('zcLines').onclick = e => { const b = e.target.closest('.zc-del'); if (!b) return; const row = b.closest('.zc-line'); ZC.cart.delete(row.dataset.id); row.remove(); if (!ZC.cart.size) { closeSheet(); render(); } };
+  $('zcSend').onclick = zcSend;
+  showSheet();
+}
+function zcSyncCart() {
+  document.querySelectorAll('#zcLines .zc-line').forEach(r => { const n = toNum(r.querySelector('.zc-n').value); if (n > 0) ZC.cart.set(r.dataset.id, n); else ZC.cart.delete(r.dataset.id); });
+}
+
+async function zcSend() {
+  if (ZC.sending) return;
+  zcSyncCart();
+  const lines = [...ZC.cart].map(([id, n]) => ({ x: ZC.items.find(v => v.id === id), n })).filter(l => l.x && l.n > 0 && l.x.code);
+  if (!lines.length) { toast('送る商品がありません'); return; }
+  const customerName = $('zcCust').value.trim() || '保管品出庫';
+  const over = lines.filter(l => l.n > zcQty(l.x));
+  if (!confirm(`取引先「${customerName}」として、${lines.length}商品・${lines.reduce((s, l) => s + l.n, 0)}点の出庫指示をzaicoに登録しますか？` +
+    (over.length ? `\n\n※在庫より多い商品があります：\n${over.map(l => `・${l.x.title}（在庫 ${zcFmt(zcQty(l.x))}／出庫 ${l.n}）`).join('\n')}` : ''))) return;
+  lzStore('zcCustomer', customerName);
+  // まとまるくんと同じ形で送る（棚番がzaicoにない商品は「-」）
+  const items = lines.map(({ x, n }) => ({ barcode: x.code, productName: x.title, orderQty: n, multiplier: 1, shelfNumber: x.place || '-', pickCount: n, inventoryId: x.id, status: 'REGISTERED' }));
+  ZC.sending = true;
+  const b = $('zcSend'); b.disabled = true; b.textContent = '送信中…';
+  try {
+    let res, data;
+    try {
+      res = await fetch(ZC_SHIP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items, customerName }) });
+      data = await res.json();
+    } catch (err) {
+      await zcSaveLog({ kind: 'network', customerName, items, errorMessage: '通信エラー：' + err.message });
+      alert('通信エラーになりました。zaicoに登録されたか分からないため、続けて送り直さないでください（二重に出庫される可能性があります）。\nzaicoの出庫一覧を確認してください。（まとまるくんの「zaico出庫履歴」に記録しました）');
+      ZC.cart.clear(); closeSheet(); return;
+    }
+    const failures = zcFailures(data, items);
+    if (data.success) {
+      const registered = Number(data.count), hasCount = data.count !== undefined && data.count !== null && !isNaN(registered);
+      const gap = !failures.length && hasCount && registered < items.length ? items.length - registered : 0;
+      await zcSaveLog({ kind: 'success', customerName, slipNum: data.slipNum, items, failures, unknownGap: gap, registered: hasCount ? registered : null });
+      let msg = `zaicoに出庫指示を登録しました。\n伝票番号：${data.slipNum || '-'}（${hasCount ? registered : items.length}明細）`;
+      if (failures.length) msg += `\n\n【登録できなかった商品 ${failures.length}件】\n${failures.map(f => `・${f.productName || f.barcode}${f.reason ? `（${f.reason}）` : ''}`).join('\n')}\n※まとまるくんの「zaico出庫履歴」に未対応として残しました。`;
+      else if (gap) msg += `\n\n【注意】${items.length}明細のうち${gap}明細が登録されていません。zaicoの伝票を確認してください。`;
+      alert(msg);
+      ZC.cart.clear(); closeSheet();
+    } else {
+      await zcSaveLog({ kind: 'error', customerName, slipNum: data.slipNum || '', items, failures, errorMessage: data.error || '送信できませんでした' });
+      toast('送信できませんでした：' + (data.error || ''));
+      b.disabled = false; b.textContent = 'zaicoに出庫指示を送信';
+    }
+  } finally { ZC.sending = false; render(); }
+}
+// 関数から返ってきた「登録できなかった商品」（まとまるくんと同じ読み方）
+function zcFailures(data, sent) {
+  const raw = [];
+  ['missingBarcodes', 'notFound', 'not_found', 'skipped', 'skippedItems', 'failed', 'failedItems', 'missing', 'missingItems', 'unregistered', 'errors']
+    .forEach(k => { if (Array.isArray(data && data[k])) raw.push(...data[k]); });
+  const by = new Map(sent.map(it => [String(it.barcode), it])), seen = new Set(), out = [];
+  raw.forEach(x => {
+    const o = x && typeof x === 'object';
+    const bc = String(o ? (x.barcode || x.code || x.jan || '') : (x || '')).trim();
+    let name = o ? String(x.productName || x.title || x.name || '').trim() : '';
+    const reason = o ? String(x.reason || x.message || x.error || '').trim() : '';
+    const hit = bc ? by.get(bc) : null;
+    if (!name && hit) name = hit.productName;
+    const k = bc || name; if (!k || seen.has(k)) return; seen.add(k);
+    out.push({ barcode: bc, productName: name, shelfNumber: hit ? hit.shelfNumber : '', pickCount: hit ? hit.pickCount : '', reason });
+  });
+  return out;
+}
+// まとまるくんの「zaico出庫履歴」（zaico_shipment_logs）に同じ形で残す
+async function zcSaveLog({ kind, customerName, slipNum = '', items, failures = [], unknownGap = 0, registered = null, errorMessage = '' }) {
+  const now = new Date(), fail = new Map(failures.filter(f => f.barcode).map(f => [String(f.barcode), f]));
+  const rows = items.map(it => {
+    const base = { barcode: it.barcode, productName: it.productName, shelfNumber: it.shelfNumber, pickCount: it.pickCount, orderQty: it.orderQty, multiplier: 1 };
+    const f = fail.get(String(it.barcode));
+    if (kind === 'network') return { ...base, result: 'check', reason: '通信エラーのため、zaicoに登録されたか不明です' };
+    if (kind === 'error') return { ...base, result: 'failed', reason: (f && f.reason) || errorMessage };
+    if (f) return { ...base, result: 'failed', reason: f.reason || 'zaicoに商品がないなどの理由で登録されませんでした' };
+    if (unknownGap) return { ...base, result: 'check', reason: `送信${items.length}明細のうち${unknownGap}明細が未登録。どれが未登録かzaicoで確認してください` };
+    return { ...base, result: 'registered', reason: '' };
+  });
+  const cnt = r => rows.filter(x => x.result === r).length;
+  const counts = { registered: cnt('registered'), failed: cnt('failed'), notSent: 0, check: cnt('check') };
+  const pad = n => String(n).padStart(2, '0');
+  const date = ymd(now);
+  const log = {
+    id: `${date.replace(/-/g, '')}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${Math.random().toString(36).slice(2, 6)}`,
+    createdAt: now.toISOString(), date, customerName, slipNum: slipNum ? String(slipNum) : '',
+    status: kind === 'success' ? (counts.failed || counts.check ? 'partial' : 'ok') : 'error',
+    kind, errorMessage, sentCount: items.length, registeredCountFromZaico: registered, counts,
+    sourceFiles: ['依頼まとめ管理（zaico在庫）'], by: S.user ? S.user.email : '', handled: false, items: rows
+  };
+  try { await setDoc(doc(db, ZC_LOG_COL, log.id), log); return true; }
+  catch (e) { console.warn('zaico出庫履歴を保存できませんでした', e); return false; }
+}
+
 // ---------- 操作（Firestoreに記録 → GASがシートへ反映） ----------
 function writeAction(r, patch) {
   return setDoc(doc(db, 'irai_actions', r.id), {
@@ -1536,6 +2163,8 @@ function formFromHash() {
   const k = decodeURIComponent(location.hash.slice(1));
   if (k === 'hokan') { S.view = 'stock'; return true; }
   if (k === 'hokan-bill') { S.view = 'bill'; return true; }
+  if (k === 'lazada') { S.view = 'lz'; return true; }
+  if (k === 'zaico') { S.view = 'zc'; return true; }
   if (!FORM_ORDER.some(([f]) => f === k)) return false;
   S.view = 'req'; S.form = k; S.status = 'open'; S.type = 'all'; S.limit = 100;
   return true;
@@ -1555,6 +2184,43 @@ $('stockList').onclick = e => {
   const b = e.target.closest('[data-lot]'); if (b) openLotSheet(b.dataset.lot);
 };
 $('exportNow').onclick = exportNow;
+// ラザダ在庫
+$('lzSeller').onchange = e => lzSelect(e.target.value);
+$('lzReload').onclick = () => { if (LZ.sid) lzLoad(); };
+$('lzOutBtn').onclick = () => openLzOut('');
+$('lzq').oninput = e => { LZ.q = e.target.value; renderLz(); };
+$('lzq').onkeydown = e => {   // バーコードリーダーは最後にEnterを送る → コードが一致すれば出庫画面を開く
+  if (e.key !== 'Enter' || e.isComposing || !LZ.D) return;
+  e.preventDefault();
+  const c = lzCode(e.target.value); if (!c) return;
+  const r = lzStock(LZ.D).rows.find(x => x.code === c);
+  if (r) openLzOut(r.key); else toast('このコードの商品が見つかりません');
+};
+$('lzfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; LZ.filter = b.dataset.s;
+  document.querySelectorAll('#lzfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderLz(); };
+$('lzList').onclick = e => { const b = e.target.closest('[data-lzkey]'); if (b) openLzOut(b.dataset.lzkey); };
+$('lzHist').onclick = e => { const b = e.target.closest('[data-lzdel]'); if (b) lzDelOut(b.dataset.lzdel); };
+// zaico在庫
+$('zcShop').onchange = e => { ZC.shop = e.target.value; lzStore('zcShop', ZC.shop); ZC.limit = 200; renderZc(); };
+$('zcReload').onclick = () => zcLoad(true);
+$('zcq').oninput = e => { ZC.q = e.target.value; ZC.limit = 200; renderZc(); };
+$('zcq').onkeydown = e => {   // バーコードを読んだら（Enter）、その商品を出庫指示に1点追加
+  if (e.key !== 'Enter' || e.isComposing) return;
+  e.preventDefault();
+  const c = half(e.target.value).replace(/\s/g, ''); if (!c) return;
+  const hits = ZC.items.filter(x => x.code === c);
+  const inShop = hits.filter(x => !ZC.shop || zcKey(x) === ZC.shop);
+  const x = inShop[0] || hits[0];
+  if (!x) { toast('このバーコードの商品がzaicoにありません'); return; }
+  if ((inShop.length || hits.length) > 1) toast('同じバーコードの商品が複数あります。一覧から選んでください');
+  else { zcAdd(x.id, 1); e.target.value = ''; ZC.q = ''; renderZc(); }
+};
+$('zcfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; ZC.filter = b.dataset.s;
+  document.querySelectorAll('#zcfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderZc(); };
+$('zcList').onclick = e => { const b = e.target.closest('[data-zcid]'); if (b) { zcAdd(b.dataset.zcid, 1); render(); } };
+$('zcMore').onclick = () => { ZC.limit += 200; renderZc(); };
+$('zcBarClear').onclick = () => { if (confirm('出庫指示の中身を空にしますか？')) { ZC.cart.clear(); render(); } };
+$('zcBarGo').onclick = openZcCart;
 $('newShare').onclick = () => {
   const k = (prompt('セラーの管理番号を入れてください（依頼フォームと同じ番号）') || '').trim();
   if (k) openShareSheet(k);
