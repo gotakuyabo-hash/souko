@@ -584,7 +584,10 @@ exports.apiListZaicoInventories = onRequest(
 // ・送られてきた項目だけを書き換える（ショップ名だけ／数量だけ／両方）。ほかの追加項目はそのまま
 // ・数量は「画面で見ていた数量（expectQuantity）」とzaicoの今の数量が違えば書き換えない（その間の入出庫を消さないため）
 // ・書き換えたあと、zaicoから読み直して本当に変わったか確かめてから返事をする
+// ・delete: true のときは商品を削除する。削除の直前の内容を Firestore の zaico_deleted_inventories に残す
+//   （在庫が残っている商品は、画面で見ていた数量 expectQuantity と今の数量が同じときだけ削除する）
 // ==========================================
+const ZAICO_DELETED_COL = "zaico_deleted_inventories";
 const SHOP_ATTR_NAME = "ショップ名";
 // 使ってよい人（どちらかに当てはまる人だけ）。両方とも空のときは、ログインしている人なら誰でも使える
 const SHOP_EDIT_ALLOWED_EMAILS = [];   // 例: ["taro@example.com"]
@@ -635,9 +638,10 @@ exports.apiUpdateZaicoShop = onRequest(
             const b = req.body || {};
             const id = String(b.inventoryId || "").trim();
             if (!/^\d+$/.test(id)) { res.status(400).json({ success: false, error: "在庫IDがありません" }); return; }
+            const wantDelete = b.delete === true;
             const wantShop = Object.prototype.hasOwnProperty.call(b, "shop");
             const wantQty = Object.prototype.hasOwnProperty.call(b, "quantity");
-            if (!wantShop && !wantQty) { res.status(400).json({ success: false, error: "変更する項目がありません" }); return; }
+            if (!wantDelete && !wantShop && !wantQty) { res.status(400).json({ success: false, error: "変更する項目がありません" }); return; }
             const shop = wantShop ? String(b.shop || "").trim() : "";
             if (shop.length > 100) { res.status(400).json({ success: false, error: "ショップ名が長すぎます" }); return; }
             const qty = wantQty ? Number(b.quantity) : null;
@@ -657,6 +661,41 @@ exports.apiUpdateZaicoShop = onRequest(
             // ② 今の内容を読む
             const inv = await getInv();
             const beforeShop = readShop(inv), beforeQty = readQty(inv);
+
+            // ── 削除 ──
+            if (wantDelete) {
+                const expect = b.expectQuantity;
+                if (expect !== undefined && expect !== null && expect !== "" && Number(expect) !== beforeQty) {
+                    res.status(409).json({ success: false, conflict: true, inventoryId: id, currentQuantity: beforeQty,
+                        error: `zaicoの在庫数が ${expect} から ${beforeQty} に変わっています（その間に入出庫がありました）。内容を確かめてから、もう一度削除してください` });
+                    return;
+                }
+                // 削除の前に、今の内容をまるごと残す（間違えて消したときに作り直せるように）
+                const db = admin.firestore();
+                const logRef = db.collection(ZAICO_DELETED_COL).doc();
+                await logRef.set({
+                    inventoryId: id, title: String(inv.title || inv.name || ""), code: String(inv.code || inv.inventory_code || ""),
+                    shop: beforeShop, quantity: beforeQty, unit: String(inv.unit || ""), place: String(inv.place || ""),
+                    raw: JSON.parse(JSON.stringify(inv)), deletedBy: email, deletedAt: admin.firestore.FieldValue.serverTimestamp(), status: "deleting"
+                });
+                const dr = await fetch(url, { method: "DELETE", headers });
+                const dt = await dr.text();
+                if (!dr.ok && dr.status !== 404) {
+                    await logRef.update({ status: "failed", error: dt.slice(0, 500) });
+                    throw new Error(`zaicoで削除できませんでした (${dr.status}): ${dt.slice(0, 300)}`);
+                }
+                // 本当に消えたか確かめる
+                const chk = await fetch(url, { method: "GET", headers });
+                const gone = chk.status === 404;
+                await logRef.update({ status: gone ? "deleted" : "unconfirmed" });
+                logger.info(`zaico商品を削除 ${id}「${inv.title || ""}」（在庫${beforeQty}）by ${email}（確認${gone ? "OK" : "NG"}）`);
+                if (!gone) {
+                    res.status(500).json({ success: false, inventoryId: id, error: "zaicoは削除を受け付けましたが、まだ商品が残っています。zaicoの画面で確認してください" });
+                    return;
+                }
+                res.json({ success: true, deleted: true, inventoryId: id, backupId: logRef.id });
+                return;
+            }
             const payload = {};
             if (wantQty && beforeQty !== qty) {
                 // 画面を開いてからzaicoの数量が変わっていたら、上書きしない
