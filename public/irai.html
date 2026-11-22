@@ -331,9 +331,9 @@ details.bd table{margin-top:6px}
     <div class="bar">
       <select class="lzsel" id="zcShop" aria-label="ショップ"></select>
       <button class="btn" id="zcReload">zaicoから読み直す</button>
-      <button class="btn" id="zcEditMode" aria-pressed="false">ショップ名を変更</button>
+      <button class="btn" id="zcEditMode" aria-pressed="false">ショップ名・在庫数を変更</button>
     </div>
-    <div class="alert" id="zcEditNote" hidden>ショップ名の変更中です。商品をタップすると、ショップ名を変える画面が開きます（出庫指示には入りません）。終わったら「変更を終える」を押してください。</div>
+    <div class="alert" id="zcEditNote" hidden>ショップ名・在庫数の変更中です。商品をタップすると、変更する画面が開きます（出庫指示には入りません）。終わったら「変更を終える」を押してください。</div>
     <div class="bar">
       <input class="search" id="zcq" type="search" placeholder="商品名・バーコード・保管場所で探す（バーコードを読むと出庫指示に追加）">
       <div class="seg" id="zcfilter">
@@ -1941,7 +1941,7 @@ function renderZc() {
       return `<button class="lz-row ${q <= 0 ? 'zero' : ''}" data-zcid="${esc(x.id)}">
       <span><span class="p">${esc(x.title || '（商品名なし）')}</span>${inc ? `<span class="incart">出庫指示 ${inc}</span>` : ''}
         <span class="d" style="display:block">${x.code ? 'JAN ' + esc(x.code) : '<span style="color:var(--late)">バーコードなし</span>'}${x.place ? '・保管場所 ' + esc(x.place) : ''}${showShop ? '・' + esc(zcKeyLabel(zcKey(x))) : ''}</span></span>
-      <span class="q">${esc(zcFmt(q))}<small>${esc(x.unit || '')} ${ZC.editMode ? 'タップでショップ名を変更' : 'タップで出庫指示へ'}</small></span></button>`; }).join('')}</div>`
+      <span class="q">${esc(zcFmt(q))}<small>${esc(x.unit || '')} ${ZC.editMode ? 'タップで変更' : 'タップで出庫指示へ'}</small></span></button>`; }).join('')}</div>`
     : `<div class="empty">${ZC.q ? '当てはまる商品はありません。' : ZC.filter === 'have' ? '在庫のある商品はありません。「すべて」で0の商品も見られます。' : '商品がありません。'}</div>`;
   $('zcMore').hidden = list.length <= ZC.limit;
   $('zcMore').textContent = `さらに表示（残り${list.length - ZC.limit}品目）`;
@@ -1956,55 +1956,118 @@ function zcAdd(id, n) {
   toast(`${x.title}（出庫指示 ${ZC.cart.get(x.id) || 0}点）`);
 }
 
-// ---- ショップ名の変更（zaicoの追加項目「ショップ名」を書き換える） ----
+// ---- ショップ名・在庫数の変更（zaicoの商品1件を書き換える） ----
 function openZcShopEdit(id) {
   const x = ZC.items.find(v => v.id === String(id)); if (!x) return;
   const shops = [...new Set(ZC.items.map(v => v.shop).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
+  const q0 = zcQty(x);
   const sh = $('sheet');
   sh.dataset.id = 'zcshop'; sh.dataset.kind = 'zcshop'; sh.dataset.dirty = '1'; sh.dataset.f = 'zc';
   sh.innerHTML = `
-    <div class="sheet-h"><div><h2>ショップ名を変更</h2><div class="sub">${esc(x.title)}</div></div>
+    <div class="sheet-h"><div><h2>ショップ名・在庫数を変更</h2><div class="sub">${esc(x.title)}</div></div>
       <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
     <dl>
       <dt>バーコード</dt><dd>${esc(x.code || '（なし）')}</dd>
-      <dt>在庫</dt><dd>${esc(zcFmt(zcQty(x)))}${esc(x.unit || '')}</dd>
       <dt>今のショップ名</dt><dd>${x.shop ? esc(x.shop) : '<span class="hint" style="margin:0">（空欄）</span>'}</dd>
+      <dt>今の在庫数</dt><dd>${esc(zcFmt(q0))}${esc(x.unit || '')}<span class="hint" style="margin:0">（${ZC.at ? esc(ZC.at.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + ' に読み込み' : ''}）</span></dd>
     </dl>
     <div class="lotform">
-      <label class="field"><span>新しいショップ名（一覧から選ぶか、入力）</span><input id="zcsN" list="zcsList" autocomplete="off" value="${esc(x.shop)}"></label>
+      <label class="field"><span>ショップ名（一覧から選ぶか、入力）</span><input id="zcsN" list="zcsList" autocomplete="off" value="${esc(x.shop)}"></label>
       <datalist id="zcsList">${shops.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-      <p class="hint">zaicoの「ショップ名」だけを書き換えます。数量やほかの項目は変わりません。</p>
+      <label class="field"><span>在庫数</span><input id="zcsQ" class="num-in" inputmode="decimal" value="${esc(zcFmt(q0))}"></label>
+      <p class="hint" id="zcsDiff"></p>
+      <p class="hint">変えた項目だけをzaicoに書き換えます。在庫数は、読み込んだあとにzaicoで入出庫があった場合は書き換えずに止まります（その入出庫を消さないため）。</p>
       <div class="actions"><button class="primary" id="zcsSave" style="background:var(--zc)">zaicoに保存</button>
         ${x.shop ? '<button class="mini danger" id="zcsClear">ショップ名を消す</button>' : ''}</div>
+      <div class="actions" style="margin-top:18px;justify-content:flex-end"><button class="mini danger" id="zcsDel">この商品をzaicoから削除</button></div>
     </div>`;
+  const diff = () => {
+    const t = half($('zcsQ').value).replace(/,/g, '').trim(), n = Number(t);
+    $('zcsDiff').textContent = t === '' || isNaN(n) ? '' : n === q0 ? '' : `在庫数を ${zcFmt(q0)} → ${zcFmt(n)}（${n > q0 ? '+' : ''}${zcFmt(n - q0)}）にします`;
+  };
   $('closeSheet').onclick = closeSheet;
-  $('zcsSave').onclick = () => zcSaveShop(x, $('zcsN').value.trim());
-  if ($('zcsClear')) $('zcsClear').onclick = () => { if (confirm(`「${x.title}」のショップ名を消して、空欄にしますか？`)) zcSaveShop(x, ''); };
-  $('zcsN').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('zcsSave').click(); } };
+  $('zcsQ').oninput = diff;
+  $('zcsSave').onclick = () => {
+    const t = half($('zcsQ').value).replace(/,/g, '').trim(), n = Number(t);
+    if (t === '' || isNaN(n) || n < 0) { toast('在庫数は0以上の数で入れてください'); return; }
+    zcSaveItem(x, { shop: $('zcsN').value.trim(), quantity: n });
+  };
+  if ($('zcsClear')) $('zcsClear').onclick = () => { if (confirm(`「${x.title}」のショップ名を消して、空欄にしますか？`)) zcSaveItem(x, { shop: '' }); };
+  $('zcsDel').onclick = () => zcDeleteItem(x);
+  [$('zcsN'), $('zcsQ')].forEach(el => el.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('zcsSave').click(); } });
   showSheet();
-  setTimeout(() => { $('zcsN').focus(); $('zcsN').select(); }, 250);
+  setTimeout(() => { $('zcsQ').focus(); $('zcsQ').select(); }, 250);
 }
-async function zcSaveShop(x, shop) {
-  if (shop === x.shop) { closeSheet(); return; }
-  if (shop && !ZC.items.some(v => v.shop === shop) && !confirm(`「${shop}」は、まだどの商品にも使われていないショップ名です。新しいショップとして登録しますか？`)) return;
+async function zcSaveItem(x, want) {
+  const q0 = zcQty(x), body = { inventoryId: x.id };
+  if ('shop' in want && want.shop !== x.shop) {
+    if (want.shop && !ZC.items.some(v => v.shop === want.shop) && !confirm(`「${want.shop}」は、まだどの商品にも使われていないショップ名です。新しいショップとして登録しますか？`)) return;
+    body.shop = want.shop;
+  }
+  if ('quantity' in want && want.quantity !== q0) {
+    if (!confirm(`「${x.title}」の在庫数を ${zcFmt(q0)} → ${zcFmt(want.quantity)} に変更します。よろしいですか？`)) return;
+    body.quantity = want.quantity; body.expectQuantity = q0;
+  }
+  if (!('shop' in body) && !('quantity' in body)) { closeSheet(); return; }
   const b = $('zcsSave'); b.disabled = true; b.textContent = '保存中…';
   try {
     const idToken = await S.user.getIdToken();
     let res, data;
     try {
-      res = await fetch(ZC_SHOP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify({ inventoryId: x.id, shop }) });
-    } catch (e) { throw new Error('ショップ名変更の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
+      res = await fetch(ZC_SHOP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify(body) });
+    } catch (e) { throw new Error('変更用の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
     try { data = await res.json(); } catch (e) { throw new Error(`関数から正しい返事がありませんでした（${res.status}）`); }
+    if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 画面の数量を最新にして、もう一度入れてもらう
+      x.quantity = data.currentQuantity; zcSaveCache(); render(); openZcShopEdit(x.id);
+      alert(data.error); return;
+    }
     if (!data.success) throw new Error(data.error || '変更できませんでした');
-    x.shop = shop;
-    try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: ZC.items, hasGroup: ZC.hasGroup, hasShop: true, fields: ZC.fields })); } catch (e) {}
+    if ('shop' in body) x.shop = data.shop ?? body.shop;
+    if ('quantity' in body) x.quantity = data.quantity ?? body.quantity;
+    zcSaveCache();
     closeSheet();
-    toast(shop ? `ショップ名を「${shop}」にしました` : 'ショップ名を消しました');
+    toast([('shop' in body) ? (body.shop ? `ショップ名を「${body.shop}」に` : 'ショップ名を空欄に') : '', ('quantity' in body) ? `在庫数を ${zcFmt(Number(x.quantity))} に` : ''].filter(Boolean).join('、') + 'しました');
     render();
   } catch (e) {
     b.disabled = false; b.textContent = 'zaicoに保存';
     toast('保存できませんでした：' + e.message);
   }
+}
+// ---- 削除（元に戻せないので、在庫が残っているときは「削除」と入力してもらう） ----
+async function zcDeleteItem(x) {
+  const q0 = zcQty(x);
+  const head = `「${x.title}」をzaicoから削除します。\n${x.code ? 'バーコード ' + x.code + '　' : ''}在庫 ${zcFmt(q0)}${x.unit || ''}${x.shop ? '　ショップ ' + x.shop : ''}\n\n削除すると元に戻せません（削除前の内容は記録に残します）。`;
+  if (q0 > 0) {
+    const t = prompt(head + `\n\n⚠ まだ在庫が ${zcFmt(q0)}${x.unit || ''} 残っています。\nそれでも削除する場合は「削除」と入力してください。`, '');
+    if (t === null) return;
+    if (t.trim() !== '削除') { toast('「削除」と入力されなかったので、削除しませんでした'); return; }
+  } else if (!confirm(head + '\n\n削除してよろしいですか？')) return;
+  const b = $('zcsDel'); b.disabled = true; b.textContent = '削除中…';
+  try {
+    const idToken = await S.user.getIdToken();
+    let res, data;
+    try {
+      res = await fetch(ZC_SHOP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify({ inventoryId: x.id, delete: true, expectQuantity: q0 }) });
+    } catch (e) { throw new Error('変更用の関数につながりませんでした（関数がデプロイされているか確認してください）'); }
+    try { data = await res.json(); } catch (e) { throw new Error(`関数から正しい返事がありませんでした（${res.status}）`); }
+    if (data.conflict && data.currentQuantity != null) {   // 読み込んだあとに入出庫があった → 最新の数量で確かめ直してもらう
+      x.quantity = data.currentQuantity; zcSaveCache(); render(); openZcShopEdit(x.id);
+      alert(data.error); return;
+    }
+    if (!data.success) throw new Error(data.error || '削除できませんでした');
+    ZC.items = ZC.items.filter(v => v.id !== x.id);
+    ZC.cart.delete(x.id);
+    zcSaveCache();
+    closeSheet();
+    toast(`「${x.title}」を削除しました`);
+    render();
+  } catch (e) {
+    b.disabled = false; b.textContent = 'この商品をzaicoから削除';
+    toast('削除できませんでした：' + e.message);
+  }
+}
+function zcSaveCache() {
+  try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: ZC.items, hasGroup: ZC.hasGroup, hasShop: ZC.hasShop, fields: ZC.fields })); } catch (e) {}
 }
 
 // 出庫指示の内容を確認して送信
@@ -2287,7 +2350,7 @@ $('zcList').onclick = e => { const b = e.target.closest('[data-zcid]'); if (!b) 
 $('zcEditMode').onclick = () => {
   ZC.editMode = !ZC.editMode;
   $('zcEditMode').setAttribute('aria-pressed', ZC.editMode);
-  $('zcEditMode').textContent = ZC.editMode ? '変更を終える' : 'ショップ名を変更';
+  $('zcEditMode').textContent = ZC.editMode ? '変更を終える' : 'ショップ名・在庫数を変更';
   $('zcEditNote').hidden = !ZC.editMode;
   render();
 };
