@@ -481,15 +481,19 @@ const shukkaAuto = (() => {
             <div class="flex justify-between items-center border-b pb-3 no-print">
                 <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs text-slate-400 font-normal ml-2">※行をドラッグして並び替えできます</span></h3>
                 <div class="flex space-x-2">
+                    <button onclick="fetchPickingImages(true)" id="pickImgBtn" class="bg-red-50 hover:bg-red-100 text-red-600 disabled:opacity-60 text-xs px-3 py-1.5 rounded font-medium" title="JANコードでYahoo!ショッピングから画像を探します"><i class="fa-solid fa-image mr-1"></i>画像を取得</button>
+                    <button onclick="setYahooGasUrl()" class="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs px-2.5 py-1.5 rounded" title="依頼くんのGASのURLを設定"><i class="fa-solid fa-gear"></i></button>
                     <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
                     <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
+            <p id="pickImgStatus" class="no-print text-[11px] text-slate-500 hidden"></p>
             <div class="overflow-x-auto border rounded-xl">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead class="bg-slate-100 border-b">
                         <tr>
                             <th class="px-2 py-3 text-center w-8"><i class="fa-solid fa-grip-vertical text-slate-400"></i></th>
+                            <th class="px-2 py-3 text-center w-16">画像</th>
                             <th class="px-4 py-3">棚番</th>
                             <th class="px-4 py-3">商品名</th>
                             <th class="px-4 py-3 text-center">必要総数量</th>
@@ -875,6 +879,7 @@ const shukkaAuto = (() => {
 
                 const itemsHtml = (rule.items || []).map(it => `
                     <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
+                        ${it.imageUrl ? `<img src="${escapeHtml(it.imageUrl)}" class="w-8 h-8 object-contain border rounded bg-white" alt="" loading="lazy">` : ''}
                         <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${escapeHtml(it.shelf || '未設定')}</span>
                         <span class="font-semibold text-slate-800 flex-grow">${escapeHtml(it.jpName)}</span>
                         <span class="text-indigo-600 font-bold">× ${escapeHtml(it.multiplier)}</span>
@@ -910,7 +915,7 @@ const shukkaAuto = (() => {
                 document.getElementById('modalKey').readOnly = true;
                 
                 if (r.items && r.items.length > 0) {
-                    r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier));
+                    r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier, it.imageUrl));
                 } else {
                     addModalItemRow();
                 }
@@ -922,13 +927,15 @@ const shukkaAuto = (() => {
             }
         }
 
-        function addModalItemRow(jpName = '', shelf = '', multiplier = 1) {
+        function addModalItemRow(jpName = '', shelf = '', multiplier = 1, imageUrl = '') {
             const container = document.getElementById('modalItemsContainer');
             const div = document.createElement('div');
             div.className = "flex gap-2 items-center bg-white p-2.5 rounded-lg border shadow-sm";
             div.innerHTML = `
+                <img src="${escapeHtml(imageUrl)}" class="modal-img-preview w-10 h-10 object-contain border rounded bg-slate-50 ${imageUrl ? '' : 'invisible'}" alt="">
                 <div class="flex-grow space-y-1">
                     <input type="text" placeholder="正式商品名" value="${escapeHtml(jpName)}" class="modal-jpname w-full border rounded px-2 py-1 text-xs font-semibold">
+                    <input type="text" placeholder="画像URL（空ならピックリストでYahooから自動取得）" value="${escapeHtml(imageUrl)}" oninput="const p=this.closest('div.flex').querySelector('.modal-img-preview');p.src=this.value;p.classList.toggle('invisible',!this.value)" class="modal-img w-full border rounded px-2 py-1 text-[11px] text-slate-500">
                 </div>
                 <div class="w-24">
                     <input type="text" placeholder="棚番" value="${escapeHtml(shelf)}" class="modal-shelf w-full border rounded px-2 py-1 text-xs text-center font-bold">
@@ -956,8 +963,9 @@ const shukkaAuto = (() => {
                 let jpName = r.querySelector('.modal-jpname').value.trim();
                 let shelf = r.querySelector('.modal-shelf').value.trim();
                 let multiplier = parseInt(r.querySelector('.modal-mult').value, 10) || 1;
+                let imageUrl = r.querySelector('.modal-img').value.trim();
                 if (jpName) {
-                    items.push({ jpName, shelf, multiplier });
+                    items.push(imageUrl ? { jpName, shelf, multiplier, imageUrl } : { jpName, shelf, multiplier });
                 }
             });
 
@@ -1078,6 +1086,7 @@ const shukkaAuto = (() => {
                     const multiplier = (it.multiplier || 1) * suffixMult;   // マスタ倍率 × 枝番
                     return {
                         ...common,
+                        imageUrl: it.imageUrl || '',
                         jpName: it.jpName,
                         masterJpName: it.jpName,     // マスタ上の名前（和名を変えたときの更新先）
                         shelf: it.shelf || '',
@@ -1088,6 +1097,7 @@ const shukkaAuto = (() => {
             }
             return [{
                 ...common,
+                imageUrl: '',
                 jpName: productInfo,
                 masterJpName: '',
                 shelf: '',
@@ -1206,7 +1216,9 @@ const shukkaAuto = (() => {
                 existing.shelf = r.shelf;
                 existing.multiplier = mult;
             } else {
-                items.push({ jpName: r.jpName, shelf: r.shelf, multiplier: mult });
+                const it = { jpName: r.jpName, shelf: r.shelf, multiplier: mult };
+                if (r.imageUrl) it.imageUrl = r.imageUrl;
+                items.push(it);
             }
         }
 
@@ -1520,15 +1532,200 @@ const shukkaAuto = (() => {
             if (kind === 'ok') el._t = setTimeout(() => { el.style.display = 'none'; }, 8000);
         }
 
+        // ===== Yahoo!ショッピング商品検索APIで画像を取る（JANコード検索） =====
+        const YAHOO_SETTINGS_DOC = ['settings', 'yahoo_shopping_api'];   // 中継GASのURLはスタッフ共通でFirestoreに保存
+        const YAHOO_IMG_CACHE_KEY = 'medi_yahoo_img_cache';               // { JAN: { url, at } } url='' は「見つからなかった」
+        const YAHOO_NOT_FOUND_RETRY_MS = 7 * 24 * 60 * 60 * 1000;         // 見つからなかったJANは7日後に再挑戦
+        const GAS_CHUNK = 20;       // 1回のGAS呼び出しで調べるJANの数（GAS側で1秒に1件ずつ問い合わせ）
+        let yahooGasUrl = null;     // null=未読込 / ''=未設定
+        let pickImgRunning = false;
+        let pickRowsCurrent = [];
+
+        const isJan = s => /^(\d{8}|\d{13})$/.test(String(s || ''));
+
+        function loadImgCache() {
+            try { return JSON.parse(localStorage.getItem(YAHOO_IMG_CACHE_KEY) || '{}') || {}; } catch (e) { return {}; }
+        }
+        function saveImgCache(c) {
+            try { localStorage.setItem(YAHOO_IMG_CACHE_KEY, JSON.stringify(c)); } catch (e) {}
+        }
+
+        async function getYahooGasUrl() {
+            if (yahooGasUrl !== null) return yahooGasUrl;
+            try {
+                const { doc, getDoc } = window.firebaseFns;
+                const snap = await getDoc(doc(window.db, ...YAHOO_SETTINGS_DOC));
+                yahooGasUrl = (snap.exists() && snap.data().gasUrl) || '';
+            } catch (e) { console.warn(e); yahooGasUrl = ''; }
+            return yahooGasUrl;
+        }
+
+        async function setYahooGasUrl() {
+            const cur = await getYahooGasUrl();
+            const v = prompt('依頼くんの保管在庫GASの「ウェブアプリのURL」（依頼くんの EXPORT_URL と同じ …/exec）を入れてください。\n※スタッフ全員の画面で共通になります', cur || '');
+            if (v === null) return false;
+            const url = v.trim();
+            if (url && !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url)) {
+                alert('URLの形が違うようです。「…/exec」で終わるウェブアプリのURLを入れてください');
+                return false;
+            }
+            try {
+                const { doc, setDoc } = window.firebaseFns;
+                await setDoc(doc(window.db, ...YAHOO_SETTINGS_DOC), { gasUrl: url, updatedAt: new Date().toISOString() }, { merge: true });
+                yahooGasUrl = url;
+                return !!url;
+            } catch (e) {
+                console.error(e);
+                alert('URLを保存できませんでした');
+                return false;
+            }
+        }
+
+        // 依頼くんのGAS（doPost）経由でまとめて検索 → { JAN: 画像URL（なければ''） }
+        // ※依頼くんと同じく text/plain のPOSTで送る（ブラウザの事前確認を起こさないため）
+        async function yahooImagesViaGas(gasUrl, jans) {
+            const res = await fetch(gasUrl, { method: 'POST', body: JSON.stringify({ action: 'yahooImages', jans }) });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (!data.ok) { const e = new Error(data.message || data.error || 'GASエラー'); e.kind = data.kind || ''; throw e; }
+            return data.results || {};
+        }
+
+        function setPickImgStatus(text, kind) {
+            const el = document.getElementById('pickImgStatus');
+            if (!text) { el.classList.add('hidden'); return; }
+            el.className = 'no-print text-[11px] ' + (kind === 'error' ? 'text-rose-600' : 'text-slate-500');
+            el.textContent = text;
+        }
+
+        function pickImgCellHtml(url) {
+            return url
+                ? `<img src="${escapeHtml(url)}" class="w-12 h-12 object-contain mx-auto" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text-slate-300',textContent:'-'}))">`
+                : '<span class="text-slate-300">-</span>';
+        }
+
+        // 画像のない行を、JANでYahooから探して埋める（1秒に1件ずつ）
+        async function fetchPickingImages(manual) {
+            if (pickImgRunning) return;
+            let gasUrl = await getYahooGasUrl();
+            if (!gasUrl) {
+                if (!manual) { setPickImgStatus('⚙ から依頼くんのGASのURLを設定すると、商品画像を自動で出せます'); return; }
+                if (!(await setYahooGasUrl())) return;
+                gasUrl = yahooGasUrl;
+            }
+
+            const cache = loadImgCache();
+            const now = Date.now();
+            const jans = [];
+            pickRowsCurrent.forEach(x => {
+                if (x.img) return;
+                x.jans.forEach(j => {
+                    const c = cache[j];
+                    if (c && (c.url || (!manual && now - c.at < YAHOO_NOT_FOUND_RETRY_MS))) return;
+                    if (!jans.includes(j)) jans.push(j);
+                });
+            });
+            // キャッシュだけで埋まる分を先に反映
+            applyFoundImages(cache);
+            if (!jans.length) {
+                const left = pickRowsCurrent.filter(x => !x.img).length;
+                setPickImgStatus(left ? `画像なし ${left}行（JANコードでない・Yahooに無い商品。マスタ編集で画像URLを入れられます）` : '');
+                return;
+            }
+
+            pickImgRunning = true;
+            const btn = document.getElementById('pickImgBtn');
+            btn.disabled = true;
+            let found = 0, stopMsg = '';
+            try {
+                for (let i = 0; i < jans.length; i += GAS_CHUNK) {
+                    if (document.getElementById('totalPickingModal').classList.contains('hidden')) { stopMsg = '途中で閉じたため止めました'; break; }
+                    const part = jans.slice(i, i + GAS_CHUNK);
+                    setPickImgStatus(`Yahoo!から画像を取得中… ${Math.min(i + part.length, jans.length)}/${jans.length}（1件1秒ほどかかります）`);
+                    try {
+                        const results = await yahooImagesViaGas(gasUrl, part);
+                        part.forEach(j => {
+                            if (!(j in results)) return;   // GAS側で調べきれなかった分は次回
+                            cache[j] = { url: results[j] || '', at: Date.now() };
+                            if (results[j]) found++;
+                        });
+                        saveImgCache(cache);
+                        applyFoundImages(cache);
+                        if (Object.keys(results).length < part.length) { stopMsg = 'Yahoo!の利用回数制限にかかったため途中で止めました。少し時間をおいて「画像を取得」を押してください'; break; }
+                    } catch (e) {
+                        console.warn(e);
+                        if (e.kind === 'auth') stopMsg = '依頼くんのGASのYahoo! Client IDが正しくないようです';
+                        else if (e.kind === 'noappid') stopMsg = '依頼くんのGASにYahoo!のClient IDが入っていません';
+                        else stopMsg = '依頼くんのGASにつながりませんでした（URL・GASに画像検索を追加して再デプロイしたかをご確認ください）：' + (e.message || e);
+                        break;
+                    }
+                }
+                await saveImagesToMaster(cache);
+            } finally {
+                pickImgRunning = false;
+                btn.disabled = false;
+            }
+            const left = pickRowsCurrent.filter(x => !x.img).length;
+            setPickImgStatus(stopMsg || (`${found}件の画像を取得しました` + (left ? `（画像なし ${left}行）` : '')), stopMsg ? 'error' : '');
+        }
+
+        // キャッシュの画像を、ピックリスト・受注データの行に反映
+        function applyFoundImages(cache) {
+            processedDataRows.forEach(r => {
+                const c = cache[r.baseSku];
+                if (!r.imageUrl && c && c.url && imageJanOf(r)) r.imageUrl = c.url;
+            });
+            pickRowsCurrent.forEach(x => {
+                if (x.img) return;
+                const j = x.jans.find(j => cache[j] && cache[j].url);
+                if (!j) return;
+                x.img = cache[j].url;
+                const cell = document.querySelector(`#totalPickingBody tr[data-key="${CSS.escape(x.key)}"] .img-col`);
+                if (cell) cell.innerHTML = pickImgCellHtml(x.img);
+            });
+        }
+
+        // その行の画像を探すのに使えるJAN（セット商品＝マスタに複数商品がある場合は、別商品の画像になるので使わない）
+        function imageJanOf(r) {
+            if (!isJan(r.baseSku)) return '';
+            const m = findMaster(r.baseSku);
+            if (m && (m.items || []).length > 1) return '';
+            return r.baseSku;
+        }
+
+        // 見つかった画像をマスタにも保存（次回からYahooに問い合わせない・他のPCでも出る）
+        async function saveImagesToMaster(cache) {
+            const writes = [];
+            multiplierMaster.forEach(m => {
+                if (!m.items || m.items.length !== 1 || m.items[0].imageUrl || !isJan(m.key)) return;
+                const c = cache[m.key];
+                if (!c || !c.url) return;
+                m.items[0].imageUrl = c.url;
+                writes.push({ key: m.key, items: m.items.map(it => ({ ...it })) });
+            });
+            if (!writes.length) return;
+            try {
+                await commitInChunks(writes.map(w => batch => batch.set(masterDocRef(w.key), w)));
+            } catch (e) {
+                console.warn('画像URLをマスタに保存できませんでした', e);
+            }
+        }
+
         function openTotalPickingModal() {
             if (!processedDataRows.length) return;
+            const cache = loadImgCache();
             const map = {};
             processedDataRows.forEach(r => {
                 const shelf = String(r.shelf || '未設定');
                 const k = shelf + "_" + r.jpName;
-                if (!map[k]) map[k] = { shelf, name: r.jpName, total: 0 };
+                if (!map[k]) map[k] = { key: k, shelf, name: r.jpName, total: 0, img: '', jans: [] };
                 map[k].total += r.baseQty * r.multiplier;
+                const j = imageJanOf(r);
+                if (j && !map[k].jans.includes(j)) map[k].jans.push(j);
+                if (!map[k].img) map[k].img = r.imageUrl || (j && cache[j] && cache[j].url) || '';
             });
+            pickRowsCurrent = Object.values(map);
+            setPickImgStatus('');
             // 棚番は数字を考慮して並べる（A-2 → A-10 の順）
             const sorted = Object.values(map).sort((a, b) =>
                 a.shelf.localeCompare(b.shelf, 'ja', { numeric: true }) ||
@@ -1542,8 +1739,10 @@ const shukkaAuto = (() => {
                 tr.className = 'hover:bg-slate-50 draggable-row';
                 tr.draggable = true;
                 tr.dataset.index = index;
+                tr.dataset.key = x.key;
                 tr.innerHTML = `
                     <td class="px-2 py-2 text-center cursor-grab text-slate-400"><i class="fa-solid fa-grip-vertical"></i></td>
+                    <td class="px-2 py-1 text-center img-col">${pickImgCellHtml(x.img)}</td>
                     <td class="px-4 py-2 font-bold text-indigo-700 shelf-col">${escapeHtml(x.shelf)}</td>
                     <td class="px-4 py-2 font-semibold name-col">${escapeHtml(x.name)}</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base total-col">${x.total}</td>
@@ -1572,6 +1771,7 @@ const shukkaAuto = (() => {
             });
 
             document.getElementById('totalPickingModal').classList.remove('hidden');
+            fetchPickingImages(false);   // Client ID設定済みなら、画像のない行を自動で探す
         }
 
         function getDragAfterElement(container, y) {
