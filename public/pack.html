@@ -96,12 +96,13 @@ const norm = s => toHalf(s).trim().toUpperCase();
 /* ---------- QRの中身を読む： #o=受注番号&i=コード*数量,… （!から始まるのはマスタ未登録） ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', items: [] };
+  const out = { order: '', src: '', items: [] };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
     const k = part.slice(0, eq), v = part.slice(eq + 1);
     if (k === 'o') out.order = safeDecode(v);
+    if (k === 's') out.src = safeDecode(v);   // medi＝分割くん Medicarry の検品書
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
@@ -156,6 +157,41 @@ async function getZaicoMap(codes) {
   catch (e) { if (local) { console.warn(e); return local; } throw e; }
 }
 
+/* ---------- 分割くん Medicarry の検品書（s=medi）：商品マスタ medicarry_products_master から 名前・画像 を引く ----------
+   コード（JAN）＝マスタのSKU。!SKU~n は「そのSKUのn番目の商品」（セット商品など、目視で確認する行）
+   読み取り回数を抑えるため、SKUごとに端末へ6時間保存して使い回す */
+const MEDI_COL = 'medicarry_products_master';
+const MEDI_LS_KEY = 'pack_medi_map_v1';
+function mediKeyOf(x) { return x.unknown ? x.code.split('~')[0] : x.code; }
+async function getMediMap(items) {
+  let local = {};
+  try { local = JSON.parse(localStorage.getItem(MEDI_LS_KEY) || '{}') || {}; } catch (e) {}
+  const now = Date.now();
+  const keys = [...new Set(items.map(mediKeyOf).filter(k => k && !k.includes('/')))];
+  const need = keys.filter(k => !local[k] || now - local[k].at > MAX_AGE);
+  await Promise.all(need.map(async k => {
+    try {
+      const snap = await getDoc(doc(db, MEDI_COL, k));
+      const its = snap.exists() ? (snap.data().items || []) : [];
+      local[k] = { at: now, items: its.map(it => ({ t: String(it.jpName || ''), img: typeof it.imageUrl === 'string' ? it.imageUrl : '' })) };
+    } catch (e) { console.warn(k, e); }
+  }));
+  // 古いものは捨てる（端末の保存領域を食わないように）
+  Object.keys(local).forEach(k => { if (now - local[k].at > 7 * 24 * 60 * 60 * 1000) delete local[k]; });
+  try { localStorage.setItem(MEDI_LS_KEY, JSON.stringify(local)); } catch (e) {}
+
+  const map = {};
+  items.forEach(x => {
+    const ent = local[mediKeyOf(x)];
+    if (!ent || !ent.items.length) return;
+    if (!x.unknown) { map[norm(x.code)] = ent.items[0]; return; }
+    const m = x.code.match(/~(\d+)$/);
+    const it = ent.items[m ? +m[1] : (ent.items.length === 1 ? 0 : -1)];
+    if (it) map['!' + x.code] = it;
+  });
+  return map;
+}
+
 /* ---------- 画面 ---------- */
 let state = parseHash();
 let zmap = {};
@@ -170,8 +206,8 @@ function render() {
   $('allok').classList.toggle('show', !!allOk);
 
   $('list').innerHTML = state.items.map((x, i) => {
-    const z = x.unknown ? null : zmap[norm(x.code)];
-    const title = z && z.t ? z.t : (x.unknown ? 'マスタ未登録の商品' : '（zaicoに見つかりません）');
+    const z = x.unknown ? zmap['!' + x.code] : zmap[norm(x.code)];
+    const title = z && z.t ? z.t : (x.unknown ? 'マスタ未登録の商品' : (state.src === 'medi' ? '（マスタに見つかりません）' : '（zaicoに見つかりません）'));
     const img = z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>';
     const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
     const manual = x.unknown && x.scanned < x.qty
@@ -180,7 +216,7 @@ function render() {
       ${img}
       <div class="info">
         <div class="title">${esc(title)}</div>
-        <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.code)}</div>
+        <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.unknown ? x.code.replace(/~\d+$/, '') : x.code)}${x.unknown ? '（コードで照合できない商品です）' : ''}</div>
         <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
         ${manual}
       </div>
@@ -349,6 +385,17 @@ async function start() {
   $('resetBtn').style.display = '';
   window.scrollTo(0, 0);
   render();
+  if (state.src === 'medi') {
+    try {
+      zmap = await getMediMap(state.items);
+      $('cacheNote').textContent = '';
+    } catch (e) {
+      $('cacheNote').textContent = '※ 商品マスタの名前・画像を読めませんでした：' + e.message + '（照合はできます）';
+    }
+    render();
+    keepFocus();
+    return;
+  }
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
