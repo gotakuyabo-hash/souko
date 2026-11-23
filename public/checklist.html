@@ -1222,7 +1222,7 @@ const TEISHA_URL = 'https://crossborder-auto.magitech-tool-lab.com/orders/daiko/
 // Lazadaくん（shopeesheet.html）と同じGAS。出庫は、Lazadaくんの「手動出庫」と同じ形でシートに記録する
 const LZ_API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec';
 const TEISHA_SELLER_WORD = '定者';
-const TEISHA = { data: null, outs: {}, busy: '' };
+const TEISHA = { data: null, outs: {}, busy: '', qty: {} };   // qty：画面で直した数量（注文番号|コード → 数）
 const normCode = v => String(v == null ? '' : v).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s/g, '');
 
 // 備考から商品コード（JAN）と、そのあとに書かれた商品名を取り出す
@@ -1232,11 +1232,18 @@ function teishaLines(x) {
   let m;
   while ((m = re.exec(remark))) hits.push({ code: normCode(m[0]), at: m.index, end: re.lastIndex });
   const seen = new Set();
-  return hits.filter(hh => !seen.has(hh.code) && seen.add(hh.code)).map((hh, i, arr) => ({
-    code: hh.code,
-    guess: remark.slice(hh.end, arr[i + 1] ? arr[i + 1].at : undefined).trim().slice(0, 60),
-    qty: arr.length === 1 ? (Number(x.qty) || 1) : 1
-  }));
+  return hits.filter(hh => !seen.has(hh.code) && seen.add(hh.code)).map((hh, i, arr) => {
+    const guess = remark.slice(hh.end, arr[i + 1] ? arr[i + 1].at : undefined).trim();
+    const def = teishaQtyIn(guess) || (arr.length === 1 ? (Number(x.qty) || 1) : 1);
+    const edited = TEISHA.qty[x.orderNo + '|' + hh.code];
+    return { code: hh.code, guess: guess.slice(0, 60), qty: edited || def };
+  });
+}
+// 備考の数量（「×2」「x2」や、末尾の「2個」「2点」）。書かれていなければ 0
+function teishaQtyIn(t) {
+  const s = String(t || '').replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  const m = s.match(/[×xX✕*＊]\s*(\d{1,3})(?!\d)/) || s.match(/(\d{1,3})\s*(?:個|点|セット)\s*[。．.、]?\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
 function renderTeisha() {
@@ -1255,8 +1262,16 @@ function renderTeisha() {
     const out = TEISHA.outs[x.orderNo];
     let act = null;
     if (out) act = h('span', { class: 't-done' }, '✓ 出庫済み' + (out.at ? '（' + new Date(out.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）' : ''));
-    else if (lines.length) act = h('button', { type: 'button', class: 'btn btn-primary', disabled: !!TEISHA.busy, onclick: () => teishaOut(x.orderNo) },
-      TEISHA.busy === x.orderNo ? '出庫中…' : `📦 在庫から出庫（${lines.map(l => l.code).join('・')}）`);
+    else if (lines.length) act = [
+      ...lines.map(l => {
+        const inp = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', value: String(l.qty), 'aria-label': `${l.code}の出庫数`,
+          style: 'width:64px;font-size:15px;font-weight:800;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)' });
+        inp.addEventListener('change', () => { const v = parseInt(inp.value, 10); TEISHA.qty[x.orderNo + '|' + l.code] = v > 0 ? v : 1; if (!(v > 0)) inp.value = '1'; });
+        return h('span', { class: 't-sub', style: 'display:inline-flex;align-items:center;gap:4px' }, l.code + ' ', inp, '個');
+      }),
+      h('button', { type: 'button', class: 'btn btn-primary', disabled: !!TEISHA.busy, onclick: () => teishaOut(x.orderNo) },
+        TEISHA.busy === x.orderNo ? '出庫中…' : '📦 在庫から出庫')
+    ];
     return h('li', {},
       h('span', {}, h('span', { class: 't-no' }, x.orderNo), x.requested ? h('span', { class: 't-sub' }, `　依頼日 ${shortDate(x.requested)}`) : null, x.country ? h('span', { class: 't-sub' }, `・${x.country}`) : null),
       h('span', { class: 't-remark' }, x.remark),
