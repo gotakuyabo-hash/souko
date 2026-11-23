@@ -326,6 +326,7 @@ details.bd table{margin-top:6px}
     </div>
     <div class="bar">
       <input class="search" id="lzq" type="search" placeholder="商品名・商品コードで探す（バーコードを読むと出庫画面が開きます）">
+      <button class="btn" id="lzqCam" aria-label="カメラでJANを読んで出庫画面を開く">📷</button>
       <div class="seg" id="lzfilter">
         <button data-s="have" aria-pressed="true">在庫あり</button>
         <button data-s="all" aria-pressed="false">すべて</button>
@@ -343,11 +344,13 @@ details.bd table{margin-top:6px}
     <div class="bar">
       <select class="lzsel" id="zcShop" aria-label="ショップ"></select>
       <button class="btn" id="zcReload">zaicoから読み直す</button>
+      <button class="btn" id="zcInBtn" style="background:var(--zc);color:#fff;border-color:var(--zc);font-weight:700">＋入庫を登録</button>
       <button class="btn" id="zcEditMode" aria-pressed="false">ショップ名・在庫数を変更</button>
     </div>
     <div class="alert" id="zcEditNote" hidden>ショップ名・在庫数の変更中です。商品をタップすると、変更する画面が開きます（出庫指示には入りません）。終わったら「変更を終える」を押してください。</div>
     <div class="bar">
       <input class="search" id="zcq" type="search" placeholder="商品名・バーコード・保管場所で探す（バーコードを読むと出庫指示に追加）">
+      <button class="btn" id="zcqCam" aria-label="カメラでJANを読んで出庫指示に追加">📷</button>
       <div class="seg" id="zcfilter">
         <button data-s="have" aria-pressed="true">在庫あり</button>
         <button data-s="all" aria-pressed="false">すべて</button>
@@ -1878,7 +1881,7 @@ function openLzOut(presetKey) {
     <div class="sheet-h"><div><h2>ラザダくん 手動出庫</h2><div class="sub">${esc(seller.name || D.title || '')}${seller.platform ? '（' + esc(seller.platform) + '）' : ''}　注文シートにない出庫を在庫から引きます</div></div>
       <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
     <div class="lotform">
-      <label class="field"><span>商品コード（バーコード可）</span><input id="lzoC" autocomplete="off" placeholder="読むと下の商品が選ばれます"></label>
+      <label class="field"><span>商品コード（バーコード可）</span><div class="hk-code"><input id="lzoC" autocomplete="off" placeholder="読むと下の商品が選ばれます"><button class="mini" id="lzoCam" aria-label="カメラでJANを読む">📷</button></div></label>
       <label class="field"><span>商品</span><select id="lzoI"><option value="">選んでください</option>
         ${list.map(r => `<option value="${esc(r.key)}" ${r.key === presetKey ? 'selected' : ''}>${esc((r.code ? r.code + '　' : '') + r.name)}（在庫 ${r.stock}）</option>`).join('')}</select></label>
       <p class="hint" id="lzoHint"></p>
@@ -1911,6 +1914,7 @@ function openLzOut(presetKey) {
     return false;
   };
   $('lzoC').oninput = byCode;
+  $('lzoCam').onclick = () => openCamera(code => { $('lzoC').value = code; (byCode() ? $('lzoQ') : $('lzoI')).focus(); });
   $('lzoC').onkeydown = e => {   // バーコードリーダーのEnterでは登録せず、出庫数へ進む
     if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
@@ -2070,6 +2074,7 @@ async function lzDelOut(row) {
 const ZC_LIST_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories';
 const ZC_SHIP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment';
 const ZC_SHOP_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiUpdateZaicoShop';   // ショップ名の変更
+const ZC_IN_URL = 'https://asia-northeast1-souko-2de57.cloudfunctions.net/apiZaicoInbound';     // 入庫・新規商品の登録
 const ZC_LOG_COL = 'zaico_shipment_logs';      // まとまるくんの「zaico出庫履歴」と同じ保存先
 const ZC_SHOP_ATTR = 'ショップ名';             // zaicoの追加項目の名前（入っていればこれでショップを分ける）
 const ZC_CACHE = 'irai_zaico_inv_v1';
@@ -2304,6 +2309,170 @@ async function zcDeleteItem(x) {
     toast('削除できませんでした：' + e.message);
   }
 }
+// ---- 入庫の登録（📷でJANを読む → zaicoにあれば入庫、なければ新しい商品として登録） ----
+async function zcPost(url, body) {
+  const idToken = await S.user.getIdToken();
+  let res, data;
+  try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken }, body: JSON.stringify(body) }); }
+  catch (e) { throw new Error('zaicoの関数につながりませんでした（関数がデプロイされているか確認してください）'); }
+  try { data = await res.json(); } catch (e) { throw new Error(`関数から正しい返事がありませんでした（${res.status}）`); }
+  return data;
+}
+function openZcIn(presetCode) {
+  if (!ZC.at) { toast('zaicoの在庫を読み込み中です。少し待ってください'); return; }
+  const shops = [...new Set(ZC.items.map(v => v.shop).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
+  const defShop = ZC.shop && ZC.shop.startsWith('s:') ? ZC.shop.slice(2) : '';
+  const sh = $('sheet');
+  sh.dataset.id = 'zcin'; sh.dataset.kind = 'zcin'; sh.dataset.dirty = '1'; sh.dataset.f = 'zc';
+  sh.innerHTML = `
+    <div class="sheet-h"><div><h2>zaicoに入庫を登録</h2><div class="sub">JANを読むと、zaicoにある商品なら入庫、ない商品なら新しく登録します</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    <div class="lotform">
+      <label class="field"><span>バーコード（JAN）</span>
+        <div class="hk-code"><input id="zciC" autocomplete="off" inputmode="numeric" placeholder="読むか入力してEnter" value="${esc(presetCode || '')}"><button class="mini" id="zciCam" aria-label="カメラでJANを読む">📷</button></div></label>
+      <div id="zciBody"><p class="hint">バーコードを読むか入力すると、zaicoの商品を探します。</p></div>
+      <div class="actions" style="margin-top:14px"><button class="mini" id="zciNew">＋新しい商品を登録（バーコードを手で入れる・バーコードなし）</button></div>
+    </div>`;
+  $('closeSheet').onclick = closeSheet;
+  const body = $('zciBody');
+  let cur = null;   // 入庫する商品（zaicoにある商品）
+
+  const showAdd = x => {
+    cur = x;
+    const q0 = zcQty(x);
+    body.innerHTML = `
+      <div class="hk" style="border-color:var(--zc)">
+        <div class="pimg-wrap">${imgTag(x.code)}<b>${esc(x.title)}</b>
+          <div class="hint" style="margin:2px 0 0">JAN ${esc(x.code)}${x.shop ? '・' + esc(x.shop) : ''}${x.place ? '・保管場所 ' + esc(x.place) : ''}・今の在庫 <b>${esc(zcFmt(q0))}</b>${esc(x.unit || '')}</div></div>
+      </div>
+      <label class="field"><span>入庫する数</span><input id="zciQ" class="num-in" inputmode="numeric"></label>
+      <p class="hint" id="zciDiff"></p>
+      <label class="field"><span>メモ（任意・入荷元など）</span><input id="zciM" autocomplete="off"></label>
+      <div class="actions"><button class="primary" id="zciGo" style="background:var(--zc)">zaicoに入庫する</button></div>
+      <p class="hint">zaicoの「入庫」として記録するので、zaicoの入出庫の履歴にも残ります。</p>`;
+    $('zciQ').oninput = () => { const n = toNum($('zciQ').value); $('zciDiff').textContent = n ? `在庫 ${zcFmt(q0)} → ${zcFmt(q0 + n)}` : ''; };
+    $('zciQ').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('zciGo').click(); } };
+    $('zciGo').onclick = () => doAdd(x, toNum($('zciQ').value), $('zciM').value.trim());
+    setTimeout(() => $('zciQ').focus(), 50);
+  };
+
+  const doAdd = async (x, n, memo) => {
+    if (!(n > 0)) { toast('入庫する数を1以上で入れてください'); return; }
+    const q0 = zcQty(x), b = $('zciGo');
+    b.disabled = true; b.textContent = '入庫中…';
+    try {
+      const d = await zcPost(ZC_IN_URL, { mode: 'add', inventoryId: x.id, quantity: n, expectQuantity: q0, memo });
+      if (d.conflict && d.currentQuantity != null) { x.quantity = d.currentQuantity; zcSaveCache(); render(); showAdd(x); alert(d.error); return; }
+      if (d.purchaseFailed) {
+        // 入庫の記録を作れなかったとき：在庫数を直接足すかを選んでもらう
+        if (!confirm(`${d.error}\n\n代わりに、在庫数を直接 ${zcFmt(q0)} → ${zcFmt(q0 + n)} に書き換えますか？\n（zaicoの入出庫の履歴には「入庫」として残りません）`)) { b.disabled = false; b.textContent = 'zaicoに入庫する'; return; }
+        const u = await zcPost(ZC_SHOP_URL, { inventoryId: x.id, quantity: q0 + n, expectQuantity: q0 });
+        if (u.conflict && u.currentQuantity != null) { x.quantity = u.currentQuantity; zcSaveCache(); render(); showAdd(x); alert(u.error); return; }
+        if (!u.success) throw new Error(u.error || '書き換えられませんでした');
+        x.quantity = u.quantity ?? q0 + n;
+      } else if (!d.success) {
+        if (d.purchaseCreated) { x.quantity = d.quantity ?? x.quantity; zcSaveCache(); render(); closeSheet(); alert(d.error); return; }
+        throw new Error(d.error || '入庫できませんでした');
+      } else {
+        x.quantity = d.quantity ?? q0 + n;
+      }
+      zcSaveCache(); render();
+      toast(`${x.title} を ${n}点 入庫しました（在庫 ${zcFmt(Number(x.quantity))}）`);
+      // 続けて次の商品を読めるようにする
+      cur = null; $('zciC').value = ''; body.innerHTML = '<p class="hint">続けて次のバーコードを読めます。</p>'; $('zciC').focus();
+    } catch (e) {
+      b.disabled = false; b.textContent = 'zaicoに入庫する';
+      toast('入庫できませんでした：' + e.message);
+    }
+  };
+
+  const showNew = code => {
+    cur = null;
+    body.innerHTML = `
+      <div class="alert" style="margin-top:8px">${code ? 'zaicoにこのバーコードの商品がありません。新しい商品として登録します。' : '新しい商品を登録します。'}</div>
+      ${code ? '' : `<label class="field"><span>バーコード（JAN・型番など。なければ空のまま）</span><input id="zcnC" autocomplete="off"></label>`}
+      <label class="field"><span>商品名</span><div class="hk-code"><input id="zcnT" autocomplete="off"><button class="mini" id="zcnFind">🔍 検索</button></div></label>
+      <div class="hk-hits" id="zcnHits"></div>
+      <label class="field"><span>ショップ名</span><input id="zcnS" list="zcnShops" autocomplete="off" value="${esc(defShop)}"></label>
+      <datalist id="zcnShops">${shops.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+      <div class="two">
+        <label class="field"><span>数量（入庫する数）</span><input id="zcnQ" class="num-in" inputmode="numeric"></label>
+        <label class="field"><span>保管場所（任意）</span><input id="zcnP" autocomplete="off"></label>
+      </div>
+      <div class="actions"><button class="primary" id="zcnGo" style="background:var(--zc)">zaicoに新しく登録する</button></div>`;
+    const codeNow = () => code || ($('zcnC') ? half($('zcnC').value).replace(/\s/g, '') : '');
+    const find = async () => {
+      const box = $('zcnHits'), btn = $('zcnFind');
+      const code = codeNow();
+      if (!code) { toast('バーコードを入れると、ネットで商品名を探せます'); return; }
+      btn.disabled = true; btn.textContent = '検索中…';
+      try {
+        const idToken = await S.user.getIdToken();
+        const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, action: 'lookup', code }) });
+        const r = await res.json();
+        if (!r.ok) { box.innerHTML = ''; toast(r.message || '検索できませんでした'); return; }
+        if (!(r.items || []).length) { box.innerHTML = '<p class="hint">見つかりませんでした。商品名を手で入れてください。</p>'; return; }
+        box.innerHTML = r.items.map((h, i) => `<button class="hk-hit" data-i="${i}">${h.image ? `<img src="${esc(h.image)}" alt="" loading="lazy">` : ''}
+            <span>${esc(h.clean || h.name)}<small>${esc([h.brand, h.jan && 'JAN ' + h.jan].filter(Boolean).join('・'))}</small></span></button>`).join('')
+          + '<div class="credit"><a href="https://developer.yahoo.co.jp/sitemap/" target="_blank" rel="noopener">Web Services by Yahoo! JAPAN</a></div>';
+        box.querySelectorAll('.hk-hit').forEach(b => b.onclick = () => {
+          $('zcnT').value = r.items[+b.dataset.i].clean || r.items[+b.dataset.i].name; box.innerHTML = '';
+          (($('zcnS').value ? $('zcnQ') : $('zcnS'))).focus();
+        });
+      } catch (e) { toast('検索できませんでした。少し待ってから、もう一度お試しください'); }
+      finally { btn.disabled = false; btn.textContent = '🔍 検索'; }
+    };
+    $('zcnFind').onclick = find;
+    $('zcnGo').onclick = async () => {
+      const title = $('zcnT').value.trim(), shop = $('zcnS').value.trim(), n = toNum($('zcnQ').value), place = $('zcnP').value.trim();
+      const code = codeNow();
+      if (!title) { toast('商品名を入れてください'); return; }
+      if (code && ZC.items.some(v => v.code === code)) { toast('このバーコードの商品は、もうzaicoにあります。入庫に切り替えます'); showAdd(ZC.items.find(v => v.code === code)); return; }
+      if (!code && !confirm('バーコードなしで登録します。zaicoへの出庫指示（まとまるくん・依頼くん）はバーコードで探すため、この商品は出庫指示に使えません。よろしいですか？')) return;
+      if (!shop && !confirm('ショップ名が空です。このまま登録しますか？（あとで「ショップ名・在庫数を変更」から入れられます）')) return;
+      if (!confirm(`zaicoに新しい商品を登録します。\n\n${title}\n${code ? 'バーコード ' + code : 'バーコードなし'}${shop ? '\nショップ ' + shop : ''}\n数量 ${n}`)) return;
+      const b = $('zcnGo'); b.disabled = true; b.textContent = '登録中…';
+      try {
+        const d = await zcPost(ZC_IN_URL, { mode: 'create', title, code, shop, place, quantity: n });
+        if (d.exists && d.item) {   // ほかの人がすでに作っていた → その商品への入庫に切り替える
+          let x = ZC.items.find(v => v.id === String(d.inventoryId));
+          if (!x) { x = { ...d.item, group: '' }; ZC.items.push(x); zcSaveCache(); }
+          toast(d.error); showAdd(x); return;
+        }
+        if (!d.success) throw new Error(d.error || '登録できませんでした');
+        ZC.items.push({ ...d.item, id: String(d.inventoryId), group: '' });
+        zcSaveCache(); render();
+        if (d.warning) alert(d.warning);
+        toast(`「${title}」をzaicoに登録しました（数量 ${n}）`);
+        $('zciC').value = ''; body.innerHTML = '<p class="hint">続けて次のバーコードを読めます。</p>'; $('zciC').focus();
+      } catch (e) {
+        b.disabled = false; b.textContent = 'zaicoに新しく登録する';
+        toast('登録できませんでした：' + e.message);
+      }
+    };
+    if (code) find();   // はじめての商品は、すぐにネットで商品名を探す
+    else setTimeout(() => $('zcnC').focus(), 50);
+  };
+
+  const lookup = () => {
+    const c = half($('zciC').value).replace(/\s/g, '');
+    if ($('zciC').value !== c) $('zciC').value = c;
+    if (!c) return;
+    const hits = ZC.items.filter(x => x.code === c);
+    if (!hits.length) { showNew(c); return; }
+    if (hits.length === 1) { showAdd(hits[0]); return; }
+    // 同じバーコードがショップ違いで複数あるとき：選んでもらう
+    body.innerHTML = '<p class="hint">同じバーコードの商品が複数あります。入庫する商品を選んでください。</p>' +
+      hits.map(x => `<button class="hk-hit" data-zid="${esc(x.id)}">${imgTag(x.code)}<span>${esc(x.title)}<small>${esc(zcKeyLabel(zcKey(x)))}・在庫 ${esc(zcFmt(zcQty(x)))}</small></span></button>`).join('');
+    body.querySelectorAll('[data-zid]').forEach(b => b.onclick = () => showAdd(hits.find(x => x.id === b.dataset.zid)));
+  };
+  $('zciC').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); lookup(); } };
+  $('zciCam').onclick = () => openCamera(code => { $('zciC').value = code; lookup(); });
+  $('zciNew').onclick = () => { $('zciC').value = ''; showNew(''); };
+  showSheet();
+  if (presetCode) lookup(); else setTimeout(() => $('zciC').focus(), 250);
+}
+
 function zcSaveCache() {
   try { localStorage.setItem(ZC_CACHE, JSON.stringify({ at: ZC.at.toISOString(), items: ZC.items, hasGroup: ZC.hasGroup, hasShop: ZC.hasShop, fields: ZC.fields })); } catch (e) {}
 }
@@ -2563,6 +2732,12 @@ $('lzq').onkeydown = e => {   // バーコードリーダーは最後にEnterを
   const r = lzStock(LZ.D).rows.find(x => x.code === c);
   if (r) openLzOut(r.key); else toast('このコードの商品が見つかりません');
 };
+$('lzqCam').onclick = () => openCamera(code => {
+  if (!LZ.D) { toast('在庫を読み込み中です'); return; }
+  const r = lzStock(LZ.D).rows.find(x => x.code === code);
+  if (r) openLzOut(r.key);
+  else { $('lzq').value = code; LZ.q = code; renderLz(); toast('このコードの商品が見つかりません（' + code + '）'); }
+});
 $('lzfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; LZ.filter = b.dataset.s;
   document.querySelectorAll('#lzfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderLz(); };
 $('lzList').onclick = e => { const b = e.target.closest('[data-lzkey]'); if (b) openLzOut(b.dataset.lzkey); };
@@ -2570,6 +2745,7 @@ $('lzHist').onclick = e => { const b = e.target.closest('[data-lzdel]'); if (b) 
 // zaico在庫
 $('zcShop').onchange = e => { ZC.shop = e.target.value; lzStore('zcShop', ZC.shop); ZC.limit = 200; renderZc(); };
 $('zcReload').onclick = () => zcLoad(true);
+$('zcInBtn').onclick = () => openZcIn('');
 $('zcq').oninput = e => { ZC.q = e.target.value; ZC.limit = 200; renderZc(); };
 $('zcq').onkeydown = e => {   // バーコードを読んだら（Enter）、その商品を出庫指示に1点追加
   if (e.key !== 'Enter' || e.isComposing) return;
@@ -2583,6 +2759,17 @@ $('zcq').onkeydown = e => {   // バーコードを読んだら（Enter）、そ
   else if (ZC.editMode) { e.target.value = ''; ZC.q = ''; renderZc(); openZcShopEdit(x.id); }
   else { zcAdd(x.id, 1); e.target.value = ''; ZC.q = ''; renderZc(); }
 };
+$('zcqCam').onclick = () => openCamera(c => {
+  const hits = ZC.items.filter(x => x.code === c);
+  const inShop = hits.filter(x => !ZC.shop || ZC.shop === '*' || zcKey(x) === ZC.shop);
+  const x = inShop[0] || hits[0];
+  if (!x) {
+    if (confirm(`バーコード ${c} の商品がzaicoにありません。新しい商品として登録しますか？`)) openZcIn(c);
+    return;
+  }
+  if ((inShop.length || hits.length) > 1) { $('zcq').value = c; ZC.q = c; renderZc(); toast('同じバーコードの商品が複数あります。一覧から選んでください'); return; }
+  if (ZC.editMode) openZcShopEdit(x.id); else { zcAdd(x.id, 1); render(); }
+});
 $('zcfilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; ZC.filter = b.dataset.s;
   document.querySelectorAll('#zcfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderZc(); };
 $('zcList').onclick = e => { const b = e.target.closest('[data-zcid]'); if (!b) return; if (ZC.editMode) openZcShopEdit(b.dataset.zcid); else { zcAdd(b.dataset.zcid, 1); render(); } };
