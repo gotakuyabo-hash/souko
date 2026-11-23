@@ -232,6 +232,14 @@ details.bd table{margin-top:6px}
 .zc-line .lbl small{display:block;color:var(--sub);font-size:12px}
 .zc-line input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;text-align:right}
 .zc-line.over .lbl small{color:var(--late);font-weight:700}
+/* カメラでJANを読む */
+.cam{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px}
+.cam[hidden]{display:none}
+.cam-box{position:relative;width:min(520px,100%);aspect-ratio:3/4;max-height:70vh;background:#000;border-radius:12px;overflow:hidden}
+.cam-box video{width:100%;height:100%;object-fit:cover}
+.cam-box .guide{position:absolute;left:8%;right:8%;top:40%;height:20%;border:3px solid #4ADE80;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+.cam p{color:#fff;margin:0;font-size:14px;text-align:center}
+.cam .btn{min-width:160px}
 /* 商品画像（JANからYahoo!ショッピングで探したもの） */
 .pimg{display:inline-block;width:44px;height:44px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;vertical-align:middle;margin-right:8px;float:left}
 .pimg-wrap::after{content:"";display:block;clear:both}
@@ -313,6 +321,7 @@ details.bd table{margin-top:6px}
     <div class="bar">
       <select class="lzsel" id="lzSeller" aria-label="セラー"></select>
       <button class="btn" id="lzReload">最新にする</button>
+      <button class="btn" id="lzInBtn">＋入庫を登録</button>
       <button class="btn" id="lzOutBtn" style="background:var(--lz);color:#fff;border-color:var(--lz);font-weight:700">手動出庫</button>
     </div>
     <div class="bar">
@@ -359,6 +368,11 @@ details.bd table{margin-top:6px}
 
 <div class="sheet-bg" id="bg"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+<div class="cam" id="cam" hidden role="dialog" aria-modal="true" aria-label="カメラでJANを読む">
+  <div class="cam-box"><video id="camVideo" playsinline muted></video><div class="guide"></div></div>
+  <p id="camMsg">バーコードを緑の枠に合わせてください</p>
+  <button class="btn" id="camClose">やめる</button>
+</div>
 <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo" hidden>元に戻す</button></div>
 
 <script type="module">
@@ -584,6 +598,16 @@ function bindRows(onChange) {
   $('hkRows').onclick = e => {
     const b = e.target.closest('.hk-del'); if (b) { b.parentElement.remove(); changed(); return; }
     const f = e.target.closest('.hk-find'); if (f) findProduct(f.closest('.hk-row'), f);
+    const c = e.target.closest('.hk-cam');
+    if (c) {   // カメラでJANを読む → 読めたらそのままYahoo!ショッピングで検索
+      const row = c.closest('.hk-row');
+      openCamera(code => {
+        const ci = row.querySelector('.hk-c');
+        ci.value = code; ci.dataset.jan = '';
+        $('sheet').dataset.dirty = '1';
+        findProduct(row, row.querySelector('.hk-find'));
+      });
+    }
   };
   $('hkRows').onkeydown = e => {   // JAN・型番の欄でEnter（バーコードリーダーも）→ すぐ検索
     if (e.key === 'Enter' && e.target.classList.contains('hk-c')) { e.preventDefault(); const row = e.target.closest('.hk-row'); findProduct(row, row.querySelector('.hk-find')); }
@@ -924,6 +948,7 @@ const itemRow = (it = {}) => `<div class="hk-row">
   <input class="hk-q num-in" inputmode="numeric" placeholder="数量" value="${it.qty || ''}">
   <button class="mini hk-del" aria-label="この行を消す">×</button>
   <div class="hk-code"><input class="hk-c" placeholder="JAN・型番（入れて🔍で商品名を検索）" value="${esc(it.code || it.jan || it.model || '')}" data-jan="${esc(it.jan || '')}">
+    <button class="mini hk-cam" aria-label="カメラでJANを読む">📷</button>
     <button class="mini hk-find" aria-label="ネットで商品を検索">🔍 検索</button></div>
   <div class="hk-hits"></div>
   <label class="hk-exp-w">賞味期限<input class="hk-exp" type="date" value="${esc(it.expiry || '')}" aria-label="賞味期限（任意）"><small>任意</small></label>
@@ -1120,6 +1145,68 @@ async function imgPump() {
     if (IMG.queue.length) setTimeout(imgPump, 1500);
   }
 }
+
+// ---------- カメラでJANを読む ----------
+// 対応しているブラウザ（AndroidのChromeなど）は内蔵の読み取り機能、iPhoneなどは読み取り用の部品（ZXing）を使う
+const CAM = { stream: null, controls: null, raf: 0, done: null };
+const janOk = t => /^\d{8}$|^\d{13}$/.test(t);
+async function openCamera(onCode) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('このブラウザではカメラを使えません'); return; }
+  const video = $('camVideo');
+  $('camMsg').textContent = 'カメラを起動しています…';
+  $('cam').hidden = false;
+  let finished = false;
+  const finish = code => {
+    if (finished) return; finished = true;
+    closeCamera();
+    if (navigator.vibrate) navigator.vibrate(80);
+    toast('JAN ' + code + ' を読みました');
+    onCode(code);
+  };
+  CAM.done = () => { finished = true; };
+  try {
+    if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('ean_13')) {
+      CAM.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      video.srcObject = CAM.stream;
+      await video.play();
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8'] });
+      $('camMsg').textContent = 'バーコードを緑の枠に合わせてください';
+      const loop = async () => {
+        if (finished) return;
+        try {
+          const hits = await det.detect(video);
+          const h = hits.find(x => janOk(String(x.rawValue || '')));
+          if (h) { finish(String(h.rawValue)); return; }
+        } catch (e) {}
+        CAM.raf = requestAnimationFrame(loop);
+      };
+      loop();
+    } else {
+      const { BrowserMultiFormatReader } = await import('https://esm.sh/@zxing/browser@0.1.5');
+      if (finished) return;
+      const reader = new BrowserMultiFormatReader();
+      $('camMsg').textContent = 'バーコードを緑の枠に合わせてください';
+      CAM.controls = await reader.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } }, audio: false }, video, res => {
+        if (res && janOk(res.getText())) finish(res.getText());
+      });
+      if (finished) closeCamera();
+    }
+  } catch (e) {
+    console.warn(e);
+    closeCamera();
+    toast(e && e.name === 'NotAllowedError' ? 'カメラの使用が許可されていません。ブラウザの設定でカメラを許可してください' : 'カメラを起動できませんでした：' + (e.message || e));
+  }
+}
+function closeCamera() {
+  if (CAM.done) CAM.done();
+  cancelAnimationFrame(CAM.raf);
+  try { if (CAM.controls) CAM.controls.stop(); } catch (e) {}
+  if (CAM.stream) CAM.stream.getTracks().forEach(t => t.stop());
+  const v = $('camVideo'); v.pause(); v.srcObject = null;
+  CAM.stream = null; CAM.controls = null; CAM.done = null;
+  $('cam').hidden = true;
+}
+$('camClose').onclick = closeCamera;
 
 // ---------- 保管在庫の画面 ----------
 function renderStock(recs) {
@@ -1863,6 +1950,102 @@ function openLzOut(presetKey) {
   setTimeout(() => (presetKey ? $('lzoQ') : $('lzoC')).focus(), 250);
 }
 
+// ---- 入庫の登録（ラザダくんの「入庫」タブと同じ。📷でJANを読み、はじめての商品はネットで商品名を探す） ----
+function openLzIn() {
+  const D = LZ.D;
+  if (!D) { toast('在庫を読み込み中です。少し待ってください'); return; }
+  if (D.hasInbound === false) { toast('ラザダくんのシートに「入庫シート」が見つかりません'); return; }
+  const sid = LZ.sid, seller = lzSeller();
+  const names = new Map();   // コード → 商品名（在庫シート＞入庫シートの順）
+  [...(D.inbound || []), ...(D.stock || [])].forEach(b => { const c = lzCode(b.code), n = String(b.name || '').trim(); if (c && n) names.set(c, n); });
+  const sh = $('sheet');
+  sh.dataset.id = 'lzin'; sh.dataset.kind = 'lzin'; sh.dataset.dirty = '1'; sh.dataset.f = 'lz';
+  sh.innerHTML = `
+    <div class="sheet-h"><div><h2>ラザダくん 入庫を登録</h2><div class="sub">${esc(seller.name || D.title || '')}${seller.platform ? '（' + esc(seller.platform) + '）' : ''}</div></div>
+      <button class="close" id="closeSheet" aria-label="閉じる">×</button></div>
+    <div class="lotform">
+      <label class="field"><span>商品コード（JAN・バーコード可）</span>
+        <div class="hk-code"><input id="lziC" autocomplete="off" inputmode="numeric" placeholder="読むか入力"><button class="mini" id="lziCam" aria-label="カメラでJANを読む">📷</button><button class="mini" id="lziFind">🔍 検索</button></div></label>
+      <p class="hint" id="lziHint"></p>
+      <div class="hk-hits" id="lziHits"></div>
+      <label class="field"><span>商品名</span><input id="lziN" autocomplete="off"></label>
+      <label class="field"><span>賞味期限（任意）</span><input id="lziE" autocomplete="off" placeholder="2026/06"></label>
+      <div class="two">
+        <label class="field"><span>入荷予定数</span><input id="lziP" class="num-in" inputmode="numeric"></label>
+        <label class="field"><span>入庫数量</span><input id="lziQ" class="num-in" inputmode="numeric"></label>
+      </div>
+      <div class="two">
+        <label class="field"><span>入荷日</span><input type="date" id="lziD" value="${todayYmd()}"></label>
+        <label class="field"><span>担当者</span><input id="lziS" autocomplete="off" value="${esc(lzStore('lastStaff'))}"></label>
+      </div>
+      <label class="field"><span>備考（任意）</span><input id="lziNote" autocomplete="off"></label>
+      <p class="hint">入荷日を空にすると「入荷待ち」として登録します（そのときは入荷予定数を入れてください）。</p>
+      <div class="actions"><button class="primary" id="lziGo" style="background:var(--lz)">入庫を登録</button></div>
+    </div>`;
+  $('closeSheet').onclick = closeSheet;
+  const hint = (t, ok) => { $('lziHint').textContent = t || ''; $('lziHint').style.color = ok ? 'var(--ok)' : (t ? '#B35C00' : ''); };
+  const known = () => {
+    const c = lzCode($('lziC').value);
+    if ($('lziC').value !== c) $('lziC').value = c;
+    if (!c) { hint(''); return false; }
+    const n = names.get(c);
+    if (n) { $('lziN').value = n; hint('登録済みの商品です：' + n, true); return true; }
+    hint('はじめてのコードです。🔍で商品名を探すか、手で入れてください');
+    return false;
+  };
+  const find = async () => {
+    const code = lzCode($('lziC').value), box = $('lziHits'), btn = $('lziFind');
+    if (!code) { toast('先に商品コードを入れてください'); $('lziC').focus(); return; }
+    btn.disabled = true; btn.textContent = '検索中…';
+    try {
+      const idToken = await S.user.getIdToken();
+      const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, action: 'lookup', code }) });
+      const r = await res.json();
+      if (!r.ok) { box.innerHTML = ''; toast(r.message || '検索できませんでした'); return; }
+      if (!(r.items || []).length) { box.innerHTML = '<p class="hint">見つかりませんでした。商品名を手で入れてください。</p>'; return; }
+      box.innerHTML = r.items.map((h, i) => `<button class="hk-hit" data-i="${i}">${h.image ? `<img src="${esc(h.image)}" alt="" loading="lazy">` : ''}
+          <span>${esc(h.clean || h.name)}<small>${esc([h.brand, h.jan && 'JAN ' + h.jan].filter(Boolean).join('・'))}</small></span></button>`).join('')
+        + '<div class="credit"><a href="https://developer.yahoo.co.jp/sitemap/" target="_blank" rel="noopener">Web Services by Yahoo! JAPAN</a></div>';
+      box.querySelectorAll('.hk-hit').forEach(b => b.onclick = () => {
+        const h = r.items[+b.dataset.i];
+        $('lziN').value = h.clean || h.name; box.innerHTML = '';
+        hint('ネットの商品名を入れました（必要なら直してください）', true);
+        $('lziQ').focus();
+      });
+    } catch (e) { toast('検索できませんでした。少し待ってから、もう一度お試しください'); }
+    finally { btn.disabled = false; btn.textContent = '🔍 検索'; }
+  };
+  $('lziC').oninput = () => { $('lziHits').innerHTML = ''; known(); };
+  $('lziC').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (known()) $('lziQ').focus(); else find(); } };
+  $('lziFind').onclick = find;
+  $('lziCam').onclick = () => openCamera(code => { $('lziC').value = code; $('lziHits').innerHTML = ''; if (known()) $('lziQ').focus(); else find(); });
+  $('lziGo').onclick = async () => {
+    const entry = { name: $('lziN').value.trim(), code: lzCode($('lziC').value), planned: half($('lziP').value).trim(), expiry: $('lziE').value.trim(),
+      inDate: $('lziD').value, inQty: half($('lziQ').value).trim(), staff: $('lziS').value.trim(), note: $('lziNote').value.trim() };
+    if (!entry.name) { toast('商品名を入れてください'); return; }
+    if (entry.inDate && entry.inQty === '') { toast('入荷日を入れたときは入庫数量も入れてください'); return; }
+    if (!entry.inDate && entry.planned === '') { toast('入荷待ちで登録するときは入荷予定数を入れてください'); return; }
+    if (sid !== LZ.sid) { toast('セラーが切り替わりました。もう一度開いてください'); closeSheet(); return; }
+    if (entry.staff) lzStore('lastStaff', entry.staff);
+    const b = $('lziGo'); b.disabled = true; b.textContent = 'シートに記録中…';
+    LZ.writing = true; render();
+    try {
+      const res = await lzRun(seller.sheetId, 'addInbound', entry);
+      if (sid === LZ.sid) {
+        if (res && res.data) { LZ.D = res.data; await lzSaveCache(); }   // ラザダくんの画面にも反映
+        else { LZ.D.inbound = (LZ.D.inbound || []).concat([{ row: -Date.now(), ...entry }]); setTimeout(lzLoad, 0); }
+      }
+      closeSheet();
+      toast(entry.inDate ? `${entry.name} を ${entry.inQty}点 入庫しました` : `${entry.name} を入荷待ちとして登録しました`);
+    } catch (e) {
+      b.disabled = false; b.textContent = '入庫を登録';
+      toast('登録できませんでした：' + e.message);
+    } finally { LZ.writing = false; render(); }
+  };
+  showSheet();
+  setTimeout(() => $('lziC').focus(), 250);
+}
+
 async function lzDelOut(row) {
   const D = LZ.D; if (!D) return;
   const m = (D.manual || []).find(x => String(x.row) === String(row));
@@ -2371,6 +2554,7 @@ $('exportNow').onclick = exportNow;
 $('lzSeller').onchange = e => lzSelect(e.target.value);
 $('lzReload').onclick = () => { if (LZ.sid) lzLoad(); };
 $('lzOutBtn').onclick = () => openLzOut('');
+$('lzInBtn').onclick = openLzIn;
 $('lzq').oninput = e => { LZ.q = e.target.value; renderLz(); };
 $('lzq').onkeydown = e => {   // バーコードリーダーは最後にEnterを送る → コードが一致すれば出庫画面を開く
   if (e.key !== 'Enter' || e.isComposing || !LZ.D) return;
@@ -2440,7 +2624,7 @@ $('sheet').onclick = e => {
   const d = e.target.closest('dd.copy'); if (d) copy(d.dataset.copy);
 };
 $('bg').onclick = closeSheet;
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (!$('cam').hidden) closeCamera(); else closeSheet(); } });
 </script>
 </body>
 </html>
