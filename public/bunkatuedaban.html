@@ -1641,19 +1641,21 @@ const shukkaAuto = (() => {
             const dateLabel = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
             const failed = [];
             let ok = 0;
+            let checked = false;   // チェックリストの「medishopee出荷報告確認」にレ点が付いたか
 
             for (let i = 0; i < targets.length; i++) {
                 const d = targets[i];
                 btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>送信中 ${i + 1}/${targets.length}`;
                 try {
                     const fileBase64 = await fileToBase64(d.file);
-                    await window.sendPackingListFn({
+                    const res = await window.sendPackingListFn({
                         fileName: d.name,
                         fileBase64,
                         message: `パッキングリストを共有します（${dateLabel}）\n${d.name}（${Math.max(d.rows.length - 1, 0)}行）`
                     });
                     d.sent = true;
                     ok++;
+                    if (res && res.data && res.data.checked) checked = true;
                 } catch (err) {
                     console.error(err);
                     failed.push(`${d.name}：${err.message || '送信エラー'}`);
@@ -1665,10 +1667,13 @@ const shukkaAuto = (() => {
 
             if (ok > 0) await registerShukkaMedi();
 
+            const checkNote = ok > 0
+                ? (checked ? '\n\nチェックリストの「medishopee出荷報告確認」にレ点を付けました。' : '\n\n※チェックリストのレ点は付けられませんでした（手で付けてください）。')
+                : '';
             if (failed.length === 0) {
-                alert(`${ok}件をChatworkに送りました。`);
+                alert(`${ok}件をChatworkに送りました。${checkNote}`);
             } else {
-                alert(`${ok}件を送りました。次のファイルは送れませんでした：\n\n${failed.join('\n')}`);
+                alert(`${ok}件を送りました。次のファイルは送れませんでした：\n\n${failed.join('\n')}${checkNote}`);
             }
         }
 
