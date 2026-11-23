@@ -1343,14 +1343,26 @@ onSnapshot(doc(db, 'settings', 'teisha_remarks'), snap => {
   if (D && S.tab === 'stock') renderSmOut();
 }, e => console.warn('teisha_remarks', e));
 
+// 備考の数量（「×2」「x2」や、末尾の「2個」「2点」）。書かれていなければ 0
+function smQtyIn(t){
+  const s = String(t || '').replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  const m = s.match(/[×xX✕*＊]\s*(\d{1,3})(?!\d)/) || s.match(/(\d{1,3})\s*(?:個|点|セット)\s*[。．.、]?\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
 function smOutPlans(){
   const items = Array.isArray(SM_REMARKS && SM_REMARKS.items) ? SM_REMARKS.items : [];
   const { rows } = stockRows();
   return items.map(x => {
-    const codes = [...new Set((String(x.remark || '').match(/\d{8,14}/g) || []).map(normCode))];
-    const lines = codes.map(c => {
-      const r = rows.find(y => y.code === c);
-      return { code:c, row:r || null, qty: codes.length === 1 ? (Number(x.qty) || 1) : 1 };
+    const remark = String(x.remark || '');
+    const re = /\d{8,14}/g, hits = []; let mm;
+    while ((mm = re.exec(remark))) hits.push({ code:normCode(mm[0]), at:mm.index, end:re.lastIndex });
+    const seen = new Set();
+    const uniq = hits.filter(hh => !seen.has(hh.code) && seen.add(hh.code));
+    const lines = uniq.map((hh, i) => {
+      const r = rows.find(y => y.code === hh.code);
+      const after = remark.slice(hh.end, uniq[i + 1] ? uniq[i + 1].at : undefined);
+      const q = smQtyIn(after) || (uniq.length === 1 ? (Number(x.qty) || 1) : 1);
+      return { code:hh.code, row:r || null, qty:q };
     });
     const done = !!SM_OUTS[x.orderNo] || MAN.some(m => String(m.note || '').indexOf(x.orderNo) >= 0);
     return { ...x, lines, done };
@@ -1404,7 +1416,7 @@ function smOutDo(orderNo){
   const msg = '注文 ' + orderNo + ' の分を、在庫から出庫します。\n\n' + ok.map(l => '・' + l.row.name + ' ×' + l.qty + '（在庫 ' + l.row.stock + '）').join('\n') +
     (ng.length ? '\n\n※在庫に見つからないコードは出庫しません：' + ng.map(l => l.code).join('、') : '') +
     (ok.some(l => l.qty > l.row.stock) ? '\n\n⚠ 在庫より多く出庫する商品があります' : '');
-  if (!confirm(msg)) return;
+  if (!confirm(msg + '\n\n数量が違うときは「キャンセル」して、「手動出庫」から記録してください。')) return;
   const staff = store('lastStaff');
   ok.forEach(l => {
     const rec = { code:l.row.code, name:l.row.name, qty:l.qty, date:today(), dest:'Shopee', staff, note:'ShopeeMate ' + orderNo };
