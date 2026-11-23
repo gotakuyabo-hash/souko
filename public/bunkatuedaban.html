@@ -6,6 +6,7 @@
     <title>分割くん Medicarry</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Firebase SDK (Modular v10) -->
@@ -1374,6 +1375,53 @@ const shukkaAuto = (() => {
             return map;
         }
 
+        // ===== 梱包くん（pack.html）連携：検品書にQRを載せる =====
+        // QRの中身：pack.htmlのURL#o=注文番号&s=medi&i=JAN*数量,…
+        //   ・JANで照合できる商品 → JAN*数量
+        //   ・JANでない／セット商品／マスタ未登録 → !SKU~何番目の商品*数量（梱包くんでは「目視で確認」）
+        //   ・s=medi … 梱包くんは zaico ではなく、この分割くんの商品マスタから名前・画像を出す
+        const PACK_URL = 'https://souko-2de57.web.app/pack.html';   // 空なら、この分割くんと同じ場所の pack.html を使う（別の場所なら https://…/pack.html を入れる）
+
+        function packBaseUrl() {
+            if (PACK_URL) return PACK_URL.replace(/#.*$/, '');
+            try { return new URL('pack.html', location.href).href.replace(/[?#].*$/, ''); } catch (e) { return 'pack.html'; }
+        }
+
+        function packHashFor(sn) {
+            const items = new Map();   // コード → 数量（同じ商品はまとめる）
+            processedDataRows.forEach(r => {
+                if ((String(r.orderSn ?? '').trim() || 'UNKNOWN') !== sn) return;
+                const qty = (r.baseQty || 1) * (r.multiplier || 1);
+                const jan = imageJanOf(r);
+                let code;
+                if (jan) {
+                    code = encodeURIComponent(jan);
+                } else {
+                    const m = r.baseSku ? findMaster(r.baseSku) : null;
+                    const idx = m ? (m.items || []).findIndex(it => it.jpName === (r.masterJpName || r.jpName)) : -1;
+                    code = '!' + encodeURIComponent((m ? m.key : (r.baseSku || r.sku || '不明')) + (idx >= 0 ? '~' + idx : ''));
+                }
+                items.set(code, (items.get(code) || 0) + qty);
+            });
+            return 'o=' + encodeURIComponent(sn) + '&s=medi&i=' + [...items].map(([c, q]) => c + '*' + q).join(',');
+        }
+
+        function packQrHtml(sn) {
+            if (typeof qrcode !== 'function') return '<div class="text-[10px] text-rose-600 text-center">QRを作れませんでした（ページを再読み込みしてください）</div>';
+            try {
+                const qr = qrcode(0, 'M');
+                qr.addData(packBaseUrl() + '#' + packHashFor(sn));
+                qr.make();
+                return `<div class="flex items-center justify-center gap-3 pt-3 mt-2 border-t border-slate-300">
+                    <img src="${qr.createDataURL(4, 0)}" alt="梱包チェック用QR" style="width:30mm;height:30mm;image-rendering:pixelated">
+                    <div class="text-[11px] text-slate-600 leading-snug">梱包チェック<br>このQRを読んでから<br>商品のJANを読む</div>
+                </div>`;
+            } catch (e) {
+                console.warn(e);
+                return '<div class="text-[10px] text-rose-600 text-center">商品が多すぎてQRに入りませんでした（目視で確認してください）</div>';
+            }
+        }
+
         function openInspectionModal() {
             if (!processedDataRows.length) return;
             updateInspectionModeButtons();
@@ -1382,7 +1430,7 @@ const shukkaAuto = (() => {
             if (inspectionMode === 'raw') { renderRawInspection(area); return; }
             const map = {};
             processedDataRows.forEach(r => {
-                const sn = r.orderSn || "UNKNOWN";
+                const sn = String(r.orderSn ?? '').trim() || "UNKNOWN";
                 if (!map[sn]) map[sn] = { tracking: r.trackingNum, items: [] };
                 map[sn].items.push(r);
             });
@@ -1415,6 +1463,7 @@ const shukkaAuto = (() => {
                         </thead>
                         <tbody>${itemsHtml}</tbody>
                     </table>
+                    ${packQrHtml(sn)}
                     <div class="text-center pt-4 border-t border-dashed text-sm text-slate-500 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
                 `;
                 area.appendChild(slip);
@@ -1453,6 +1502,7 @@ const shukkaAuto = (() => {
                         </thead>
                         <tbody>${itemsHtml}</tbody>
                     </table>
+                    ${packQrHtml(sn)}
                     <div class="text-center pt-4 border-t border-dashed text-sm text-slate-500 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
                 `;
                 area.appendChild(slip);
