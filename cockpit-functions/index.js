@@ -3027,6 +3027,150 @@ exports.sendPackingListToChatwork = onCall(
       throw new HttpsError("internal", `Chatworkへの送信に失敗しました（${res.status}）`);
     }
     const json = await res.json().catch(() => ({}));
-    return { ok: true, fileId: json.file_id || null };
+    // 日次報告チェックリストの「medishopee出荷報告確認」に自動でレ点（失敗しても送信は成功扱い）
+    let checked = false;
+    try { checked = (await autoCheckChecklist(todayJst(), BUNKATU_MEDI_CHECK, "bunkatu_medi")).ok; }
+    catch (e) { console.error("チェックリストにレ点を付けられませんでした: " + e.message); }
+    return { ok: true, fileId: json.file_id || null, checked };
+  }
+);
+
+
+// ==============================
+// 日次報告チェックリスト（checklist.html）に自動でレ点を付ける
+//   warehouse_reports/{日付} の sections の中から、項目名が条件に合うチェック項目を探してオンにする
+//   その日の記録がまだない時は、チェックリストと同じく「直前の記録日の項目構成」を引き継いで作る
+// ==============================
+const CL_SECTIONS = ["morning", "noon", "afternoon", "peak", "evening", "reflection"];
+// 分割くんmedi で送った時にレ点を付ける項目（項目名に両方の言葉が入っているもの）
+const BUNKATU_MEDI_CHECK = t => /medishopee/i.test(t) && /出荷報告/.test(t);
+// ニッシントーア報告で送った時にレ点を付ける項目
+const NISSHINTOA_CHECK = t => /ニッシントーア/.test(t) && /報告/.test(t);
+
+function todayJst() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+
+async function autoCheckChecklist(date, match, by) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { ok: false, reason: "bad_date" };
+  const ref = db.collection("warehouse_reports").doc(date);
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    let data;
+    if (snap.exists) {
+      data = snap.data();
+    } else {
+      const docId = admin.firestore.FieldPath.documentId();
+      const prev = await tx.get(db.collection("warehouse_reports").where(docId, "<", date).orderBy(docId, "desc").limit(1));
+      if (prev.empty) return { ok: false, reason: "no_template" };
+      const src = prev.docs[0].data().sections || {};
+      const secs = {};
+      CL_SECTIONS.forEach(k => {
+        secs[k] = (Array.isArray(src[k]) ? src[k] : []).map(it => {
+          const o = Object.assign({}, it);
+          if ("value" in o) o.value = "";
+          if ("checked" in o) o.checked = false;
+          return o;
+        });
+      });
+      data = { date, sections: secs, frozenChecked: false };
+    }
+    const secs = data.sections || {};
+    let hit = false, changed = !snap.exists;
+    CL_SECTIONS.forEach(k => (Array.isArray(secs[k]) ? secs[k] : []).forEach(it => {
+      if (!it || it.type !== "checkbox" || !match(String(it.title || ""))) return;
+      hit = true;
+      if (!it.checked) { it.checked = true; changed = true; }
+    }));
+    if (!hit) return { ok: false, reason: "no_item" };
+    if (changed) {
+      tx.set(ref, {
+        date, sections: secs, frozenChecked: !!data.frozenChecked,
+        updatedAt: new Date().toISOString(), updatedBy: "server_" + by
+      });
+    }
+    return { ok: true };
+  });
+}
+
+// ==============================
+// ニッシントーア様への出荷件数の報告（checklist.html の「💬 ニッシントーア報告」タブから）
+//   ラクロジスタッフのアカウントで、ニッシントーア様のルームに投稿する
+//   送った記録は settings/nisshintoa_report の sent.{日付} に残す（チェックリストの画面に「送信済み」と出る）
+//   送れたら、チェックリストの「ニッシントーアチャット報告確認」に自動でレ点
+//   件数を出荷件数タブに入れるのは、画面側で行う
+// ==============================
+const NISSHINTOA_ROOM_ID = "411360327";
+const NISSHINTOA_MAX_SENDS_PER_DAY = 3;   // 連打・いたずらよけ
+
+// 本文の {返信先} は、ニッシントーア様からの「その日の出荷依頼」のメッセージへの「返信」に置き換える
+//   探す条件：自社以外の人の発言で、送った日が報告する日と同じで、本文に NISSHINTOA_REQUEST_WORDS のどれかが入っているもの（いちばん新しいもの）
+//   自社かどうかは、コックピットと同じ判定（ラクロジスタッフ・松下のアカウント＋ STAFF_ACCOUNT_IDS）
+//   見つからない時は、返信なしで本文だけ送る
+const NISSHINTOA_REQUEST_WORDS = ["本日合計", "〆分の登録"];
+
+async function nisshintoaReplyHead(token, date) {
+  try {
+    const myIds = (await getMyIds()).map(String);
+    const msgs = await cw(token, "get", "/rooms/" + NISSHINTOA_ROOM_ID + "/messages?force=1");
+    const dayOf = t => new Date((t || 0) * 1000 + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const list = (Array.isArray(msgs) ? msgs : []).filter(m => {
+      const id = String((m.account && m.account.account_id) || "");
+      if (!id || myIds.indexOf(id) !== -1) return false;
+      if (dayOf(m.send_time) !== date) return false;
+      const body = String(m.body || "");
+      return NISSHINTOA_REQUEST_WORDS.some(w => body.indexOf(w) !== -1);
+    });
+    const last = list[list.length - 1];
+    if (last) {
+      const aid = String(last.account.account_id);
+      return "[rp aid=" + aid + " to=" + NISSHINTOA_ROOM_ID + "-" + last.message_id + "]" + (last.account.name || "") + "さん";
+    }
+  } catch (e) {
+    console.error("返信先のメッセージを取れませんでした: " + e.message);
+  }
+  return "";
+}
+
+exports.sendNisshintoaReport = onCall(
+  { region: REGION, secrets: [CW_TOKEN_STAFF], memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    const { date, count, normal, fba, body, by } = request.data || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new HttpsError("invalid-argument", "日付が正しくありません");
+    const n = Number(count);
+    if (!Number.isInteger(n) || n < 0 || n > 100000) throw new HttpsError("invalid-argument", "件数が正しくありません");
+    const text = String(body || "").trim();
+    if (!text) throw new HttpsError("invalid-argument", "本文が空です");
+    if (text.length > 2000) throw new HttpsError("invalid-argument", "本文が長すぎます（2000文字まで）");
+    if (text.indexOf(String(n)) === -1) throw new HttpsError("invalid-argument", "本文に件数が入っていません");
+
+    const ref = db.collection("settings").doc("nisshintoa_report");
+    const cur = await ref.get();
+    const prev = (cur.exists && cur.get("sent") && cur.get("sent")[date]) || null;
+    const sends = prev ? Number(prev.sends || 0) : 0;
+    if (sends >= NISSHINTOA_MAX_SENDS_PER_DAY) {
+      throw new HttpsError("resource-exhausted", `この日はもう${NISSHINTOA_MAX_SENDS_PER_DAY}回送っています。直す時はChatworkで直接送ってください`);
+    }
+
+    const token = CW_TOKEN_STAFF.value();
+    if (!token) throw new HttpsError("failed-precondition", "ラクロジスタッフのChatworkトークンが登録されていません");
+    const replyHead = text.indexOf("{返信先}") !== -1 ? await nisshintoaReplyHead(token, date) : "";
+    // 返信先が見つからない時は、{返信先} の行ごと消して本文だけ送る
+    const finalText = text.replace(/\{返信先\}(\n?)/g, (_, nl) => replyHead ? replyHead + nl : "").trim();
+    let posted;
+    try {
+      posted = await cw(token, "post", "/rooms/" + NISSHINTOA_ROOM_ID + "/messages", { body: finalText, self_unread: "0" });
+    } catch (e) {
+      console.error(e);
+      throw new HttpsError("internal", "Chatworkに送れませんでした：" + e.message);
+    }
+    try { await markSentFromCockpit(NISSHINTOA_ROOM_ID, finalText); } catch (e) {}   // AI添削ログに入れないための目印
+
+    await ref.set({
+      sent: { [date]: { count: n, normal: Number.isInteger(Number(normal)) ? Number(normal) : n, fba: Number.isInteger(Number(fba)) ? Number(fba) : 0, body: finalText, sentAt: nowSec(), sends: sends + 1, by: String(by || "").slice(0, 40), messageId: String((posted && posted.message_id) || "") } }
+    }, { merge: true });
+
+    let checked = false;
+    try { checked = (await autoCheckChecklist(date, NISSHINTOA_CHECK, "nisshintoa")).ok; }
+    catch (e) { console.error("チェックリストにレ点を付けられませんでした: " + e.message); }
+    return { ok: true, checked, sends: sends + 1, replied: !!replyHead };
   }
 );
