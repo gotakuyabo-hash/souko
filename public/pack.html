@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>梱包チェック</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{ --ink:#1c2733; --muted:#5d6b77; --line:#d3d9d7; --ok:#1e8e4f; --ng:#c0392b; --warn:#d68910; --accent:#0f5f8a; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:"BIZ UDPGothic","Hiragino Sans",sans-serif; color:var(--ink); background:#eef1f0; -webkit-text-size-adjust:100%; }
+header{ position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid var(--line); padding:10px 14px; }
+header .order{ font-size:13px; color:var(--muted); word-break:break-all; }
+header .progress{ font-size:22px; font-weight:700; margin-top:2px; }
+header .bar{ height:6px; background:#e6eae9; border-radius:3px; margin-top:6px; overflow:hidden; }
+header .bar i{ display:block; height:100%; width:0; background:var(--ok); transition:width .2s; }
+main{ padding:12px 12px 140px; }
+.item{ display:flex; gap:12px; background:#fff; border:2px solid var(--line); border-radius:12px; padding:10px; margin-bottom:10px; align-items:center; }
+.item img, .item .noimg{ width:96px; height:96px; object-fit:contain; border-radius:8px; background:#f5f6f6; flex:none; }
+.item .noimg{ display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted); text-align:center; }
+.item .info{ flex:1; min-width:0; }
+.item .title{ font-size:15px; font-weight:700; line-height:1.35; word-break:break-all; }
+.item .code{ font-size:12px; color:var(--muted); margin-top:3px; word-break:break-all; }
+.item .count{ font-size:26px; font-weight:700; margin-top:4px; }
+.item .count small{ font-size:14px; color:var(--muted); font-weight:400; }
+.item.done{ border-color:var(--ok); background:#eefaf2; }
+.item.done .count{ color:var(--ok); }
+.item.over{ border-color:var(--ng); background:#fdeeee; }
+.item.unknown{ border-style:dashed; border-color:var(--warn); }
+.item .manual{ margin-top:6px; font-size:14px; padding:8px 12px; border-radius:8px; border:1px solid var(--warn); background:#fff8e8; color:#7a4d00; }
+.allok{ display:none; text-align:center; background:var(--ok); color:#fff; border-radius:12px; padding:18px; font-size:26px; font-weight:700; margin-bottom:12px; }
+.allok.show{ display:block; }
+.foot{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:10px 12px calc(10px + env(safe-area-inset-bottom)); z-index:6; }
+.foot .row{ display:flex; gap:8px; }
+.btn{ flex:1; font-size:17px; font-weight:700; padding:14px; border-radius:10px; border:none; background:var(--accent); color:#fff; }
+.btn.ghost{ background:#fff; color:var(--accent); border:2px solid var(--accent); flex:none; }
+#manualInput{ width:100%; font-size:16px; padding:10px; border:1px solid var(--line); border-radius:8px; margin-top:8px; }
+#readerWrap{ display:none; position:fixed; left:0; right:0; bottom:0; top:0; background:rgba(0,0,0,.85); z-index:10; padding:12px; }
+#readerWrap.on{ display:block; }
+#reader{ width:100%; max-width:520px; margin:40px auto 0; background:#000; border-radius:10px; overflow:hidden; }
+#readerWrap .close{ display:block; margin:14px auto 0; max-width:520px; width:100%; }
+#readerMsg{ color:#fff; text-align:center; margin-top:10px; font-size:15px; min-height:22px; }
+#flash{ position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:center; flex-direction:column; color:#fff; font-weight:700; text-align:center; padding:20px; }
+#flash.on{ display:flex; }
+#flash.ok{ background:rgba(30,142,79,.92); }
+#flash.ng{ background:rgba(192,57,43,.95); }
+#flash .big{ font-size:44px; }
+#flash .small{ font-size:17px; margin-top:10px; word-break:break-all; white-space:pre-line; }
+.err{ background:#fdeeee; border:1px solid var(--ng); color:var(--ng); padding:14px; border-radius:10px; font-size:15px; }
+.note{ font-size:12px; color:var(--muted); margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="order" id="orderNo">受注番号：</div>
+  <div class="progress" id="progress">読み込み中…</div>
+  <div class="bar"><i id="bar"></i></div>
+</header>
+<main>
+  <div class="allok" id="allok">✓ 梱包OK</div>
+  <div id="list"></div>
+  <div class="note" id="cacheNote"></div>
+</main>
+<div class="foot">
+  <div class="row">
+    <button class="btn" id="scanBtn">📷 商品のシールをスキャン</button>
+    <button class="btn ghost" id="resetBtn">やり直し</button>
+  </div>
+  <input id="manualInput" inputmode="text" autocomplete="off" placeholder="手入力・Bluetoothスキャナはここ（Enterで照合）">
+</div>
+<div id="readerWrap">
+  <div id="reader"></div>
+  <div id="readerMsg">シールのバーコードを枠に入れてください</div>
+  <button class="btn ghost close" id="closeBtn">閉じる</button>
+</div>
+<div id="flash"><div class="big" id="flashBig"></div><div class="small" id="flashSmall"></div></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, doc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app"
+});
+const db = getFirestore(app);
+
+/* ---------- 共通 ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const toHalf = s => String(s || '').replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/　/g, ' ');
+const norm = s => toHalf(s).trim().toUpperCase();
+
+/* ---------- QRの中身を読む： #o=受注番号&i=コード*数量,… （!から始まるのはマスタ未登録） ---------- */
+function parseHash() {
+  const h = location.hash.replace(/^#/, '');
+  const out = { order: '', items: [] };
+  h.split('&').forEach(part => {
+    const eq = part.indexOf('=');
+    if (eq < 0) return;
+    const k = part.slice(0, eq), v = part.slice(eq + 1);
+    if (k === 'o') out.order = safeDecode(v);
+    if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
+      const star = t.lastIndexOf('*');
+      let code = star >= 0 ? t.slice(0, star) : t;
+      const qty = star >= 0 ? (parseInt(t.slice(star + 1), 10) || 1) : 1;
+      const unknown = code.startsWith('!');
+      if (unknown) code = code.slice(1);
+      out.items.push({ code: safeDecode(code), qty, unknown, scanned: 0 });
+    });
+  });
+  return out;
+}
+function safeDecode(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
+
+/* ---------- zaicoの在庫の写し（まとまるくんと同じ zaico_inventory_cache）から 名前・画像 を引く ----------
+   読み取り回数を抑えるため、端末に「コード → 名前・画像」を保存して使い回す。
+   必要なコードが見つからないとき・6時間たったときだけ読み直す */
+const LS_KEY = 'pack_zaico_map_v1';
+const MAX_AGE = 6 * 60 * 60 * 1000;
+function readLocal() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
+function writeLocal(o) { try { localStorage.setItem(LS_KEY, JSON.stringify(o)); } catch (e) { console.warn(e); } }
+function imgOf(x) {
+  const u = (x.item_image && x.item_image.url) || x.imageUrl || x.image_url || x.img || '';
+  return typeof u === 'string' ? u : '';
+}
+async function fetchZaicoMap() {
+  const ref = doc(db, 'zaico_inventory_cache', 'current');
+  const meta = (await getDoc(ref)).data();
+  if (!meta) throw new Error('在庫の写しがまだありません（まとまるくんを一度開いてください）');
+  const ps = await getDocs(collection(ref, 'parts'));
+  const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a, b) => a.i - b.i);
+  if (parts.length !== meta.parts) throw new Error('在庫の写しを作り直している途中です。少し待ってから開き直してください');
+  const base = JSON.parse(parts.map(p => p.s).join(''));
+  const map = {};
+  let withImg = 0;
+  base.forEach(x => {
+    const c = norm(x.code);
+    if (!c) return;
+    const img = imgOf(x);
+    if (img) withImg++;
+    map[c] = { t: String(x.title || ''), img };
+  });
+  const o = { at: Date.now(), v: meta.v, withImg, map };
+  writeLocal(o);
+  return o;
+}
+async function getZaicoMap(codes) {
+  const local = readLocal();
+  const fresh = local && Date.now() - local.at < MAX_AGE;
+  const allFound = local && codes.every(c => local.map[norm(c)]);
+  if (fresh && allFound) return local;
+  try { return await fetchZaicoMap(); }
+  catch (e) { if (local) { console.warn(e); return local; } throw e; }
+}
+
+/* ---------- 画面 ---------- */
+const state = parseHash();
+let zmap = {};
+
+function render() {
+  $('orderNo').textContent = '受注番号：' + (state.order || '（不明）');
+  const total = state.items.reduce((s, x) => s + x.qty, 0);
+  const done = state.items.reduce((s, x) => s + Math.min(x.scanned, x.qty), 0);
+  $('progress').textContent = `${done} / ${total} 点`;
+  $('bar').style.width = total ? (done / total * 100) + '%' : '0';
+  const allOk = state.items.length && state.items.every(x => x.scanned === x.qty);
+  $('allok').classList.toggle('show', !!allOk);
+
+  $('list').innerHTML = state.items.map((x, i) => {
+    const z = x.unknown ? null : zmap[norm(x.code)];
+    const title = z && z.t ? z.t : (x.unknown ? 'マスタ未登録の商品' : '（zaicoに見つかりません）');
+    const img = z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>';
+    const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
+    const manual = x.unknown && x.scanned < x.qty
+      ? `<button class="manual" data-i="${i}">目視で確認した（＋1）</button>` : '';
+    return `<div class="${cls}">
+      ${img}
+      <div class="info">
+        <div class="title">${esc(title)}</div>
+        <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.code)}</div>
+        <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
+        ${manual}
+      </div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.manual').forEach(b => b.onclick = () => { state.items[+b.dataset.i].scanned++; afterChange(); });
+}
+
+/* ---------- 音・振動・画面全体の表示 ---------- */
+let actx = null;
+function beep(ok) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const play = (freq, start, dur) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = ok ? 'sine' : 'square'; o.frequency.value = freq;
+      g.gain.value = 0.25; o.connect(g); g.connect(actx.destination);
+      o.start(actx.currentTime + start); o.stop(actx.currentTime + start + dur);
+    };
+    if (ok) play(1200, 0, 0.12); else { play(300, 0, 0.25); play(300, 0.32, 0.25); play(300, 0.64, 0.25); }
+  } catch (e) {}
+  try { navigator.vibrate && navigator.vibrate(ok ? 60 : [300, 100, 300, 100, 300]); } catch (e) {}
+}
+let flashTimer = null;
+function flash(ok, big, small, ms) {
+  const f = $('flash');
+  f.className = 'on ' + (ok ? 'ok' : 'ng');
+  $('flashBig').textContent = big; $('flashSmall').textContent = small || '';
+  clearTimeout(flashTimer);
+  if (ok) flashTimer = setTimeout(() => f.className = '', ms || 700);
+}
+$('flash').onclick = () => { $('flash').className = ''; };   // 赤いエラーはタップで閉じる
+
+/* ---------- 照合 ---------- */
+function findItem(code) {
+  const c = norm(code);
+  const cands = [c];
+  if (/^\d{13}$/.test(c) && c.startsWith('0')) cands.push(c.slice(1));   // UPC-A を EAN-13 として読んだとき
+  if (/^\d{12}$/.test(c)) cands.push('0' + c);
+  return state.items.find(x => !x.unknown && cands.includes(norm(x.code)));
+}
+function check(code) {
+  const raw = String(code || '').trim();
+  if (!raw) return;
+  const it = findItem(raw);
+  if (!it) {
+    beep(false);
+    const z = zmap[norm(raw)];
+    flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + '\n（タップで閉じる）');
+    return;
+  }
+  if (it.scanned >= it.qty) {
+    it.scanned++;
+    beep(false);
+    flash(false, '✕ 数が多いです', `${zmap[norm(it.code)]?.t || it.code}\n必要 ${it.qty} 個 → ${it.scanned} 個読みました（タップで閉じる）`);
+    afterChange();
+    return;
+  }
+  it.scanned++;
+  beep(true);
+  const left = state.items.every(x => x.scanned === x.qty);
+  flash(true, left ? '✓ 梱包OK' : '✓ OK', `${zmap[norm(it.code)]?.t || it.code}　${it.scanned}/${it.qty}`, left ? 1500 : 600);
+  afterChange();
+}
+function afterChange() {
+  render();
+  if (state.items.length && state.items.every(x => x.scanned === x.qty)) stopCamera();
+}
+
+/* ---------- カメラ（html5-qrcode：iPhoneのSafariでも動く） ---------- */
+let scanner = null, lastCode = '', lastAt = 0;
+async function startCamera() {
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}   // 音を鳴らせるようにする
+  $('readerWrap').classList.add('on');
+  $('readerMsg').textContent = 'シールのバーコードを枠に入れてください';
+  if (scanner) return;
+  const F = window.Html5QrcodeSupportedFormats;
+  scanner = new Html5Qrcode('reader', {
+    verbose: false,
+    formatsToSupport: [F.CODE_128, F.CODE_39, F.EAN_13, F.EAN_8, F.UPC_A, F.ITF, F.QR_CODE],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+  });
+  try {
+    await scanner.start({ facingMode: 'environment' }, { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.45) }) },
+      text => {
+        const now = Date.now();
+        if ($('flash').classList.contains('ng')) return;          // 赤いエラーを閉じるまでは読まない
+        if (text === lastCode && now - lastAt < 1500) return;   // 同じシールを続けて読まない
+        lastCode = text; lastAt = now;
+        check(text);
+      }, () => {});
+  } catch (e) {
+    $('readerMsg').textContent = 'カメラを起動できませんでした：' + (e && e.message ? e.message : e);
+    scanner = null;
+  }
+}
+async function stopCamera() {
+  $('readerWrap').classList.remove('on');
+  if (scanner) { try { await scanner.stop(); scanner.clear(); } catch (e) {} scanner = null; }
+}
+$('scanBtn').onclick = startCamera;
+$('closeBtn').onclick = stopCamera;
+$('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state.items.forEach(x => x.scanned = 0); render(); } };
+$('manualInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); check(e.target.value); e.target.value = ''; }
+});
+
+/* ---------- 起動 ---------- */
+(async () => {
+  if (!state.items.length) {
+    $('progress').textContent = '';
+    $('list').innerHTML = '<div class="err">注文の情報が読めませんでした。検品シートのQRを、スマホのカメラで読み直してください。</div>';
+    document.querySelector('.foot').style.display = 'none';
+    return;
+  }
+  render();
+  try {
+    const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
+    zmap = z.map || {};
+    if (!z.withImg) $('cacheNote').textContent = '※ 在庫の写しに画像のURLが入っていません（関数の設定が必要です）';
+  } catch (e) {
+    $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
+  }
+  render();
+})();
+</script>
+</body>
+</html>
