@@ -232,6 +232,9 @@ details.bd table{margin-top:6px}
 .zc-line .lbl small{display:block;color:var(--sub);font-size:12px}
 .zc-line input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;text-align:right}
 .zc-line.over .lbl small{color:var(--late);font-weight:700}
+/* 商品画像（JANからYahoo!ショッピングで探したもの） */
+.pimg{display:inline-block;width:44px;height:44px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;vertical-align:middle;margin-right:8px;float:left}
+.pimg-wrap::after{content:"";display:block;clear:both}
 </style>
 </head>
 <body>
@@ -723,6 +726,9 @@ function listen() {
     snap.docChanges().forEach(c => c.type === 'removed' ? S.sellers.delete(c.doc.id) : S.sellers.set(c.doc.id, c.doc.data()));
     render();
   }, () => {}));
+  S.unsubs.push(onSnapshot(doc(db, 'settings', 'jan_images'), d => {
+    IMG.map = Object.assign({}, IMG.map, (d.data() || {}).codes || {}); IMG.loaded = true; render();
+  }, () => { IMG.loaded = true; }));
   S.unsubs.push(onSnapshot(doc(db, 'settings', 'hokan_skip'), d => { S.skip = (d.data() || {}).ids || {}; render(); }, () => {}));
   // 取り消した依頼（settings/irai_cancel の ids に 依頼ID → 理由・日付・操作した人）
   S.unsubs.push(onSnapshot(doc(db, 'settings', 'irai_cancel'), d => { S.cancels = (d.data() || {}).ids || {}; render(); }, () => {}));
@@ -1067,6 +1073,54 @@ function bindHokanPanel(r) {
   };
 }
 
+// ---------- 商品画像（JAN → Yahoo!ショッピングの画像） ----------
+// 調べた結果は settings/jan_images に1つにまとめて保存する（どの端末・どのアプリからも使えて、読み込みは1回だけ）
+// まだ調べていないJANは、画面に出たものから書き出しGASの「lookup」で少しずつ調べる（見つからなかったものも記録して、何度も調べない）
+const IMG = { map: {}, loaded: false, queue: [], busy: false, asked: new Set() };
+const IMG_MAX_PER_OPEN = 100;   // 1回画面を開いているあいだに調べる上限（zaicoを全部表示したときなどに調べすぎないように）
+const IMG_RETRY_DAYS = 30;   // 見つからなかったJANを、もう一度調べるまでの日数
+function imgTag(code) {
+  const c = half(code || '').replace(/\s/g, '');
+  if (!isJan(c)) return '';
+  const hit = IMG.map[c];
+  if (hit && hit.u) return `<img class="pimg" src="${esc(hit.u)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+  if (IMG.loaded && (!hit || (!hit.u && Date.now() - (hit.t || 0) > IMG_RETRY_DAYS * DAY))) imgAsk(c);
+  return '';
+}
+function imgAsk(c) {
+  if (IMG.asked.has(c) || IMG.asked.size >= IMG_MAX_PER_OPEN) return;
+  IMG.asked.add(c); IMG.queue.push(c);
+  if (!IMG.busy) setTimeout(imgPump, 300);
+}
+async function imgPump() {
+  if (IMG.busy || !IMG.queue.length || !S.user) return;
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(EXPORT_URL)) return;
+  IMG.busy = true;
+  const found = {};
+  try {
+    const idToken = await S.user.getIdToken();
+    // 1回に10件まで（残りは次の回）
+    for (const code of IMG.queue.splice(0, 10)) {
+      try {
+        const res = await fetch(EXPORT_URL, { method: 'POST', body: JSON.stringify({ idToken, action: 'lookup', code }) });
+        const r = await res.json();
+        if (!r.ok) continue;   // エラーの時は記録しない（あとでもう一度）
+        const items = r.items || [];
+        const h = items.find(x => x.image && half(x.jan || '') === code) || items.find(x => x.image);
+        found[code] = { u: h ? h.image : '', t: Date.now() };
+      } catch (e) { /* 通信エラーは記録しない */ }
+    }
+    if (Object.keys(found).length) {
+      Object.assign(IMG.map, found);
+      await setDoc(doc(db, 'settings', 'jan_images'), { codes: found }, { merge: true }).catch(e => console.warn('商品画像を保存できませんでした', e));
+      render();
+    }
+  } finally {
+    IMG.busy = false;
+    if (IMG.queue.length) setTimeout(imgPump, 1500);
+  }
+}
+
 // ---------- 保管在庫の画面 ----------
 function renderStock(recs) {
   const al = [];
@@ -1110,7 +1164,7 @@ function renderStock(recs) {
       <span class="sum">残り ${total}点${fee ? `／保管料対象 ${fee}点` : ''}</span></div>
       ${shareLine(seller)}
       ${lots.map(l => { const rem = remain(l), on = feeStart(l) <= today;
-        return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span><span class="p">${esc(l.product)}</span>
+        return `<button class="lot ${rem > 0 ? '' : 'zero'}" data-lot="${esc(l.id)}"><span class="pimg-wrap">${imgTag(l.jan)}<span class="p">${esc(l.product)}</span>
           <span class="d">${l.jan || l.model ? `${esc([l.jan && 'JAN ' + l.jan, l.model && '型番 ' + l.model].filter(Boolean).join('・'))}　` : ''}${l.orderId ? `<span class="badge cancel" style="margin:0 4px 0 0">キャンセル品 ${esc(l.orderId)}</span>` : ''}保管日 ${esc(l.inDate)}（${daysSince(l.inDate)}日）${l.expiry ? `　賞味期限 ${esc(l.expiry)}` : ''}${rem > 0 ? expBadge(l.expiry) : ''}${rem > 0 && itemMode ? (on ? '<span class="badge fee">保管料対象</span>' : `<span class="badge free">${esc(feeStart(l).slice(5).replace('-', '/'))}まで無料</span>`) : ''}</span></span>
           <span class="q">${rem}<small>／${l.qtyIn}点</small></span></button>`; }).join('')}</div>`;
   }).join('');
@@ -1129,7 +1183,7 @@ function fillLotSheet(id, force) {
   const sh = $('sheet');
   sh.dataset.f = 'shopee';
   sh.innerHTML = `
-    <div class="sheet-h"><div><h2>${esc(l.product)}</h2><div class="sub">${esc(l.sellerName || '')}　${esc(l.seller)}　残り${rem}点／${l.qtyIn}点</div></div>
+    <div class="sheet-h"><div class="pimg-wrap">${imgTag(l.jan)}<h2>${esc(l.product)}</h2><div class="sub">${esc(l.sellerName || '')}　${esc(l.seller)}　残り${rem}点／${l.qtyIn}点</div></div>
       <div style="display:flex;gap:4px;align-items:center"><button class="mini" id="lotEdit">✏️ 編集</button><button class="close" id="closeSheet" aria-label="閉じる">×</button></div></div>
     <dl>
       <dt>保管日</dt><dd>${esc(l.inDate)}（${daysSince(l.inDate)}日経過）</dd>
@@ -1704,7 +1758,7 @@ function renderLz() {
   const total = list.reduce((s, r) => s + r.stock, 0);
   $('lzList').innerHTML = list.length ? `<div class="lz-box"><div class="lz-h"><b>${esc(lzSeller().name || D.title || '')}</b><span class="sum">${list.length}品目・在庫 ${total}点</span></div>
     ${list.map(r => `<button class="lz-row ${r.avail < 0 ? 'neg' : ''} ${r.stock <= 0 && !r.resv ? 'zero' : ''}" data-lzkey="${esc(r.key)}">
-      <span><span class="p">${esc(r.name || '（商品名なし）')}</span>${r.inSheet ? '' : '<span class="badge exp">在庫シート未登録</span>'}
+      <span class="pimg-wrap">${imgTag(r.code)}<span class="p">${esc(r.name || '（商品名なし）')}</span>${r.inSheet ? '' : '<span class="badge exp">在庫シート未登録</span>'}
         <span class="d" style="display:block">${r.code ? esc(r.code) + '　' : ''}入庫 ${r.inQty}・出荷 ${r.out}${r.man ? '・手動出庫 ' + r.man : ''}${r.resv ? `・未出荷の注文 ${r.resv}・<span class="av">引当後 ${r.avail}</span>` : ''}${r.pend ? '・入荷待ち ' + r.pend : ''}</span></span>
       <span class="q">${r.stock}<small>在庫・タップで出庫</small></span></button>`).join('')}</div>`
     : `<div class="empty">${q ? '当てはまる商品はありません。' : LZ.filter === 'have' ? '在庫のある商品はありません。「すべて」で0点の商品も見られます。' : '商品がありません。'}</div>`;
@@ -1940,7 +1994,7 @@ function renderZc() {
   $('zcList').innerHTML = list.length ? `<div class="lz-box zc"><div class="lz-h"><b>${esc(title)}</b><span class="sum">${list.length}品目・在庫 ${zcFmt(total)}</span></div>
     ${list.slice(0, ZC.limit).map(x => { const q = zcQty(x), inc = ZC.cart.get(x.id);
       return `<button class="lz-row ${q <= 0 ? 'zero' : ''}" data-zcid="${esc(x.id)}">
-      <span><span class="p">${esc(x.title || '（商品名なし）')}</span>${inc ? `<span class="incart">出庫指示 ${inc}</span>` : ''}
+      <span class="pimg-wrap">${imgTag(x.code)}<span class="p">${esc(x.title || '（商品名なし）')}</span>${inc ? `<span class="incart">出庫指示 ${inc}</span>` : ''}
         <span class="d" style="display:block">${x.code ? 'JAN ' + esc(x.code) : '<span style="color:var(--late)">バーコードなし</span>'}${x.place ? '・保管場所 ' + esc(x.place) : ''}${showShop ? '・' + esc(zcKeyLabel(zcKey(x))) : ''}</span></span>
       <span class="q">${esc(zcFmt(q))}<small>${esc(x.unit || '')} ${ZC.editMode ? 'タップで変更' : 'タップで出庫指示へ'}</small></span></button>`; }).join('')}</div>`
     : `<div class="empty">${ZC.q ? '当てはまる商品はありません。' : ZC.filter === 'have' ? '在庫のある商品はありません。「すべて」で0の商品も見られます。' : '商品がありません。'}</div>`;
