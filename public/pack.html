@@ -66,7 +66,7 @@ main{ padding:12px 12px 140px; }
     <button class="btn" id="scanBtn">📷 商品のシールをスキャン</button>
     <button class="btn ghost" id="resetBtn">やり直し</button>
   </div>
-  <input id="manualInput" inputmode="text" autocomplete="off" placeholder="手入力・Bluetoothスキャナはここ（Enterで照合）">
+  <input id="manualInput" inputmode="text" autocomplete="off" placeholder="スキャナ・手入力はここ（Enterで照合）" autocapitalize="off" spellcheck="false">
 </div>
 <div id="readerWrap">
   <div id="reader"></div>
@@ -225,18 +225,18 @@ function findItem(code) {
 function check(code) {
   const raw = String(code || '').trim();
   if (!raw) return;
-  if (!state.items.length) { beep(false); flash(false, '先に検品シートのQRを読んでください', '読んだコード：' + raw + '\n（タップで閉じる）'); return; }
+  if (!state.items.length) { beep(false); flash(false, '先に検品シートのQRを読んでください', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); return; }
   const it = findItem(raw);
   if (!it) {
     beep(false);
     const z = zmap[norm(raw)];
-    flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + '\n（タップで閉じる）');
+    flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + '\n（タップ・Escで閉じる）');
     return;
   }
   if (it.scanned >= it.qty) {
     it.scanned++;
     beep(false);
-    flash(false, '✕ 数が多いです', `${zmap[norm(it.code)]?.t || it.code}\n必要 ${it.qty} 個 → ${it.scanned} 個読みました（タップで閉じる）`);
+    flash(false, '✕ 数が多いです', `${zmap[norm(it.code)]?.t || it.code}\n必要 ${it.qty} 個 → ${it.scanned} 個読みました（タップ・Escで閉じる）`);
     afterChange();
     return;
   }
@@ -286,13 +286,42 @@ async function stopCamera() {
 $('scanBtn').onclick = startCamera;
 $('closeBtn').onclick = stopCamera;
 $('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state.items.forEach(x => x.scanned = 0); render(); } };
+/* ---------- スキャナ（USB・Bluetooth）・手入力 ----------
+   スキャナの配列設定（US）とパソコン（日本語配列）が違うと、記号が化けて入る（= → ^、& → '、* → ( など）。
+   検品シートのQRっぽいのに #o= が見つからないときは、化けた記号を元に戻して読む */
+function fixLayout(v) {
+  if (/#o=.*&i=/.test(v)) return v;
+  if (!/pack\.html/i.test(v) && !/#o\^/.test(v)) return v;
+  return v.replace(/\^/g, '=').replace(/'/g, '&').replace(/\(/g, '*');
+}
+function handleTyped(v) {
+  v = String(v || '').trim();
+  if (!v) return;
+  const q = fixLayout(v);
+  if (/#o=.*&i=/.test(q)) openOrder(q.slice(q.indexOf('#') + 1));
+  else check(v);
+}
 $('manualInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const v = e.target.value; e.target.value = '';
-    if (/#o=.*&i=/.test(v)) openOrder(v.slice(v.indexOf('#') + 1)); else check(v);
-  }
+  if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value; e.target.value = ''; handleTyped(v); }
 });
+
+// パソコン（マウスで操作する端末）では、入力欄にずっとカーソルを置いておく（クリック不要でスキャナが使える）
+const isPC = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+function keepFocus() {
+  if (!isPC || $('readerWrap').classList.contains('on')) return;
+  const a = document.activeElement;
+  if (a && a !== document.body && a !== $('manualInput') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
+  $('manualInput').focus({ preventScroll: true });
+}
+if (isPC) {
+  document.addEventListener('click', () => setTimeout(keepFocus, 0));
+  window.addEventListener('focus', () => setTimeout(keepFocus, 0));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') $('flash').className = '';   // 赤い表示を Esc で閉じる
+    if (document.activeElement !== $('manualInput') && e.key.length === 1 && !e.ctrlKey && !e.metaKey) keepFocus();
+  });
+  setInterval(keepFocus, 1500);
+}
 
 /* ---------- 起動 ----------
    検品シートのQRから開いたとき：その注文を表示
@@ -310,9 +339,10 @@ async function start() {
     $('progress').textContent = '検品シートのQRを読んでください';
     $('bar').style.width = '0';
     $('allok').classList.remove('show');
-    $('list').innerHTML = '<div class="note" style="font-size:14px;">下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。</div>';
+    $('list').innerHTML = '<div class="note" style="font-size:14px;">' + (isPC ? 'スキャナで検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。' : '下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。') + '</div>';
     $('scanBtn').textContent = '📷 検品シートのQRを読む';
     $('resetBtn').style.display = 'none';
+    keepFocus();
     return;
   }
   $('scanBtn').textContent = '📷 商品のシールをスキャン';
@@ -327,6 +357,7 @@ async function start() {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
   }
   render();
+  keepFocus();
 }
 start();
 </script>
