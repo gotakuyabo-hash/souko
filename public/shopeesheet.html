@@ -297,6 +297,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
       <button id="manOutBtn" class="btn primary" type="button">手動出庫</button>
       <button id="addStock" class="btn" type="button" hidden></button>
     </div>
+    <div id="smOut" class="panel" hidden></div>
     <div class="panel tablewrap" style="padding:0"><table id="stockTbl"></table></div>
     <div class="panel tablewrap" style="padding:0">
       <div class="ph" style="padding:16px 16px 0">
@@ -1326,7 +1327,79 @@ function stockRows(){
   return { rows, unmatched };
 }
 
+/* ===== ShopeeMate（定者さん）の在庫からの出荷依頼 → 手動出庫 =====
+   GAS（shukka_auto.gs の runTeisha）が、ShopeeMateの「定者」「依頼済み」で備考欄に書き込みがある注文を
+   settings/teisha_remarks に保存している。備考に書かれた商品コード（JAN）で在庫の商品を探し、ボタンで手動出庫する。
+   出庫済みかどうかは、手動出庫の備考に注文番号が入っているかで判断する */
+const SM_SELLER_WORD = '定者';   // このセラーを開いている時だけ表示する
+let SM_REMARKS = null;
+onSnapshot(doc(db, 'settings', 'teisha_remarks'), snap => {
+  SM_REMARKS = snap.exists() ? snap.data() : null;
+  if (D && S.tab === 'stock') renderSmOut();
+}, e => console.warn('teisha_remarks', e));
+
+function smOutPlans(){
+  const items = Array.isArray(SM_REMARKS && SM_REMARKS.items) ? SM_REMARKS.items : [];
+  const { rows } = stockRows();
+  return items.map(x => {
+    const codes = [...new Set((String(x.remark || '').match(/\d{8,14}/g) || []).map(normCode))];
+    const lines = codes.map(c => {
+      const r = rows.find(y => y.code === c);
+      return { code:c, row:r || null, qty: codes.length === 1 ? (Number(x.qty) || 1) : 1 };
+    });
+    const done = MAN.some(m => String(m.note || '').indexOf(x.orderNo) >= 0);
+    return { ...x, lines, done };
+  });
+}
+
+function renderSmOut(){
+  const box = $('smOut');
+  const seller = SELLERS.find(x => x.id === S.sellerId) || {};
+  if (!D || String(seller.name || D.title || '').indexOf(SM_SELLER_WORD) < 0 || !SM_REMARKS){ box.hidden = true; return; }
+  const plans = smOutPlans();
+  if (!plans.length){ box.hidden = true; return; }
+  box.hidden = false;
+  const at = SM_REMARKS.at ? new Date(SM_REMARKS.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) + '時点' : '';
+  box.innerHTML = '<div class="ph"><h2>ShopeeMateの在庫からの出荷依頼（' + plans.length + '件）</h2><span class="muted" style="font-size:13px">' + esc(at) + '</span></div>' +
+    '<p class="hint" style="margin:6px 0 10px">ShopeeMateで「依頼済み」の注文のうち、備考に商品コードが書かれているものです。出荷したら「出庫する」を押すと、手動出庫に記録して在庫から引きます。</p>' +
+    '<div class="tablewrap"><table><thead><tr><th>注文番号</th><th>備考</th><th>在庫から引く商品</th><th></th></tr></thead><tbody>' +
+    plans.map(p => {
+      const ok = p.lines.filter(l => l.row);
+      const linesHtml = p.lines.length
+        ? p.lines.map(l => l.row
+            ? '<div>' + esc(l.row.name) + ' <b>×' + l.qty + '</b> <span class="muted" style="font-size:12px">（' + esc(l.code) + '・在庫 ' + l.row.stock + '）</span></div>'
+            : '<div style="color:var(--danger)">' + esc(l.code) + '：在庫に見つかりません</div>').join('')
+        : '<span class="muted">商品コードが書かれていません（手動出庫から記録してください）</span>';
+      const btn = p.done ? '<span class="tag">✓ 出庫済み</span>'
+        : ok.length ? '<button type="button" class="btn primary" data-sm-out="' + esc(p.orderNo) + '">出庫する</button>' : '';
+      return '<tr><td class="num" style="white-space:nowrap">' + esc(p.orderNo) + (p.requested ? '<div class="muted" style="font-size:12px">依頼 ' + esc(fmtMD(p.requested)) + '</div>' : '') + '</td>' +
+        '<td style="min-width:200px">' + esc(p.remark) + '</td><td style="min-width:220px">' + linesHtml + '</td><td>' + btn + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function smOutDo(orderNo){
+  if (!D.hasManualApi){ toast('GASが手動出庫に対応していません', true); return; }
+  const p = smOutPlans().find(x => x.orderNo === orderNo);
+  if (!p) return;
+  if (p.done){ toast('この注文はもう出庫済みです', true); return; }
+  const ok = p.lines.filter(l => l.row);
+  const ng = p.lines.filter(l => !l.row);
+  const msg = '注文 ' + orderNo + ' の分を、在庫から出庫します。\n\n' + ok.map(l => '・' + l.row.name + ' ×' + l.qty + '（在庫 ' + l.row.stock + '）').join('\n') +
+    (ng.length ? '\n\n※在庫に見つからないコードは出庫しません：' + ng.map(l => l.code).join('、') : '') +
+    (ok.some(l => l.qty > l.row.stock) ? '\n\n⚠ 在庫より多く出庫する商品があります' : '');
+  if (!confirm(msg)) return;
+  const staff = store('lastStaff');
+  ok.forEach(l => {
+    const rec = { code:l.row.code, name:l.row.name, qty:l.qty, date:today(), dest:'Shopee', staff, note:'ShopeeMate ' + orderNo };
+    D.manual = (D.manual || []).concat([{ row:tempRow(), id:'', ...rec }]);
+    queueWrite('addManualOut', [rec]);
+  });
+  toast('注文 ' + orderNo + ' の ' + ok.length + '品目を出庫しました（手動出庫シートに記録します）');
+  render();
+}
+
 function renderStock(){
+  renderSmOut();
   const { rows, unmatched } = stockRows();
   const q = S.sq.trim().toLowerCase();
   const qc = normCode(q);
@@ -1635,6 +1708,7 @@ document.addEventListener('click', e => {
   if (t.id === 'selAll'){ visibleOrders().slice(0, S.limit).forEach(o => S.sel.add(o.row)); renderOrders(); renderBar(); return; }
   if (t.id === 'manOutBtn'){ if (D) openManOut(''); return; }
   if (t.dataset.manOut){ if (D) openManOut(t.dataset.manOut); return; }
+  if (t.dataset.smOut){ if (D) smOutDo(t.dataset.smOut); return; }
   if (t.dataset.manDel){ removeManOut(t.dataset.manDel); return; }
   if (t.dataset.recvIn){ const b = D.inbound.find(x => x.row === Number(t.dataset.recvIn)); if (b) openReceiveIn(b); return; }
   if (t.id === 'addStock'){
