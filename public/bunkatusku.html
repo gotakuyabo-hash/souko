@@ -6,6 +6,7 @@
     <title>分割くん吉原</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script type="module">
@@ -478,6 +479,18 @@ const shukkaAuto = (() => {
         </div>
     </div>
 
+    <div id="zaicoPicker" class="hidden fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-xl w-full p-5 space-y-3 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-boxes-stacked text-teal-600 mr-2"></i>zaicoの在庫から選ぶ</h3>
+                <button onclick="closeZaicoPicker()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <input type="text" id="zaicoSearch" oninput="renderZaicoPicker()" placeholder="商品名・JANで検索（スペースで区切ると全部ふくむもの）" class="w-full border rounded-lg px-3 py-2 text-sm">
+            <p id="zaicoStatus" class="text-xs text-slate-500"></p>
+            <div id="zaicoList" class="overflow-y-auto divide-y border rounded-lg flex-grow"></div>
+        </div>
+    </div>
+
     <div id="bulkMasterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -486,7 +499,7 @@ const shukkaAuto = (() => {
             </div>
             <p class="text-xs text-slate-500">
                 以下の形式（CSVまたはタブ区切り）で入力してください。<br>
-                フォーマット: <code>SKUコード, 商品名, 棚番, 数量, 取引先</code> (複数行可)<br>
+                フォーマット: <code>SKUコード, 商品名, 棚番, 数量, 取引先, バーコード</code> (複数行可・取引先とバーコードは省略可)<br>
                 取引先は <code>吉原</code> または <code>今別府</code>（空欄なら今の設定のまま）
             </p>
             <div>
@@ -541,7 +554,7 @@ const shukkaAuto = (() => {
             <div class="overflow-x-auto border rounded-xl">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead class="bg-slate-100 border-b">
-                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
+                        <tr><th class="px-4 py-3 w-10 text-center">↕</th><th class="px-4 py-3">棚番</th><th class="px-2 py-3">写真</th><th class="px-4 py-3">商品名</th><th class="px-4 py-3 text-center">必要総数量</th></tr>
                     </thead>
                     <tbody id="totalPickingBody" class="divide-y"></tbody>
                 </table>
@@ -835,8 +848,10 @@ const shukkaAuto = (() => {
                 
                 let itemsHtml = rule.items.map(it => `
                     <div class="flex items-center space-x-2 py-1 border-b border-slate-100 last:border-b-0 text-xs">
+                        ${it.img ? `<img src="${esc(it.img)}" class="w-8 h-8 object-contain border rounded bg-white">` : ''}
                         <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">棚: ${esc(it.shelf || '未設定')}</span>
                         <span class="font-semibold text-slate-800 flex-grow">${esc(it.jpName)}</span>
+                        ${it.jan ? `<span class="font-mono text-[10px] text-slate-500">${esc(it.jan)}</span>` : '<span class="text-[10px] text-amber-600 whitespace-nowrap">JAN未登録</span>'}
                         <span class="text-indigo-600 font-bold">× ${esc(it.multiplier)}</span>
                     </div>
                 `).join('');
@@ -875,7 +890,7 @@ const shukkaAuto = (() => {
                 document.getElementById('modalClient').innerHTML = clientOptions(r.client);
                 
                 if (r.items && r.items.length > 0) {
-                    r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier));
+                    r.items.forEach(it => addModalItemRow(it.jpName, it.shelf, it.multiplier, it.img || '', it.jan || ''));
                 } else {
                     addModalItemRow();
                 }
@@ -913,11 +928,12 @@ const shukkaAuto = (() => {
                     let shelf = cols[2] ? cols[2].trim() : '';
                     let multiplier = cols[3] ? parseInt(cols[3].trim(), 10) || 1 : 1;
                     let clientText = cols[4] ? cols[4].trim() : '';
+                    let jan = cols[5] ? normJan(cols[5]) : '';
                     let client = clientText ? (CLIENTS.find(c => c.key === clientText || c.name.includes(clientText.replace(/様$/, ''))) || {}).key || '' : null;
 
                     if (!key || !jpName) return;
                     if (!map[key]) map[key] = { items: [], client: null };
-                    map[key].items.push({ jpName, shelf, multiplier });
+                    map[key].items.push(jan ? { jpName, shelf, multiplier, jan } : { jpName, shelf, multiplier });
                     if (client !== null) map[key].client = client;
                 }
             });
@@ -929,7 +945,15 @@ const shukkaAuto = (() => {
                 await batchMaster(keys.map(key => {
                     const old = multiplierMaster.find(m => m.key === key);
                     const client = map[key].client !== null ? map[key].client : (old?.client || '');
-                    return { key, items: map[key].items, client };
+                    // 同じ商品名の写真・バーコードは引き継ぐ（CSVにバーコードがあればそちらを使う）
+                    const items = map[key].items.map(it => {
+                        const prev = old && old.items.find(o => o.jpName === it.jpName);
+                        const out = { ...it };
+                        if (prev && prev.img) out.img = prev.img;
+                        if (!out.jan && prev && prev.jan) out.jan = prev.jan;
+                        return out;
+                    });
+                    return { key, items, client };
                 }));
                 if (allFilesRawData.length) processAllData();
                 closeBulkMasterModal();
@@ -940,13 +964,67 @@ const shukkaAuto = (() => {
             }
         }
 
-        function addModalItemRow(jpName = '', shelf = '', multiplier = 1) {
+        // バーコード：全角→半角、数字・英字以外を消す
+        function normJan(v) {
+            return String(v || '').replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+        }
+
+        // 商品写真：小さく縮めて（長い辺240px・JPEG）データとして持つ
+        function resizeImage(file, max = 240) {
+            return new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    const s = Math.min(1, max / Math.max(img.width, img.height));
+                    const c = document.createElement('canvas');
+                    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+                    const ctx = c.getContext('2d');
+                    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+                    ctx.drawImage(img, 0, 0, c.width, c.height);
+                    URL.revokeObjectURL(url);
+                    resolve(c.toDataURL('image/jpeg', 0.75));
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+                img.src = url;
+            });
+        }
+
+        function setRowImage(row, src) {
+            row.dataset.img = src || '';
+            const box = row.querySelector('.modal-img');
+            box.innerHTML = src
+                ? `<img src="${src}" class="w-full h-full object-contain">`
+                : `<i class="fa-solid fa-camera text-slate-400"></i>`;
+            row.querySelector('.modal-img-del').classList.toggle('hidden', !src);
+        }
+
+        async function pickRowImage(input) {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            try { setRowImage(input.closest('[data-item-row]'), await resizeImage(file)); }
+            catch (e) { alert(e.message); }
+            input.value = '';
+        }
+
+        function addModalItemRow(jpName = '', shelf = '', multiplier = 1, img = '', jan = '') {
             const container = document.getElementById('modalItemsContainer');
             const div = document.createElement('div');
             div.className = "flex gap-2 items-center bg-white p-2.5 rounded-lg border shadow-sm";
+            div.dataset.itemRow = '1';
             div.innerHTML = `
+                <div class="flex flex-col items-center gap-0.5">
+                    <label class="modal-img w-12 h-12 border rounded bg-slate-50 flex items-center justify-center cursor-pointer overflow-hidden" title="写真を選ぶ">
+                        <i class="fa-solid fa-camera text-slate-400"></i>
+                    </label>
+                    <input type="file" accept="image/*" class="hidden" onchange="pickRowImage(this)">
+                    <button type="button" onclick="setRowImage(this.closest('[data-item-row]'), '')" class="modal-img-del hidden text-[10px] text-rose-500">削除</button>
+                </div>
                 <div class="flex-grow space-y-1">
                     <input type="text" placeholder="正式商品名" value="${esc(jpName)}" class="modal-jpname w-full border rounded px-2 py-1 text-xs font-semibold">
+                    <div class="flex gap-1">
+                        <input type="text" inputmode="numeric" placeholder="バーコード（JAN）" value="${esc(jan)}" class="modal-jan w-full border rounded px-2 py-1 text-xs font-mono">
+                        <button type="button" onclick="openZaicoPicker(this.closest('[data-item-row]'))" class="whitespace-nowrap bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 rounded px-2 py-1 text-[11px] font-bold"><i class="fa-solid fa-boxes-stacked mr-1"></i>zaicoから選ぶ</button>
+                    </div>
                 </div>
                 <div class="w-24">
                     <input type="text" placeholder="棚番" value="${esc(shelf)}" class="modal-shelf w-full border rounded px-2 py-1 text-xs text-center font-bold">
@@ -956,7 +1034,102 @@ const shukkaAuto = (() => {
                 </div>
                 <button onclick="this.parentElement.remove()" class="text-rose-500 hover:text-rose-700 px-2 py-1 text-xs"><i class="fa-solid fa-trash"></i></button>
             `;
+            // 写真の枠をクリックしたら、ファイル選択を開く
+            div.querySelector('.modal-img').addEventListener('click', e => { e.preventDefault(); div.querySelector('input[type=file]').click(); });
             container.appendChild(div);
+            setRowImage(div, img);
+        }
+
+        // ===== zaicoの在庫一覧から選ぶ =====
+        // まとまるくんが作る在庫の写し（zaico_inventory_cache）を読む。
+        // 読み取り回数を抑えるため、pack.html と同じ形で端末に保存して6時間使い回す（同じサイトなら pack.html と共有）
+        const ZAICO_LS = 'pack_zaico_map_v1';
+        const ZAICO_MAX_AGE = 6 * 60 * 60 * 1000;
+        let zaicoMap = null, zaicoAt = 0, zaicoTargetRow = null;
+
+        async function loadZaico(force) {
+            if (!force) {
+                try {
+                    const o = JSON.parse(localStorage.getItem(ZAICO_LS) || 'null');
+                    if (o && o.map && Date.now() - o.at < ZAICO_MAX_AGE) { zaicoMap = o.map; zaicoAt = o.at; return; }
+                } catch (_) {}
+            }
+            const { doc, getDoc, getDocs, collection } = window.firebaseFns;
+            const ref = doc(window.db, 'zaico_inventory_cache', 'current');
+            const meta = (await getDoc(ref)).data();
+            if (!meta) throw new Error('在庫の写しがまだありません（まとまるくんを一度開いてください）');
+            const ps = await getDocs(collection(ref, 'parts'));
+            const parts = ps.docs.map(d => d.data()).filter(p => p.v === meta.v).sort((a, b) => a.i - b.i);
+            if (parts.length !== meta.parts) throw new Error('在庫の写しを作り直している途中です。少し待ってからもう一度開いてください');
+            const map = {};
+            let withImg = 0;
+            JSON.parse(parts.map(p => p.s).join('')).forEach(x => {
+                const c = normJan(x.code);
+                if (!c) return;
+                const u = (x.item_image && x.item_image.url) || x.imageUrl || x.image_url || x.img || '';
+                const img = typeof u === 'string' ? u : '';
+                if (img) withImg++;
+                map[c] = { t: String(x.title || ''), img };
+            });
+            zaicoMap = map; zaicoAt = Date.now();
+            try { localStorage.setItem(ZAICO_LS, JSON.stringify({ at: zaicoAt, v: meta.v, withImg, map })); } catch (e) { console.warn(e); }
+        }
+
+        async function openZaicoPicker(row, force) {
+            zaicoTargetRow = row;
+            document.getElementById('zaicoPicker').classList.remove('hidden');
+            const search = document.getElementById('zaicoSearch');
+            if (!force) {
+                // 商品名に「（JAN：9144）」があれば、その数字で探す（いちばん確実）。なければ商品名で探す
+                const name = row.querySelector('.modal-jpname').value;
+                const m = toHalfWidth(name).match(/JAN\s*[:：]?\s*(\d{4,13})/i);
+                search.value = row.querySelector('.modal-jan').value.trim() || (m ? m[1] : name.trim());
+            }
+            const st = document.getElementById('zaicoStatus');
+            if (!zaicoMap || force) {
+                st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>zaicoの在庫一覧を読み込み中...';
+                document.getElementById('zaicoList').innerHTML = '';
+                try { await loadZaico(force); }
+                catch (e) { st.innerHTML = `<span class="text-rose-600">${esc(e.message)}</span>`; return; }
+            }
+            renderZaicoPicker();
+            search.focus(); search.select();
+        }
+
+        function closeZaicoPicker() { document.getElementById('zaicoPicker').classList.add('hidden'); zaicoTargetRow = null; }
+
+        function renderZaicoPicker() {
+            if (!zaicoMap) return;
+            const words = toHalfWidth(document.getElementById('zaicoSearch').value).toLowerCase().split(/\s+/).filter(Boolean);
+            const all = Object.entries(zaicoMap);
+            const hits = all.filter(([c, z]) => {
+                const hay = toHalfWidth(c + ' ' + z.t).toLowerCase();
+                return words.every(w => hay.includes(w));
+            }).slice(0, 100);
+            const d = new Date(zaicoAt);
+            document.getElementById('zaicoStatus').innerHTML =
+                `全${all.length}件中 ${hits.length >= 100 ? '100件以上' : hits.length + '件'}（${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 時点の一覧）` +
+                ` <button onclick="openZaicoPicker(zaicoTargetRow, true)" class="text-teal-700 underline ml-1">最新に読み直す</button>`;
+            document.getElementById('zaicoList').innerHTML = hits.length ? hits.map(([c, z]) => `
+                <button type="button" data-code="${esc(c)}" onclick="pickZaico(this.dataset.code)" class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-teal-50">
+                    ${z.img ? `<img src="${esc(z.img)}" loading="lazy" class="w-12 h-12 object-contain border rounded bg-white flex-none">` : '<div class="w-12 h-12 border border-dashed rounded flex-none flex items-center justify-center text-[10px] text-slate-300">画像なし</div>'}
+                    <span class="flex-grow min-w-0"><span class="block text-xs font-semibold break-all">${esc(z.t || '（名前なし）')}</span><span class="block text-[11px] font-mono text-slate-500">${esc(c)}</span></span>
+                </button>`).join('') : '<p class="p-4 text-center text-xs text-slate-400">見つかりません。言葉を短くしてみてください</p>';
+        }
+
+        // 選んだ商品のJANを入れる。商品名が空なら名前も、写真がなければzaicoの画像も入れる
+        function pickZaico(code) {
+            const row = zaicoTargetRow, z = zaicoMap && zaicoMap[code];
+            if (!row || !z) return;
+            row.querySelector('.modal-jan').value = code;
+            const nameEl = row.querySelector('.modal-jpname');
+            if (!nameEl.value.trim()) nameEl.value = z.t;
+            if (!row.dataset.img && z.img) setRowImage(row, z.img);
+            closeZaicoPicker();
+        }
+
+        function toHalfWidth(v) {
+            return String(v || '').replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/　/g, ' ');
         }
 
         function closeMasterModal() { document.getElementById('masterModal').classList.add('hidden'); }
@@ -973,8 +1146,13 @@ const shukkaAuto = (() => {
                 let jpName = r.querySelector('.modal-jpname').value.trim();
                 let shelf = r.querySelector('.modal-shelf').value.trim();
                 let multiplier = parseInt(r.querySelector('.modal-mult').value, 10) || 1;
+                const img = r.dataset.img || '';
+                const jan = normJan(r.querySelector('.modal-jan').value);
                 if (jpName) {
-                    items.push({ jpName, shelf, multiplier });
+                    const it = { jpName, shelf, multiplier };
+                    if (jan) it.jan = jan;
+                    if (img) it.img = img;
+                    items.push(it);
                 }
             });
 
@@ -1247,6 +1425,8 @@ const shukkaAuto = (() => {
                         item: productInfo,
                         jpName: it.jpName,
                         shelf: it.shelf || '',
+                        img: it.img || '',
+                        jan: it.jan || '',
                         baseQty: qty,
                         multiplier: it.multiplier || 1,
                         matched: true,
@@ -1363,7 +1543,7 @@ const shukkaAuto = (() => {
         // 行の内容をマスタの商品構成に反映（編集した商品名は「上書き」扱いにして重複を防ぐ）
         function applyRowToItems(items, r) {
             if (r.matched && r.masterItemIdx !== undefined && items[r.masterItemIdx]) {
-                items[r.masterItemIdx] = { jpName: r.jpName.trim(), shelf: r.shelf, multiplier: r.multiplier };
+                items[r.masterItemIdx] = { ...items[r.masterItemIdx], jpName: r.jpName.trim(), shelf: r.shelf, multiplier: r.multiplier }; // 写真はそのまま残す
                 return;
             }
             const existing = items.find(it => it.jpName === r.jpName.trim());
@@ -1521,11 +1701,43 @@ const shukkaAuto = (() => {
                         </thead>
                         <tbody>${itemsHtml}</tbody>
                     </table>
-                    <div class="text-center pt-4 border-t border-dashed text-sm text-slate-500 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
+                    <div class="flex items-center justify-between pt-3 border-t border-dashed mt-auto">
+                        <div class="text-center">${packQrHtml(sn, o.items)}<div class="text-[10px] text-slate-500">梱包チェック</div></div>
+                        <div class="text-sm text-slate-500">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
+                    </div>
                 `;
                 area.appendChild(slip);
             });
+            const noJan = new Set(processedDataRows.filter(r => r.matched && !r.jan).map(r => r.jpName));
+            if (noJan.size) {
+                const note = document.createElement('p');
+                note.className = 'no-print text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2';
+                note.innerText = `バーコード（JAN）が未登録の商品が ${noJan.size} 種類あります。梱包チェックでは「目視で確認した」で数えます。\n・${[...noJan].slice(0, 5).join('\n・')}${noJan.size > 5 ? '\n…ほか' : ''}`;
+                area.prepend(note);
+            }
             document.getElementById('inspectionModal').classList.remove('hidden');
+        }
+
+        // ===== 梱包チェック（pack.html）用のQR =====
+        // 中身：pack.html#o=受注番号&i=バーコード*数量,…（バーコードがない商品は !SKU*数量 → 目視で確認）
+        const PACK_URL = 'https://souko-2de57.web.app/pack.html';
+        function packUrl(sn, rows) {
+            const sum = new Map();
+            rows.forEach(r => {
+                const code = r.jan ? r.jan : '!' + (r.sku || r.lookupKey || r.jpName || '').slice(0, 40);
+                sum.set(code, (sum.get(code) || 0) + r.baseQty * r.multiplier);
+            });
+            const items = [...sum].map(([c, q]) => (c.startsWith('!') ? '!' + encodeURIComponent(c.slice(1)) : encodeURIComponent(c)) + '*' + q).join(',');
+            return `${PACK_URL}#o=${encodeURIComponent(sn)}&i=${items}`;
+        }
+        function packQrHtml(sn, rows) {
+            if (typeof qrcode !== 'function') return '<div class="text-[10px] text-rose-500">QRを作れません</div>';
+            try {
+                const qr = qrcode(0, 'M');
+                qr.addData(packUrl(sn, rows));
+                qr.make();
+                return `<img src="${qr.createDataURL(4, 2)}" style="width:28mm;height:28mm;image-rendering:pixelated" alt="QR">`;
+            } catch (e) { console.warn(e); return '<div class="text-[10px] text-rose-500">QRを作れません</div>'; }
         }
 
         function closeInspectionModal() { document.getElementById('inspectionModal').classList.add('hidden'); }
@@ -1541,7 +1753,8 @@ const shukkaAuto = (() => {
             let map = {};
             processedDataRows.forEach(r => {
                 let k = (r.shelf || '未設定') + "_" + r.jpName;
-                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, total: 0 };
+                if (!map[k]) map[k] = { shelf: r.shelf || '未設定', name: r.jpName, img: '', total: 0 };
+                if (!map[k].img && r.img) map[k].img = r.img;
                 map[k].total += r.baseQty * r.multiplier;
             });
             let sorted = Object.values(map).sort((a,b) => a.shelf.localeCompare(b.shelf, 'ja', { numeric: true }));
@@ -1581,6 +1794,7 @@ const shukkaAuto = (() => {
                 tr.innerHTML = `
                     <td class="px-4 py-2 text-center text-slate-400"><i class="fa-solid fa-grip-vertical"></i></td>
                     <td class="px-4 py-2 font-bold text-indigo-700">${esc(x.shelf)}</td>
+                    <td class="px-2 py-1 w-20">${x.img ? `<img src="${esc(x.img)}" class="w-16 h-16 object-contain border rounded bg-white">` : '<div class="w-16 h-16 border border-dashed rounded flex items-center justify-center text-slate-300 text-[10px]">写真なし</div>'}</td>
                     <td class="px-4 py-2 font-semibold">${esc(x.name)}</td>
                     <td class="px-4 py-2 text-center font-bold text-emerald-600 text-base">${x.total}</td>
                 `;
