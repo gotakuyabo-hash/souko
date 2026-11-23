@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>日次報告チェックリスト</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <style>
 :root{
   --bg:#eef1ee; --surface:#ffffff; --surface-2:#f5f7f5; --ink:#1f2a33; --muted:#66727c; --line:#d5dbd7;
@@ -1264,7 +1265,8 @@ function renderTeisha() {
     const lines = teishaLines(x);
     const out = TEISHA.outs[x.orderNo];
     let act = null;
-    if (out) act = h('span', { class: 't-done' }, '✓ 出庫済み' + (out.at ? '（' + new Date(out.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）' : ''));
+    if (out) act = [h('span', { class: 't-done' }, '✓ 出庫済み' + (out.at ? '（' + new Date(out.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）' : '')),
+      Array.isArray(out.lines) && out.lines.length ? h('button', { type: 'button', class: 'btn', onclick: () => printTeishaPack(x.orderNo, out.lines) }, '🖨 検品書') : null];
     else if (lines.length) act = [
       ...lines.map(l => {
         const inp = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', value: String(l.qty), 'aria-label': `${l.code}の出庫数`,
@@ -1353,12 +1355,65 @@ async function teishaOut(orderNo) {
     }
     await setDoc(doc(db, 'settings', 'teisha_outs'), { orders: { [orderNo]: { at: new Date().toISOString(), by: user.email || '', lines: done } } }, { merge: true });
     toast(`出庫しました（${done.length}品目）` + (ng.length ? '。見つからないコードは出庫していません' : ''), ng.length ? 'error' : '');
+    printTeishaPack(orderNo, done);   // 梱包くん用の検品書（QRつき）
   } catch (e) {
     console.error(e);
     toast('出庫できませんでした：' + (e.message || e), 'error');
   } finally {
     TEISHA.busy = ''; renderTeisha();
   }
+}
+
+/* ===== 梱包チェック（梱包くん pack.html）用のQRつき検品シートを印刷 =====
+   QRの中身： pack.html#o=受注番号&s=元の在庫&i=コード*数量,…&t=商品名,…
+   コードがない商品は「!~番号」にして、梱包くんで目視確認の行にする */
+const PACK_URL = new URL('pack.html', location.href).href.split('#')[0];
+const PACK_NAME_MAX = 20;   // QRに入れる商品名の文字数（長いとQRの模様が細かくなるため）
+function packHash(s){
+  const enc = v => encodeURIComponent(String(v == null ? '' : v));
+  const build = n => 'o=' + enc(s.orderId) + '&s=' + enc(s.src) +
+    '&i=' + s.items.map((x, k) => (x.unknown ? '!~' + (k + 1) : enc(x.code)) + '*' + x.qty).join(',') +
+    (n ? '&t=' + s.items.map(x => enc([...String(x.name || '').replace(/\s+/g, ' ').trim()].slice(0, n).join(''))).join(',') : '');
+  // 長くなりすぎたら商品名を短く → それでも長ければ商品名なし（検品シートの一覧で確認）
+  for (const n of [PACK_NAME_MAX, 12, 6]){ const h = build(n); if ((PACK_URL + '#' + h).length <= 900) return h; }
+  return build(0);
+}
+function printPackSheets(sheets, heading){
+  if (!window.qrcode){ alert('QRを作る部品を読み込めませんでした。ページを開き直してください'); return; }
+  const e = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const now = new Date();
+  const stamp = now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate()+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  const blocks = sheets.map(s => {
+    const q = qrcode(0, 'M'); q.addData(PACK_URL + '#' + packHash(s)); q.make();
+    const total = s.items.reduce((a, x) => a + x.qty, 0);
+    return '<div class="blk"><div class="txt"><div class="oid">' + e(s.orderId) + '</div>' +
+      (s.sub ? '<div class="sub">' + e(s.sub) + '</div>' : '') +
+      '<table><thead><tr><th>コード</th><th>商品名</th><th class="n">数量</th></tr></thead><tbody>' +
+      s.items.map(x => '<tr><td class="c">' + (x.unknown ? '<b>目視</b>' : e(x.code)) + '</td><td>' + e(x.name) + '</td><td class="n"><b>' + x.qty + '</b></td></tr>').join('') +
+      '</tbody></table><div class="sum">' + s.items.length + '品目・合計 ' + total + '点</div></div>' +
+      '<div class="qr"><img src="' + q.createDataURL(4, 2) + '" alt=""><div>梱包くんで読む</div></div></div>';
+  }).join('');
+  const html = '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>梱包チェック 検品シート</title><style>' +
+    "@page{size:A4;margin:10mm}body{font-family:'BIZ UDPGothic','Hiragino Sans','Yu Gothic',Meiryo,sans-serif;color:#000;font-size:12px;margin:0}" +
+    'h1{font-size:16px;margin:0 0 2px}.meta{margin:0 0 8px;font-size:11px}' +
+    '.blk{display:flex;gap:10px;border:1.5px solid #000;border-radius:6px;padding:8px;margin-bottom:8px;page-break-inside:avoid}' +
+    '.txt{flex:1;min-width:0}.oid{font-size:17px;font-weight:700;word-break:break-all}.sub{font-size:11px;margin:1px 0 4px}' +
+    'table{width:100%;border-collapse:collapse}th,td{border:1px solid #666;padding:3px 5px;text-align:left;vertical-align:top}th{background:#eee;font-size:10px}' +
+    'td.c{white-space:nowrap;font-variant-numeric:tabular-nums}td.n,th.n{text-align:right;white-space:nowrap}td.n b{font-size:14px}.sum{text-align:right;font-size:11px;margin-top:3px}' +
+    '.qr{flex:none;text-align:center;font-size:10px}.qr img{width:38mm;height:38mm;image-rendering:pixelated;display:block}' +
+    '</style></head><body><h1>梱包チェック 検品シート</h1><p class="meta">' + e(heading || '') + '　｜　' + sheets.length + '件　｜　作成 ' + stamp + '</p>' + blocks + '</body></html>';
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  document.body.appendChild(fr);
+  fr.contentDocument.open(); fr.contentDocument.write(html); fr.contentDocument.close();
+  setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 1000); }, 400);
+}
+
+// 定者さんの出庫 → 梱包くん用の検品書（Lazadaくんの在庫なので s=lzd）
+function printTeishaPack(orderNo, lines) {
+  const items = (lines || []).filter(l => l && l.code && Number(l.qty) > 0).map(l => ({ code: l.code, name: l.name || '', qty: Number(l.qty), unknown: false }));
+  if (!items.length) { toast('検品書に載せる商品がありません', 'error'); return; }
+  printPackSheets([{ orderId: orderNo, src: 'lzd', sub: '定者さん（ShopeeMate）', items }], '定者さん 出庫分');
 }
 
 /* =========================================================
