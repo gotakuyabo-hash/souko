@@ -43,7 +43,7 @@ button,input,textarea{font:inherit;color:inherit}
 .date-note{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap}
 .date-note.is-today{color:var(--ok)}
 
-.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-bottom:8px}
+.tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding-bottom:8px}
 .tab{position:relative;border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:8px 10px;text-align:left;cursor:pointer;min-height:52px}
 .tab[aria-selected="true"]{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
 .tab-title{display:block;font-weight:800;font-size:14px}
@@ -170,6 +170,15 @@ button,input,textarea{font:inherit;color:inherit}
 .panel-foot{display:flex;gap:8px;margin:12px 0}
 .panel-foot .btn{flex:1}
 
+/* ===== ニッシントーア報告 ===== */
+.rp{display:grid;gap:10px}
+.rp-state{margin:0;font-weight:800;font-size:14px;padding:8px 12px;border-radius:9px;background:var(--surface-2);color:var(--muted)}
+.rp-state.is-sent{background:var(--ok-soft);color:var(--ok)}
+.rp-count{display:flex;align-items:center;gap:8px}
+.rp textarea,.rp-set textarea{resize:vertical;line-height:1.5}
+.rp-set summary{cursor:pointer;font-weight:800}
+.rp-set .lbl{margin-top:10px}
+
 /* ===== モーダル・トースト ===== */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:100}
 .modal-box{background:var(--surface);border-radius:14px;width:100%;max-width:360px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
@@ -224,6 +233,10 @@ button,input,textarea{font:inherit;color:inherit}
         <span class="tab-title">📊 出荷件数</span>
         <span class="tab-sub" id="tabSub-shukka">読み込み中…</span>
       </button>
+      <button type="button" class="tab" role="tab" id="tabBtn-report" aria-selected="false">
+        <span class="tab-title">💬 ニッシントーア</span>
+        <span class="tab-sub" id="tabSub-report">読み込み中…</span>
+      </button>
     </div>
 
     <div class="statusbar">
@@ -270,6 +283,41 @@ button,input,textarea{font:inherit;color:inherit}
       <button type="button" class="btn" id="skHistoryBtn">🗓 過去の記録</button>
     </div>
   </section>
+
+  <!-- ===== ニッシントーア報告 ===== -->
+  <section id="tab-report" hidden>
+    <div class="panel panel-pad rp">
+      <p class="rp-state" id="rpState">読み込み中…</p>
+      <div class="rp-count" style="flex-wrap:wrap;gap:14px">
+        <div>
+          <label class="lbl" for="rpCount">通常分</label>
+          <div class="rp-count"><input id="rpCount" class="count-in" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="0"><span class="unit">件</span></div>
+        </div>
+        <div>
+          <label class="lbl" for="rpFba">FBA分（ふだんは0）</label>
+          <div class="rp-count"><input id="rpFba" class="count-in" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="0" value="0"><span class="unit">件</span></div>
+        </div>
+        <div>
+          <span class="lbl">合計</span>
+          <div class="rp-count"><span class="tile-v" id="rpTotal">0</span><span class="unit">件</span></div>
+        </div>
+      </div>
+      <div>
+        <label class="lbl" for="rpPreview">送る文面（必要なら直せます。{返信先} は送信時に、その日のニッシントーア様の出荷依頼（「本日合計」が入ったメッセージ）への返信になります）</label>
+        <textarea id="rpPreview" class="text-in" rows="5"></textarea>
+      </div>
+      <button type="button" class="btn btn-primary btn-block" id="rpSendBtn" style="min-height:48px">📨 Chatworkに送信（ラクロジスタッフ）</button>
+      <p class="small muted" style="margin:0">送信すると、出荷件数タブの「<span id="rpSvcName">—</span>」に合計の件数が入り、チェックリストの「ニッシントーアチャット報告確認」にレ点が付きます。</p>
+    </div>
+    <details class="panel panel-pad rp-set">
+      <summary>⚙️ 文面のひな形・件数を入れる欄</summary>
+      <label class="lbl" for="rpTemplate">ひな形（{件数}＝合計・{通常件数}・{FBA件数}・{日付} のところが自動で入ります。{返信先} はその日のニッシントーア様の出荷依頼への返信になります）</label>
+      <textarea id="rpTemplate" class="text-in" rows="5"></textarea>
+      <label class="lbl" for="rpService">件数を入れる、出荷件数タブの欄</label>
+      <select id="rpService" class="auto-sel"></select>
+      <div style="margin-top:12px"><button type="button" class="btn btn-primary" id="rpSaveSettings">保存する</button></div>
+    </details>
+  </section>
 </main>
 
 <!-- 確認ダイアログ -->
@@ -308,6 +356,7 @@ button,input,textarea{font:inherit;color:inherit}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
@@ -479,12 +528,14 @@ $('confirmYes').onclick = () => { $('confirmModal').hidden = true; const cb = co
    ========================================================= */
 let activeTab = 'checklist';
 const status = { checklist: { state: 'idle', time: '', msg: '' }, shukka: { state: 'idle', time: '', msg: '' } };
+// ニッシントーア報告タブでは、出荷件数の保存状態を表示する
+const stTab = () => activeTab === 'checklist' ? 'checklist' : 'shukka';
 function setStatus(tab, state, msg = '') {
   status[tab] = { state, time: state === 'saved' ? hhmm() : status[tab].time, msg };
-  if (tab === activeTab) renderStatus();
+  if (tab === stTab()) renderStatus();
 }
 function renderStatus() {
-  const s = status[activeTab];
+  const s = status[stTab()];
   const text = {
     idle: s.time ? `保存済み（${s.time}）` : '自動保存オン（入力すると自動で保存されます）',
     dirty: '入力中…まもなく自動保存します',
@@ -495,7 +546,7 @@ function renderStatus() {
     error: s.msg || '保存できませんでした。通信状況を確認して「今すぐ保存」を押してください'
   }[s.state];
   const el = $('statusText'); el.textContent = text; el.dataset.state = s.state;
-  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
+  const saver = stTab() === 'checklist' ? CL.saver : SK.saver;
   $('undoBtn').hidden = saver.undo.length === 0;
   $('undoCount').textContent = saver.undo.length;
 }
@@ -516,7 +567,7 @@ class Saver {
     try { await this.write(JSON.parse(cur)); setStatus(this.tab, 'saved'); }
     catch (e) { console.error(e); this.savedJSON = null; setStatus(this.tab, 'error'); }
   }
-  reset(json) { clearTimeout(this.timer); this.timer = null; this.savedJSON = json; this.undo = []; if (this.tab === activeTab) renderStatus(); }
+  reset(json) { clearTimeout(this.timer); this.timer = null; this.savedJSON = json; this.undo = []; if (this.tab === stTab()) renderStatus(); }
 }
 
 /* =========================================================
@@ -1145,6 +1196,144 @@ $('skHistoryBtn').onclick = openHistory;
 $('historyClose').onclick = () => { $('historyModal').hidden = true; };
 
 /* =========================================================
+   ニッシントーア報告
+   件数を入れて送信 → Cloud Functions（sendNisshintoaReport）がラクロジスタッフのアカウントで
+   ニッシントーア様のルームに投稿し、チェックリストの「ニッシントーアチャット報告確認」にレ点を付ける。
+   送れたら、この画面が出荷件数タブの欄に件数を入れる。
+   設定と送信の記録：settings/nisshintoa_report（template・serviceId・sent.{日付}）
+   ========================================================= */
+const RP_DEFAULT_TEMPLATE = "{返信先}\nお世話になっております。\n本日{件数}件の出荷作業が完了致しました。\n・通常分 {通常件数}件\n・FBA分 {FBA件数}件\nご確認よろしくお願い致します。";
+const RP = { cfg: null, sending: false, loaded: false };
+const rpSendFn = httpsCallable(getFunctions(app, 'asia-northeast1'), 'sendNisshintoaReport');
+
+function rpServiceId() {
+  const id = RP.cfg?.serviceId;
+  if (id && SK.services.some(s => s.id === id)) return id;
+  return SK.services.find(s => /ニッシントーア/.test(s.name))?.id || '';
+}
+const rpTemplate = () => (RP.cfg?.template || '').trim() ? RP.cfg.template : RP_DEFAULT_TEMPLATE;
+const rpSent = () => (CL.date && RP.cfg?.sent?.[CL.date]) || null;
+// 通常分・FBA分 → 文面（{件数}＝合計、{通常件数}、{FBA件数}、{日付}）
+const rpNum = v => /^\d+$/.test(String(v)) ? parseInt(v, 10) : null;
+function rpBuild(normal, fba) {
+  const a = rpNum(normal), b = rpNum(fba) ?? 0;
+  const total = a === null ? '○' : String(a + b);
+  return rpTemplate()
+    .replace(/\{日付\}/g, shortDate(CL.date || todayJST()))
+    .replace(/\{通常件数\}/g, a === null ? '○' : String(a))
+    .replace(/\{FBA件数\}/g, String(b))
+    .replace(/\{件数\}/g, total);
+}
+function rpRefresh() {
+  const a = rpNum($('rpCount').value), b = rpNum($('rpFba').value) ?? 0;
+  $('rpTotal').textContent = a === null ? '—' : fmt(a + b);
+  $('rpPreview').value = rpBuild($('rpCount').value, $('rpFba').value);
+}
+function rpTime(sec) {
+  return new Date(sec * 1000).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+}
+
+// full=true：件数・文面・設定の欄も作り直す（日付やタブを切り替えた時）
+function renderReport(full) {
+  if (!CL.date) return;
+  const sent = rpSent();
+  const st = $('rpState');
+  st.className = 'rp-state' + (sent ? ' is-sent' : '');
+  st.textContent = !RP.loaded ? '読み込み中…'
+    : sent ? `✅ ${shortDate(CL.date)}は ${rpTime(sent.sentAt)} に送信済み（${fmt(sent.count)}件）` + (sent.sends > 1 ? `・${sent.sends}回送信` : '')
+    : `${shortDate(CL.date)}はまだ送信していません`;
+  $('tabSub-report').textContent = !RP.loaded ? '読み込み中…' : sent ? '✓ 送信済み' : '未送信';
+  const sid = rpServiceId();
+  $('rpSvcName').textContent = sid ? SK.services.find(s => s.id === sid).name : '（未設定：⚙️で選んでください）';
+  const btn = $('rpSendBtn');
+  btn.disabled = RP.sending || !RP.loaded;
+  btn.textContent = RP.sending ? '送信中…' : sent ? '📨 もう一度送信する' : '📨 Chatworkに送信（ラクロジスタッフ）';
+  if (!full || RP.sending) return;
+
+  if (!isTyping('tab-report')) {
+    let n = '', f = '0';
+    if (sent) { n = String(sent.normal ?? sent.count); f = String(sent.fba ?? 0); }
+    else if (sid && SK.state && SK.date === CL.date && typeof SK.state.counts[sid] === 'number') n = String(SK.state.counts[sid]);
+    $('rpCount').value = n;
+    $('rpFba').value = f;
+    rpRefresh();
+    $('rpTemplate').value = rpTemplate();
+    const sel = $('rpService');
+    sel.replaceChildren(h('option', { value: '' }, '入れない'), ...SK.services.map(s => h('option', { value: s.id }, s.name)));
+    sel.value = sid;
+  }
+}
+
+function watchReportCfg() {
+  onSnapshot(doc(db, 'settings', 'nisshintoa_report'), snap => {
+    RP.cfg = snap.exists() ? snap.data() : {};
+    const first = !RP.loaded; RP.loaded = true;
+    renderReport(first || activeTab !== 'report');
+  }, e => { console.warn('nisshintoa_report', e); RP.loaded = true; RP.cfg = {}; renderReport(true); });
+}
+
+['rpCount', 'rpFba'].forEach(id => {
+  $(id).addEventListener('input', e => {
+    const raw = e.target.value.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
+    if (raw !== e.target.value) e.target.value = raw;
+    rpRefresh();
+  });
+  $(id).addEventListener('focus', e => e.target.select());
+});
+
+$('rpSendBtn').onclick = () => {
+  const normal = rpNum($('rpCount').value.trim());
+  if (normal === null) { toast('通常分の件数を入力してください', 'error'); $('rpCount').focus(); return; }
+  const fba = rpNum($('rpFba').value.trim() || '0');
+  if (fba === null) { toast('FBA分の件数を入力してください（なければ0）', 'error'); $('rpFba').focus(); return; }
+  const n = normal + fba;
+  const body = $('rpPreview').value.trim();
+  if (!body) { toast('文面が空です', 'error'); return; }
+  if (body.indexOf(String(n)) === -1) { toast('文面に合計の件数（' + n + '）が入っていません', 'error'); return; }
+  const sent = rpSent();
+  const head = sent ? `${shortDate(CL.date)}はもう送信済みです（${fmt(sent.count)}件）。もう一度送りますか？` : 'ニッシントーア様のルームに、次の文面を送信します。';
+  confirmDialog(head + '\n\n' + body, '送信する', () => rpDoSend(CL.date, n, body, normal, fba));
+};
+
+async function rpDoSend(date, n, body, normal, fba) {
+  RP.sending = true; renderReport(false);
+  try {
+    const r = await rpSendFn({ date, count: n, normal, fba, body });
+    // 出荷件数タブのニッシントーアの欄に件数を入れる
+    const sid = rpServiceId();
+    let put = false;
+    if (sid && SK.state && SK.date === date) {
+      SK.state.counts[sid] = n;
+      if (activeTab === 'shukka') renderShukka(); else renderTotals();
+      await SK.saver.flush();
+      put = true;
+    }
+    const notes = [];
+    if (/\{返信先\}/.test(body)) notes.push(r.data?.replied ? '出荷依頼のメッセージに返信しました' : 'その日の出荷依頼が見つからず、返信なしで送りました');
+    notes.push(put ? '出荷件数に入れました' : '出荷件数には入れられませんでした（⚙️で欄を選んでください）');
+    notes.push(r.data?.checked ? 'チェックリストにレ点を付けました' : 'チェックリストの項目が見つからずレ点は付けていません');
+    toast('送信しました。' + notes.join('・'), put && r.data?.checked ? '' : 'error');
+  } catch (e) {
+    console.error(e);
+    toast('送信できませんでした：' + (e.message || e), 'error');
+  } finally {
+    RP.sending = false;
+    renderReport(false);
+  }
+}
+
+$('rpSaveSettings').onclick = async () => {
+  try {
+    await setDoc(doc(db, 'settings', 'nisshintoa_report'), {
+      template: $('rpTemplate').value.trim() || RP_DEFAULT_TEMPLATE,
+      serviceId: $('rpService').value, updatedAt: new Date().toISOString()
+    }, { merge: true });
+    toast('保存しました');
+    setTimeout(() => renderReport(true), 300);
+  } catch (e) { console.error(e); toast('保存できませんでした。通信状況を確認してください', 'error'); }
+};
+
+/* =========================================================
    スタッフ依頼（未対応件数）
    ========================================================= */
 function updatePortalBadge(cardId, count) {
@@ -1170,16 +1359,18 @@ function watchStaff() {
    ========================================================= */
 function switchTab(t) {
   activeTab = t;
-  for (const k of ['checklist', 'shukka']) {
+  for (const k of ['checklist', 'shukka', 'report']) {
     $('tab-' + k).hidden = k !== t;
     $('tabBtn-' + k).setAttribute('aria-selected', String(k === t));
   }
   try { localStorage.setItem('checklist_active_tab', t); } catch (e) {}
   if (t === 'checklist') requestAnimationFrame(() => document.querySelectorAll('#clSections textarea').forEach(autoGrow));
+  if (t === 'report') renderReport(true);
   renderStatus();
 }
 $('tabBtn-checklist').onclick = () => switchTab('checklist');
 $('tabBtn-shukka').onclick = () => switchTab('shukka');
+$('tabBtn-report').onclick = () => switchTab('report');
 
 function updateDateNote(date) {
   const today = todayJST(); const d = parseDate(date);
@@ -1196,7 +1387,7 @@ async function goDate(date) {
   $('dateInput').value = date;
   updateDateNote(date);
   clLoad(date);
-  servicesReady.then(() => { if (CL.date === date) skLoad(date); });
+  servicesReady.then(() => { if (CL.date === date) { skLoad(date); renderReport(true); } });
   renderStatus();
 }
 $('dateInput').addEventListener('change', e => goDate(e.target.value));
@@ -1205,16 +1396,16 @@ $('nextDay').onclick = () => goDate(fmtD(addDays(parseDate($('dateInput').value 
 $('todayBtn').onclick = () => goDate(todayJST());
 
 $('saveNowBtn').onclick = async () => {
-  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
-  if (saver.savedJSON === saver.getJSON() && status[activeTab].state !== 'error') { toast('保存済みです'); return; }
+  const saver = stTab() === 'checklist' ? CL.saver : SK.saver;
+  if (saver.savedJSON === saver.getJSON() && status[stTab()].state !== 'error') { toast('保存済みです'); return; }
   await saver.flush();
-  if (status[activeTab].state === 'saved') toast('保存しました');
+  if (status[stTab()].state === 'saved') toast('保存しました');
 };
 $('undoBtn').onclick = () => {
-  const saver = activeTab === 'checklist' ? CL.saver : SK.saver;
+  const saver = stTab() === 'checklist' ? CL.saver : SK.saver;
   const prev = saver.undo.pop(); if (!prev) return;
   const st = JSON.parse(prev);
-  if (activeTab === 'checklist') { CL.state = st; renderChecklist(); }
+  if (stTab() === 'checklist') { CL.state = st; renderChecklist(); }
   else { SK.state = { date: st.date, counts: st.counts, auto: SK.state?.auto || {} }; renderShukka(); }
   saver.flush({ pushUndo: false });
   toast('1つ前の状態に戻しました');
@@ -1423,10 +1614,11 @@ function watchShip() {
   servicesReady = watchServices();
   watchFrozen();
   let tab = 'checklist';
-  try { tab = localStorage.getItem('checklist_active_tab') === 'shukka' ? 'shukka' : 'checklist'; } catch (e) {}
+  try { const v = localStorage.getItem('checklist_active_tab'); tab = (v === 'shukka' || v === 'report') ? v : 'checklist'; } catch (e) {}
   switchTab(tab);
   goDate(todayJST());
   servicesReady.then(watchAutoSources);
+  servicesReady.then(watchReportCfg);
   // 件数バッジ用の大きめのデータは、チェックリストが表示されてから読み込む（最長4秒待ち）
   await Promise.race([firstLoaded, new Promise(r => setTimeout(r, 4000))]);
   watchStaff();
