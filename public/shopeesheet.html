@@ -1395,9 +1395,13 @@ function renderSmOut(){
     plans.map(p => {
       const ok = p.lines.filter(l => l.row);
       const linesHtml = p.lines.length
-        ? p.lines.map(l => l.row
-            ? '<div>' + esc(l.row.name) + ' <b>×' + l.qty + '</b> <span class="muted" style="font-size:12px">（' + esc(l.code) + '・在庫 ' + l.row.stock + '）</span></div>'
-            : '<div style="color:var(--danger)">' + esc(l.code) + '：在庫に見つかりません</div>').join('')
+        ? p.lines.map(l => {
+            const im = (Array.isArray(p.images) ? p.images : []).find(y => y.code === l.code);
+            const img = im ? '<img src="' + esc(im.url) + '" alt="" loading="lazy" referrerpolicy="no-referrer" style="width:48px;height:48px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;vertical-align:middle;margin-right:6px">' : '';
+            return img + (l.row
+            ? '<div style="display:inline-block;vertical-align:middle">' + esc(l.row.name) + ' <b>×' + l.qty + '</b> <span class="muted" style="font-size:12px">（' + esc(l.code) + '・在庫 ' + l.row.stock + '）</span></div>'
+            : '<div style="display:inline-block;vertical-align:middle;color:var(--danger)">' + esc(l.code) + '：在庫に見つかりません</div>');
+          }).map(x => '<div style="margin:2px 0">' + x + '</div>').join('')
         : '<span class="muted">商品コードが書かれていません（手動出庫から記録してください）</span>';
       const btn = p.done ? '<span class="tag">✓ 出庫済み</span>'
         : ok.length ? '<button type="button" class="btn primary" data-sm-out="' + esc(p.orderNo) + '">出庫する</button>' : '';
