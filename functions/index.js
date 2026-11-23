@@ -918,3 +918,170 @@ exports.apiSyncZaicoInventory = onRequest(
         }
     }
 );
+
+// ==========================================
+// zaicoへの入庫・新規商品登録API（依頼まとめ管理 irai.html の「zaico在庫」→「＋入庫を登録」から使う）
+// ・apiUpdateZaicoShop と同じく、FirebaseのIDトークンで社内の人か確認する
+// ・mode: "add"    … zaicoにある商品に入庫する（zaicoの「入庫（仕入れ）」として記録するので、入出庫の履歴に残る）
+//      { inventoryId, quantity: 入庫する数, expectQuantity: 画面で見ていた在庫数, memo }
+//      入庫の記録を作れなかったときは、何もせずにエラーを返す（画面から「在庫数を直接足す」を選べる）
+// ・mode: "create" … zaicoにない商品を新しく作る
+//      { title, code, quantity, shop, place, unit }
+//      同じバーコードの商品がすでにあるときは作らない（二重登録を防ぐ）
+// ・どちらも、zaicoから読み直して本当に反映されたか確かめてから返事をする。在庫の写し（patches）にもすぐ反映
+// ==========================================
+exports.apiZaicoInbound = onRequest(
+    { region: "asia-northeast1", timeoutSeconds: 120, secrets: [zaicoApiTokenSecret] },
+    async (req, res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+        if (req.method !== 'POST') { res.status(405).json({ success: false, error: "POSTで送ってください" }); return; }
+
+        // ① ログインの確認（apiUpdateZaicoShop と同じ）
+        let email = "";
+        try {
+            const m = String(req.get('Authorization') || "").match(/^Bearer\s+(.+)$/i);
+            if (!m) throw new Error("no token");
+            const decoded = await admin.auth().verifyIdToken(m[1]);
+            email = String(decoded.email || "").toLowerCase();
+            if (!email || decoded.email_verified === false) throw new Error("no email");
+        } catch (e) {
+            res.status(401).json({ success: false, error: "ログインを確認できませんでした。ログインし直してください" });
+            return;
+        }
+        const okEmail = SHOP_EDIT_ALLOWED_EMAILS.map(x => x.toLowerCase()).includes(email);
+        const okDomain = SHOP_EDIT_ALLOWED_DOMAINS.some(d => email.endsWith("@" + d.toLowerCase()));
+        if ((SHOP_EDIT_ALLOWED_EMAILS.length || SHOP_EDIT_ALLOWED_DOMAINS.length) && !okEmail && !okDomain) {
+            res.status(403).json({ success: false, error: `${email} にはzaicoの商品を変更する許可がありません` });
+            return;
+        }
+
+        const ZAICO_API_TOKEN = zaicoApiTokenSecret.value();
+        const base = `https://web.zaico.co.jp/api/v2/orgs/companies/${COMPANY_ID}`;
+        const headers = { "Authorization": `Bearer ${ZAICO_API_TOKEN}`, "Content-Type": "application/json" };
+        const getInv = async (id) => {
+            const r = await fetch(`${base}/inventories/${encodeURIComponent(id)}.json`, { method: "GET", headers });
+            const t = await r.text();
+            if (!r.ok) throw new Error(`zaicoの商品を読めませんでした (${r.status}): ${t.slice(0, 300)}`);
+            const d = JSON.parse(t);
+            return d.inventory || d.data || d;
+        };
+        const jstToday = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+        try {
+            const b = req.body || {};
+            const mode = String(b.mode || "");
+
+            // ── zaicoにある商品に入庫 ──
+            if (mode === "add") {
+                const id = String(b.inventoryId || "").trim();
+                if (!/^\d+$/.test(id)) { res.status(400).json({ success: false, error: "在庫IDがありません" }); return; }
+                const n = Number(b.quantity);
+                if (!isFinite(n) || n <= 0) { res.status(400).json({ success: false, error: "入庫数は1以上で入れてください" }); return; }
+
+                const inv = await getInv(id);
+                const beforeQty = readQty(inv);
+                if (b.expectQuantity !== undefined && b.expectQuantity !== null && b.expectQuantity !== "" && Number(b.expectQuantity) !== beforeQty) {
+                    res.status(409).json({ success: false, conflict: true, inventoryId: id, currentQuantity: beforeQty,
+                        error: `zaicoの在庫数が ${b.expectQuantity} から ${beforeQty} に変わっています（その間に入出庫がありました）。内容を確かめてから、もう一度入庫してください` });
+                    return;
+                }
+
+                // zaicoの「入庫（仕入れ）」を、入庫済みとして1件作る
+                const num = "IN-" + Date.now();
+                const payload = {
+                    num,
+                    customer_name: String(b.supplier || "依頼まとめ管理（入庫）").slice(0, 100),
+                    status: "purchased",
+                    purchase_date: jstToday,
+                    memo: String(b.memo || "").slice(0, 500),
+                    purchases: [{ inventory_id: String(id), quantity: String(n), unit_price: "0", purchase_date: jstToday }]
+                };
+                const r = await fetch(`${base}/purchases.json`, { method: "POST", headers, body: JSON.stringify(payload) });
+                const rt = await r.text();
+                if (!r.ok) {
+                    logger.error("zaico入庫の登録に失敗しました:", rt.slice(0, 500));
+                    res.status(500).json({ success: false, purchaseFailed: true, inventoryId: id, currentQuantity: beforeQty,
+                        error: zaicoErrJa(rt) || `zaicoに入庫を記録できませんでした (${r.status}): ${rt.slice(0, 300)}` });
+                    return;
+                }
+
+                // 読み直して、在庫数が増えたか確かめる
+                const after = await getInv(id);
+                const afterQty = readQty(after);
+                const ok = afterQty === beforeQty + n;
+                logger.info(`zaico入庫 ${id}「${inv.title || ""}」${beforeQty}→${afterQty}（+${n}）伝票 ${num} by ${email}（確認${ok ? "OK" : "NG"}）`);
+                await writeInvPatch(id, slimInv(after), email);
+                if (!ok) {
+                    res.status(500).json({ success: false, verified: false, purchaseCreated: true, inventoryId: id, num, before: beforeQty, quantity: afterQty,
+                        error: `zaicoに入庫の伝票（${num}）は作りましたが、在庫数が ${beforeQty} → ${afterQty} でした。zaicoの入庫一覧で確認してください（続けて入れ直さないでください）` });
+                    return;
+                }
+                res.json({ success: true, verified: true, inventoryId: id, num, before: beforeQty, quantity: afterQty });
+                return;
+            }
+
+            // ── zaicoにない商品を新しく作る ──
+            if (mode === "create") {
+                const title = String(b.title || "").trim();
+                const code = String(b.code || "").trim();
+                const shop = String(b.shop || "").trim();
+                const place = String(b.place || "").trim();
+                const unit = String(b.unit || "").trim();
+                const n = b.quantity === "" || b.quantity === undefined || b.quantity === null ? 0 : Number(b.quantity);
+                if (!title) { res.status(400).json({ success: false, error: "商品名を入れてください" }); return; }
+                if (title.length > 200 || code.length > 100 || shop.length > 100 || place.length > 100) { res.status(400).json({ success: false, error: "入力が長すぎます" }); return; }
+                if (!isFinite(n) || n < 0) { res.status(400).json({ success: false, error: "数量は0以上で入れてください" }); return; }
+
+                // 同じバーコードの商品がすでにないか、zaicoの一覧で確かめる（二重登録を防ぐ）
+                if (code) {
+                    for (let page = 1; page <= 1000; page++) {
+                        const r = await fetch(`${base}/inventories.json?page=${page}&per_page=100`, { method: "GET", headers });
+                        if (!r.ok) throw new Error(`zaico在庫の確認に失敗しました (page ${page}, ${r.status})`);
+                        const data = await r.json();
+                        const list = data.inventories || data.data || [];
+                        const hit = list.find(inv => readCode(inv) === code);
+                        if (hit) {
+                            res.status(409).json({ success: false, exists: true, inventoryId: String(hit.id || hit.inventory_id), item: slimInv(hit),
+                                error: `このバーコードの商品は、すでにzaicoにあります（${pickText(hit.title || hit.name)}）。新しく作らずに、その商品に入庫してください` });
+                            return;
+                        }
+                        if (list.length < 100) break;
+                    }
+                }
+
+                const payload = { title, quantity: String(n) };
+                if (code) payload.code = code;
+                if (place) payload.place = place;
+                if (unit) payload.unit = unit;
+                if (shop) payload.optional_attributes = { [SHOP_ATTR_NAME]: shop };   // v2 の書き込みはオブジェクト形式
+                const r = await fetch(`${base}/inventories.json`, { method: "POST", headers, body: JSON.stringify(payload) });
+                const rt = await r.text();
+                if (!r.ok) throw new Error(zaicoErrJa(rt) || `zaicoに商品を作れませんでした (${r.status}): ${rt.slice(0, 300)}`);
+                let created = {};
+                try { const d = JSON.parse(rt); created = d.inventory || d.data || d; } catch (e) {}
+                const id = String(created.id || created.inventory_id || created.data_id || "");
+                if (!id) {
+                    res.status(500).json({ success: false, error: "zaicoは受け付けましたが、作った商品のIDがわかりませんでした。zaicoの画面で確認してください（続けて作り直さないでください）", zaicoResponse: rt.slice(0, 500) });
+                    return;
+                }
+                const after = await getInv(id);
+                const ng = [];
+                if (readCode(after) !== code) ng.push(`バーコードが「${readCode(after)}」`);
+                if (shop && readShop(after) !== shop) ng.push(`ショップ名が「${readShop(after)}」`);
+                if (readQty(after) !== n) ng.push(`数量が ${readQty(after)}`);
+                logger.info(`zaico商品を新規作成 ${id}「${title}」${code} 数量${n} ショップ「${shop}」by ${email}` + (ng.length ? `（確認NG：${ng.join("・")}）` : "（確認OK）"));
+                await writeInvPatch(id, slimInv(after), email);
+                res.json({ success: true, verified: !ng.length, warning: ng.length ? `作りましたが、${ng.join("・")}になっています。zaicoの画面で確認してください` : "", inventoryId: id, item: slimInv(after) });
+                return;
+            }
+
+            res.status(400).json({ success: false, error: "mode は add か create を指定してください" });
+        } catch (error) {
+            logger.error("zaicoの入庫・新規登録でエラーが発生しました:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+);
