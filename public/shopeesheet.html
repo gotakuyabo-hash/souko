@@ -40,6 +40,21 @@ h1{font-size:20px;line-height:1.3}
 h2{font-size:16px}
 .muted{color:var(--muted)}
 .hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+/* カメラでJANを読む・ネットで商品名を探す（入庫） */
+.in-tools{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 10px}
+.in-hits{display:flex;flex-direction:column;gap:4px;margin:-4px 0 10px}
+.in-hits:empty{display:none}
+.in-hit{display:flex;gap:8px;align-items:center;text-align:left;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:6px 8px;font-size:13px;width:100%;cursor:pointer;color:inherit}
+.in-hit img{width:44px;height:44px;object-fit:contain;flex:none;background:#fff;border-radius:4px}
+.in-hit small{display:block;color:var(--muted);font-size:11px}
+.credit{font-size:10px;color:var(--muted);text-align:right}
+.credit a{color:var(--muted)}
+.cam{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px}
+.cam[hidden]{display:none}
+.cam-box{position:relative;width:min(520px,100%);aspect-ratio:3/4;max-height:70vh;background:#000;border-radius:12px;overflow:hidden}
+.cam-box video{width:100%;height:100%;object-fit:cover}
+.cam-box .guide{position:absolute;left:8%;right:8%;top:40%;height:20%;border:3px solid #4ADE80;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+.cam p{color:#fff;margin:0;font-size:14px;text-align:center}
 .num{font-variant-numeric:tabular-nums}
 
 /* ヘッダー */
@@ -251,6 +266,12 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
     <div id="list" class="list"></div>
   </section>
 
+  <div class="cam" id="cam" hidden role="dialog" aria-modal="true" aria-label="カメラでJANを読む">
+    <div class="cam-box"><video id="camVideo" playsinline muted></video><div class="guide"></div></div>
+    <p id="camMsg">バーコードを緑の枠に合わせてください</p>
+    <button class="btn" type="button" id="camClose">やめる</button>
+  </div>
+
   <!-- 入庫 -->
   <section id="v-inbound" class="view" hidden>
     <div class="cols">
@@ -259,6 +280,11 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
         <form id="inForm">
           <label>商品コード<input name="code" list="dlCodes" autocomplete="off" placeholder="バーコードを読むか、コードを入力"></label>
           <p class="hint" id="codeHint" style="margin:-4px 0 10px" hidden></p>
+          <div class="in-tools">
+            <button class="btn" type="button" id="inCam">📷 カメラで読む</button>
+            <button class="btn" type="button" id="inFind">🔍 ネットで商品名を探す</button>
+          </div>
+          <div class="in-hits" id="inHits"></div>
           <label>商品名<input name="name" list="dlNames" required autocomplete="off"></label>
           <label>賞味期限<input name="expiry" placeholder="2026/06" autocomplete="off"></label>
           <div class="two">
@@ -1803,6 +1829,108 @@ $('inForm').elements.name.addEventListener('change', e => {
   if (c && !f.elements.code.value.trim()){ f.elements.code.value = c; codeHint('登録済みの商品です：' + e.target.value.trim(), true); }
 });
 
+/* ===== カメラでJANを読む → ネット（Yahoo!ショッピング）で商品名を探す =====
+   商品名の検索は、依頼まとめ管理（依頼くん）の「🔍 検索」と同じ書き出しGASを使う */
+const EXPORT_URL = 'https://script.google.com/macros/s/AKfycby4qkkn5M5RWNyc5wUmKTwzhSuxaZy1cdC4guM-HvOukLBZhypasiXzLfp2x0RQo1iX/exec'; // 依頼くんの EXPORT_URL と同じ
+const CAM = { stream:null, controls:null, raf:0, done:null };
+const janOk = t => /^\d{8}$|^\d{13}$/.test(t);
+async function openCamera(onCode){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ toast('このブラウザではカメラを使えません', true); return; }
+  const video = $('camVideo');
+  $('camMsg').textContent = 'カメラを起動しています…';
+  $('cam').hidden = false;
+  let finished = false;
+  const finish = code => {
+    if (finished) return; finished = true;
+    closeCamera();
+    if (navigator.vibrate) navigator.vibrate(80);
+    onCode(code);
+  };
+  CAM.done = () => { finished = true; };
+  try {
+    if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('ean_13')){
+      CAM.stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false });
+      video.srcObject = CAM.stream;
+      await video.play();
+      const det = new BarcodeDetector({ formats:['ean_13', 'ean_8'] });
+      $('camMsg').textContent = 'バーコードを緑の枠に合わせてください';
+      const loop = async () => {
+        if (finished) return;
+        try {
+          const hits = await det.detect(video);
+          const h = hits.find(x => janOk(String(x.rawValue || '')));
+          if (h){ finish(String(h.rawValue)); return; }
+        } catch(e){}
+        CAM.raf = requestAnimationFrame(loop);
+      };
+      loop();
+    } else {
+      const { BrowserMultiFormatReader } = await import('https://esm.sh/@zxing/browser@0.1.5');
+      if (finished) return;
+      const reader = new BrowserMultiFormatReader();
+      $('camMsg').textContent = 'バーコードを緑の枠に合わせてください';
+      CAM.controls = await reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } }, audio:false }, video, res => {
+        if (res && janOk(res.getText())) finish(res.getText());
+      });
+      if (finished) closeCamera();
+    }
+  } catch(e){
+    console.warn(e);
+    closeCamera();
+    toast(e && e.name === 'NotAllowedError' ? 'カメラの使用が許可されていません。ブラウザの設定でカメラを許可してください' : 'カメラを起動できませんでした：' + (e.message || e), true);
+  }
+}
+function closeCamera(){
+  if (CAM.done) CAM.done();
+  cancelAnimationFrame(CAM.raf);
+  try { if (CAM.controls) CAM.controls.stop(); } catch(e){}
+  if (CAM.stream) CAM.stream.getTracks().forEach(t => t.stop());
+  const v = $('camVideo'); v.pause(); v.srcObject = null;
+  CAM.stream = null; CAM.controls = null; CAM.done = null;
+  $('cam').hidden = true;
+}
+$('camClose').addEventListener('click', closeCamera);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('cam').hidden) closeCamera(); });
+
+async function findInName(){
+  const f = $('inForm'), code = normCode(f.elements.code.value), box = $('inHits'), btn = $('inFind');
+  if (!code){ toast('先に商品コード（JAN）を入れてください', true); f.elements.code.focus(); return; }
+  const user = auth.currentUser;
+  if (!user){ toast('ログインしてください', true); return; }
+  btn.disabled = true; btn.textContent = '探しています…';
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch(EXPORT_URL, { method:'POST', body:JSON.stringify({ idToken, action:'lookup', code }) });
+    const r = await res.json();
+    if (!r.ok){ box.innerHTML = ''; toast(r.message || '探せませんでした', true); return; }
+    if (!(r.items || []).length){ box.innerHTML = '<p class="hint" style="margin:0">ネットで見つかりませんでした。商品名を手で入れてください。</p>'; return; }
+    box.innerHTML = r.items.map((h, i) => '<button type="button" class="in-hit" data-i="'+i+'">'+(h.image ? '<img src="'+esc(h.image)+'" alt="" loading="lazy" referrerpolicy="no-referrer">' : '') +
+      '<span>'+esc(h.clean || h.name)+'<small>'+esc([h.brand, h.jan && 'JAN ' + h.jan].filter(Boolean).join('・'))+'</small></span></button>').join('') +
+      '<div class="credit"><a href="https://developer.yahoo.co.jp/sitemap/" target="_blank" rel="noopener">Web Services by Yahoo! JAPAN</a></div>';
+    box.querySelectorAll('.in-hit').forEach(b => b.onclick = () => {
+      const h = r.items[+b.dataset.i];
+      f.elements.name.value = h.clean || h.name;
+      box.innerHTML = '';
+      codeHint('ネットの商品名を入れました（必要なら直してください）', true);
+      (f.elements.inQty.value ? f.elements.name : f.elements.planned).focus();
+    });
+  } catch(e){
+    toast('探せませんでした。少し待ってから、もう一度お試しください', true);
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 ネットで商品名を探す';
+  }
+}
+$('inFind').addEventListener('click', findInName);
+$('inCam').addEventListener('click', () => openCamera(code => {
+  const f = $('inForm');
+  f.elements.code.value = code;
+  $('inHits').innerHTML = '';
+  toast('JAN ' + code + ' を読みました');
+  // 登録済みの商品なら商品名が自動で入る。はじめての商品はネットで探す
+  if (lookupCode()) f.elements.planned.focus(); else findInName();
+}));
+$('inForm').elements.code.addEventListener('input', () => { $('inHits').innerHTML = ''; });
+
 $('inForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
@@ -1818,7 +1946,7 @@ $('inForm').addEventListener('submit', async e => {
   D.inbound.push({ row:tempRow(), ...entry });
   queueWrite('addInbound', [entry]);
   ['name','code','planned','expiry','inQty','note'].forEach(k => f.elements[k].value = '');
-  codeHint(''); f.elements.code.focus();
+  codeHint(''); $('inHits').innerHTML = ''; f.elements.code.focus();
   toast(entry.inDate ? '入庫を登録しました' : '入荷待ちとして登録しました');
 });
 
