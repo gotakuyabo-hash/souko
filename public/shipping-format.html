@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/encoding-japanese/2.1.0/encoding.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <style>
 :root{
   --ink:#1c2733; --paper:#eef1f0; --panel:#ffffff; --line:#d3d9d7; --line-soft:#e6eae9; --muted:#5d6b77;
@@ -733,12 +734,15 @@ async function registerFrozen(orderNos) {
 }
 const URL_CREATE_SHIPMENT = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiCreateZaicoShipment";
 const URL_LIST_ZAICO_INVENTORIES = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories";
+// 検品シートのQRを読んだときに開く梱包チェックページ（Firebase Hostingに置いた pack.html）
+const PACK_URL = "https://souko-2de57.web.app/pack.html";
 
 // 受注CSVの列番号（0始まり）
 const COL = { SHOP: 3, ORDER: 5, KOBAN: 6, NAME_ALT: 14, MEMO: 27, SKU: 30, ITEM: 31, QTY: 34, NAME: 40, PREF: 43 /* AR列 */ };
 
 let uploadedFiles = [];
 let pickGroups = [];        // バーコード単位でまとめたピック行
+let masterMapCache = null;  // 商品マスタ（SKU → マスタ）。ピック数算出か検品シート印刷で1回だけ読む
 let pickMeta = null;
 let pickStale = false;
 let lastZaicoSend = null;   // 直近のzaico送信結果（トータルピックリストに伝票番号・未登録を出すため）
@@ -1198,6 +1202,7 @@ window.processOrderPickCalculation = async () => {
     const snap = await getDocs(collection(db, "product_masters"));
     const masterMap = new Map();
     snap.forEach(d => masterMap.set(d.id, d.data()));
+    masterMapCache = masterMap;
 
     // バーコード → 棚番（セットの中身の棚番が空のとき、単品マスタから拾う）
     const shelfByBc = new Map();
@@ -1428,10 +1433,10 @@ async function saveSkuMaster(s) {
     const comps = s.setComponents.map((c, k) => k === s.compIndex
       ? { ...c, barcode: s.barcode || c.barcode || '', shelfNumber: s.shelfNumber || '', qty: s.multiplier || 1, zaicoItemId: validZaicoId(s) || null } : c);
     s.setComponents.splice(0, s.setComponents.length, ...comps);
-    await setDoc(doc(db, "product_masters", s.setCode), { components: comps, updatedAt: new Date() }, { merge: true });
+    masterMapCache = null; await setDoc(doc(db, "product_masters", s.setCode), { components: comps, updatedAt: new Date() }, { merge: true });
     return;
   }
-  await setDoc(doc(db, "product_masters", s.skuCode), {
+  masterMapCache = null; await setDoc(doc(db, "product_masters", s.skuCode), {
     skuCode: s.skuCode, barcode: s.barcode || '', productName: s.productName,
     multiplier: s.multiplier || 1, shelfNumber: s.shelfNumber, zaicoItemId: validZaicoId(s) || null, updatedAt: new Date()
   }, { merge: true });
@@ -1473,7 +1478,7 @@ async function learnZaicoIds(map) {
     }
   }
   for (const [code, comps] of setUpdates) {
-    try { await setDoc(doc(db, 'product_masters', code), { components: comps }, { merge: true }); }
+    masterMapCache = null; try { await setDoc(doc(db, 'product_masters', code), { components: comps }, { merge: true }); }
     catch (err) { console.warn('セットのzaico商品IDを保存できませんでした', code, err); }
   }
 }
@@ -2193,7 +2198,7 @@ window.linkNotSentFromZaico = (logId, idx) => {
         exSnap.forEach(d => { if (d.data().isSet) setSkus.push(d.id); });
         if (it.skuCodes.some(c => setSkus.includes(c))) { alert('この商品はセット品です。商品マスタタブの「セット品の登録」で中身を設定してください。'); return; }
         for (const sku of it.skuCodes) {
-          await setDoc(doc(db, 'product_masters', sku), {
+          masterMapCache = null; await setDoc(doc(db, 'product_masters', sku), {
             skuCode: sku, barcode: x.code, shelfNumber: shelf,
             productName: it.productName || x.title, zaicoItemId: x.id, updatedAt: new Date()
           }, { merge: true });
@@ -2218,7 +2223,7 @@ window.loadZaicoInvForMaster = async (force = false) => {
   area.innerHTML = '<p class="empty">zaicoの在庫一覧と商品マスタを読み込んでいます…</p>';
   zaicoInvProgress = n => { area.innerHTML = `<p class="empty">zaicoの在庫一覧を読み込んでいます…（${n.toLocaleString()}件）</p>`; };
   try {
-    const [, snap] = await Promise.all([loadZaicoInventories(force), getDocs(collection(db, 'product_masters'))]);
+    const [, snap] = await Promise.all([loadZaicoInventories(force), getDocs(collection(db, 'product_masters'))]); masterMapCache = new Map(snap.docs.map(d => [d.id, d.data()]));
     zaicoInvMasters = [];
     snap.forEach(d => zaicoInvMasters.push({ id: d.id, ...d.data() }));
     renderZaicoInvTable();
@@ -2279,7 +2284,7 @@ window.registerFromZaicoInv = async (k) => {
       !confirm(`SKU「${sku}」はすでに別のバーコード（${exist.barcode}）で登録されています。\nzaicoのバーコード（${x.code}）に置き換えますか？`)) return;
   try {
     const data = { skuCode: sku, barcode: x.code, productName: (exist && (exist.productName || exist.product_name)) || x.title, multiplier: mult, shelfNumber: shelf, zaicoItemId: x.id, updatedAt: new Date() };
-    await setDoc(doc(db, 'product_masters', sku), data, { merge: true });
+    masterMapCache = null; await setDoc(doc(db, 'product_masters', sku), data, { merge: true });
     zaicoInvMasters = [...zaicoInvMasters.filter(m => (m.skuCode || m.id) !== sku), { id: sku, ...data }];
     renderZaicoInvTable();
     toast(`SKU ${sku} を登録しました`);
@@ -2409,7 +2414,7 @@ window.saveSetMaster = async () => {
     barcode: '', shelfNumber: '', multiplier: 1, updatedAt: new Date()
   };
   try {
-    await setDoc(doc(db, 'product_masters', sku), data);
+    masterMapCache = null; await setDoc(doc(db, 'product_masters', sku), data);
     masterItemsCache = [...masterItemsCache.filter(it => (it.skuCode || it.id) !== sku), { id: sku, ...data }];
     if (pickGroups.length) pickStale = true; // 計算済みのピックは算出し直しが必要
     updateButtons();
@@ -2438,7 +2443,7 @@ window.editSetMaster = (sku) => {
 window.deleteSetMaster = async (sku) => {
   if (!confirm(`セット品「${sku}」を削除しますか？`)) return;
   try {
-    await deleteDoc(doc(db, 'product_masters', sku));
+    masterMapCache = null; await deleteDoc(doc(db, 'product_masters', sku));
     masterItemsCache = masterItemsCache.filter(it => (it.skuCode || it.id) !== sku);
     renderSetList();
     toast('削除しました');
@@ -2509,7 +2514,7 @@ window.resendZaicoProblems = async (id) => {
   // 商品マスタを読み直して、あとから入れたバーコード・棚番を拾う
   let masters = [];
   try {
-    const snap = await getDocs(collection(db, 'product_masters'));
+    const snap = await getDocs(collection(db, 'product_masters')); masterMapCache = new Map(snap.docs.map(d => [d.id, d.data()]));
     snap.forEach(d => masters.push({ sku: d.id, ...d.data() }));
   } catch (err) {
     console.warn('商品マスタを読めませんでした', err);
@@ -3630,10 +3635,66 @@ window.openTotalPickList = () => {
   w.document.close();
 };
 
+/* ---------- 検品シートのQR（スマホで読むと梱包チェックページが開く） ----------
+   QRの中身： pack.html#o=受注番号&i=バーコード*数量,バーコード*数量,…
+   バーコードは商品マスタのバーコード（＝zaicoのバーコード欄＝商品に貼ってあるシール）。
+   セット品は中身に分解し、入数（multiplier）も掛ける。マスタ未登録・バーコードなしは「!SKU*数量」で入れる */
+async function getMasterMapCached() {
+  if (masterMapCache) return masterMapCache;
+  const snap = await getDocs(collection(db, "product_masters"));
+  const m = new Map();
+  snap.forEach(d => m.set(d.id, d.data()));
+  masterMapCache = m;
+  return m;
+}
+function buildPackItems(rows, masterMap) {
+  const { skuItems } = buildSkuItems(rows);   // セットの親行（子行があるもの）は除く
+  const items = new Map();                     // key → { code, qty, unknown }
+  const add = (code, qty, unknown) => {
+    const k = (unknown ? '!' : '') + code;
+    if (items.has(k)) items.get(k).qty += qty; else items.set(k, { code, qty, unknown });
+  };
+  skuItems.forEach(s => {
+    const m = s.skuCode ? masterMap.get(s.skuCode) : null;
+    if (m && m.isSet && Array.isArray(m.components) && m.components.length) {
+      m.components.forEach(c => {
+        const bc = String(c.barcode || '').trim();
+        const q = s.orderQty * (Number(c.qty) || 1);
+        if (bc) add(bc, q, false); else add(s.skuCode || s.csvName, q, true);
+      });
+      return;
+    }
+    const bc = m && m.barcode ? String(m.barcode).trim() : '';
+    const q = s.orderQty * (m ? (Number(m.multiplier) || 1) : 1);
+    if (bc) add(bc, q, false); else add(s.skuCode || s.csvName, q, true);
+  });
+  return [...items.values()];
+}
+function packQrDataUrl(orderNo, items) {
+  if (typeof qrcode !== 'function') return '';
+  const enc = encodeURIComponent;
+  const list = items.map(x => (x.unknown ? '!' : '') + enc(x.code) + '*' + x.qty).join(',');
+  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}`;
+  try {
+    const qr = qrcode(0, 'M');   // 0 = 中身の長さに合わせて自動
+    qr.addData(url, 'Byte');
+    qr.make();
+    return qr.createDataURL(4, 0);
+  } catch (e) { console.warn('QRを作れませんでした', orderNo, e); return ''; }
+}
+
 /* ---------- 検品シート ---------- */
-window.openPrintPreview = () => {
+window.openPrintPreview = async () => {
   const allOrders = getAllOrderRows();
   if (!allOrders.length) { alert('受注データがありません。'); return; }
+
+  // 先にウィンドウを開いておく（マスタを読んだあとに開くと、ポップアップがブロックされることがある）
+  const printWin = window.open('', '_blank');
+  if (!printWin) { alert('印刷用のウィンドウを開けませんでした。ポップアップを許可してください。'); return; }
+  printWin.document.write('<p style="font-family:sans-serif;padding:20px;">検品シートを作っています…</p>');
+  let masterMap = new Map();
+  try { masterMap = await getMasterMapCached(); }
+  catch (e) { console.warn(e); toast('商品マスタを読めなかったため、QRは「マスタ未登録」扱いで作ります'); }
 
   const todayStr = new Date().toLocaleDateString();
   const koBanIdx = COL.KOBAN;
@@ -3698,12 +3759,17 @@ window.openPrintPreview = () => {
         </tr>`;
     });
 
+    const qrSrc = packQrDataUrl(group.orderNo, buildPackItems(group.rows, masterMap));
+    const qrCell = qrSrc
+      ? `<td style="width:21mm;padding-left:4px;text-align:center;vertical-align:top;"><img src="${qrSrc}" style="width:19mm;height:19mm;image-rendering:pixelated;display:block;margin:0 auto;"><div style="font-size:6pt;line-height:1.1;margin-top:1px;">スマホで読んで<br>梱包チェック</div></td>`
+      : '';
+
     htmlPages.push(`
     <div class="page" style="width:94mm;height:144mm;padding:3mm;box-sizing:border-box;page-break-after:always;font-family:sans-serif;background:#fff;overflow:hidden;">
       <div style="font-size:13pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;">
         <span>出荷検品シート${group.kind === 'nekopos' ? '<span class="sheet-kind" style="font-size:8.5pt;font-weight:bold;color:#fff;background:#d35400;padding:1px 6px;border-radius:3px;margin-left:6px;">ネコポス</span>' : ''}</span><span style="font-size:9pt;font-weight:normal;">合計数量: ${totalQty}</span>
       </div>
-      <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${escapeHtml(group.name) || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${escapeHtml(group.shop) || '（ショップなし）'}<br><span style="font-size:8.5pt;color:#333;font-weight:normal;">このショップの ${shopCountLabel}</span></td></tr></table>
+      <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${escapeHtml(group.name) || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${escapeHtml(group.shop) || '（ショップなし）'}<br><span style="font-size:8.5pt;color:#333;font-weight:normal;">このショップの ${shopCountLabel}</span></td>${qrCell}</tr></table>
       <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${escapeHtml(group.orderNo)}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="background:#2c3e50;color:#fff;font-size:9pt;"><th style="width:12%;padding:4px;text-align:center;">確認</th><th style="width:73%;padding:4px;text-align:left;">商品名 / コード</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead>
@@ -3712,7 +3778,7 @@ window.openPrintPreview = () => {
     </div>`);
   });
 
-  const printWin = window.open('', '_blank');
+  printWin.document.open();
   printWin.document.write(`<html><head><title>出荷検品シート</title><style>@page { size: 100mm 150mm; margin: 0; } body { margin: 0; background: #eee; -webkit-print-color-adjust: exact; print-color-adjust: exact; }</style></head><body>${htmlPages.join('')}<script>window.onload = function() { setTimeout(() => window.print(), 400); };<\/script></body></html>`);
   printWin.document.close();
 };
@@ -3722,7 +3788,7 @@ window.loadMasterItems = async () => {
   const area = document.getElementById('masterResultArea');
   if (area) area.innerHTML = '<p class="empty">マスタデータを取得しています…</p>';
   try {
-    const snap = await getDocs(collection(db, "product_masters"));
+    const snap = await getDocs(collection(db, "product_masters")); masterMapCache = new Map(snap.docs.map(d => [d.id, d.data()]));
     masterItemsCache = [];
     snap.forEach(d => masterItemsCache.push({ id: d.id, ...d.data() }));
     document.getElementById('masterSearch').value = '';
@@ -3829,7 +3895,7 @@ window.updateMaster = async (i) => {
   const m = readMasterRow(i);
   if (!m.shelfNumber) { alert('棚番を入力してください。'); return; }
   try {
-    await setDoc(doc(db, "product_masters", m.skuCode), { ...m, updatedAt: new Date() }, { merge: true });
+    masterMapCache = null; await setDoc(doc(db, "product_masters", m.skuCode), { ...m, updatedAt: new Date() }, { merge: true });
     const cached = masterItemsCache.find(it => (it.skuCode || it.id) === m.skuCode);
     if (cached) Object.assign(cached, m);
     toast('保存しました');
@@ -3840,7 +3906,7 @@ window.deleteMaster = async (i) => {
   const m = masterRendered[i];
   if (!confirm(`「${m.name}（${m.skuCode}）」をマスタから削除しますか？`)) return;
   try {
-    await deleteDoc(doc(db, "product_masters", m.skuCode));
+    masterMapCache = null; await deleteDoc(doc(db, "product_masters", m.skuCode));
     masterItemsCache = masterItemsCache.filter(it => (it.skuCode || it.id) !== m.skuCode);
     filterMasterTable();
     toast('削除しました');
@@ -3854,7 +3920,7 @@ window.saveAllMasters = async () => {
     const m = readMasterRow(i);
     if (!m.shelfNumber) continue;
     try {
-      await setDoc(doc(db, "product_masters", m.skuCode), { ...m, updatedAt: new Date() }, { merge: true });
+      masterMapCache = null; await setDoc(doc(db, "product_masters", m.skuCode), { ...m, updatedAt: new Date() }, { merge: true });
       count++;
     } catch (e) { console.error(e); }
   }
@@ -4056,7 +4122,7 @@ window.commitBulk = async () => {
     for (let i = 0; i < targets.length; i += 400) {
       const batch = writeBatch(db);
       targets.slice(i, i + 400).forEach(b => {
-        batch.set(doc(db, "product_masters", b.after.skuCode), { ...b.after, updatedAt: new Date() }, { merge: true });
+        masterMapCache = null; batch.set(doc(db, "product_masters", b.after.skuCode), { ...b.after, updatedAt: new Date() }, { merge: true });
       });
       await batch.commit();
       done += Math.min(400, targets.length - i);
