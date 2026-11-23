@@ -320,6 +320,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
   <section id="v-stock" class="view" hidden>
     <div class="toolbar">
       <input id="sq" type="search" placeholder="商品名・商品コードで探す">
+      <button id="sqCam" class="btn" type="button" aria-label="カメラでJANを読んで探す">📷</button>
       <button id="manOutBtn" class="btn primary" type="button">手動出庫</button>
       <button id="addStock" class="btn" type="button" hidden></button>
     </div>
@@ -1515,6 +1516,7 @@ function openManOut(presetKey){
     '<form><h2>手動出庫</h2>' +
     '<p class="sub">注文シートにない出庫（Shopeeなど別のモールで使った分）を在庫から引きます。</p>' +
     '<label>商品コード（バーコード可）<input name="code" autocomplete="off" placeholder="読むと下の商品が選ばれます"></label>' +
+    '<div class="in-tools"><button class="btn" type="button" id="moCam">📷 カメラで読む</button></div>' +
     '<label>商品<select name="item" required><option value="">選んでください</option>' +
       list.map(r => '<option value="'+esc(r.key)+'"'+(r.key === presetKey ? ' selected' : '')+'>'+esc((r.code ? r.code + '　' : '') + r.name)+'（在庫 '+r.stock+'）</option>').join('') +
     '</select></label>' +
@@ -1561,6 +1563,7 @@ function openManOut(presetKey){
     return false;
   };
   f.elements.code.addEventListener('input', byCode);
+  $('moCam').addEventListener('click', () => openCamera(code => { f.elements.code.value = code; (byCode() ? f.elements.qty : f.elements.item).focus(); }));
   // バーコードリーダーは最後にEnterを送るので、登録はせずに出庫数へ進める
   f.elements.code.addEventListener('keydown', e => {
     if (e.key !== 'Enter' || e.isComposing) return;
@@ -1811,6 +1814,7 @@ function switchTab(tab){
 
 $('q').addEventListener('input', e => { S.q = e.target.value; S.limit = 300; renderOrders(); });
 $('sq').addEventListener('input', e => { S.sq = e.target.value; renderStock(); });
+$('sqCam').addEventListener('click', () => openCamera(code => { $('sq').value = code; S.sq = code; renderStock(); }));
 $('groupSel').addEventListener('change', e => { S.groupSel = e.target.checked; });
 $('inMonth').addEventListener('change', e => { S.inMonth = e.target.value; renderInbound(); });
 
