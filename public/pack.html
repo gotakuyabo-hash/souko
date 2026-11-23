@@ -102,7 +102,8 @@ function parseHash() {
     if (eq < 0) return;
     const k = part.slice(0, eq), v = part.slice(eq + 1);
     if (k === 'o') out.order = safeDecode(v);
-    if (k === 's') out.src = safeDecode(v);   // medi＝分割くん Medicarry の検品書
+    if (k === 's') out.src = safeDecode(v);   // medi＝分割くん Medicarry の検品書／lzd＝ラザダくん／hk＝保管在庫（依頼くん）
+    if (k === 't') out.names = v.split(',').map(safeDecode);   // 商品名（i と同じ順。zaico以外の在庫用）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
@@ -112,6 +113,7 @@ function parseHash() {
       out.items.push({ code: safeDecode(code), qty, unknown, scanned: 0 });
     });
   });
+  (out.names || []).forEach((n, i) => { if (out.items[i]) out.items[i].name = n; });
   return out;
 }
 function safeDecode(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -192,12 +194,41 @@ async function getMediMap(items) {
   return map;
 }
 
+/* ---------- zaico以外の在庫（ラザダくん・保管在庫など）：名前はQRの中身、画像は settings/jan_images から引く ----------
+   jan_images は依頼くんがJANごとに調べた画像（Yahoo!ショッピング）。1回読むだけ・端末に6時間保存して使い回す */
+const SRC_LABEL = { lzd: 'ラザダくん', hk: '保管在庫' };
+const IMG_LS_KEY = 'pack_jan_images_v1';
+async function getJanImages() {
+  try {
+    const c = JSON.parse(localStorage.getItem(IMG_LS_KEY) || 'null');
+    if (c && Date.now() - c.at < MAX_AGE) return c.codes || {};
+  } catch (e) {}
+  const snap = await getDoc(doc(db, 'settings', 'jan_images'));
+  const raw = (snap.exists() && snap.data().codes) || {};
+  const codes = {};
+  Object.keys(raw).forEach(k => { if (raw[k] && raw[k].u) codes[k] = raw[k].u; });   // 画像があるものだけ保存
+  try { localStorage.setItem(IMG_LS_KEY, JSON.stringify({ at: Date.now(), codes })); } catch (e) {}
+  return codes;
+}
+async function getOtherMap(items) {
+  const map = {};
+  items.forEach(x => { map[x.unknown ? '!' + x.code : norm(x.code)] = { t: x.name || '', img: '' }; });
+  let imgs = {};
+  try { imgs = await getJanImages(); } catch (e) { console.warn('商品画像を読めませんでした', e); }
+  items.forEach(x => {
+    if (x.unknown) return;
+    const c = norm(x.code), u = imgs[c] || (c.length === 12 ? imgs['0' + c] : '') || '';
+    if (u) map[c].img = u;
+  });
+  return map;
+}
+
 /* ---------- 画面 ---------- */
 let state = parseHash();
 let zmap = {};
 
 function render() {
-  $('orderNo').textContent = '受注番号：' + (state.order || '（不明）');
+  $('orderNo').textContent = '受注番号：' + (state.order || '（不明）') + (SRC_LABEL[state.src] ? '（' + SRC_LABEL[state.src] + '）' : '');
   const total = state.items.reduce((s, x) => s + x.qty, 0);
   const done = state.items.reduce((s, x) => s + Math.min(x.scanned, x.qty), 0);
   $('progress').textContent = `${done} / ${total} 点`;
@@ -207,7 +238,8 @@ function render() {
 
   $('list').innerHTML = state.items.map((x, i) => {
     const z = x.unknown ? zmap['!' + x.code] : zmap[norm(x.code)];
-    const title = z && z.t ? z.t : (x.unknown ? 'マスタ未登録の商品' : (state.src === 'medi' ? '（マスタに見つかりません）' : '（zaicoに見つかりません）'));
+    const title = z && z.t ? z.t : x.name ? x.name : (x.unknown ? 'マスタ未登録の商品' : (state.src === 'medi' ? '（マスタに見つかりません）' : SRC_LABEL[state.src] ? '（商品名なし）' : '（zaicoに見つかりません）'));
+    const shownCode = x.unknown ? x.code.replace(/~\d+$/, '') : x.code;
     const img = z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>';
     const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
     const manual = x.unknown && x.scanned < x.qty
@@ -216,7 +248,7 @@ function render() {
       ${img}
       <div class="info">
         <div class="title">${esc(title)}</div>
-        <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.unknown ? x.code.replace(/~\d+$/, '') : x.code)}${x.unknown ? '（コードで照合できない商品です）' : ''}</div>
+        <div class="code">${shownCode ? (x.unknown ? (state.src === 'medi' ? 'SKU' : 'コード') : 'コード') + '：' + esc(shownCode) : 'コードなし'}${x.unknown ? '（コードで照合できない商品です。目で見て確認してください）' : ''}</div>
         <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
         ${manual}
       </div>
@@ -392,6 +424,13 @@ async function start() {
     } catch (e) {
       $('cacheNote').textContent = '※ 商品マスタの名前・画像を読めませんでした：' + e.message + '（照合はできます）';
     }
+    render();
+    keepFocus();
+    return;
+  }
+  if (state.src && state.src !== 'zaico') {   // ラザダくん・保管在庫など（zaicoは読まない）
+    zmap = await getOtherMap(state.items);
+    $('cacheNote').textContent = '';
     render();
     keepFocus();
     return;
