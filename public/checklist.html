@@ -179,6 +179,8 @@ button,input,textarea{font:inherit;color:inherit}
 .teisha-list .t-no{font-weight:800;font-family:ui-monospace,Menlo,Consolas,monospace}
 .teisha-list .t-remark{font-weight:700;color:var(--danger);white-space:pre-wrap}
 .teisha-list .t-sub{color:var(--muted);font-size:12px}
+.teisha-list .t-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+.teisha-list .t-done{font-size:12px;font-weight:800;color:var(--ok);background:var(--ok-soft);border-radius:999px;padding:3px 10px}
 
 /* ===== ニッシントーア報告 ===== */
 .rp{display:grid;gap:10px}
@@ -368,7 +370,7 @@ button,input,textarea{font:inherit;color:inherit}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
-import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
    設定
@@ -531,7 +533,12 @@ function confirmDialog(msg, okLabel, onOk) {
   $('confirmMsg').textContent = msg; $('confirmYes').textContent = okLabel || '削除する';
   confirmCb = onOk; $('confirmModal').hidden = false; $('confirmNo').focus();
 }
-$('confirmNo').onclick = () => { $('confirmModal').hidden = true; confirmCb = null; };
+let confirmCancelCb = null;
+$('confirmNo').onclick = () => { $('confirmModal').hidden = true; confirmCb = null; const c = confirmCancelCb; confirmCancelCb = null; if (c) c(); };
+// はい／いいえを待つ版
+function confirmAsync(msg, okLabel) {
+  return new Promise(r => { confirmDialog(msg, okLabel, () => { confirmCancelCb = null; r(true); }); confirmCancelCb = () => r(false); });
+}
 $('confirmYes').onclick = () => { $('confirmModal').hidden = true; const cb = confirmCb; confirmCb = null; if (cb) cb(); };
 
 /* =========================================================
@@ -1212,7 +1219,28 @@ $('historyClose').onclick = () => { $('historyModal').hidden = true; };
    備考欄に書き込みがある注文を settings/teisha_remarks に保存する。ここでは表示するだけ
    ========================================================= */
 const TEISHA_URL = 'https://crossborder-auto.magitech-tool-lab.com/orders/daiko/?search=' + encodeURIComponent('定者') + '&status=1';
-function renderTeisha(d) {
+// Lazadaくん（shopeesheet.html）と同じGAS。出庫は、Lazadaくんの「手動出庫」と同じ形でシートに記録する
+const LZ_API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec';
+const TEISHA_SELLER_WORD = '定者';
+const TEISHA = { data: null, outs: {}, busy: '' };
+const normCode = v => String(v == null ? '' : v).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s/g, '');
+
+// 備考から商品コード（JAN）と、そのあとに書かれた商品名を取り出す
+function teishaLines(x) {
+  const remark = String(x.remark || '');
+  const re = /\d{8,14}/g, hits = [];
+  let m;
+  while ((m = re.exec(remark))) hits.push({ code: normCode(m[0]), at: m.index, end: re.lastIndex });
+  const seen = new Set();
+  return hits.filter(hh => !seen.has(hh.code) && seen.add(hh.code)).map((hh, i, arr) => ({
+    code: hh.code,
+    guess: remark.slice(hh.end, arr[i + 1] ? arr[i + 1].at : undefined).trim().slice(0, 60),
+    qty: arr.length === 1 ? (Number(x.qty) || 1) : 1
+  }));
+}
+
+function renderTeisha() {
+  const d = TEISHA.data;
   const box = $('teishaBox');
   const items = Array.isArray(d?.items) ? d.items : [];
   if (!d || (!items.length && !d.error)) { box.hidden = true; return; }
@@ -1222,16 +1250,94 @@ function renderTeisha(d) {
     h('p', { class: 'teisha-title' }, items.length ? `📝 定者さんの備考つき依頼 ${items.length}件` : '📝 定者さんの備考つき依頼'),
     h('span', { class: 'small muted' }, at),
     h('a', { class: 'btn', href: TEISHA_URL, target: '_blank', rel: 'noopener noreferrer' }, 'ShopeeMateで開く'));
-  const list = h('ul', { class: 'teisha-list' }, items.map(x => h('li', {},
-    h('span', {}, h('span', { class: 't-no' }, x.orderNo), x.requested ? h('span', { class: 't-sub' }, `　依頼日 ${shortDate(x.requested)}`) : null, x.country ? h('span', { class: 't-sub' }, `・${x.country}`) : null),
-    h('span', { class: 't-remark' }, x.remark),
-    x.product ? h('span', { class: 't-sub' }, x.product) : null)));
+  const list = h('ul', { class: 'teisha-list' }, items.map(x => {
+    const lines = teishaLines(x);
+    const out = TEISHA.outs[x.orderNo];
+    let act = null;
+    if (out) act = h('span', { class: 't-done' }, '✓ 出庫済み' + (out.at ? '（' + new Date(out.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）' : ''));
+    else if (lines.length) act = h('button', { type: 'button', class: 'btn btn-primary', disabled: !!TEISHA.busy, onclick: () => teishaOut(x.orderNo) },
+      TEISHA.busy === x.orderNo ? '出庫中…' : `📦 在庫から出庫（${lines.map(l => l.code).join('・')}）`);
+    return h('li', {},
+      h('span', {}, h('span', { class: 't-no' }, x.orderNo), x.requested ? h('span', { class: 't-sub' }, `　依頼日 ${shortDate(x.requested)}`) : null, x.country ? h('span', { class: 't-sub' }, `・${x.country}`) : null),
+      h('span', { class: 't-remark' }, x.remark),
+      x.product ? h('span', { class: 't-sub' }, x.product) : null,
+      act ? h('div', { class: 't-act' }, act) : null);
+  }));
   const err = d.error ? h('p', { class: 'small', style: 'color:var(--warn);margin:8px 0 0' }, '⚠️ 最新の確認に失敗しました：' + d.error) : null;
   box.replaceChildren(...[head, err, items.length ? list : null].filter(Boolean));
 }
 function watchTeisha() {
-  onSnapshot(doc(db, 'settings', 'teisha_remarks'), snap => renderTeisha(snap.exists() ? snap.data() : null),
+  onSnapshot(doc(db, 'settings', 'teisha_remarks'), snap => { TEISHA.data = snap.exists() ? snap.data() : null; renderTeisha(); },
     e => console.warn('teisha_remarks', e));
+  onSnapshot(doc(db, 'settings', 'teisha_outs'), snap => { TEISHA.outs = (snap.exists() && snap.data().orders) || {}; renderTeisha(); },
+    e => console.warn('teisha_outs', e));
+}
+
+// Lazadaくんが Firestore に保存しているシートの内容（delivery_cache/{セラーID}）
+async function lzReadCache(sid) {
+  const ref = doc(db, 'delivery_cache', sid);
+  const m = await getDoc(ref);
+  if (!m.exists()) return null;
+  const meta = m.data();
+  const ps = await getDocs(collection(ref, 'parts'));
+  const parts = ps.docs.map(x => x.data()).filter(p => p.v === meta.v).sort((a, b) => a.i - b.i);
+  if (!meta.parts || parts.length !== meta.parts) return null;
+  return JSON.parse(parts.map(p => p.s).join(''));
+}
+async function lzRun(user, sheetId, fn, args) {
+  const idToken = await user.getIdToken();
+  let res;
+  try {
+    res = await fetch(LZ_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ idToken, sheetId, fn, args }) });
+  } catch (e) { throw new Error('Lazadaくんのシートにつながりません'); }
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error('Lazadaくんのシートの返事が読めません'); }
+  if (!j.ok) throw new Error(j.error || '処理に失敗しました');
+  return j.result;
+}
+
+async function teishaOut(orderNo) {
+  const x = (TEISHA.data?.items || []).find(i => i.orderNo === orderNo);
+  if (!x || TEISHA.busy) return;
+  if (TEISHA.outs[orderNo]) { toast('この注文はもう出庫済みです'); return; }
+  const seller = SHIP.sellers.find(sv => String(sv.name || '').indexOf(TEISHA_SELLER_WORD) >= 0);
+  if (!seller || !seller.sheetId) { toast('Lazadaくんに定者さんのシートが見つかりません（セラー管理の名前を確認してください）', 'error'); return; }
+  const user = await signedInUser();
+  if (!user) { toast('出庫にはログインが必要です。このブラウザでLazadaくんを開いてログインしてから、もう一度押してください', 'error'); return; }
+
+  TEISHA.busy = orderNo; renderTeisha();
+  try {
+    const data = await lzReadCache(seller.id).catch(() => null);
+    if (!data) throw new Error('定者さんの在庫を読めませんでした。Lazadaくんで定者さんのシートを一度開いてから、もう一度押してください');
+    if ((data.manual || []).some(m => String(m.note || '').indexOf(orderNo) >= 0)) {
+      await setDoc(doc(db, 'settings', 'teisha_outs'), { orders: { [orderNo]: { at: new Date().toISOString(), by: user.email || '', via: 'lazada' } } }, { merge: true });
+      toast('この注文は、Lazadaくんでもう出庫済みでした');
+      return;
+    }
+    const names = new Map();
+    (data.stock || []).concat(data.inbound || []).forEach(r => { const c = normCode(r.code); if (c && !names.has(c)) names.set(c, String(r.name || '').trim()); });
+    const lines = teishaLines(x).map(l => ({ ...l, name: names.get(l.code) || '' }));
+    const ok = lines.filter(l => l.name), ng = lines.filter(l => !l.name);
+    if (!ok.length) throw new Error('備考の商品コード（' + lines.map(l => l.code).join('・') + '）が、定者さんの在庫に見つかりません。Lazadaくんの「手動出庫」から記録してください');
+
+    const msg = `注文 ${orderNo} の分を、定者さんの在庫から出庫します。\n\n` + ok.map(l => `・${l.name} ×${l.qty}（${l.code}）`).join('\n')
+      + (ng.length ? '\n\n※在庫に見つからないコードは出庫しません：' + ng.map(l => l.code).join('、') : '');
+    if (!(await confirmAsync(msg, '出庫する'))) return;
+
+    const done = [];
+    for (const l of ok) {
+      const rec = { code: l.code, name: l.name, qty: l.qty, date: todayJST(), dest: 'Shopee', staff: 'チェックリスト', note: 'ShopeeMate ' + orderNo };
+      await lzRun(user, seller.sheetId, 'addManualOut', [rec]);
+      done.push({ code: l.code, name: l.name, qty: l.qty });
+    }
+    await setDoc(doc(db, 'settings', 'teisha_outs'), { orders: { [orderNo]: { at: new Date().toISOString(), by: user.email || '', lines: done } } }, { merge: true });
+    toast(`出庫しました（${done.length}品目）` + (ng.length ? '。見つからないコードは出庫していません' : ''), ng.length ? 'error' : '');
+  } catch (e) {
+    console.error(e);
+    toast('出庫できませんでした：' + (e.message || e), 'error');
+  } finally {
+    TEISHA.busy = ''; renderTeisha();
+  }
 }
 
 /* =========================================================
