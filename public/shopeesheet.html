@@ -356,7 +356,7 @@ dialog::backdrop{background:rgba(20,30,32,.45)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, writeBatch, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, getDocs, getDoc, addDoc, deleteDoc, doc, setDoc, updateDoc, writeBatch, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ===== 設定（ここだけ書き換えてください） ===== */
 const FIREBASE_CONFIG = {
@@ -1332,7 +1332,12 @@ function stockRows(){
    settings/teisha_remarks に保存している。備考に書かれた商品コード（JAN）で在庫の商品を探し、ボタンで手動出庫する。
    出庫済みかどうかは、手動出庫の備考に注文番号が入っているかで判断する */
 const SM_SELLER_WORD = '定者';   // このセラーを開いている時だけ表示する
-let SM_REMARKS = null;
+let SM_REMARKS = null, SM_OUTS = {};
+// チェックリストから出庫した注文（settings/teisha_outs）
+onSnapshot(doc(db, 'settings', 'teisha_outs'), snap => {
+  SM_OUTS = (snap.exists() && snap.data().orders) || {};
+  if (D && S.tab === 'stock') renderSmOut();
+}, e => console.warn('teisha_outs', e));
 onSnapshot(doc(db, 'settings', 'teisha_remarks'), snap => {
   SM_REMARKS = snap.exists() ? snap.data() : null;
   if (D && S.tab === 'stock') renderSmOut();
@@ -1347,17 +1352,29 @@ function smOutPlans(){
       const r = rows.find(y => y.code === c);
       return { code:c, row:r || null, qty: codes.length === 1 ? (Number(x.qty) || 1) : 1 };
     });
-    const done = MAN.some(m => String(m.note || '').indexOf(x.orderNo) >= 0);
+    const done = !!SM_OUTS[x.orderNo] || MAN.some(m => String(m.note || '').indexOf(x.orderNo) >= 0);
     return { ...x, lines, done };
   });
 }
 
 function renderSmOut(){
   const box = $('smOut');
+  if (!D){ box.hidden = true; return; }
   const seller = SELLERS.find(x => x.id === S.sellerId) || {};
-  if (!D || String(seller.name || D.title || '').indexOf(SM_SELLER_WORD) < 0 || !SM_REMARKS){ box.hidden = true; return; }
-  const plans = smOutPlans();
-  if (!plans.length){ box.hidden = true; return; }
+  const isTeisha = [seller.name, seller.platform, D.title].some(v => String(v || '').indexOf(SM_SELLER_WORD) >= 0);
+  const plans = SM_REMARKS ? smOutPlans() : [];
+  // 定者さんのシート、または備考の商品コードがこのシートの在庫にあるときに表示する
+  const anyHit = plans.some(p => p.lines.some(l => l.row));
+  if (!isTeisha && !anyHit){ box.hidden = true; return; }
+  box.hidden = false;
+  if (!SM_REMARKS){
+    box.innerHTML = '<div class="ph"><h2>ShopeeMateの在庫からの出荷依頼</h2></div><p class="muted">まだデータがありません。GAS（shukka_auto.gs）で runTeisha を実行してください。</p>';
+    return;
+  }
+  if (!plans.length){
+    box.innerHTML = '<div class="ph"><h2>ShopeeMateの在庫からの出荷依頼</h2></div><p class="muted">備考つきの依頼済み注文はありません。</p>';
+    return;
+  }
   box.hidden = false;
   const at = SM_REMARKS.at ? new Date(SM_REMARKS.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) + '時点' : '';
   box.innerHTML = '<div class="ph"><h2>ShopeeMateの在庫からの出荷依頼（' + plans.length + '件）</h2><span class="muted" style="font-size:13px">' + esc(at) + '</span></div>' +
@@ -1394,6 +1411,8 @@ function smOutDo(orderNo){
     D.manual = (D.manual || []).concat([{ row:tempRow(), id:'', ...rec }]);
     queueWrite('addManualOut', [rec]);
   });
+  setDoc(doc(db, 'settings', 'teisha_outs'), { orders: { [orderNo]: { at: new Date().toISOString(), by: auth.currentUser ? auth.currentUser.email : '', via: 'lazada' } } }, { merge: true })
+    .catch(e => console.warn('teisha_outs', e));
   toast('注文 ' + orderNo + ' の ' + ok.length + '品目を出庫しました（手動出庫シートに記録します）');
   render();
 }
