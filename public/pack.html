@@ -57,7 +57,7 @@ main{ padding:12px 12px 140px; }
   <div class="bar"><i id="bar"></i></div>
 </header>
 <main>
-  <div class="allok" id="allok">✓ 梱包OK</div>
+  <div class="allok" id="allok">✓ 梱包OK<div style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
   <div id="list"></div>
   <div class="note" id="cacheNote"></div>
 </main>
@@ -157,7 +157,7 @@ async function getZaicoMap(codes) {
 }
 
 /* ---------- 画面 ---------- */
-const state = parseHash();
+let state = parseHash();
 let zmap = {};
 
 function render() {
@@ -225,6 +225,7 @@ function findItem(code) {
 function check(code) {
   const raw = String(code || '').trim();
   if (!raw) return;
+  if (!state.items.length) { beep(false); flash(false, '先に検品シートのQRを読んでください', '読んだコード：' + raw + '\n（タップで閉じる）'); return; }
   const it = findItem(raw);
   if (!it) {
     beep(false);
@@ -270,6 +271,7 @@ async function startCamera() {
         if ($('flash').classList.contains('ng')) return;          // 赤いエラーを閉じるまでは読まない
         if (text === lastCode && now - lastAt < 1500) return;   // 同じシールを続けて読まない
         lastCode = text; lastAt = now;
+        if (/#o=.*&i=/.test(text)) { openOrder(text.slice(text.indexOf('#') + 1)); return; }   // 検品シートのQR → その注文を開く
         check(text);
       }, () => {});
   } catch (e) {
@@ -285,27 +287,48 @@ $('scanBtn').onclick = startCamera;
 $('closeBtn').onclick = stopCamera;
 $('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state.items.forEach(x => x.scanned = 0); render(); } };
 $('manualInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); check(e.target.value); e.target.value = ''; }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const v = e.target.value; e.target.value = '';
+    if (/#o=.*&i=/.test(v)) openOrder(v.slice(v.indexOf('#') + 1)); else check(v);
+  }
 });
 
-/* ---------- 起動 ---------- */
-(async () => {
+/* ---------- 起動 ----------
+   検品シートのQRから開いたとき：その注文を表示
+   ポータルから開いたとき（QRの情報なし）：「検品シートのQRを読む」から始める。
+   照合中のカメラで次の注文の検品シートQRを読むと、そのまま次の注文に切り替わる */
+function openOrder(hash) {
+  if (location.hash.replace(/^#/, '') === hash) return;
+  location.hash = hash;   // hashchange で読み直す
+}
+window.addEventListener('hashchange', () => { state = parseHash(); start(); });
+
+async function start() {
   if (!state.items.length) {
-    $('progress').textContent = '';
-    $('list').innerHTML = '<div class="err">注文の情報が読めませんでした。検品シートのQRを、スマホのカメラで読み直してください。</div>';
-    document.querySelector('.foot').style.display = 'none';
+    $('orderNo').textContent = '梱包チェック';
+    $('progress').textContent = '検品シートのQRを読んでください';
+    $('bar').style.width = '0';
+    $('allok').classList.remove('show');
+    $('list').innerHTML = '<div class="note" style="font-size:14px;">下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。</div>';
+    $('scanBtn').textContent = '📷 検品シートのQRを読む';
+    $('resetBtn').style.display = 'none';
     return;
   }
+  $('scanBtn').textContent = '📷 商品のシールをスキャン';
+  $('resetBtn').style.display = '';
+  window.scrollTo(0, 0);
   render();
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
-    if (!z.withImg) $('cacheNote').textContent = '※ 在庫の写しに画像のURLが入っていません（関数の設定が必要です）';
+    $('cacheNote').textContent = z.withImg ? '' : '※ 在庫の写しに画像のURLが入っていません（関数の設定が必要です）';
   } catch (e) {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
   }
   render();
-})();
+}
+start();
 </script>
 </body>
 </html>
