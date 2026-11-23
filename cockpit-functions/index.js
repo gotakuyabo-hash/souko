@@ -1960,6 +1960,34 @@ function questionRoomOf(cfg) {
   return String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x))[0] || "";
 }
 
+// 質問の宛先（渡辺さん）
+//   ⚙️の「質問の宛先」があればそれを使う。空欄なら、質問ルームのメンバーのうち
+//   自社アカウント（ラクロジスタッフ・松下）以外が1人だけの時、その人を宛先にする（渡辺さんとの1対1のルームなど）
+//   決められない時は { id: "", reason } を返す（質問は送るが、タスクは作れない）
+async function questionTarget(qRoom, cfg, order, tokenOf) {
+  const setId = String(cfg.questionToId || "").replace(/[^0-9]/g, "");
+  let members = null;
+  for (const acc of order) {
+    try { members = await getMembersCached(tokenOf(acc), qRoom); break; } catch (e) {}
+  }
+  if (setId) {
+    const m = (members || []).find(x => String(x.account_id) === setId);
+    return { id: setId, name: m ? String(m.name || "") : "" };
+  }
+  if (!members) {
+    return { id: "", reason: "質問ルームのメンバーを確認できなかったため、タスクを作れませんでした。⚙️の「質問の宛先」に渡辺さんのアカウントIDを入れてください" };
+  }
+  const owners = await getOwnerIds();
+  const others = members.filter(x => owners.indexOf(String(x.account_id)) === -1);
+  if (others.length === 1) return { id: String(others[0].account_id), name: String(others[0].name || "") };
+  return {
+    id: "",
+    reason: others.length
+      ? "質問ルームに自社アカウント以外のメンバーが" + others.length + "人いて、宛先を決められませんでした。⚙️の「質問の宛先」に渡辺さんのアカウントIDを入れてください"
+      : "質問ルームに渡辺さんが見つかりませんでした。⚙️の「質問の宛先」に渡辺さんのアカウントIDを入れてください"
+  };
+}
+
 async function nextQuestionNo() {
   const ref = db.collection("cw_server").doc("question_seq");
   return db.runTransaction(async tx => {
@@ -1997,19 +2025,31 @@ async function askQuestion(token, p) {
   // お客様の最後の発言（カードの文から【自社】以外の最後の1件）
   const lines = context.split(/\n{2,}/).filter(s => s.trim());
   const lastCust = lines.slice().reverse().find(s => s.indexOf("【自社】") !== 0) || "";
-  const toLine = cfg.questionToId ? "[To:" + String(cfg.questionToId).replace(/[^0-9]/g, "") + "]\n" : "";
-  const body = toLine
-    + "[info][title]❓ " + label + "　" + roomName + "[/title]"
-    + (lastCust ? "【お客様】" + lastCust.slice(0, 300) + "\n\n" : "")
-    + "【聞きたいこと】" + question
-    + (by ? "\n（質問：" + by + "）" : "")
-    + "[/info]"
-    + "このメッセージに「返信」して答えてください（返信するとタスクも自動で完了します）";
+  // 「名前: 本文」を名前と本文に分ける（カードの文の形）
+  const cm = lastCust.match(/^([^:\n]{1,40}):\s*([\s\S]*)$/);
+  const custName = cm ? cm[1].trim() : "";
+  const custText = (cm ? cm[2] : lastCust).replace(/\n{2,}/g, "\n").trim();
+  const cut = (s, n) => (s.length > n ? s.slice(0, n) + "…" : s);
 
   // 質問ルームのメンバーでないアカウント（松下アカウントなど）から聞いた時は、メンバーのアカウントで送る
   //   回答が届いたら、聞いたアカウント側のカードに戻す（p.account で記録）
-  let posted = null, lastErr = null, postedBy = "";
   const order = [p.account].concat(Object.keys(ACCOUNTS).filter(a => a !== p.account));
+  const tokenOf = acc => (acc === p.account ? token : getChatworkToken(acc));
+
+  // 宛先（渡辺さん）を決める。⚙️で未設定でも、質問ルームのメンバーから自動で探す
+  const target = await questionTarget(qRoom, cfg, order, tokenOf);
+  const toLine = target.id ? "[To:" + target.id + "]" + (target.name ? target.name + "さん" : "") + "\n" : "";
+
+  // チャットで読みやすい形：①聞きたいこと ②お客様の連絡（短く）③回答のしかた。区切りは [hr]
+  const body = toLine
+    + "[info][title]❓ " + label + "　" + (roomName || "単独の質問") + "[/title]"
+    + "■ 聞きたいこと\n" + question
+    + (custText ? "\n[hr]■ お客様の連絡" + (custName ? "（" + custName + "）" : "") + "\n" + cut(custText, 200) : "")
+    + "\n[hr]" + (by ? "質問者：" + by + "\n" : "")
+    + "↩ このメッセージに「返信」で回答してください（タスクも自動で完了します）"
+    + "[/info]";
+
+  let posted = null, lastErr = null, postedBy = "";
   for (const acc of order) {
     try {
       const tk = acc === p.account ? token : getChatworkToken(acc);
@@ -2022,20 +2062,22 @@ async function askQuestion(token, p) {
   }
   if (!posted) throw new Error("質問ルームに送れませんでした（どのアカウントもそのルームのメンバーでない可能性があります）：" + (lastErr ? lastErr.message : ""));
 
-  // 渡辺さん担当のタスクを作る（宛先のアカウントIDが設定されている時だけ。失敗しても質問は送れているので止めない）
+  // 渡辺さん担当のタスクを作る（失敗しても質問は送れているので止めない。作れなかった理由は画面に出す）
+  //   チャットに質問と同じ内容が2回並ばないよう、タスクの文は短くする
   let taskId = "", taskError = "";
-  const toId = String(cfg.questionToId || "").replace(/[^0-9]/g, "");
-  if (toId) {
+  if (target.id) {
     try {
-      const taskBody = label + "　" + roomName + "\n" + question.slice(0, 300)
-        + "\n（社内ルームの質問メッセージに返信してください。返信すると自動で完了します）";
-      const tk = postedBy === p.account ? token : getChatworkToken(postedBy);
-      const t = await cw(tk, "post", "/rooms/" + qRoom + "/tasks", { body: taskBody, to_ids: toId, limit_type: "none" });
+      const taskBody = "❓" + label + "（" + (roomName || "単独の質問") + "）：" + cut(question.replace(/\s+/g, " "), 60)
+        + "\n↑ 質問メッセージに返信すると自動で完了";
+      const t = await cw(tokenOf(postedBy), "post", "/rooms/" + qRoom + "/tasks", { body: taskBody, to_ids: target.id, limit_type: "none" });
       taskId = String((t && Array.isArray(t.task_ids) && t.task_ids[0]) || "");
+      if (!taskId) taskError = "Chatworkからタスクの番号が返ってきませんでした";
     } catch (e) {
       taskError = e.message;
       console.error("質問タスクを作れませんでした: " + e.message);
     }
+  } else {
+    taskError = target.reason;
   }
 
   const now = nowSec();
