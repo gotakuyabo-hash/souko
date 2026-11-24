@@ -3426,6 +3426,7 @@
         };
         const TRIAGE_SUB_ORDER = ['trouble', 'shopee', 'medicarry', 'order', 'ship', 'bill', 'system', 'other'];
         let triageFilter = 'all';
+        let triagePicked = false;   // スタッフが分類ボタンを押したか（押すまでは、要確認があれば要確認を開く）
         let subFilter = 'all';
         function triageSub(rid) {
             if (triageCat(rid) !== 'check') return '';
@@ -3497,6 +3498,7 @@
             cards.forEach(c => { const t = c.getAttribute('data-tri'); if (n[t] !== undefined) n[t]++; });
             if (!n.check && !n.easy && !n.none) { bar.innerHTML = ''; bar.style.display = 'none'; triageFilter = 'all'; applyTriageFilter(); return; }
             bar.style.display = '';
+            if (!triagePicked && n.check) triageFilter = 'check';   // 開いた時は、要確認から表示する
             if (triageFilter !== 'all' && !n[triageFilter]) triageFilter = 'all';   // 0件になった分類は「すべて」に戻す
             // 要確認の中の種類ごとの件数
             const ns = {};
@@ -3509,7 +3511,7 @@
                 : '';
             bar.innerHTML = `
                 <div class="grid grid-cols-4 gap-2">
-                    ${chip('all', 'すべて')}${chip('check', '🔍 要確認')}${chip('easy', '💬 すぐ返せる')}${chip('none', '✓ 返信不要')}
+                    ${chip('check', '🔍 要確認')}${chip('all', 'すべて')}${chip('easy', '💬 すぐ返せる')}${chip('none', '✓ 返信不要')}
                 </div>
                 ${subRow}
                 ${n.none ? `<button onclick="markNoReplyAll(this)" class="btn btn-ok w-full mt-2" style="height:auto;min-height:44px;white-space:normal;padding:8px 12px">✓ 返信不要の ${n.none} 件をまとめて対応済みにする</button>` : ''}`;
@@ -3567,6 +3569,7 @@
         };
         window.setTriageFilter = function(f) {
             triageFilter = f;
+            triagePicked = true;
             subFilter = 'all';
             // 隠れるカードに選択が残らないように、選択はいったん外す
             document.querySelectorAll('#burstModeContainer .room-checkbox').forEach(cb => cb.checked = false);
