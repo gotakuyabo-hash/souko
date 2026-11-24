@@ -3647,12 +3647,16 @@ async function getMasterMapCached() {
   masterMapCache = m;
   return m;
 }
+// おまけ扱いにする商品名のキーワード（必要に応じて足してください）
+const PACK_OMAKE_RE = /おまけ|オマケ|ノベルティ|特典|プレゼント|サンプル|試供品|同梱|チラシ|ステッカー/;
 function buildPackItems(rows, masterMap) {
   const { skuItems } = buildSkuItems(rows);   // セットの親行（子行があるもの）は除く
-  const items = new Map();                     // key → { code, qty, unknown }
-  const add = (code, qty, unknown) => {
-    const k = (unknown ? '!' : '') + code;
-    if (items.has(k)) items.get(k).qty += qty; else items.set(k, { code, qty, unknown });
+  // kind: ''＝バーコードで照合 / 'nobc'＝マスタにあるがバーコードなし（おまけ等）/ 'unreg'＝マスタ未登録
+  // nobc・unreg はスマホで「目視で確認」するので、商品名も一緒に入れる
+  const items = new Map();
+  const add = (code, qty, kind, name) => {
+    const k = kind + '|' + code;
+    if (items.has(k)) items.get(k).qty += qty; else items.set(k, { code, qty, kind, name: kind ? String(name || '') : '' });
   };
   skuItems.forEach(s => {
     const m = s.skuCode ? masterMap.get(s.skuCode) : null;
@@ -3660,20 +3664,35 @@ function buildPackItems(rows, masterMap) {
       m.components.forEach(c => {
         const bc = String(c.barcode || '').trim();
         const q = s.orderQty * (Number(c.qty) || 1);
-        if (bc) add(bc, q, false); else add(s.skuCode || s.csvName, q, true);
+        if (bc) add(bc, q, '');
+        else add(c.productName || s.skuCode || s.csvName, q, 'nobc', c.productName || s.csvName);
       });
       return;
     }
     const bc = m && m.barcode ? String(m.barcode).trim() : '';
     const q = s.orderQty * (m ? (Number(m.multiplier) || 1) : 1);
-    if (bc) add(bc, q, false); else add(s.skuCode || s.csvName, q, true);
+    if (bc) add(bc, q, '');
+    else {
+      // マスタにない行でも、名前がおまけっぽいものは「マスタ未登録」ではなく「バーコードなし（おまけ等）」として出す
+      const nm = (m && (m.productName || m.product_name)) || s.csvName;
+      const isOmake = PACK_OMAKE_RE.test(String(s.csvName || '') + ' ' + String(nm || ''));
+      add(s.skuCode || s.csvName, q, (m || isOmake) ? 'nobc' : 'unreg', nm);
+    }
   });
   return [...items.values()];
 }
+/* QRの1商品の書き方：
+   バーコードで照合 → コード*数量
+   おまけ等（バーコードなし） → ?コード:商品名*数量
+   マスタ未登録 → !コード:商品名*数量   （商品名はQRが細かくなりすぎないよう12文字まで） */
 function packQrDataUrl(orderNo, items) {
   if (typeof qrcode !== 'function') return '';
   const enc = encodeURIComponent;
-  const list = items.map(x => (x.unknown ? '!' : '') + enc(x.code) + '*' + x.qty).join(',');
+  const list = items.map(x => {
+    const pre = x.kind === 'nobc' ? '?' : x.kind === 'unreg' ? '!' : '';
+    const nm = x.kind ? ':' + enc(String(x.name || '').replace(/\s+/g, ' ').trim().slice(0, 12)) : '';
+    return pre + enc(String(x.code).slice(0, 40)) + nm + '*' + x.qty;
+  }).join(',');
   const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}`;
   try {
     const qr = qrcode(0, 'M');   // 0 = 中身の長さに合わせて自動
