@@ -386,6 +386,11 @@ if (isPC) {
   setInterval(keepFocus, 1500);
 }
 
+// 端末に保存した商品名・画像を捨てて、zaicoから読み直す
+document.addEventListener('click', e => {
+  if (e.target && e.target.id === 'reloadZaico') { e.preventDefault(); try { localStorage.removeItem(LS_KEY); } catch (_) {} location.reload(); }
+});
+
 /* ---------- 起動 ----------
    検品シートのQRから開いたとき：その注文を表示
    ポータルから開いたとき（QRの情報なし）：「検品シートのQRを読む」から始める。
@@ -415,7 +420,7 @@ async function start() {
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
-    $('cacheNote').textContent = z.withImg ? '' : '※ 画像のURLを取得できませんでした（' + (z.imgError || '関数の設定が必要です') + '）';
+    $('cacheNote').innerHTML = z.withImg ? '' : esc('※ 画像のURLを取得できませんでした（' + (z.imgError || '関数の設定が必要です') + '）') + ' <a href="#" id="reloadZaico">zaicoから読み直す</a>';
   } catch (e) {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
   }
