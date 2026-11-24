@@ -27,6 +27,8 @@ main{ padding:12px 12px 140px; }
 .item.done .count{ color:var(--ok); }
 .item.over{ border-color:var(--ng); background:#fdeeee; }
 .item.unknown{ border-style:dashed; border-color:var(--warn); }
+.item .manual.sub{ border-color:#9aa5ae; background:#fff; color:#3d4a55; font-size:13px; padding:6px 10px; }
+.item .manual.undo{ border-color:#bbb; background:#fff; color:#777; font-size:13px; padding:6px 10px; }
 .item .manual{ margin-top:6px; font-size:14px; padding:8px 12px; border-radius:8px; border:1px solid var(--warn); background:#fff8e8; color:#7a4d00; }
 .allok{ display:none; text-align:center; background:var(--ok); color:#fff; border-radius:12px; padding:18px; font-size:26px; font-weight:700; margin-bottom:12px; }
 .allok.show{ display:block; }
@@ -124,7 +126,7 @@ function safeDecode(s) { try { return decodeURIComponent(s); } catch (e) { retur
 /* ---------- zaicoの在庫の写し（まとまるくんと同じ zaico_inventory_cache）から 名前・画像 を引く ----------
    読み取り回数を抑えるため、端末に「コード → 名前・画像」を保存して使い回す。
    必要なコードが見つからないとき・6時間たったときだけ読み直す */
-const LS_KEY = 'pack_zaico_map_v1';
+const LS_KEY = 'pack_zaico_map_v2';   // v1（画像なしで保存されたもの）は使わない
 const MAX_AGE = 6 * 60 * 60 * 1000;
 function readLocal() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
 function writeLocal(o) { try { localStorage.setItem(LS_KEY, JSON.stringify(o)); } catch (e) { console.warn(e); } }
@@ -149,15 +151,43 @@ async function fetchZaicoMap() {
     if (img) withImg++;
     map[c] = { t: String(x.title || ''), img };
   });
-  const o = { at: Date.now(), v: meta.v, withImg, map };
+  const o = { at: Date.now(), v: meta.v, withImg, map, src: 'cache' };
+  // 在庫の写しに画像のURLが入っていないときは、zaicoの在庫一覧を返す関数から画像だけ取り寄せる
+  if (!withImg) {
+    o.imgTried = Date.now();
+    try { await fillImagesFromList(o); } catch (e) { console.warn('zaicoから画像を取り寄せられませんでした', e); o.imgError = e.message; }
+  }
   writeLocal(o);
   return o;
+}
+const URL_LIST_ZAICO_INVENTORIES = "https://asia-northeast1-souko-2de57.cloudfunctions.net/apiListZaicoInventories";
+async function fillImagesFromList(o) {
+  let page = 1, n = 0, seen = 0;
+  for (let guard = 0; page && guard < 200; guard++) {
+    $('cacheNote').textContent = `zaicoから商品画像を読み込んでいます…（${seen.toLocaleString()}件）`;
+    const res = await fetch(`${URL_LIST_ZAICO_INVENTORIES}?page=${page}&pages=10`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'zaicoの在庫一覧を取得できませんでした');
+    (data.items || []).forEach(x => {
+      seen++;
+      const c = norm(x.code), img = imgOf(x);
+      if (!c) return;
+      if (!o.map[c]) o.map[c] = { t: String(x.title || ''), img: '' };
+      if (img) { o.map[c].img = img; n++; }
+    });
+    page = data.nextPage || null;
+  }
+  o.withImg = n;
+  o.src = n ? 'list' : 'cache';
+  if (!n) o.imgError = 'zaicoの在庫一覧の関数も画像のURLを返していません';
 }
 async function getZaicoMap(codes) {
   const local = readLocal();
   const fresh = local && Date.now() - local.at < MAX_AGE;
   const allFound = local && codes.every(c => local.map[norm(c)]);
-  if (fresh && allFound) return local;
+  // 画像が取れなかったときは、1時間たったらもう一度試す
+  const imgRetry = local && !local.withImg && (!local.imgTried || Date.now() - local.imgTried > 60 * 60 * 1000);
+  if (fresh && allFound && !imgRetry) return local;
   try { return await fetchZaicoMap(); }
   catch (e) { if (local) { console.warn(e); return local; } throw e; }
 }
@@ -183,9 +213,15 @@ function render() {
       : (z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>');
     const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
     const left = x.qty - x.scanned;
-    const manual = x.unknown && left > 0
-      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;"><button class="manual" data-i="${i}" data-n="1">入れた（＋1）</button>${left > 1 ? `<button class="manual" data-i="${i}" data-n="${left}">まとめて入れた（＋${left}）</button>` : ''}</div>`
-      : (x.unknown && x.scanned > 0 ? `<button class="manual undo" data-i="${i}" data-n="-1" style="border-color:#999;background:#fff;color:#555;">1つ戻す</button>` : '');
+    // どの商品も手で確認できる（シールが貼っていない・読めない商品があるため）。バーコードがある商品はスキャンが基本なので控えめなボタンにする
+    const sub = x.unknown ? '' : ' sub';
+    const plus = x.unknown ? '入れた' : '手で確認';
+    const btns = [];
+    if (left > 0) btns.push(`<button class="manual${sub}" data-i="${i}" data-n="1">${plus}（＋1）</button>`);
+    if (left > 1) btns.push(`<button class="manual${sub}" data-i="${i}" data-n="${left}">まとめて（＋${left}）</button>`);
+    if (x.scanned > 0) btns.push(`<button class="manual undo" data-i="${i}" data-n="-1">1つ戻す</button>`);
+    const manual = btns.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">${btns.join('')}</div>` : '';
+    const manualNote = !x.unknown && x.manual ? `<div class="code">うち手で確認 ${x.manual} 個</div>` : '';
     const tag = x.kind === 'nobc' ? '<span style="display:inline-block;font-size:11px;font-weight:700;background:#d68910;color:#fff;border-radius:4px;padding:1px 6px;margin-bottom:3px;">バーコードなし・目で確認</span><br>'
               : x.kind === 'unreg' ? '<span style="display:inline-block;font-size:11px;font-weight:700;background:#c0392b;color:#fff;border-radius:4px;padding:1px 6px;margin-bottom:3px;">マスタ未登録・目で確認</span><br>' : '';
     return `<div class="${cls}">
@@ -194,13 +230,20 @@ function render() {
         <div class="title">${tag}${esc(title)}</div>
         <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.code)}</div>
         <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
+        ${manualNote}
         ${manual}
       </div>
     </div>`;
   }).join('');
   document.querySelectorAll('.manual').forEach(b => b.onclick = () => {
     const it = state.items[+b.dataset.i], n = +b.dataset.n || 1;
-    it.scanned = Math.max(0, Math.min(it.qty, it.scanned + n));
+    if (n > 0) {
+      const add = Math.max(0, Math.min(n, it.qty - it.scanned));
+      it.scanned += add; it.manual = (it.manual || 0) + add;
+    } else {
+      it.scanned = Math.max(0, it.scanned - 1);
+      if (it.manual) it.manual--;
+    }
     if (n > 0) {
       beep(true);
       if (state.items.every(x => x.scanned === x.qty)) flash(true, '✓ 梱包OK', '', 1500);
@@ -305,7 +348,7 @@ async function stopCamera() {
 }
 $('scanBtn').onclick = startCamera;
 $('closeBtn').onclick = stopCamera;
-$('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state.items.forEach(x => x.scanned = 0); render(); } };
+$('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state.items.forEach(x => { x.scanned = 0; x.manual = 0; }); render(); } };
 /* ---------- スキャナ（USB・Bluetooth）・手入力 ----------
    スキャナの配列設定（US）とパソコン（日本語配列）が違うと、記号が化けて入る（= → ^、& → '、* → ( など）。
    検品シートのQRっぽいのに #o= が見つからないときは、化けた記号を元に戻して読む */
@@ -372,7 +415,7 @@ async function start() {
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
-    $('cacheNote').textContent = z.withImg ? '' : '※ 在庫の写しに画像のURLが入っていません（関数の設定が必要です）';
+    $('cacheNote').textContent = z.withImg ? '' : '※ 画像のURLを取得できませんでした（' + (z.imgError || '関数の設定が必要です') + '）';
   } catch (e) {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
   }
