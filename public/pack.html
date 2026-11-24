@@ -93,27 +93,30 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&l
 const toHalf = s => String(s || '').replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/　/g, ' ');
 const norm = s => toHalf(s).trim().toUpperCase();
 
-/* ---------- QRの中身を読む： #o=受注番号&i=コード*数量,… （!から始まるのはマスタ未登録） ---------- */
+/* ---------- QRの中身を読む： #o=受注番号&i=コード*数量,…
+   ?コード:商品名*数量 ＝ マスタにあるがバーコードなし（おまけ等）、!コード:商品名*数量 ＝ マスタ未登録。どちらも目視で確認 ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', src: '', items: [] };
+  const out = { order: '', items: [] };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
     const k = part.slice(0, eq), v = part.slice(eq + 1);
     if (k === 'o') out.order = safeDecode(v);
-    if (k === 's') out.src = safeDecode(v);   // medi＝分割くん Medicarry の検品書／lzd＝ラザダくん／hk＝保管在庫（依頼くん）
-    if (k === 't') out.names = v.split(',').map(safeDecode);   // 商品名（i と同じ順。zaico以外の在庫用）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
       const qty = star >= 0 ? (parseInt(t.slice(star + 1), 10) || 1) : 1;
-      const unknown = code.startsWith('!');
-      if (unknown) code = code.slice(1);
-      out.items.push({ code: safeDecode(code), qty, unknown, scanned: 0 });
+      const kind = code.startsWith('?') ? 'nobc' : code.startsWith('!') ? 'unreg' : '';
+      let name = '';
+      if (kind) {
+        code = code.slice(1);
+        const c = code.indexOf(':');
+        if (c >= 0) { name = safeDecode(code.slice(c + 1)); code = code.slice(0, c); }
+      }
+      out.items.push({ code: safeDecode(code), name, qty, kind, unknown: !!kind, scanned: 0 });
     });
   });
-  (out.names || []).forEach((n, i) => { if (out.items[i]) out.items[i].name = n; });
   return out;
 }
 function safeDecode(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -159,76 +162,12 @@ async function getZaicoMap(codes) {
   catch (e) { if (local) { console.warn(e); return local; } throw e; }
 }
 
-/* ---------- 分割くん Medicarry の検品書（s=medi）：商品マスタ medicarry_products_master から 名前・画像 を引く ----------
-   コード（JAN）＝マスタのSKU。!SKU~n は「そのSKUのn番目の商品」（セット商品など、目視で確認する行）
-   読み取り回数を抑えるため、SKUごとに端末へ6時間保存して使い回す */
-const MEDI_COL = 'medicarry_products_master';
-const MEDI_LS_KEY = 'pack_medi_map_v1';
-function mediKeyOf(x) { return x.unknown ? x.code.split('~')[0] : x.code; }
-async function getMediMap(items) {
-  let local = {};
-  try { local = JSON.parse(localStorage.getItem(MEDI_LS_KEY) || '{}') || {}; } catch (e) {}
-  const now = Date.now();
-  const keys = [...new Set(items.map(mediKeyOf).filter(k => k && !k.includes('/')))];
-  const need = keys.filter(k => !local[k] || now - local[k].at > MAX_AGE);
-  await Promise.all(need.map(async k => {
-    try {
-      const snap = await getDoc(doc(db, MEDI_COL, k));
-      const its = snap.exists() ? (snap.data().items || []) : [];
-      local[k] = { at: now, items: its.map(it => ({ t: String(it.jpName || ''), img: typeof it.imageUrl === 'string' ? it.imageUrl : '' })) };
-    } catch (e) { console.warn(k, e); }
-  }));
-  // 古いものは捨てる（端末の保存領域を食わないように）
-  Object.keys(local).forEach(k => { if (now - local[k].at > 7 * 24 * 60 * 60 * 1000) delete local[k]; });
-  try { localStorage.setItem(MEDI_LS_KEY, JSON.stringify(local)); } catch (e) {}
-
-  const map = {};
-  items.forEach(x => {
-    const ent = local[mediKeyOf(x)];
-    if (!ent || !ent.items.length) return;
-    if (!x.unknown) { map[norm(x.code)] = ent.items[0]; return; }
-    const m = x.code.match(/~(\d+)$/);
-    const it = ent.items[m ? +m[1] : (ent.items.length === 1 ? 0 : -1)];
-    if (it) map['!' + x.code] = it;
-  });
-  return map;
-}
-
-/* ---------- zaico以外の在庫（ラザダくん・保管在庫など）：名前はQRの中身、画像は settings/jan_images から引く ----------
-   jan_images は依頼くんがJANごとに調べた画像（Yahoo!ショッピング）。1回読むだけ・端末に6時間保存して使い回す */
-const SRC_LABEL = { lzd: 'ラザダくん', hk: '保管在庫' };
-const IMG_LS_KEY = 'pack_jan_images_v1';
-async function getJanImages() {
-  try {
-    const c = JSON.parse(localStorage.getItem(IMG_LS_KEY) || 'null');
-    if (c && Date.now() - c.at < MAX_AGE) return c.codes || {};
-  } catch (e) {}
-  const snap = await getDoc(doc(db, 'settings', 'jan_images'));
-  const raw = (snap.exists() && snap.data().codes) || {};
-  const codes = {};
-  Object.keys(raw).forEach(k => { if (raw[k] && raw[k].u) codes[k] = raw[k].u; });   // 画像があるものだけ保存
-  try { localStorage.setItem(IMG_LS_KEY, JSON.stringify({ at: Date.now(), codes })); } catch (e) {}
-  return codes;
-}
-async function getOtherMap(items) {
-  const map = {};
-  items.forEach(x => { map[x.unknown ? '!' + x.code : norm(x.code)] = { t: x.name || '', img: '' }; });
-  let imgs = {};
-  try { imgs = await getJanImages(); } catch (e) { console.warn('商品画像を読めませんでした', e); }
-  items.forEach(x => {
-    if (x.unknown) return;
-    const c = norm(x.code), u = imgs[c] || (c.length === 12 ? imgs['0' + c] : '') || '';
-    if (u) map[c].img = u;
-  });
-  return map;
-}
-
 /* ---------- 画面 ---------- */
 let state = parseHash();
 let zmap = {};
 
 function render() {
-  $('orderNo').textContent = '受注番号：' + (state.order || '（不明）') + (SRC_LABEL[state.src] ? '（' + SRC_LABEL[state.src] + '）' : '');
+  $('orderNo').textContent = '受注番号：' + (state.order || '（不明）');
   const total = state.items.reduce((s, x) => s + x.qty, 0);
   const done = state.items.reduce((s, x) => s + Math.min(x.scanned, x.qty), 0);
   $('progress').textContent = `${done} / ${total} 点`;
@@ -236,25 +175,38 @@ function render() {
   const allOk = state.items.length && state.items.every(x => x.scanned === x.qty);
   $('allok').classList.toggle('show', !!allOk);
 
-  $('list').innerHTML = state.items.map((x, i) => {
-    const z = x.unknown ? zmap['!' + x.code] : zmap[norm(x.code)];
-    const title = z && z.t ? z.t : x.name ? x.name : (x.unknown ? 'マスタ未登録の商品' : (state.src === 'medi' ? '（マスタに見つかりません）' : SRC_LABEL[state.src] ? '（商品名なし）' : '（zaicoに見つかりません）'));
-    const shownCode = x.unknown ? x.code.replace(/~\d+$/, '') : x.code;
-    const img = z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>';
+  $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
+    const z = x.unknown ? null : zmap[norm(x.code)];
+    const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : '（zaicoに見つかりません）');
+    const img = x.unknown
+      ? `<div class="noimg" style="font-size:40px;">${x.kind === 'nobc' ? '🎁' : '❓'}</div>`
+      : (z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>');
     const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
-    const manual = x.unknown && x.scanned < x.qty
-      ? `<button class="manual" data-i="${i}">目視で確認した（＋1）</button>` : '';
+    const left = x.qty - x.scanned;
+    const manual = x.unknown && left > 0
+      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;"><button class="manual" data-i="${i}" data-n="1">入れた（＋1）</button>${left > 1 ? `<button class="manual" data-i="${i}" data-n="${left}">まとめて入れた（＋${left}）</button>` : ''}</div>`
+      : (x.unknown && x.scanned > 0 ? `<button class="manual undo" data-i="${i}" data-n="-1" style="border-color:#999;background:#fff;color:#555;">1つ戻す</button>` : '');
+    const tag = x.kind === 'nobc' ? '<span style="display:inline-block;font-size:11px;font-weight:700;background:#d68910;color:#fff;border-radius:4px;padding:1px 6px;margin-bottom:3px;">バーコードなし・目で確認</span><br>'
+              : x.kind === 'unreg' ? '<span style="display:inline-block;font-size:11px;font-weight:700;background:#c0392b;color:#fff;border-radius:4px;padding:1px 6px;margin-bottom:3px;">マスタ未登録・目で確認</span><br>' : '';
     return `<div class="${cls}">
       ${img}
       <div class="info">
-        <div class="title">${esc(title)}</div>
-        <div class="code">${shownCode ? (x.unknown ? (state.src === 'medi' ? 'SKU' : 'コード') : 'コード') + '：' + esc(shownCode) : 'コードなし'}${x.unknown ? '（コードで照合できない商品です。目で見て確認してください）' : ''}</div>
+        <div class="title">${tag}${esc(title)}</div>
+        <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.code)}</div>
         <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
         ${manual}
       </div>
     </div>`;
   }).join('');
-  document.querySelectorAll('.manual').forEach(b => b.onclick = () => { state.items[+b.dataset.i].scanned++; afterChange(); });
+  document.querySelectorAll('.manual').forEach(b => b.onclick = () => {
+    const it = state.items[+b.dataset.i], n = +b.dataset.n || 1;
+    it.scanned = Math.max(0, Math.min(it.qty, it.scanned + n));
+    if (n > 0) {
+      beep(true);
+      if (state.items.every(x => x.scanned === x.qty)) flash(true, '✓ 梱包OK', '', 1500);
+    }
+    afterChange();
+  });
 }
 
 /* ---------- 音・振動・画面全体の表示 ---------- */
@@ -360,7 +312,7 @@ $('resetBtn').onclick = () => { if (confirm('数え直しますか？')) { state
 function fixLayout(v) {
   if (/#o=.*&i=/.test(v)) return v;
   if (!/pack\.html/i.test(v) && !/#o\^/.test(v)) return v;
-  return v.replace(/\^/g, '=').replace(/'/g, '&').replace(/\(/g, '*');
+  return v.replace(/\^/g, '=').replace(/'/g, '&').replace(/\(/g, '*').replace(/\+/g, ':');
 }
 function handleTyped(v) {
   v = String(v || '').trim();
@@ -417,24 +369,6 @@ async function start() {
   $('resetBtn').style.display = '';
   window.scrollTo(0, 0);
   render();
-  if (state.src === 'medi') {
-    try {
-      zmap = await getMediMap(state.items);
-      $('cacheNote').textContent = '';
-    } catch (e) {
-      $('cacheNote').textContent = '※ 商品マスタの名前・画像を読めませんでした：' + e.message + '（照合はできます）';
-    }
-    render();
-    keepFocus();
-    return;
-  }
-  if (state.src && state.src !== 'zaico') {   // ラザダくん・保管在庫など（zaicoは読まない）
-    zmap = await getOtherMap(state.items);
-    $('cacheNote').textContent = '';
-    render();
-    keepFocus();
-    return;
-  }
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
