@@ -519,6 +519,17 @@ const pickText = (v) => {
     if (typeof v === "object") return String(v.name || v.title || "");
     return String(v);
 };
+// zaicoの商品画像のURL（梱包くん pack.html で使う）。APIのバージョンで項目名が違っても拾えるようにしておく
+const pickImage = (inv) => {
+    const cands = [inv.item_image, inv.image, inv.inventory_image, inv.photo, inv.image_url, inv.item_image_url,
+                   Array.isArray(inv.images) ? inv.images[0] : null, Array.isArray(inv.item_images) ? inv.item_images[0] : null];
+    for (const c of cands) {
+        if (!c) continue;
+        const u = typeof c === "string" ? c : (c.url || c.original || c.large || c.medium || c.thumb || "");
+        if (typeof u === "string" && /^https?:\/\//.test(u)) return u;
+    }
+    return "";
+};
 
 exports.apiListZaicoInventories = onRequest(
     { region: "asia-northeast1", timeoutSeconds: 120, memory: "512MiB", secrets: [zaicoApiTokenSecret] },
@@ -562,7 +573,9 @@ exports.apiListZaicoInventories = onRequest(
                         // 依頼まとめ管理（irai.html）の「zaico在庫」でショップごとに分けるため
                         // グループと追加項目（「ショップ名」など）もそのまま返す
                         user_group: inv.user_group ?? inv.group ?? inv.user_groups ?? inv.groups ?? null,
-                        optional_attributes: inv.optional_attributes ?? inv.optional_attribute_values ?? inv.custom_fields ?? null
+                        optional_attributes: inv.optional_attributes ?? inv.optional_attribute_values ?? inv.custom_fields ?? null,
+                        // 梱包くん（pack.html）で商品画像を出すため
+                        item_image: { url: pickImage(inv) }
                     });
                     if (!fields) fields = Object.keys(inv); // zaicoが返す項目名（うまく分けられないときの確認用）
                 }
@@ -837,7 +850,8 @@ function slimInv(inv) {
         id: String(inv.id || inv.inventory_id || ""), title: pickText(inv.title || inv.name),
         code: String(inv.code || inv.inventory_code || "").trim(), place: pickText(inv.place || inv.location),
         quantity: inv.quantity ?? inv.logical_quantity ?? "", unit: pickText(inv.unit), category: pickText(inv.category),
-        shop: readShop(inv)
+        shop: readShop(inv),
+        img: pickImage(inv)   // 商品画像のURL（梱包くん pack.html で使う）
     };
 }
 async function syncZaicoInventory(by) {
