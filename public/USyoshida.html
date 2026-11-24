@@ -297,6 +297,9 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .phead .ptrk{font-size:15pt;font-weight:700;letter-spacing:.03em}
 .phead .pmeta{font-size:10pt}
 .phead .pdate{margin-left:auto;font-size:9pt}
+.phead .pqr{width:24mm;height:24mm;flex:none;align-self:center}
+.phead .pqr svg{width:100%;height:100%;display:block}
+.phead .pqrn{font-size:7pt;text-align:center;align-self:center;line-height:1.2}
 .ptable{width:100%;border-collapse:collapse;table-layout:fixed}
 .ptable th,.ptable td{border:1px solid #777;padding:2px 3px;vertical-align:top;word-break:break-all}
 .ptable th{background:#e6e6e6;font-weight:700;text-align:left}
@@ -511,6 +514,8 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <label>ご依頼主：郵便番号<input id="sSZip"></label>
     <label>ご依頼主：住所<input id="sSAddr"></label>
     <label>ご依頼主：建物名（住所2）<input id="sSAddr2"></label>
+    <h3 style="margin:8px 0 0;font-size:15px">梱包くん</h3>
+    <label>梱包くん（pack.html）のURL（検品書のQRコードで開くページ。空欄なら、このアプリと同じ場所の pack.html）<input id="sPack" placeholder="https://…/pack.html"></label>
     <h3 style="margin:8px 0 0;font-size:15px">チャットでの報告</h3>
     <label>ChatworkのルームID<input id="sRoom" inputmode="numeric"></label>
     <label>宛先（報告文の1行目から）<textarea id="sTo" rows="2" style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface)"></textarea></label>
@@ -591,6 +596,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 
 <script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.0.0/encoding.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -791,6 +797,7 @@ function openSettings(){
   $('#sSAddr').value = c.senderAddr || DEFAULTS.senderAddr;
   $('#sSAddr2').value = c.senderAddr2 || DEFAULTS.senderAddr2;
   $('#sRoom').value = c.reportRoomId || DEFAULTS.reportRoomId;
+  $('#sPack').value = c.packUrl || '';
   $('#sTo').value = c.reportTo || DEFAULTS.reportTo;
   settingsMsg('');
   $('#dlgSettings').showModal();
@@ -811,6 +818,7 @@ function readSettingsForm(){
     senderAddr: $('#sSAddr').value.trim(),
     senderAddr2: $('#sSAddr2').value.trim(),
     reportRoomId: $('#sRoom').value.trim(),
+    packUrl: $('#sPack').value.trim(),
     reportTo: $('#sTo').value.trim(),
   };
 }
@@ -1272,6 +1280,20 @@ async function logArrival(nos, date){
 // 数量欄の最初の数字だけを読む（「1/1」「1個(12/3)」などで数字がつながって大きくならないように）
 function qtyNum(v){ const m = String(v==null?'':v).normalize('NFKC').match(/\d+(?:\.\d+)?/); return m ? Number(m[0]) : 0; }
 $('#btnPrint').onclick = printSheets;
+// 検品書のQRコード：梱包くん（pack.html）で読むと、このページの注文がタイルで出る
+// 中身：pack.htmlのURL#u=お客様ID&n=No.,No.…&t=倉庫追跡番号（注文の中身は、梱包くんがシートから読み直す）
+function packUrlBase(){
+  const c = (state.config && state.config.packUrl) || '';
+  try { return new URL(c || 'pack.html', location.href).href.split('#')[0]; } catch(e){ return 'pack.html'; }
+}
+function packQr(key, nos){
+  if (typeof qrcode !== 'function') return '';
+  const text = packUrlBase() + '#u=' + encodeURIComponent(state.clientId) + '&n=' + nos.join(',') + '&t=' + encodeURIComponent(normTracking(key) || key);
+  try{
+    const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
+    return '<div class="pqr">'+qr.createSvgTag({ cellSize:2, margin:0, scalable:true })+'</div><div class="pqrn">梱包くんで<br>読む</div>';
+  }catch(e){ console.warn('QRコードを作れませんでした', e); return ''; }
+}
 
 async function printSheets(){
   if (!state.selected.size) { toast('印刷する注文を選んでください'); return; }
@@ -1301,7 +1323,7 @@ async function printSheets(){
         + '<td class="pnote">'+note+'</td></tr>';
     }).join('');
 
-    pages.push('<section class="ppage"><div class="phead"><span class="ptrk">'+esc(g.key)+'</span>'
+    pages.push('<section class="ppage"><div class="phead">'+packQr(g.key, rows.map(r => r.no))+'<span class="ptrk">'+esc(g.key)+'</span>'
       + '<span class="pmeta">'+esc(shops)+' ／ '+rows.length+'件</span><span class="pdate">印刷日 '+md(today)+'</span></div>'
       + '<table class="ptable"><colgroup>'
       + '<col style="width:5%"><col style="width:11%"><col style="width:28%"><col style="width:8%">'
