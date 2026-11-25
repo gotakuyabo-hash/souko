@@ -21,6 +21,8 @@
  *
  * ▼ 普通の設定（functions/.env）
  *   STAFF_ACCOUNT_IDS … 自社スタッフ個人のChatworkアカウントID（カンマ区切り）
+ *   BOT_ACCOUNT_IDS   … 通知用のチャットボットのChatworkアカウントID（カンマ区切り）。
+ *                       スタッフだけのルームかを調べる時はいないものとして扱い、社内ルームでは自社の発言として扱う（要対応に出さない）
  *   AUTH_GEN          … 合言葉ログインの世代番号
  *   LEARN_ACCOUNT_IDS … Chatworkで直接送った返信をAI添削ログに入れる対象のアカウントID（渡辺さんの個人アカウントなど）。
  *                       ラクロジスタッフ・松下のアカウントは自動で対象になる
@@ -265,9 +267,10 @@ async function handleRequest(p) {
         const cfg = await getAiConfig();
         result = {
           me_id: await getMeId(p.account, token),
-          owner_ids: await getOwnerIds(),   // ラクロジスタッフ・松下のアカウント
+          owner_ids: (await getOwnerIds()).concat(envIds("BOT_ACCOUNT_IDS")),   // ラクロジスタッフ・松下のアカウント（＋チャットボット：社内ルームで自社扱いにするため）
           my_ids: await getMyIds(),         // 自社の発言の色分け用（STAFF_ACCOUNT_IDS も含む）
-          internal_room_ids: String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x)),
+          internal_room_ids: Array.from(new Set(String(cfg.internalRoomIds || "").split(/[,、\s]+/).filter(x => /^\d+$/.test(x))
+            .concat(await getAutoInternal(p.account)))),
           quick_links: String(cfg.quickLinks || "")
         };
       } else if (action === "edit_message") {
@@ -400,6 +403,44 @@ async function getMyIds() {
 // Chatworkで直接送った返信を記録する対象（ラクロジスタッフ・松下・LEARN_ACCOUNT_IDS）
 async function getLearnIds() {
   return (await getOwnerIds()).concat(envIds("LEARN_ACCOUNT_IDS"));
+}
+
+// ==============================
+// スタッフだけのルーム（自動で社内ルーム扱い）
+//   ルームのメンバーが、自社アカウント（ラクロジスタッフ・松下）と STAFF_ACCOUNT_IDS の人だけで、
+//   STAFF_ACCOUNT_IDS の人が1人以上いるルームは、⚙️の社内ルームに入れていなくても社内ルームとして扱う
+//   → スタッフの発言が「相手からの連絡」になり、要対応に出る・返信先に選べる
+//   見つけたルームは cw_server/auto_internal_{アカウント} に保存（画面にも渡す）
+// ==============================
+const autoInternalMem = {};
+async function getAutoInternal(account) {
+  if (!ACCOUNTS[account]) return [];
+  const hit = autoInternalMem[account];
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.list;
+  const list = await loadJsonDoc("auto_internal_" + account, []);
+  const out = Array.isArray(list) ? list.map(String) : [];
+  autoInternalMem[account] = { list: out, at: Date.now() };
+  return out;
+}
+async function saveAutoInternal(account, list) {
+  const sorted = Array.from(new Set(list.map(String))).sort();
+  const cur = autoInternalMem[account];
+  if (cur && JSON.stringify(cur.list.slice().sort()) === JSON.stringify(sorted)) { cur.at = Date.now(); return; }
+  await saveJsonDoc("auto_internal_" + account, sorted);
+  autoInternalMem[account] = { list: sorted, at: Date.now() };
+}
+// メンバーがスタッフだけのルームか（メンバーが取れない時は null＝判断しない）
+async function isStaffOnlyRoom(token, rid, myIds) {
+  const staff = envIds("STAFF_ACCOUNT_IDS");
+  if (!staff.length) return false;
+  let members;
+  try { members = await getMembersCached(token, rid); } catch (e) { return null; }
+  if (!Array.isArray(members) || members.length < 2) return false;
+  const ids = members.map(m => String(m.account_id));
+  // チャットボット（BOT_ACCOUNT_IDS）は、いないものとして調べる
+  const bots = envIds("BOT_ACCOUNT_IDS");
+  const people = ids.filter(id => bots.indexOf(id) === -1);
+  return people.every(id => myIds.indexOf(id) !== -1) && people.some(id => staff.indexOf(id) !== -1);
 }
 
 // 「後で対応」リスト（スタッフ全員で共有。アカウントごと）
@@ -801,7 +842,8 @@ async function generateAiReply(params) {
   const contextText = params.context || "";
   const customPrompt = params.custom_prompt || "";
   const cfg = await getAiConfig();
-  const internal = isInternalRoom(params.room_id, cfg);
+  const internal = isInternalRoom(params.room_id, cfg)
+    || (await getAutoInternal(params.account)).indexOf(String(params.room_id || "").replace(/[^0-9]/g, "")) !== -1;
   const rules = block(String(cfg.common || "").trim() + "\n" + String((internal ? cfg.internal : cfg.external) || "").trim());
   const note = params.room_id ? (await getRoomNote(params.room_id)).summary : "";
   const qa = await qaForPrompt(params.room_id);
@@ -1571,7 +1613,7 @@ async function saveSyncState(key, obj) {
 const syncStatusMem = {};
 
 // 自社かどうかの判定などを変えた時に上げる（上げると、最近のルームを1回だけ取り直す）
-const SYNC_VER = 2;
+const SYNC_VER = 3;   // 3：スタッフだけのルームを自動で社内ルーム扱いにした
 
 async function syncAccount(acc, token, myIds, learn, opt = {}) {
   const ownerIds = await getOwnerIds();   // ラクロジスタッフ・松下のアカウント
@@ -1607,6 +1649,18 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   // 更新が新しいルームから順に、最新メッセージを確認
   need.sort((a, b) => (b.last_update_time || 0) - (a.last_update_time || 0));
   const batch = need.slice(0, SYNC_FETCH_BUDGET);
+  // スタッフだけのルーム（自動で社内ルーム扱い）。メンバーは6時間キャッシュ
+  const autoList = (await getAutoInternal(acc)).slice();
+  const liveIds = new Set(rooms.map(r => String(r.room_id)));
+  let autoSet = new Set(autoList.filter(id => liveIds.has(id)));   // 退出したルームは外す
+  await inChunks(batch, 10, async r => {
+    const rid = String(r.room_id);
+    if (learn && learn.internal.indexOf(rid) !== -1) return;
+    const staffOnly = await isStaffOnlyRoom(token, rid, myIds);
+    if (staffOnly === true) autoSet.add(rid);
+    else if (staffOnly === false) autoSet.delete(rid);
+  });
+  const isInternal = rid => !!(learn && learn.internal.indexOf(rid) !== -1) || autoSet.has(rid);
   await inChunks(batch, 25, async r => {
     const rid = String(r.room_id);
     const got = await fetchMessages(token, rid);
@@ -1620,7 +1674,7 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
 
     // Chatworkで直接送った返信をAI添削ログへ（社内ルームは除く。前回確認した時より後の返信だけ。
     //   コックピットから送った文は、送信時の目印と一致するので除く）
-    if (learn && learn.ids.length && learn.internal.indexOf(rid) === -1) {
+    if (learn && learn.ids.length && !isInternal(rid)) {
       const pairs = pickReplyPairs(msgs, learn.ids, myIds, (state[rid] && state[rid].m) || 0);
       if (pairs.length) {
         let marks = [];
@@ -1638,7 +1692,8 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
     const meta = { msgUpdate: r.last_update_time || 0, lastMsgId: "", lastMsgTime: 0, lastMine: false, custTimes: [] };
     // 社内ルーム（渡辺さんとのルームなど）では、渡辺さんなど STAFF_ACCOUNT_IDS の人の発言は「相手からの連絡」として扱う
     //   （自社扱いにすると、渡辺さんからの連絡が要対応に出なくなるため）
-    const mineIds = (learn && learn.internal.indexOf(rid) !== -1) ? ownerIds : myIds;
+    // 社内ルームでは、チャットボットの通知も自社の発言として扱う（要対応に出さない）
+    const mineIds = isInternal(rid) ? ownerIds.concat(envIds("BOT_ACCOUNT_IDS")) : myIds;
     // 自社の人の発言でも、このアカウント宛ての依頼（[To:]・返信・タスク）は「相手からの連絡」として扱う
     const isMineMsg = m => mineIds.indexOf(String(m.account && m.account.account_id)) !== -1 && !isRequestToMe(m, meId);
     if (msgs.length) {
@@ -1660,7 +1715,7 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
       if (String(st.tm || "") === meta.lastMsgId) {
         newState[rid].tm = st.tm;   // 判定済み（前回の結果がFirestoreに残っている）
       } else {
-        const internal = !!(learn && learn.internal && learn.internal.indexOf(String(rid)) !== -1);
+        const internal = isInternal(rid);
         triageTargets.push({ rid, name: r.name || "", msgs, mineIds, meId, isMineMsg, meta, msgDoc, prevM: st.m || 0, internal });
       }
     } else {
@@ -1724,6 +1779,7 @@ async function syncAccount(acc, token, myIds, learn, opt = {}) {
   }
   await commitWrites(writes);
   await saveSyncState(stateKey, newState);
+  try { await saveAutoInternal(acc, Array.from(autoSet)); } catch (e) { console.error("スタッフだけのルームを保存できませんでした: " + e.message); }
 
 }
 
