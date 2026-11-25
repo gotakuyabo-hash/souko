@@ -2190,6 +2190,12 @@
                     msgs = roomData.messages || [];
                     members = roomData.members || [];
                     roomMembersCache[currentRoomId] = members;
+                    // スタッフだけのルーム（社内ルーム）なら、スタッフの発言にも返信できるようにする
+                    if (roomData.internal === true && mineCfg.internal.indexOf(currentRoomId) === -1) {
+                        mineCfg = { owner: mineCfg.owner, internal: mineCfg.internal.concat([currentRoomId]) };
+                        try { localStorage.setItem(MINE_CFG_KEY, JSON.stringify(mineCfg)); } catch (e) {}
+                        if (!mineCfg.owner.length) loadMineCfg();
+                    }
                 }
                 if (currentRoomId !== safeId(roomId)) return;
                 lastFetchAt = Date.now();
