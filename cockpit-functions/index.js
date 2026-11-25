@@ -2023,13 +2023,26 @@ async function askQuestion(token, p) {
 
   const no = await nextQuestionNo();
   const label = "Q-" + no;
-  // お客様の最後の発言（カードの文から【自社】以外の最後の1件）
-  const lines = context.split(/\n{2,}/).filter(s => s.trim());
-  const lastCust = lines.slice().reverse().find(s => s.indexOf("【自社】") !== 0) || "";
+  // お客様の連絡（自社が最後に発言した後の、お客様の発言をまとめたもの。最大3件）
+  //   カードの文は「名前: 本文」を空行でつないだ形。本文の中にも空行があるので、
+  //   「名前: 」で始まらない段落は、前の発言の続きとしてつなげる
+  //   （以前は空行で区切った最後の段落だけを使っていたため、「よろしくお願いいたします。」だけになることがあった）
+  const msgList = [];
+  context.split(/\n{2,}/).filter(s => s.trim()).forEach(part => {
+    if (!msgList.length || /^(【自社】)?[^:\n]{1,40}: /.test(part)) msgList.push(part);
+    else msgList[msgList.length - 1] += "\n" + part;
+  });
+  let lastMineIdx = -1;
+  msgList.forEach((s, i) => { if (s.indexOf("【自社】") === 0) lastMineIdx = i; });
+  let custMsgs = msgList.slice(lastMineIdx + 1);
+  if (!custMsgs.length) custMsgs = msgList.filter(s => s.indexOf("【自社】") !== 0).slice(-1);
+  custMsgs = custMsgs.slice(-3);
+  const lastCust = custMsgs.join("\n\n");
   // 「名前: 本文」を名前と本文に分ける（カードの文の形）
-  const cm = lastCust.match(/^([^:\n]{1,40}):\s*([\s\S]*)$/);
-  const custName = cm ? cm[1].trim() : "";
-  const custText = (cm ? cm[2] : lastCust).replace(/\n{2,}/g, "\n").trim();
+  const split = s => { const m = s.match(/^([^:\n]{1,40}):\s*([\s\S]*)$/); return m ? { name: m[1].trim(), text: m[2] } : { name: "", text: s }; };
+  const parts = custMsgs.map(split);
+  const custName = Array.from(new Set(parts.map(x => x.name).filter(Boolean))).join("・");
+  const custText = parts.map(x => x.text.replace(/\n{2,}/g, "\n").trim()).filter(Boolean).join("\n―\n");
   const cut = (s, n) => (s.length > n ? s.slice(0, n) + "…" : s);
 
   // 質問ルームのメンバーでないアカウント（松下アカウントなど）から聞いた時は、メンバーのアカウントで送る
@@ -2045,7 +2058,7 @@ async function askQuestion(token, p) {
   const body = toLine
     + "[info][title]❓ " + label + "　" + (roomName || "単独の質問") + "[/title]"
     + "■ 聞きたいこと\n" + question
-    + (custText ? "\n[hr]■ お客様の連絡" + (custName ? "（" + custName + "）" : "") + "\n" + cut(custText, 200) : "")
+    + (custText ? "\n[hr]■ お客様の連絡" + (custName ? "（" + custName + "）" : "") + "\n" + cut(custText, 500) : "")
     + "\n[hr]" + (by ? "質問者：" + by + "\n" : "")
     + "↩ このメッセージに「返信」で回答してください（タスクも自動で完了します）"
     + "[/info]";
@@ -2084,7 +2097,7 @@ async function askQuestion(token, p) {
   const now = nowSec();
   const data = {
     no, label, status: "open", account: p.account, roomId: rid, roomName,
-    question, customerText: lastCust.slice(0, 500), askedBy: by, askedAt: now,
+    question, customerText: lastCust.slice(0, 1000), askedBy: by, askedAt: now,
     questionRoomId: qRoom, cwMessageId: String((posted && posted.message_id) || ""), postedBy,
     taskId, taskDone: false,
     answer: "", answeredBy: "", answeredAt: 0
