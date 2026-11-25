@@ -1276,7 +1276,12 @@ $('historyClose').onclick = () => { $('historyModal').hidden = true; };
    GAS（shukka_auto.gs の runTeisha）が、ShopeeMateの「定者」「依頼済み」で
    備考欄に書き込みがある注文を settings/teisha_remarks に保存する。ここでは表示するだけ
    ========================================================= */
-const TEISHA_URL = 'https://crossborder-auto.magitech-tool-lab.com/orders/daiko/?search=' + encodeURIComponent('定者') + '&status=1';
+const SHOPEEMATE_URL = w => 'https://crossborder-auto.magitech-tool-lab.com/orders/daiko/?search=' + encodeURIComponent(w) + '&status=1';
+const TEISHA_URL = SHOPEEMATE_URL('定者');
+// 表示する依頼主（GASが items[].who に入れる名前。なければ定者さん）
+//   定者さん：備考欄に書き込みがある注文だけ ／ 野中さん（IP115_野中政志）：備考欄が空でも全部
+const TEISHA_WHO = { '定者': { label: '定者さん', search: '定者' }, '野中': { label: '野中さん', search: 'IP115' } };
+const whoOf = x => (x && x.who && TEISHA_WHO[x.who]) ? x.who : '定者';
 // Lazadaくん（shopeesheet.html）と同じGAS。出庫は、Lazadaくんの「手動出庫」と同じ形でシートに記録する
 const LZ_API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec';
 const TEISHA_SELLER_WORD = '定者';
@@ -1312,16 +1317,16 @@ function renderTeisha() {
   box.hidden = false;
   const at = d.at ? new Date(d.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '時点' : '';
   const head = h('div', { class: 'teisha-head' },
-    h('p', { class: 'teisha-title' }, items.length ? `📝 定者さんの備考つき依頼 ${items.length}件` : '📝 定者さんの備考つき依頼'),
+    h('p', { class: 'teisha-title' }, '📝 定者さん・野中さんの依頼' + (items.length ? ` ${items.length}件` : '')),
     h('span', { class: 'small muted' }, at),
-    h('a', { class: 'btn', href: TEISHA_URL, target: '_blank', rel: 'noopener noreferrer' }, 'ShopeeMateで開く'));
+    ...Object.entries(TEISHA_WHO).map(([, w]) => h('a', { class: 'btn', href: SHOPEEMATE_URL(w.search), target: '_blank', rel: 'noopener noreferrer' }, `${w.label}をShopeeMateで開く`)));
   const list = h('ul', { class: 'teisha-list' }, items.map(x => {
     const lines = teishaLines(x);
     const out = TEISHA.outs[x.orderNo];
     let act = null;
     if (out) act = [h('span', { class: 't-done' }, '✓ 出庫済み' + (out.at ? '（' + new Date(out.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）' : '')),
       Array.isArray(out.lines) && out.lines.length ? h('button', { type: 'button', class: 'btn', onclick: () => printTeishaPack(x.orderNo, out.lines) }, '🖨 検品書') : null];
-    else if (lines.length) act = [
+    else if (lines.length && whoOf(x) === '定者') act = [   // 在庫から出庫は定者さんだけ（野中さんは表示のみ）
       ...lines.map(l => {
         const inp = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', value: String(l.qty), 'aria-label': `${l.code}の出庫数`,
           style: 'width:64px;font-size:15px;font-weight:800;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)' });
@@ -1332,8 +1337,8 @@ function renderTeisha() {
         TEISHA.busy === x.orderNo ? '出庫中…' : '📦 在庫から出庫')
     ];
     return h('li', {},
-      h('span', {}, h('span', { class: 't-no' }, x.orderNo), x.requested ? h('span', { class: 't-sub' }, `　依頼日 ${shortDate(x.requested)}`) : null, x.country ? h('span', { class: 't-sub' }, `・${x.country}`) : null),
-      h('span', { class: 't-remark' }, x.remark),
+      h('span', {}, h('span', { class: 'chip' }, TEISHA_WHO[whoOf(x)].label), h('span', { class: 't-no' }, x.orderNo), x.requested ? h('span', { class: 't-sub' }, `　依頼日 ${shortDate(x.requested)}`) : null, x.country ? h('span', { class: 't-sub' }, `・${x.country}`) : null),
+      String(x.remark || '').trim() ? h('span', { class: 't-remark' }, x.remark) : h('span', { class: 't-sub' }, '（備考なし）'),
       x.product ? h('span', { class: 't-sub' }, x.product) : null,
       Array.isArray(x.images) && x.images.length ? h('div', { class: 't-imgs' }, x.images.map(im =>
         h('a', { href: im.url, target: '_blank', rel: 'noopener noreferrer', title: im.code },
