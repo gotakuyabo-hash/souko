@@ -1208,7 +1208,18 @@ async function findShipsForCancel(r) {
       b.set(doc(db, 'settings', 'ship_cancels'), { keys: map, updatedAt: now.toISOString() }, { merge: true });
       await b.commit();
     };
-    const orderHtml = '<div style="margin-bottom:8px">' + [...ocx.values()].map(o => `<div class="pend-row" style="border-top:1px solid var(--line)">
+    // もう出荷通知CSVに出した注文か（robotinNotified/{日付}・直近7日・読み取り7回まで）
+    // 出していれば、Robot-inではステータス120／212に移っているので、発送済みに移す前に外してもらう
+    const lowK = k => String(k).toLowerCase().replace(/_/g, '');
+    const sent = new Map();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(Date.now() - i * 86400000), id = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      try { const nd = await getDoc(doc(db, 'robotinNotified', id)); if (nd.exists()) (nd.data().keys || []).forEach(k => { if (!sent.has(k)) sent.set(k, id); }); } catch (e) { break; }
+    }
+    ocx.forEach(o => { o.sentOn = sent.get(lowK(o.key)) || ''; });
+    const sentWarn = [...ocx.values()].filter(o => o.sentOn);
+    const orderHtml = (sentWarn.length ? `<div class="err" style="margin-bottom:8px;padding:8px;border:1px solid var(--err,#c0392b);border-radius:8px">⚠ ${sentWarn.map(o => esc(o.word) + '（' + esc(o.sentOn.slice(5).replace('-', '/')) + 'に出荷通知CSVに出し済み）').join('、')}<br>Robot-inでは、もうステータス120（ロジ）／212（メディ）に移っています。<b>発送済みに移す前に、Robot-inでこの注文のチェックを外すか、キャンセルのステータスに移してください。</b>すでに発送済みに移していたら、ショップ側でキャンセルの手続きが必要です。</div>` : '')
+      + '<div style="margin-bottom:8px">' + [...ocx.values()].map(o => `<div class="pend-row" style="border-top:1px solid var(--line)">
         <span style="font-size:13px"><b>受注番号 ${esc(o.word)}</b>　${o.canceled ? `<span class="cxl">キャンセル済み</span> <small style="color:var(--sub)">${esc(String(o.at || '').slice(0, 16).replace('T', ' '))} ${esc(o.by || '')}</small>` : '<small style="color:var(--sub)">キャンセル済みにしていません</small>'}</span>
         ${o.canceled ? `<button class="mini" data-ocundo="${esc(o.key)}">戻す</button>` : `<button class="mini danger" data-occx="${esc(o.key)}">キャンセル済みにする</button>`}</div>`).join('') + '</div>';
     const bindOrder = () => {
