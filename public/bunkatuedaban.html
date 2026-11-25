@@ -12,7 +12,7 @@
     <!-- Firebase SDK (Modular v10) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where, orderBy, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 
         const firebaseConfig = {
@@ -29,7 +29,7 @@
         const db = getFirestore(app);
 
         window.db = db;
-        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where };
+        window.firebaseFns = { collection, getDocs, setDoc, doc, deleteDoc, getDoc, writeBatch, query, where, orderBy, limit, documentId, runTransaction };
 
 /* =========================================================
    日次報告チェックリスト（checklist.html）の出荷件数へ自動で足す（共通部品）
@@ -1867,6 +1867,55 @@ const shukkaAuto = (() => {
             });
         }
 
+        // ===== チェックリスト（checklist.html）の「medishopee出荷報告確認」にレ点を付ける =====
+        // Chatwork送信のサーバー側でもレ点を付けるが、付かなかったときのためにこの画面からも付ける
+        // 保存先：warehouse_reports/{今日の日付（日本時間）}
+        const isMediCheckItem = it => it && it.type === 'checkbox' && /medi\s*shopee/i.test(String(it.title || '')) && /出荷報告/.test(String(it.title || ''));
+        const todayJST = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+        // 戻り値：'ok'（付けた）／'already'（もう付いていた）／'notfound'（項目がない）／'nodoc'（チェックリストの記録がない）
+        async function tickMediChecklist() {
+            const { doc, getDoc, getDocs, collection, query, where, orderBy, limit, documentId, runTransaction } = window.firebaseFns;
+            const db = window.db;
+            const date = todayJST();
+            const ref = doc(db, 'warehouse_reports', date);
+
+            // 今日の記録がまだ無いときは、チェックリストと同じく「直前の日の項目構成」を空にして使う
+            let template = null;
+            const first = await getDoc(ref);
+            if (!first.exists()) {
+                const qs = await getDocs(query(collection(db, 'warehouse_reports'), where(documentId(), '<', date), orderBy(documentId(), 'desc'), limit(1)));
+                if (!qs.empty) {
+                    template = JSON.parse(JSON.stringify(qs.docs[0].data().sections || {}));
+                    Object.values(template).forEach(arr => Array.isArray(arr) && arr.forEach(it => {
+                        if (it && 'value' in it) it.value = '';
+                        if (it && 'checked' in it) it.checked = false;
+                    }));
+                }
+            }
+
+            return runTransaction(db, async tx => {
+                const snap = await tx.get(ref);
+                const d = snap.exists() ? snap.data() : null;
+                const sections = d ? JSON.parse(JSON.stringify(d.sections || {})) : template;
+                if (!sections) return 'nodoc';
+                let found = false, already = false;
+                Object.values(sections).forEach(arr => Array.isArray(arr) && arr.forEach(it => {
+                    if (!isMediCheckItem(it)) return;
+                    found = true;
+                    if (it.checked) already = true;
+                    it.checked = true;
+                }));
+                if (!found) return 'notfound';
+                if (already && d) return 'already';
+                tx.set(ref, {
+                    date, sections, frozenChecked: !!(d && d.frozenChecked),
+                    updatedAt: new Date().toISOString(), updatedBy: 'auto:bunkatuedaban'
+                }, { merge: true });
+                return 'ok';
+            });
+        }
+
         async function sendPackingListsToChatwork() {
             if (!window.sendPackingListFn) { alert('送信機能の準備ができていません。ページを再読み込みしてください。'); return; }
             const targets = allFilesRawData.filter(d => d.file);
@@ -1917,8 +1966,22 @@ const shukkaAuto = (() => {
 
             if (ok > 0) await registerShukkaMedi();
 
+            // サーバー側で付いたかどうかに関わらず、この画面からも確かめて付ける（付いていれば何もしない）
+            let tickErr = '';
+            if (ok > 0) {
+                try {
+                    const r = await tickMediChecklist();
+                    if (r === 'ok' || r === 'already') checked = true;
+                    else if (r === 'notfound') tickErr = 'チェックリストに「medishopee出荷報告確認」の項目が見つかりませんでした';
+                    else if (r === 'nodoc') tickErr = '今日のチェックリストの記録がありません（チェックリストを一度開いてから、もう一度送ってください）';
+                } catch (e) {
+                    console.warn('チェックリストのレ点を付けられませんでした', e);
+                    tickErr = (e && (e.code || e.message)) || String(e);
+                }
+            }
+
             const checkNote = ok > 0
-                ? (checked ? '\n\nチェックリストの「medishopee出荷報告確認」にレ点を付けました。' : '\n\n※チェックリストのレ点は付けられませんでした（手で付けてください）。')
+                ? (checked ? '\n\nチェックリストの「medishopee出荷報告確認」にレ点を付けました。' : '\n\n※チェックリストのレ点は付けられませんでした（手で付けてください）。' + (tickErr ? '\n理由：' + tickErr : ''))
                 : '';
             if (failed.length === 0) {
                 alert(`${ok}件をChatworkに送りました。${checkNote}`);
