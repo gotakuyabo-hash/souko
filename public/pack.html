@@ -76,6 +76,7 @@ main{ padding:12px 12px 140px; }
 .us-tile .tq{ position:absolute; top:4px; right:4px; background:var(--ink); color:#fff; border-radius:4px; padding:0 6px; font-weight:700; font-size:14px; }
 .us-tile .tq.many{ background:var(--ng); }
 .us-tile .tc{ position:absolute; top:4px; left:4px; background:var(--accent); color:#fff; border-radius:4px; padding:0 6px; font-weight:700; font-size:12px; }
+.us-tile .tb{ font-size:11px; font-weight:700; color:#7a4d00; background:#fff8e8; border:1px solid var(--warn); border-radius:4px; padding:0 4px; width:max-content; }
 .us-tile.done{ opacity:.45; border-color:var(--ok); } .us-tile.stop{ border-color:var(--ng); }
 .us-tile.sel{ border-color:var(--accent); box-shadow:0 0 0 3px #f4c842; }
 @media (max-width:480px){ .us-grid{ grid-template-columns:repeat(3,1fr); } .us-big{ width:96px; height:96px; } }
@@ -342,7 +343,7 @@ function usTiles(){
     t.qty = t.todo.reduce((s, r) => s + (qtyNum(r.qty) || 1), 0);
     return t;
   }).filter(t => !words.length || words.every(w => (t.rows[0].item + ' ' + t.rows.map(r => r.no + ' ' + r.name).join(' ')).toLowerCase().includes(w)))
-    .sort((a,b) => (!a.todo.length) - (!b.todo.length) || a.rows[0].no - b.rows[0].no);
+    .sort((a,b) => (!a.todo.length) - (!b.todo.length) || (a.rows.every(hasPkg) - b.rows.every(hasPkg)) || a.rows[0].no - b.rows[0].no);
 }
 function usRender(){
   const rows = Object.values(US.rows);
@@ -368,7 +369,7 @@ function usRender(){
           return '<div class="us-it' + (p ? ' done' : '') + '">' + usImg(r, 'us-big')
             + '<div class="info"><div class="code"><b style="font-size:16px;color:var(--ink)">No.' + r.no + '</b>　' + esc(r.shop || '') + ' ' + spec + '</div>'
             + '<div class="title">' + esc(r.item || '（商品名なし）') + '</div>'
-            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
+            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : '<b style="color:var(--warn)">バーコードなし</b>　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
             + (f.storage && f.storage.active ? '<div class="us-note">📦 保管中' + (f.storage.memo ? '：' + esc(f.storage.memo) : '') + '</div>' : '')
             + (r.note ? '<div class="us-note">' + esc(r.note) + '</div>' : '')
             + '<div class="count' + (q >= 2 ? ' us-many' : '') + '">×' + esc(r.qty || '1') + '</div>'
@@ -379,7 +380,7 @@ function usRender(){
         }).join('') + '</div>';
   }
   const tiles = usTiles(), selSet = new Set(US.sel ? usBundle(US.sel).nos : []);
-  const grid = '<div class="us-ghead"><b>' + (US.sel ? '次の商品を選ぶ' : '手に取った商品をタップ') + '</b>'
+  const grid = '<div class="us-ghead"><b>' + (US.sel ? '次の商品' : '商品のPKGIDをスキャン（バーコードがない商品はタップ）') + '</b>'
     + (rows.length > 8 ? '<input id="usPf" type="search" placeholder="商品名・No.・お届け先で絞り込み" value="' + esc(US.pf) + '" autocomplete="off">' : '') + '</div>'
     + '<div class="us-grid">' + tiles.map(t => {
       const r = t.rows[0], done = !t.todo.length && !t.stop.length;
@@ -389,6 +390,7 @@ function usRender(){
         + (t.rows.length > 1 ? '<span class="tc">' + t.rows.length + '注文</span>' : '')
         + '<span class="tq' + (many ? ' many' : '') + '">' + (done ? '✓' : '×' + t.qty) + '</span>'
         + '<span class="tn">' + esc(r.item || '（商品名なし）') + '</span>'
+        + (t.rows.every(hasPkg) ? '' : '<span class="tb">バーコードなし</span>')
         + '<span class="tm">' + (t.rows.length > 1 ? 'No.' + r.no + ' ほか' : 'No.' + r.no)
         + (t.stop.length ? ' <b style="color:var(--ng)">' + esc(usStop(t.stop[0].no)) + '</b>' : done ? ' 済' : t.rows.length > 1 ? ' 残り' + t.todo.length : '') + '</span></button>';
     }).join('') + '</div>';
@@ -413,21 +415,22 @@ $('list').addEventListener('click', async e => {
     if (!confirm('No.' + no + 'の「箱に入れた」を取り消しますか？（入荷日はそのまま残ります）')) return;
     b.disabled = true; await usSetPack(no, false); usRender(); return;
   }
-  if (act === 'in') {
-    b.disabled = true;
-    if (!(await usSetPack(no, true))) { b.disabled = false; return; }
-    if (!US.rows[no].arrivedAt) usArriveBg(no);
-    beep(true);
-    const bd = usBundle(no);
-    const full = !bd.missing.length && bd.nos.every(n => usPacked(n) || usStop(n));
-    const left = Object.values(US.rows).filter(r => !usPacked(r.no) && !usStop(r.no)).length;
-    if (full) {
-      flash(true, left ? '✓ 梱包OK' : '✓ この検品書は全部OK', (bd.nos.length > 1 ? '同梱 ' + bd.nos.length + '件そろいました' : 'No.' + no) + (left ? '\n残り ' + left + '件' : '\n次の検品書のQRを読んでください'), 1300);
-      US.sel = null;
-    }
-    usRender(); keepFocus();
-  }
+  if (act === 'in') { b.disabled = true; if (!(await usPutIn(no))) b.disabled = false; }
 });
+async function usPutIn(no){
+  if (!(await usSetPack(no, true))) return false;
+  if (!US.rows[no].arrivedAt) usArriveBg(no);
+  beep(true);
+  const bd = usBundle(no);
+  const full = !bd.missing.length && bd.nos.every(n => usPacked(n) || usStop(n));
+  const left = Object.values(US.rows).filter(r => !usPacked(r.no) && !usStop(r.no)).length;
+  if (full) {
+    flash(true, left ? '✓ 梱包OK' : '✓ この検品書は全部OK', (bd.nos.length > 1 ? '同梱 ' + bd.nos.length + '件そろいました' : 'No.' + no) + (left ? '\n残り ' + left + '件' : '\n次の検品書のQRを読んでください'), 1300);
+    US.sel = null;
+  } else flash(true, '✓ No.' + no + ' 入れた', '同梱のほかの商品も入れてください', 900);
+  usRender(); keepFocus();
+  return true;
+}
 async function usSetPack(no, done){
   const now = new Date().toISOString(), email = (authUser && authUser.email) || '';
   const v = done ? { done:true, at:now, by:email, from:'梱包くん' } : { done:false, undoneAt:now, undoneBy:email };
@@ -455,12 +458,38 @@ function usArriveBg(no){
     }catch(e){ $('cacheNote').textContent = '⚠ No.' + no + 'の入荷日を入れられませんでした：' + e.message + '（配送管理アプリの「入荷済みにする」で入れてください）'; }
   });
 }
-// 検品書モードで、QR以外を読んだとき（No.を打ったときは、その注文を開く）
+// 検品書モードで商品のバーコードを読んだとき：PKGIDで注文を探して開く
+// 開いている注文と同じPKGIDをもう一度読むと「箱に入れた」にする（スキャナだけで進められる）
+const pkgNorm = v => String(v || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
+const pkgList = r => String(r.pkgId || '').split(/[\s,、，\/]+/).map(pkgNorm).filter(x => x.length >= 4);
+const hasPkg = r => pkgList(r).length > 0;
+function usFindPkg(code){
+  const c = pkgNorm(code); if (!c) return [];
+  let hits = Object.values(US.rows).filter(r => pkgList(r).includes(c));
+  // バーコードに余分な文字が付いているとき（前後に文字が付くなど）は、含まれているかで探す
+  if (!hits.length && c.length >= 8) hits = Object.values(US.rows).filter(r => pkgList(r).some(t => t.length >= 8 && (c.includes(t) || t.includes(c))));
+  return hits.sort((a,b) => a.no - b.no);
+}
 function usCheck(raw){
   const m = String(raw).normalize('NFKC').trim().match(/^(?:No\.?)?\s*0*(\d{3,6})$/i);
   if (m && US.rows[Number(m[1])]) { US.sel = Number(m[1]); usRender(); window.scrollTo({ top:0, behavior:'smooth' }); return; }
-  beep(false);
-  flash(false, '✕ 検品書のQRではありません', '読んだコード：' + raw + '\nこの検品書の商品にはバーコードがありません。画像のタイルから選んでください\n（タップ・Escで閉じる）');
+  const hits = usFindPkg(raw);
+  if (!hits.length) {
+    beep(false);
+    flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGIDが見つかりません。バーコードがない商品は、画像のタイルから選んでください\n（タップ・Escで閉じる）');
+    return;
+  }
+  // 開いている注文のPKGIDをもう一度読んだ → 箱に入れた
+  const open = US.sel && hits.find(r => usBundle(US.sel).nos.includes(r.no) && !usPacked(r.no) && !usStop(r.no));
+  if (open) { usPutIn(open.no); return; }
+  const todo = hits.filter(r => !usPacked(r.no) && !usStop(r.no));
+  const r = todo[0] || hits.find(x => usStop(x.no)) || hits[0];
+  US.sel = r.no; usRender(); window.scrollTo({ top:0, behavior:'smooth' });
+  if (usStop(r.no)) { beep(false); flash(false, '⚠ No.' + r.no + 'は' + usStop(r.no), '箱に入れないでください\n（タップ・Escで閉じる）'); return; }
+  if (!todo.length) { beep(false); flash(false, 'この商品は梱包済みです', 'No.' + hits.map(x => x.no).join('、No.') + '\n二重に梱包していないか確かめてください（タップ・Escで閉じる）'); return; }
+  const q = qtyNum(r.qty);
+  beep(true);
+  flash(true, 'No.' + r.no + (q >= 2 ? '　×' + q + '個' : ''), 'お届け先：' + (r.name || '') + '\n送り状を貼って箱に入れたら、もう一度スキャン（または「箱に入れた」）', 1500);
 }
 
 /* ---------- 画面 ---------- */
