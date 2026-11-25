@@ -37,6 +37,8 @@
  *
  * ▼ 送り状の記録
  *   shipments/{yamato|sagawa}_{追跡番号} … 発行済みCSVから取り込んだ送り状（住所・電話番号は保存しない）
+ *     配送管理アプリ（USyoshida.html）・まとまるくんからも同じ形で保存する（どのアプリで取り込んでも同じ記録）
+ *     同じ内容の送り状はもう一度書き込まない（書き込み回数を減らす）
  *
  * ▼ USアプリ（配送管理アプリ USyoshida.html）への出荷依頼
  *   deliveryClients/{US_CLIENT_ID}/cockpitRequests/{ID} … コックピットから送ったNo.の依頼。USアプリに一覧で出る
@@ -1844,12 +1846,24 @@ function shipNormName(s) {
   return String(s || "").replace(/[\s\u3000]/g, "").replace(/(様|殿|御中)$/, "");
 }
 
+// 品名の「(No.10266,10267)」からNo.を取り出す（「)」まで読めたものだけ）
+function shipNos(texts) {
+  const out = [];
+  (texts || []).forEach(t => {
+    const m = String(t || "").match(/No\.?\s*([\d,，、\s]+)\)/i);
+    if (m) m[1].split(/[,，、\s]+/).map(Number).filter(Boolean).forEach(n => { if (out.indexOf(n) === -1) out.push(n); });
+  });
+  return out.slice(0, 30);
+}
+
 function shipKeys(r) {
   const keys = new Set();
   const add = k => { k = String(k || ""); if (k.length >= 4 && k.length <= 60) keys.add(k); };
   add(shipNorm(r.tracking));
   add(shipNorm(r.orderNo));
   add(shipNormName(r.name));
+  // 欄まるごとが受注番号のもの（Robot-inの送り状：ヤマトの記事・佐川の品名2「No:受注番号」）を先に入れる（30個までで切れないように）
+  (r.texts || []).forEach(t => { const s = String(t || "").trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNorm(s.replace(/^No[:：.]?\s*/i, ""))); });
   (r.texts || []).forEach(t => {
     const s = String(t || "");
     // (No.10266,10267) の No.
@@ -1858,6 +1872,7 @@ function shipKeys(r) {
     // 注文番号らしい英数字（5文字以上）
     (s.match(/[A-Za-z0-9Ａ-Ｚａ-ｚ０-９][A-Za-z0-9Ａ-Ｚａ-ｚ０-９\-‐－_]{4,}/g) || []).forEach(x => add(shipNorm(x)));
   });
+  (r.nos || []).forEach(n => add(String(n)));
   return Array.from(keys).slice(0, 30);
 }
 
@@ -1877,14 +1892,28 @@ async function saveShipments(p) {
       name: String(r.name || "").trim().slice(0, 60),
       orderNo: String(r.orderNo || "").trim().slice(0, 60),
       items: texts.join(" / ").slice(0, 300),
+      type: String(r.type || "").trim().slice(0, 2),   // ヤマトの送り状種類（0=宅急便、A=ネコポス など）
+      nos: shipNos(texts),                             // 品名の「(No.○○,○○)」のNo.
       file: String(r.file || "").slice(0, 100),
       importedAt: nowSec()
     };
-    data.keys = shipKeys({ tracking, orderNo: data.orderNo, name: data.name, texts });
+    data.keys = shipKeys({ tracking, orderNo: data.orderNo, name: data.name, texts, nos: data.nos });
     writes.push(wPatch("shipments", carrier + "_" + tracking, data));
   });
-  await commitWrites(writes);
-  return { saved: writes.length, skipped: rows.length - writes.length };
+  // すでに同じ内容で保存されている送り状は書き込まない（書き込み回数を減らす）
+  const fresh = [];
+  for (let i = 0; i < writes.length; i += 300) {
+    const part = writes.slice(i, i + 300);
+    const snaps = await db.getAll(...part.map(w => w.ref));
+    part.forEach((w, j) => { if (!sameShipment(snaps[j].exists ? snaps[j].data() : null, w.data)) fresh.push(w); });
+  }
+  await commitWrites(fresh);
+  return { saved: fresh.length, same: writes.length - fresh.length, skipped: rows.length - writes.length };
+}
+function sameShipment(a, b) {
+  if (!a) return false;
+  return ["carrier", "tracking", "type", "date", "name", "orderNo", "items"].every(k => String(a[k] || "") === String(b[k] || ""))
+    && (a.nos || []).join(",") === (b.nos || []).join(",");
 }
 
 async function findShipments(q) {
@@ -1899,7 +1928,7 @@ async function findShipments(q) {
     const snap = await db.collection("shipments").where("keys", "array-contains", k).limit(30).get();
     snap.forEach(d => {
       const x = d.data();
-      found[d.id] = { carrier: x.carrier, carrierName: x.carrierName, tracking: x.tracking, date: x.date, name: x.name, orderNo: x.orderNo, items: x.items };
+      found[d.id] = { carrier: x.carrier, carrierName: x.carrierName, tracking: x.tracking, date: x.date, name: x.name, orderNo: x.orderNo, items: x.items, canceled: !!x.canceled };
     });
   }
   const list = Object.values(found).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 30);
