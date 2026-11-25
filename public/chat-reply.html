@@ -520,6 +520,15 @@
             if (rid && mineCfg.internal.indexOf(String(rid)) !== -1 && mineCfg.owner.length) return mineCfg.owner.indexOf(id) !== -1;
             return myIds.has(id);
         }
+        // 色づけ（「自社」の印）用：ラクロジスタッフ・松下のアカウントは、社内ルームでも・自分宛ての依頼でも、いつも自社の色にする
+        //   （返信ボタン・要対応の判定は isMine のまま。社内ルームのスタッフ個人の発言は色を付けない）
+        function isOwnColor(m, rid) {
+            if (!(m && m.account)) return false;
+            if (isLine()) return isMine(m, rid);
+            const id = String(m.account.account_id);
+            if (mineCfg.owner.indexOf(id) !== -1) return true;
+            return isMine(m, rid);
+        }
         async function loadMineCfg() {
             try {
                 const d = await callApi("get_me");
@@ -958,7 +967,7 @@
 
         function messageHtml(key, m, opts = {}) {
             const st = window.messageStore[key];
-            const mine = isMine(m, st && st.roomId);
+            const mine = isOwnColor(m, st && st.roomId);
             const avatarUrl = m.account && m.account.avatar_image_url;
             const avatar = avatarUrl
                 ? `<img src="${esc(avatarUrl)}" alt="" class="w-8 h-8 rounded-full shrink-0 bg-slate-200 object-cover" loading="lazy">`
