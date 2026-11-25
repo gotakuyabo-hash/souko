@@ -575,8 +575,8 @@ function renderStatus() {
 
 /* 自動保存＋元に戻す（履歴を最大30回分保持） */
 class Saver {
-  constructor(tab, getJSON, write) { this.tab = tab; this.getJSON = getJSON; this.write = write; this.timer = null; this.savedJSON = null; this.undo = []; }
-  get dirty() { return this.timer !== null; }
+  constructor(tab, getJSON, write) { this.tab = tab; this.getJSON = getJSON; this.write = write; this.timer = null; this.savedJSON = null; this.undo = []; this.busy = 0; }
+  get dirty() { return this.timer !== null || this.busy > 0; }
   touch() { setStatus(this.tab, 'dirty'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 1500); }
   async flush({ pushUndo = true } = {}) {
     clearTimeout(this.timer); this.timer = null;
@@ -584,10 +584,13 @@ class Saver {
     if (cur == null) return;
     if (cur === this.savedJSON) { if (status[this.tab].state === 'dirty') setStatus(this.tab, 'idle'); return; }
     if (pushUndo && this.savedJSON != null) { this.undo.push(this.savedJSON); if (this.undo.length > 30) this.undo.shift(); }
+    const base = this.savedJSON; // 前回保存した（＝画面が知っている）状態
     this.savedJSON = cur;
     setStatus(this.tab, 'saving');
-    try { await this.write(JSON.parse(cur)); setStatus(this.tab, 'saved'); }
+    this.busy++;
+    try { await this.write(JSON.parse(cur), base ? JSON.parse(base) : null); setStatus(this.tab, 'saved'); }
     catch (e) { console.error(e); this.savedJSON = null; setStatus(this.tab, 'error'); }
+    finally { this.busy--; }
   }
   reset(json) { clearTimeout(this.timer); this.timer = null; this.savedJSON = json; this.undo = []; if (this.tab === stTab()) renderStatus(); }
 }
@@ -597,14 +600,63 @@ class Saver {
    ========================================================= */
 // チェックリストが最初に表示できたら知らせる（後回しにした読み込みを始める合図）
 let markFirstLoaded; const firstLoaded = new Promise(r => { markFirstLoaded = r; });
-const CL = { date: null, state: null, edit: false, unsub: null, pendingRemote: null, collapsed: {} };
+const CL = { date: null, state: null, edit: false, unsub: null, pendingRemote: null, collapsed: {}, written: [], lateRemote: null };
+// 他のアプリ（分割くん・Chatwork送信など）が付けたレ点を、この画面の保存で消さないための合わせ込み
+// 「この画面では触っていない」のに「保存先では変わっている」チェックは、保存先の方を残す
+function mergeRemoteChecks(st, base, remote) {
+  if (!base || !remote) return [];
+  const rs = normSections(remote.sections);
+  const find = (arr, title) => (arr || []).find(x => x && x.type === 'checkbox' && x.title === title);
+  const changed = [];
+  for (const k in st.sections) {
+    st.sections[k].forEach((it, i) => {
+      if (it.type !== 'checkbox') return;
+      const b = find(base.sections?.[k], it.title), r = find(rs[k], it.title);
+      if (!b || !r) return;
+      if (!!it.checked === !!b.checked && !!r.checked !== !!b.checked) { it.checked = !!r.checked; changed.push({ k, i, title: it.title, checked: it.checked }); }
+    });
+  }
+  if (!!st.frozenChecked === !!base.frozenChecked && !!remote.frozenChecked !== !!base.frozenChecked) { st.frozenChecked = !!remote.frozenChecked; changed.push({ frozen: true }); }
+  return changed;
+}
 CL.saver = new Saver('checklist',
   () => CL.state ? JSON.stringify(CL.state) : null,
-  async st => {
-    await setDoc(doc(db, 'warehouse_reports', st.date), {
-      date: st.date, sections: st.sections, frozenChecked: !!st.frozenChecked,
-      updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID
-    });
+  async (st, base) => {
+    const ref = doc(db, 'warehouse_reports', st.date);
+    let changed = [];
+    const orig = clone({ sections: st.sections, frozenChecked: !!st.frozenChecked });
+    const body = () => ({ date: st.date, sections: st.sections, frozenChecked: !!st.frozenChecked, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID });
+    try {
+      await runTransaction(db, async tx => {
+        const cur = await tx.get(ref);
+        st.sections = clone(orig.sections); st.frozenChecked = orig.frozenChecked; changed = []; // やり直しのときは元の内容から
+        if (cur.exists() && base) changed = mergeRemoteChecks(st, base, cur.data());
+        tx.set(ref, body());
+      });
+    } catch (e) {
+      if (e && e.code === 'permission-denied') throw e;
+      console.warn('transaction failed, fallback to setDoc', e);
+      await setDoc(ref, body()); // 通信が不安定なとき用（従来どおりの保存）
+    }
+    CL.written.push(JSON.stringify(st.sections)); if (CL.written.length > 10) CL.written.shift();
+    if (changed.length && CL.state && CL.date === st.date) {
+      CL.saver.savedJSON = JSON.stringify(st);
+      // 画面の状態にも反映（保存中に入力された内容はそのまま）
+      changed.forEach(c => {
+        if (c.frozen) { CL.state.frozenChecked = st.frozenChecked; return; }
+        const it = CL.state.sections[c.k]?.find(x => x.type === 'checkbox' && x.title === c.title);
+        if (it) it.checked = c.checked;
+      });
+      if (JSON.stringify(CL.state) !== JSON.stringify(st)) CL.saver.touch(); // 保存中に入力があった分はもう一度保存
+      if (!isTyping('tab-checklist')) renderChecklist(); else updateProgress();
+    }
+    // 保存中に届いた他の端末・アプリの更新を、保存が終わってから反映
+    setTimeout(() => {
+      const r = CL.lateRemote; CL.lateRemote = null;
+      if (!r || r.date !== CL.date || CL.saver.dirty || JSON.stringify(r) === CL.saver.savedJSON) return;
+      if (activeTab === 'checklist' && isTyping('tab-checklist')) { CL.pendingRemote = r; setStatus('checklist', 'pending'); return; }
+      clApply(r, true);
+    }, 0);
   });
 
 function normItem(it, key) {
@@ -653,12 +705,14 @@ function clLoad(date) {
     if (CL.date !== date || snap.metadata.hasPendingWrites) return;
     if (snap.exists()) {
       const d = snap.data();
-      if (CL.state && d.updatedBy === CLIENT_ID) return; // 自分の保存の反映は無視
+      // 自分の保存の反映は無視（ただし、ほかのアプリがレ点だけ書き換えた場合は updatedBy が自分のままなので中身で判断する）
+      if (CL.state && d.updatedBy === CLIENT_ID && CL.written.includes(JSON.stringify(normSections(d.sections)))) { CL.lateRemote = null; return; }
       const st = { date, sections: normSections(d.sections), frozenChecked: !!d.frozenChecked };
       const json = JSON.stringify(st);
       if (!CL.state) { clApply(st, false); return; }
       if (json === CL.saver.savedJSON || json === JSON.stringify(CL.state)) return;
-      if (CL.saver.dirty) return; // 自分の入力を優先（このあと保存される）
+      if (CL.saver.dirty) { if (CL.saver.busy) CL.lateRemote = st; return; } // 自分の入力を優先（このあと保存される）
+      CL.lateRemote = null;
       if (activeTab === 'checklist' && isTyping('tab-checklist')) { CL.pendingRemote = st; setStatus('checklist', 'pending'); return; }
       clApply(st, true);
     } else if (!CL.state) {
