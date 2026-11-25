@@ -292,6 +292,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
       </div>
       <div class="search-row">
         <span id="qCount" class="muted">0件</span>
+        <button id="btnPackedToday" class="secondary" title="梱包くんで今日「箱に入れた」注文を出して全件選択します（出荷通知の前など）">📦 今日梱包した注文を出す</button>
         <button id="btnClear" class="ghost">クリア</button>
         <button id="btnSearch" class="primary">検索する</button>
       </div>
@@ -992,11 +993,12 @@ function render(){
     const rows = g.rows.map(no => state.rows[no]);
     const shops = [...new Set(rows.map(r=>r.shop).filter(Boolean))].join('、');
     const arrived = rows.filter(r=>r.arrivedAt).length;
+    const packedToday = rows.filter(r=>state.pack[r.no] && packToday(state.pack[r.no])).length;
     const allSel = rows.every(r=>state.selected.has(r.no));
     return '<section class="parcel">'
       + '<div class="parcel-head"><label class="chk"><input type="checkbox" class="gsel" data-g="'+gi+'" '+(allSel?'checked':'')+' aria-label="この番号の注文をすべて選択"></label>'
       + '<div class="trk">'+esc(g.key)+'</div>'
-      + '<div class="meta">'+esc(shops)+' ／ '+rows.length+'件 ／ 入荷済み '+arrived+'件</div></div>'
+      + '<div class="meta">'+esc(shops)+' ／ '+rows.length+'件 ／ 入荷済み '+arrived+'件 ／ 今日梱包 '+packedToday+'件</div></div>'
       + '<div class="rows">'+rows.map(rowHtml).join('')+'</div></section>';
   }).join('');
 
@@ -1021,12 +1023,35 @@ function rowHtml(r){
     + '<div class="l3 muted">'+esc(r.name)+' ／ 数量 '+esc(r.qty)+' ／ 注文番号 '+esc(r.orderId)+'</div></div>'
     + '<div class="side"><span>'+spec+'</span>'
     + (r.arrivedAt ? '<span class="arr">入荷 '+esc(md(r.arrivedAt))+'</span>' : '<span class="todo">未入荷</span>')
-    + (state.pack[r.no] ? '<span class="arr">梱包済み</span>' : '')
+    + (state.pack[r.no] ? '<span class="arr">'+(packToday(state.pack[r.no]) ? '✓ 今日梱包済み' : '梱包済み '+esc(packDay(state.pack[r.no])))+'</span>' : (r.shippedAt ? '' : '<span class="todo">未梱包</span>'))
     + '<span>'+(r.shippedAt ? '出荷 '+esc(md(r.shippedAt)) : '未出荷')+'</span>'
     + rowButtons(r.no)+'</div>'
     + (noteText ? '<div class="note">'+esc(noteText)+'</div>' : '')
     + '</label>';
 }
+
+/* ===== 梱包済み（梱包くんで「箱に入れた」記録） ===== */
+function packDate(p){ const d = p && p.at ? new Date(p.at) : null; return d && !isNaN(d) ? d : null; }
+function packToday(p){ const d = packDate(p); return !!d && d.toDateString() === new Date().toDateString(); }
+function packDay(p){ const d = packDate(p); return d ? (d.getMonth()+1)+'/'+d.getDate() : ''; }
+$('#btnPackedToday').onclick = async () => {
+  const btn = $('#btnPackedToday'); btn.disabled = true;
+  try{
+    const from = new Date(); from.setHours(0,0,0,0);
+    const snap = await ordersCol().where('pack.at', '>=', from.toISOString()).get();
+    const nos = [];
+    snap.forEach(d => { const v = d.data(); if (v.pack && v.pack.done) nos.push(Number(d.id)); });
+    if (!nos.length) { toast('今日梱包した注文はまだありません'); return; }
+    nos.sort((a,b) => a - b);
+    const segNo = document.querySelector('.seg button[data-mode="no"]');
+    if (segNo && state.mode !== 'no') segNo.click();
+    $('#q').value = nos.join(' ');
+    updateCount();
+    await doSearch(true);
+    toast('今日梱包した注文 '+nos.length+'件を全件選択しました', 5000);
+  }catch(e){ toast('今日梱包した注文を読み込めませんでした：'+e.message, 6000); }
+  finally{ btn.disabled = false; }
+};
 
 /* ===== 選択 ===== */
 $('#groups').addEventListener('change', e => {
