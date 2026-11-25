@@ -241,7 +241,7 @@ async function handleRequest(p) {
       } else if (action === "summarize_room") {
         result = await summarizeRoom(token, p);
       } else if (action === "get_room_data") {
-        result = await getChatworkRoomData(token, p.room_id);
+        result = await getChatworkRoomData(token, p.room_id, p.account);
       } else if (action === "get_room_file") {
         result = { file: await cw(token, "get", "/rooms/" + safeRid(p.room_id) + "/files/" + String(p.file_id).replace(/[^0-9]/g, "") + "?create_download_url=1") };
       } else if (action === "send_message") {
@@ -507,15 +507,32 @@ async function getMembersCached(token, roomId) {
   return slim;
 }
 
-async function getChatworkRoomData(token, roomId) {
+async function getChatworkRoomData(token, roomId, account) {
   const rid = safeRid(roomId);
   const messages = await cw(token, "get", "/rooms/" + rid + "/messages?force=1");
   let members = [];
   try { members = await getMembersCached(token, rid); } catch (e) { members = []; }
+  const myIds = await getMyIds();
+  // スタッフだけのルームか（ルームを開いた時にも調べる。しばらく動きのないルームは同期で調べないため）
+  let internal = false;
+  try {
+    const cfg = await getAiConfig();
+    internal = isInternalRoom(rid, cfg);
+    if (!internal && ACCOUNTS[account]) {
+      const auto = await getAutoInternal(account);
+      const staffOnly = await isStaffOnlyRoom(token, rid, myIds);
+      internal = staffOnly === true || (staffOnly === null && auto.indexOf(rid) !== -1);
+      if (staffOnly === true && auto.indexOf(rid) === -1) await saveAutoInternal(account, auto.concat([rid]));
+      if (staffOnly === false && auto.indexOf(rid) !== -1) await saveAutoInternal(account, auto.filter(x => x !== rid));
+    }
+  } catch (e) {
+    console.error("社内ルームかどうか調べられませんでした: " + e.message);
+  }
   return {
     messages: Array.isArray(messages) ? messages : [],
     members: Array.isArray(members) ? members : [],
-    my_ids: await getMyIds()
+    my_ids: myIds,
+    internal
   };
 }
 
