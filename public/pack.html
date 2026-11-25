@@ -30,37 +30,6 @@ main{ padding:12px 12px 140px; }
 .item .manual.sub{ border-color:#9aa5ae; background:#fff; color:#3d4a55; font-size:13px; padding:6px 10px; }
 .item .manual.undo{ border-color:#bbb; background:#fff; color:#777; font-size:13px; padding:6px 10px; }
 .item .manual{ margin-top:6px; font-size:14px; padding:8px 12px; border-radius:8px; border:1px solid var(--warn); background:#fff8e8; color:#7a4d00; }
-/* 資材指定のSKU */
-.item.mat{ border-color:var(--warn); border-width:4px; }
-.matbadge{ margin-top:6px; background:#fff3c4; border:2px solid var(--warn); border-radius:8px; padding:6px 10px; font-size:16px; font-weight:700; color:#7a4d00; white-space:pre-wrap; word-break:break-all; }
-.matwarn{ background:var(--warn); color:#fff; border-radius:10px; padding:10px 12px; font-size:16px; font-weight:700; margin-bottom:10px; white-space:pre-wrap; }
-.matedit{ margin-top:6px; margin-left:auto; font-size:12px; padding:4px 8px; border-radius:6px; border:1px solid #ccc; background:#fff; color:#777; }
-#flash.mat{ background:rgba(214,137,16,.95); }
-/* 使った資材を選ぶ画面・使用枚数の集計 */
-#matPick, #usageView{ display:none; position:fixed; inset:0; z-index:30; background:rgba(20,30,40,.7); align-items:flex-start; justify-content:center; padding:20px 12px; overflow:auto; }
-#matPick.on, #usageView.on{ display:flex; }
-.mp-box, .uv-box{ background:#fff; border-radius:14px; padding:16px; width:100%; max-width:560px; }
-.uv-box{ max-width:900px; }
-.mp-title{ font-size:20px; font-weight:800; }
-.mp-sub{ font-size:14px; color:var(--muted); margin-top:4px; white-space:pre-wrap; word-break:break-all; }
-.mp-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; margin-top:10px; max-height:58vh; overflow:auto; }
-.mp-btn{ font:inherit; font-size:16px; font-weight:700; padding:14px 8px; border-radius:10px; border:2px solid var(--accent); background:#fff; color:var(--accent); }
-.mp-btn.def{ background:var(--warn); border-color:var(--warn); color:#fff; }
-.mp-btn .mi{ display:block; width:100%; height:auto; aspect-ratio:4/3; object-fit:contain; background:#fff; border-radius:6px; margin-bottom:4px; }
-.mp-btn{ padding:6px !important; }
-.mp-btn .n{ display:block; font-size:11px; font-weight:400; color:var(--ink); margin-top:2px; }
-.mp-btn.def .n{ color:#fff; }
-.mp-btn .k{ display:block; font-size:11px; font-weight:400; opacity:.75; }
-.mp-btn.mp-small{ font-size:13px; padding:8px 10px; border-color:#9aa5ae; color:#3d4a55; }
-.mp-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-.mp-link{ font:inherit; font-size:12px; border:0; background:none; color:var(--accent); text-decoration:underline; padding:4px; }
-#mpMsg{ color:var(--ng); font-weight:700; margin-top:8px; min-height:20px; }
-.uv-tbl{ border-collapse:collapse; font-size:13px; white-space:nowrap; }
-.uv-tbl th, .uv-tbl td{ border:1px solid var(--line); padding:4px 8px; text-align:right; }
-.uv-tbl th:first-child, .uv-tbl td:first-child{ text-align:left; }
-.uv-tbl thead th{ background:#e8eef2; }
-.uv-tbl .tot td{ font-weight:700; background:#fff8e8; }
-#allokMat button{ font:inherit; font-size:13px; margin-left:8px; padding:4px 10px; border-radius:6px; border:1px solid #fff; background:transparent; color:#fff; }
 .allok{ display:none; text-align:center; background:var(--ok); color:#fff; border-radius:12px; padding:18px; font-size:26px; font-weight:700; margin-bottom:12px; }
 .allok.show{ display:block; }
 .foot{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:10px 12px calc(10px + env(safe-area-inset-bottom)); z-index:6; }
@@ -121,12 +90,13 @@ main{ padding:12px 12px 140px; }
 </head>
 <body>
 <header>
+  <div id="dayProg" style="display:none;margin:0 0 8px;font-size:14px"></div>
   <div class="order" id="orderNo">受注番号：</div>
   <div class="progress" id="progress">読み込み中…</div>
   <div class="bar"><i id="bar"></i></div>
 </header>
 <main>
-  <div class="allok" id="allok">✓ 梱包OK<div id="allokSub" style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div><div id="allokMat" style="font-size:16px;margin-top:8px;"></div></div>
+  <div class="allok" id="allok">✓ 梱包OK<div id="allokSub" style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
   <div id="labelTag" style="display:none;margin:6px 0;padding:8px 10px;border-radius:8px;font-weight:700;font-size:14px"></div>
   <div id="holdBox" style="display:none;margin:6px 0"></div>
   <div id="list"></div>
@@ -136,7 +106,6 @@ main{ padding:12px 12px 140px; }
   <div class="row">
     <button class="btn" id="scanBtn">📷 商品のシールをスキャン</button>
     <button class="btn ghost" id="resetBtn">やり直し</button>
-    <button class="btn ghost" id="usageBtn" title="資材の使用枚数">📊</button>
   </div>
   <input id="manualInput" inputmode="text" autocomplete="off" placeholder="スキャナ・手入力はここ（Enterで照合）" autocapitalize="off" spellcheck="false">
 </div>
@@ -146,35 +115,10 @@ main{ padding:12px 12px 140px; }
   <button class="btn ghost close" id="closeBtn">閉じる</button>
 </div>
 <div id="flash"><div class="big" id="flashBig"></div><div class="small" id="flashSmall"></div></div>
-<!-- 梱包OKのあとに「使った資材」を選ぶ（全注文で記録して、使用枚数を集計する） -->
-<div id="matPick"><div class="mp-box">
-  <div class="mp-title" id="mpTitle">使った資材を選んでください</div>
-  <div class="mp-sub" id="mpSub"></div>
-  <input id="mpFilter" type="search" placeholder="ほかの資材を探す（例：120、封筒）" autocomplete="off" style="width:100%;margin-top:10px;font-size:15px;padding:8px;border:1px solid var(--line);border-radius:8px">
-  <div class="mp-grid" id="mpGrid"></div>
-  <button type="button" class="mp-link" id="mpMore" style="display:none;margin-top:6px;font-size:14px"></button>
-  <div class="mp-row">
-    <button type="button" class="mp-btn mp-small" id="mpOther">その他（入力）</button>
-    <button type="button" class="mp-btn mp-small" id="mpNone">資材を使っていない（再利用など）</button>
-  </div>
-  <div class="mp-row"><button type="button" class="mp-link" id="mpEdit">資材の一覧を編集</button><button type="button" class="mp-link" id="mpCancel" style="font-size:14px">選ばずに進む</button></div>
-  <div id="mpMsg"></div>
-</div></div>
-<!-- 資材の使用枚数（月ごと） -->
-<div id="usageView"><div class="uv-box">
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <b style="font-size:17px;flex:1">📊 資材の使用枚数</b>
-    <input type="month" id="uvMonth">
-    <button type="button" class="mp-btn mp-small" id="uvCsv">CSV</button>
-    <button type="button" class="mp-btn mp-small" id="uvClose">閉じる</button>
-  </div>
-  <div id="uvOrder" style="margin-top:10px"></div>
-  <div id="uvBody" style="margin-top:10px"></div>
-</div></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
@@ -304,7 +248,7 @@ onAuthStateChanged(auth, u => {
   authUser = u; authReadyResolve(); if (state.us && US.needLogin && u) usStart();
   // ログイン必須：ログインしていなければ画面を覆う（キャンセル済みの警告・送り状の照合にログインが要るため）
   const g = document.getElementById('loginGate'); if (g) g.style.display = u ? 'none' : 'flex';
-  if (u) { const n = document.getElementById('loginNote'); if (n) n.remove(); watchCancels(); if (!state.us && state.order) checkOrderCanceled(); }
+  if (u) { const n = document.getElementById('loginNote'); if (n) n.remove(); watchCancels(); watchProgress(); if (!state.us && state.order) checkOrderCanceled(); }
 });
 document.getElementById('gateLoginBtn').onclick = () => {
   document.getElementById('gateErr').textContent = '';
@@ -549,7 +493,6 @@ async function usPutIn(no, note){
   if (full) {
     flash(true, left ? '✓ 梱包OK' : '✓ この検品書は全部OK', note + (bd.nos.length > 1 ? '同梱 ' + bd.nos.length + '件そろいました' : 'No.' + no) + (left ? '\n残り ' + left + '件' : '\n次の検品書のQRを読んでください'), 1300);
     US.sel = null;
-    askMatUs(bd.nos);
   } else flash(true, '✓ No.' + no + ' 入れた', note + '同梱のほかの商品も入れてください', 1200);
   usRender(); keepFocus();
   return true;
@@ -711,6 +654,8 @@ function render() {
   $('progress').textContent = `${done} / ${total} 点`;
   $('bar').style.width = total ? (done / total * 100) + '%' : '0';
   const allOk = state.items.length && state.items.every(x => x.scanned === x.qty);
+  if (allOk) markPacked();
+  renderDayProg();
   $('allok').classList.toggle('show', !!allOk);
   // 送り状の照合（共有の発行済みデータ shipments で、この受注番号の送り状か確かめる）
   const lt = $('labelTag');
@@ -725,28 +670,15 @@ function render() {
   if (holdOf()) $('allok').classList.remove('show');
   lt.style.background = state.label ? '#e4f3ea' : '#fff4d6'; lt.style.color = state.label ? '#1e7a46' : '#8a5a00';
   lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）' : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
-  const used = USED[orderUsageKey()];
-  $('allokMat').innerHTML = used ? '📦 使った資材：' + esc(matFull(used.mat)) + (state.items.every(x => matOf(x.code) && matOf(x.code).mat === used.mat) ? '（資材指定）' : '') + '<button type="button" id="matChange">変更</button>' : '';
-  if (!used && state.items.length && state.items.every(x => x.scanned === x.qty) && !state.canceled && !holdOf()) {
-    $('allokMat').innerHTML = '📦 使った資材：未記録<button type="button" id="matChange">選ぶ</button>';
-    $('matChange').onclick = () => { SKIPPED.delete(orderUsageKey()); maybeAskMat(); };
-  }
-  if (used) $('matChange').onclick = () => openPick({ key: orderUsageKey(), codes: state.items.map(x => x.code), change: true, sub: '受注番号 ' + state.order + '\n今：' + used.mat + '\nこの注文の商品の資材指定も、選んだ資材に変わります', def: [used.mat], info: { order: state.order, src: 'sheet' } });
   $('allokSub').textContent = state.label ? '次の検品シートのQRを読むと、次の注文に進みます' : '送り状のバーコードを読んで照合してください（そのあと次の検品シートへ）';
-  // 資材指定のSKUがある注文：上に注意を出し、開いたときに1回だけ画面全体で知らせる
-  const mt = matText();
-  if (mt && !state.matShown) { state.matShown = true; beep(false); flash(true, '📦 資材指定の商品があります', mt + '\n指定の資材で梱包してください', 1500, 'mat'); }
 
-  $('list').innerHTML = (mt ? '<div class="matwarn">⚠ 資材指定あり：指定の資材で梱包してください\n' + esc(mt) + '</div>' : '') + state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
+  $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
     const z = x.unknown ? null : zmap[norm(x.code)];
     const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : '（zaicoに見つかりません）');
     const img = x.unknown
       ? `<div class="noimg" style="font-size:40px;">${x.kind === 'nobc' ? '🎁' : '❓'}</div>`
       : (z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>');
-    const mat = matOf(x.code);
-    const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : '', mat ? 'mat' : ''].join(' ');
-    const matHtml = (mat ? `<div class="matbadge" style="display:flex;gap:8px;align-items:center">${matImg(mat.mat) ? `<img src="${esc(matImg(mat.mat))}" alt="" style="width:56px;height:42px;object-fit:contain;background:#fff;border-radius:4px;flex:none" onerror="this.remove()">` : ''}<span>📦 資材指定：${esc(matFull(mat.mat))}</span></div>` : '')
-      + (authUser ? `<div style="display:flex"><button type="button" class="matedit" data-mi="${i}">資材指定を${mat ? '変更・解除' : '登録'}</button></div>` : '');
+    const cls = ['item', x.scanned === x.qty ? 'done' : '', x.scanned > x.qty ? 'over' : '', x.unknown ? 'unknown' : ''].join(' ');
     const left = x.qty - x.scanned;
     // どの商品も手で確認できる（シールが貼っていない・読めない商品があるため）。バーコードがある商品はスキャンが基本なので控えめなボタンにする
     const sub = x.unknown ? '' : ' sub';
@@ -765,13 +697,11 @@ function render() {
         <div class="title">${tag}${esc(title)}</div>
         <div class="code">${x.unknown ? 'SKU' : 'コード'}：${esc(x.code)}</div>
         <div class="count">${x.scanned} <small>/ ${x.qty} 個</small>${x.scanned === x.qty ? ' ✓' : ''}${x.scanned > x.qty ? ' 多い！' : ''}</div>
-        ${matHtml}
         ${manualNote}
         ${manual}
       </div>
     </div>`;
   }).join('');
-  document.querySelectorAll('.matedit').forEach(b => b.onclick = () => matEdit(state.items[+b.dataset.mi]));
   document.querySelectorAll('.manual').forEach(b => b.onclick = () => {
     const it = state.items[+b.dataset.i], n = +b.dataset.n || 1;
     if (n > 0) {
@@ -783,9 +713,7 @@ function render() {
     }
     if (n > 0) {
       beep(true);
-      const mt = matText();
-      if (state.items.every(x => x.scanned === x.qty)) flash(true, '✓ 梱包OK', mt ? '📦 資材指定\n' + mt : '', mt ? 2500 : 1500, mt ? 'mat' : '');
-      else if (matOf(it.code)) flash(true, '📦 資材指定：' + matOf(it.code).mat, matLabel(it) + '　' + it.scanned + '/' + it.qty, 1800, 'mat');
+      if (state.items.every(x => x.scanned === x.qty)) flash(true, '✓ 梱包OK', '', 1500);
     }
     afterChange();
   });
@@ -807,9 +735,9 @@ function beep(ok) {
   try { navigator.vibrate && navigator.vibrate(ok ? 60 : [300, 100, 300, 100, 300]); } catch (e) {}
 }
 let flashTimer = null;
-function flash(ok, big, small, ms, extra) {
+function flash(ok, big, small, ms) {
   const f = $('flash');
-  f.className = 'on ' + (ok ? 'ok' : 'ng') + (extra ? ' ' + extra : '');
+  f.className = 'on ' + (ok ? 'ok' : 'ng');
   $('flashBig').textContent = big; $('flashSmall').textContent = small || '';
   clearTimeout(flashTimer);
   if (ok) flashTimer = setTimeout(() => f.className = '', ms || 700);
@@ -861,10 +789,7 @@ function check(code) {
   it.scanned++;
   beep(true);
   const left = state.items.every(x => x.scanned === x.qty);
-  const m = matOf(it.code), mt = matText();
-  if (left && mt) flash(true, '✓ 梱包OK', '📦 資材指定\n' + mt, 2500, 'mat');
-  else if (m) flash(true, (left ? '✓ 梱包OK' : '✓ OK') + '\n📦 資材指定：' + m.mat, `${zmap[norm(it.code)]?.t || it.code}　${it.scanned}/${it.qty}`, 2000, 'mat');
-  else flash(true, left ? '✓ 梱包OK' : '✓ OK', `${zmap[norm(it.code)]?.t || it.code}　${it.scanned}/${it.qty}`, left ? 1500 : 600);
+  flash(true, left ? '✓ 梱包OK' : '✓ OK', `${zmap[norm(it.code)]?.t || it.code}　${it.scanned}/${it.qty}`, left ? 1500 : 600);
   afterChange();
 }
 // まとまるくんの検品シートの注文：送り状を読んだら、その受注番号の送り状か確かめる
@@ -906,25 +831,6 @@ function watchCancels(){
     HOLDS = (snap.exists() && snap.data().holds) || {};
     if (!state.us && state.items.length) render();
   }, e => console.warn('ship_holds', e));
-  // 資材指定のSKU（settings/pack_materials）：開いたときに1回読み、変更があったときだけ届く
-  onSnapshot(doc(db, 'settings', 'pack_materials'), snap => {
-    MATS = (snap.exists() && snap.data().items) || {};
-    MATLIST = (snap.exists() && snap.data().list) || null;
-    if (PICK) drawPick();
-    if (!state.us && state.items.length) render();
-  }, e => console.warn('pack_materials', e));
-  // 使った枚数（前回の発注から）：settings/material_counter。発注数量に届いた資材を知らせる
-  onSnapshot(doc(db, 'settings', 'material_counter'), snap => {
-    COUNTER = (snap.exists() && snap.data().used) || {};
-    POINT = (snap.exists() && snap.data().point) || {};
-    const due = dueMats();
-    const fresh = due.filter(d => !NOTIFIED.has(d.code));
-    if (fresh.length && COUNTER_READY) { fresh.forEach(d => NOTIFIED.add(d.code)); beep(false); flash(true, '📦 資材を発注してください', fresh.map(d => d.code + '　' + d.used + '枚使いました（発注点 ' + d.point + '枚）').join('\n') + '\n（チェックリストにも出ています）', 3500, 'mat'); }
-    if (!COUNTER_READY) due.forEach(d => NOTIFIED.add(d.code));   // 開いたときにすでに出ている分は、全画面では知らせない
-    COUNTER_READY = true;
-    if (!state.us && !state.items.length) start();
-    if ($('usageView').classList.contains('on')) drawOrderBox();
-  }, e => console.warn('material_counter', e));
   onSnapshot(doc(db, 'settings', 'ship_cancels'), snap => {
     CXMAP = (snap.exists() && snap.data().keys) || {};
     if (!state.us && state.order && !state.canceled) checkOrderCanceled();
@@ -935,262 +841,38 @@ function watchCancels(){
    carry.{受注番号}：保留を解除した注文。送り状を作った日のあとでも、次の出荷通知CSVに自動で入る
      送り状が同じか作り直したかは、出荷通知のときに「取り消していない送り状のうち新しいほう」で決まる */
 let HOLDS = {};
-/* ---------- 資材指定のSKU（settings/pack_materials） ----------
-   items.{SKU（半角・大文字）}：{ mat:'A4k80', at, by }
-   この梱包くんの画面から登録・変更・解除できる（商品カードの「資材指定を登録」） */
-let MATS = {};
-const matOf = code => { const m = MATS[norm(code)]; return m && m.mat ? m : null; };
-const matLabel = x => { const z = zmap[norm(x.code)]; return (x.unknown ? (x.name || x.code) : (z && z.t) || x.code); };
-const matText = () => state.items.filter(x => matOf(x.code)).map(x => '・' + matOf(x.code).mat + '（' + matLabel(x) + '）').join('\n');
-async function matEdit(x){
-  const k = norm(x.code), cur = matOf(x.code);
-  const v = prompt('SKU ' + x.code + '（' + matLabel(x) + '）の資材指定\n例：A4k80、k80、緩衝材多め など\n空欄にすると資材指定を解除します', cur ? cur.mat : '');
-  if (v === null) return;
-  const mat = v.trim();
-  if (!mat && !cur) return;
-  try {
-    const now = new Date().toISOString();
-    await setDoc(doc(db, 'settings', 'pack_materials'), { items: { [k]: mat ? { mat, at: now, by: holdWho() } : deleteField() }, updatedAt: now }, { merge: true });
-    beep(true); flash(true, mat ? '資材指定を登録しました' : '資材指定を解除しました', x.code + (mat ? '\n📦 ' + mat : ''), 1500);
-  } catch (e) { alert('資材指定を保存できませんでした：' + e.message); }
+/* ---------- 今日の残り件数（packProgress/{日付}） ----------
+   plan：まとまるくんで今日印刷した検品シートの注文／done：梱包OKになった注文（端末をまたいで共有）
+   読み取り：開いたときに1回＋変更のたび。書き込み：梱包OKになった注文ごとに1回 */
+let PROG = null, progWatching = false;
+function watchProgress(){
+  if (progWatching || !authUser) return; progWatching = true;
+  onSnapshot(doc(db, 'packProgress', todayStr()), snap => { PROG = snap.exists() ? snap.data() : null; renderDayProg(); },
+    e => { console.warn('packProgress', e); progWatching = false; });
 }
-
-/* ---------- 使った資材の記録（全注文）と使用枚数の集計 ----------
-   梱包OKになったら「使った資材」を選ぶ（資材指定が1つだけの注文は自動で記録）
-   settings/pack_usage_{YYYY-MM-DD}.orders.{注文のキー} = { mat, n:1, at, by, order|client,nos, src }
-   同じ注文を選び直したときは同じキーに上書きするので、二重には数えない（1注文の書き込み1回） */
-// 資材発注システムの資材マスタのうち、1箱に1つ使う資材（ダンボール・メール便ケース・袋・封筒）。並びは調布の発注の多い順
-//   画面の「資材の一覧を編集」で変えられる（品番を「,」区切り）
-const MAT_DEFAULT = ["CFC80-A4", "K-44", "K-60", "NA4-H26", "TB-SS-M", "K-80", "K-S60", "PM-XL", "K-100", "A4-K80", "NPOS-A5-H29", "MA100-039", "MA80-006", "CFC80-DM", "PM-L", "PM-M", "K-DA009", "PM-LL", "S-K80", "TB-S-M", "A2-120", "IE-N3S-107P", "K-50", "TB-SS-S", "M-80", "PMB-M", "IE-N3S-107NF", "Z-NPOS", "MA120-028", "DA004", "K-A480", "P-B2", "MA140-271", "MA100-001", "KY-DA009", "MA140-401", "K-MAK160002"];
-const MAT_NAMES = {"CFC80-A4": "クッション封筒 305×220", "K-44": "50サイズ（小）202×122×88", "K-60": "60サイズ 260×190×110", "NA4-H26": "厚さ3cm N式ケース A4", "TB-SS-M": "宅配袋SS 茶", "K-80": "80サイズ 314×221×141", "K-S60": "60サイズ 240×185×150", "PM-XL": "ビニール袋 A2", "K-100": "100サイズ 377×267×284", "A4-K80": "80サイズ A4 310×220×240", "NPOS-A5-H29": "厚さ3cm テープレス A5", "MA100-039": "100サイズ無地 430×307×123", "MA80-006": "80サイズ無地 457×178×127", "CFC80-DM": "クッション封筒 A4 340×240", "PM-L": "ビニール袋 B4", "PM-M": "ビニール袋 A4", "K-DA009": "120サイズ 460×320×280", "PM-LL": "ビニール袋 A3", "S-K80": "80サイズ 薄型", "TB-S-M": "宅配袋S 茶", "A2-120": "120サイズ無地 600×430×130", "IE-N3S-107P": "長3封筒 〒枠あり", "K-50": "50サイズ 201×167×102", "TB-SS-S": "宅配袋SS 白", "M-80": "80サイズ無地 314×221×141", "PMB-M": "耐水クッション封筒 A4", "IE-N3S-107NF": "長3封筒 〒枠なし", "Z-NPOS": "厚さ2.5cm ジッパー A4", "MA120-028": "120サイズ無地 520×320×310", "DA004": "80サイズ DA004", "K-A480": "80サイズ A4 旧品番", "P-B2": "ポスターケース B2", "MA140-271": "140サイズ 614×454×168", "MA100-001": "100サイズ無地 432×330×203", "KY-DA009": "120サイズ 強化", "MA140-401": "140サイズ 470×290×580", "K-MAK160002": "160サイズ 高さ可変"};
-// 資材マスタの画像（notosiki.co.jp の商品画像の番号）
-const MAT_IMG = {"CFC80-A4": 22599, "K-44": 852, "K-60": 109, "NA4-H26": 145, "TB-SS-M": 1864, "K-80": 110, "K-S60": 691, "PM-XL": 809, "K-100": 104, "A4-K80": 19, "NPOS-A5-H29": 2532, "MA100-039": 2881, "MA80-006": 2717, "CFC80-DM": 32953, "PM-L": 807, "PM-M": 806, "K-DA009": 22614, "PM-LL": 808, "S-K80": 242, "TB-S-M": 263, "A2-120": 70308, "IE-N3S-107P": 5951, "K-50": 108, "TB-SS-S": 1865, "M-80": 129, "PMB-M": 2244, "IE-N3S-107NF": 5949, "Z-NPOS": 326, "MA120-028": 2863, "DA004": 65, "K-A480": 2680, "P-B2": 184, "MA140-271": 4297, "MA100-001": 2719, "KY-DA009": 25464, "MA140-401": 7339, "K-MAK160002": 23642};
-const matImg = m => MAT_IMG[m] ? 'https://www.notosiki.co.jp/parts/data/item/' + MAT_IMG[m] + '/' + MAT_IMG[m] + '_1.jpg' : '';
-const MAT_TOP = 12;   // 最初に出すボタンの数（よく使う順の上から）。残りは「ほかの資材を出す」か絞り込みで出す
-const matName = m => MAT_NAMES[m] || '';
-const matFull = m => m + (matName(m) ? '（' + matName(m) + '）' : '');
-const MAT_NONE = 'なし（再利用など）';
-let MATLIST = null, PICK = null;
-// 選んだ資材は、その注文のSKUの「資材指定」として登録する（次からその注文は選ぶ画面を出さない）
-//   はじめて選ぶとき：まだ資材指定がないSKUだけ登録。「変更」のとき：その注文のSKUすべてを変更後の資材にする
-async function setMatsFor(codes, mat){
-  const ks = [...new Set(codes.map(norm).filter(Boolean))]; if (!ks.length) return;
-  const now = new Date().toISOString(), items = {};
-  ks.forEach(k => { items[k] = { mat, at: now, by: holdWho(), from: '梱包OKで選択' }; });
-  await setDoc(doc(db, 'settings', 'pack_materials'), { items, updatedAt: now }, { merge: true });
-  ks.forEach(k => { MATS[k] = items[k]; });
+function markPacked(){
+  if (state.us || !state.order || state.canceled || holdOf() || !authUser) return;
+  const k = cxKey(state.order);
+  if (state.doneWritten === k || (PROG && PROG.done && PROG.done[k])) return;
+  state.doneWritten = k;
+  setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: { at: new Date().toISOString(), by: holdWho() } } }, { merge: true }).catch(e => { console.warn('packProgress', e); state.doneWritten = ''; });
 }
-const USED = {};   // この端末で記録した注文 → { mat, date }
-const matList = () => (Array.isArray(MATLIST) && MATLIST.length ? MATLIST : MAT_DEFAULT);
-const usageRef = date => doc(db, 'settings', 'pack_usage_' + date);
-const orderUsageKey = () => 'O-' + cxKey(state.order);
-/* ---------- 使った分だけ発注（settings/material_counter） ----------
-   used.{品番}：前回の発注から使った枚数。梱包OKで資材を記録するたびに +1（選び直しは古い資材を -1）
-   used が発注数量（調布の 標準ロット×標準口数）に届いたら「○枚使いました → ○枚発注してください」を出す
-   「発注した」を押すと used から発注数量を引く（チェックリストからも同じ記録を読む・押せる） */
-const MAT_LOT = {"CFC80-A4": 1260, "K-44": 480, "K-60": 640, "NA4-H26": 1250, "TB-SS-M": 1400, "K-80": 100, "K-S60": 420, "PM-XL": 500, "K-100": 100, "A4-K80": 180, "NPOS-A5-H29": 300, "MA100-039": 60, "MA80-006": 80, "CFC80-DM": 440, "PM-L": 500, "PM-M": 400, "K-DA009": 50, "PM-LL": 900, "S-K80": 160, "TB-S-M": 500, "A2-120": 120, "IE-N3S-107P": 1000, "K-50": 400, "TB-SS-S": 700, "M-80": 300, "PMB-M": 250, "IE-N3S-107NF": 200, "Z-NPOS": 250, "MA120-028": 90, "DA004": 50, "K-A480": 180, "P-B2": 60, "MA140-271": 100};   // 資材発注システムの拠点別資材（調布）の 標準ロット×標準口数
-let COUNTER = {}, POINT = {}, COUNTER_READY = false;
-// 発注点（何枚使ったら知らせるか）：発注するたびに決める（point.{品番}）。決めていなければ発注数量
-const pointOf = k => Number(POINT[k]) || MAT_LOT[k] || 0;
-const NOTIFIED = new Set();
-const dueMats = () => Object.keys(COUNTER).filter(k => pointOf(k) > 0 && Number(COUNTER[k]) >= pointOf(k)).map(k => ({ code: k, used: Number(COUNTER[k]), lot: MAT_LOT[k] || 0, point: pointOf(k) }));
-async function bumpCounter(prev, mat){
-  const used = {}, isMat = m => m && m !== MAT_NONE;
-  if (prev === mat) return;
-  if (isMat(prev)) used[prev] = increment(-1);
-  if (isMat(mat)) used[mat] = increment(1);
-  if (!Object.keys(used).length) return;
-  const info = {}; [prev, mat].filter(isMat).forEach(m => { info[m] = { name: matName(m), lot: MAT_LOT[m] || 0, img: matImg(m) }; });
-  await setDoc(doc(db, 'settings', 'material_counter'), { used, info, updatedAt: new Date().toISOString() }, { merge: true });
+function renderDayProg(){
+  const el = $('dayProg'); if (!el) return;
+  const plan = (PROG && PROG.plan) || {}, done = (PROG && PROG.done) || {};
+  const keys = Object.keys(plan);
+  if (state.us || !keys.length) { el.style.display = 'none'; return; }
+  const cxm = CXMAP || {};
+  const held = keys.filter(k => !done[k] && HOLDS[k]), cx = keys.filter(k => !done[k] && cxm[k]);
+  const left = keys.filter(k => !done[k] && !HOLDS[k] && !cxm[k]);
+  const n = keys.filter(k => done[k]).length;
+  el.style.display = '';
+  el.innerHTML = '<details style="background:' + (left.length ? '#eef4fa' : '#e4f3ea') + ';border-radius:8px;padding:8px 10px"><summary style="cursor:pointer;font-weight:700">'
+    + (left.length ? '今日の残り <span style="font-size:20px">' + left.length + '</span> 件' : '✓ 今日の検品シートはすべて梱包済み')
+    + '<span style="font-weight:400;font-size:12px">（全' + keys.length + '・済み' + n + (held.length ? '・欠品保留' + held.length : '') + (cx.length ? '・キャンセル' + cx.length : '') + '）</span></summary>'
+    + (left.length ? '<div style="margin-top:6px;font-size:12px;line-height:1.7">' + left.map(k => esc(plan[k].orderNo) + (plan[k].shop ? '<span style="color:#66727c">（' + esc(plan[k].shop) + '）</span>' : '')).join('<br>') + '</div>' : '')
+    + '</details>';
 }
-async function markOrdered(code){
-  const lot = MAT_LOT[code] || 0, n = Number(COUNTER[code] || 0);
-  const v = prompt(code + '（' + matName(code) + '）を何枚発注しましたか？\n使った枚数 ' + n + '枚から引きます', String(lot || n));
-  if (v === null) return;
-  const q = Number(String(v).replace(/[^\d]/g, '')); if (!q) return;
-  const pv = prompt('次は何枚使ったら知らせますか？（発注点）', String(pointOf(code) || q));
-  if (pv === null) return;
-  const pt = Number(String(pv).replace(/[^\d]/g, '')) || q;
-  const now = new Date().toISOString();
-  try {
-    await setDoc(doc(db, 'settings', 'material_counter'), { used: { [code]: increment(-q) }, point: { [code]: pt }, ordered: { [code]: { qty: q, point: pt, at: now, by: holdWho() } }, updatedAt: now }, { merge: true });
-    NOTIFIED.delete(code); beep(true); flash(true, '発注した数を記録しました', code + '　' + q + '枚', 1200);
-  } catch (e) { alert('記録できませんでした：' + e.message); }
-}
-function orderBoxHtml(){
-  const due = dueMats();
-  if (!due.length) return '';
-  return '<div class="matwarn" style="white-space:normal">📦 発注してください（前回の発注から使った枚数が、発注数量に届きました）'
-    + due.map(d => '<div style="display:flex;gap:8px;align-items:center;background:#fff;color:var(--ink);border-radius:8px;padding:6px 8px;margin-top:6px">'
-      + (matImg(d.code) ? '<img src="' + esc(matImg(d.code)) + '" alt="" style="width:48px;height:36px;object-fit:contain;flex:none" onerror="this.remove()">' : '')
-      + '<div style="flex:1;font-size:14px"><b>' + esc(d.code) + '</b> ' + esc(matName(d.code)) + '<br>' + d.used + '枚使いました（発注点 ' + d.point + '枚）' + (d.lot ? ' → いつもは <b>' + d.lot + '枚</b>' : '') + '</div>'
-      + '<button type="button" data-ordered="' + esc(d.code) + '" style="font:inherit;font-size:14px;font-weight:700;padding:8px 12px;border-radius:8px;border:1px solid var(--warn);background:#fff8e8;color:#7a4d00">発注した</button></div>').join('') + '</div>';
-}
-function drawOrderBox(){ const el = $('uvOrder'); if (el) el.innerHTML = orderBoxHtml(); }
-document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-ordered]'); if (b) markOrdered(b.dataset.ordered); });
-async function saveUsage(key, mat, info){
-  const date = (USED[key] && USED[key].date) || todayStr(), now = new Date().toISOString();   // 選び直しは最初に記録した日に上書き
-  await setDoc(usageRef(date), { orders: { [key]: Object.assign({ mat, n: 1, at: now, by: holdWho() }, info || {}) }, updatedAt: now }, { merge: true });
-  const prev = USED[key] && USED[key].mat;
-  USED[key] = { mat, date };
-  bumpCounter(prev, mat).catch(e => console.warn('material_counter', e));
-}
-function openPick(p){
-  PICK = p;
-  $('mpTitle').textContent = p.change ? '使った資材を変更' : '使った資材を選んでください';
-  $('mpSub').textContent = p.sub || '';
-  $('mpCancel').textContent = p.change ? '閉じる（変えない）' : '選ばずに進む（記録しない）';
-  $('mpMsg').textContent = '';
-  $('mpFilter').value = '';
-  drawPick();
-  $('matPick').classList.add('on');
-}
-function drawPick(){
-  if (!PICK) return;
-  const def = PICK.def || [];
-  const list = [...new Set([...def, ...matList()])];
-  const w = ($('mpFilter').value || '').trim().toLowerCase();
-  const top = new Set([...def, ...matList().slice(0, MAT_TOP)]);
-  const shown = list.filter(m => w ? (def.includes(m) || (m + ' ' + matName(m)).toLowerCase().includes(w)) : (PICK.all || top.has(m)));
-  const rest = list.length - shown.length;
-  $('mpMore').style.display = !w && !PICK.all && rest > 0 ? '' : 'none';
-  $('mpMore').textContent = '▼ ほかの資材を出す（' + rest + '）';
-  $('mpGrid').innerHTML = shown.map((m, i) => '<button type="button" class="mp-btn' + (def.includes(m) ? ' def' : '') + '" data-mat="' + esc(m) + '">'
-    + (matImg(m) ? '<img class="mi" src="' + esc(matImg(m)) + '" alt="" loading="lazy" onerror="this.remove()">' : '') + esc(m)
-    + (matName(m) ? '<span class="n">' + esc(matName(m)) + '</span>' : '')
-    + '<span class="k">' + (def.includes(m) ? '資材指定' : '') + (isPC && i < 9 ? (def.includes(m) ? '・' : '') + 'キー ' + (i + 1) : '') + '</span></button>').join('') || '<div class="note">見つかりません</div>';
-}
-async function pickMat(mat){
-  if (!PICK || PICK.busy) return;
-  const p = PICK; p.busy = true;
-  $('mpMsg').textContent = '記録しています…';
-  try {
-    await saveUsage(p.key, mat, p.info);
-    if (p.codes && mat !== MAT_NONE) {   // 「資材を使っていない」は資材指定にしない（その時だけのことが多いので）
-      const codes = p.change ? p.codes : p.codes.filter(c => !matOf(c));
-      setMatsFor(codes, mat).catch(e => alert('資材指定に登録できませんでした：' + e.message));
-    }
-    PICK = null; $('matPick').classList.remove('on');
-    beep(true); flash(true, '📦 ' + mat, '使った資材を記録しました', 900);
-    if (state.us) usRender(); else render();
-    keepFocus();
-  } catch (e) { p.busy = false; $('mpMsg').textContent = '記録できませんでした：' + e.message; }
-}
-$('mpGrid').addEventListener('click', e => { const b = e.target.closest('[data-mat]'); if (b) pickMat(b.dataset.mat); });
-$('mpFilter').addEventListener('input', drawPick);
-$('mpMore').onclick = () => { if (PICK) { PICK.all = true; drawPick(); } };
-$('mpNone').onclick = () => pickMat(MAT_NONE);
-$('mpOther').onclick = () => { const v = prompt('使った資材の名前'); if (v && v.trim()) pickMat(v.trim()); };
-// 選ばずに進む：この注文の資材は記録しない（梱包OKの帯の「選ぶ」からあとで記録できる）
-const SKIPPED = new Set();
-function skipPick(){
-  if (!PICK) return;
-  if (!PICK.change) SKIPPED.add(PICK.key);
-  PICK = null; $('matPick').classList.remove('on');
-  if (state.us) usRender(); else if (state.items.length) render();
-  keepFocus();
-}
-$('mpCancel').onclick = skipPick;
-$('mpEdit').onclick = async () => {
-  const v = prompt('ボタンに出す資材の品番（「,」で区切る。並び順＝キー1〜9）\n※ 空欄にすると資材発注システムの一覧に戻します', matList().join(','));
-  if (v === null) return;
-  const list = [...new Set(v.split(/[,，、\n]/).map(s => s.trim()).filter(Boolean))];
-  try { await setDoc(doc(db, 'settings', 'pack_materials'), { list: list.length ? list : deleteField(), updatedAt: new Date().toISOString() }, { merge: true }); MATLIST = list.length ? list : null; drawPick(); }
-  catch (e) { alert('一覧を保存できませんでした：' + e.message); }
-};
-// 選ぶ画面が出ているあいだ：数字キー1つ＝その資材。スキャナの入力（速い連続入力）は無視して注意する
-let pkBuf = '', pkTimer = null;
-window.addEventListener('keydown', e => {
-  if (!PICK) return;
-  if (document.activeElement && document.activeElement.id === 'mpFilter') { if (e.key === 'Escape') { $('mpFilter').value = ''; drawPick(); } return; }
-  e.preventDefault(); e.stopPropagation();
-  if (e.key === 'Escape') { skipPick(); return; }
-  // スキャナで次のコード（検品シートのQRなど）を読んだ → 資材は選ばずに進み、読んだコードをそのまま使う
-  if (e.key === 'Enter') { const b = pkBuf; pkBuf = ''; clearTimeout(pkTimer); if (b.length > 1) { skipPick(); handleTyped(b); } return; }
-  if (e.key.length !== 1) return;
-  pkBuf += e.key; clearTimeout(pkTimer);
-  pkTimer = setTimeout(() => {
-    const b = pkBuf; pkBuf = '';
-    if (/^[1-9]$/.test(b)) { const btn = $('mpGrid').querySelectorAll('[data-mat]')[Number(b) - 1]; if (btn) pickMat(btn.dataset.mat); }
-  }, 150);
-}, true);
-// 梱包OKになったときに呼ぶ（まとまるくんの検品シートの注文）
-function maybeAskMat(){
-  if (state.us || !state.items.length || state.canceled || holdOf() || PICK) return;
-  if (!state.items.every(x => x.scanned === x.qty)) return;
-  const key = orderUsageKey(); if (USED[key] || SKIPPED.has(key)) return;
-  const specs = [...new Set(state.items.map(x => matOf(x.code)).filter(Boolean).map(m => m.mat))];
-  const info = { order: state.order, src: 'sheet' }, codes = state.items.map(x => x.code);
-  const allSet = state.items.every(x => matOf(x.code));
-  if (allSet && specs.length === 1) {   // どのSKUも資材指定があり、資材が1つ → そのまま記録（違ったら「変更」）
-    saveUsage(key, specs[0], Object.assign({ auto: true }, info)).then(() => render())
-      .catch(() => openPick({ key, codes, sub: '受注番号 ' + state.order + '\n資材指定：' + specs[0], def: specs, info }));
-    return;
-  }
-  openPick({ key, codes, sub: '受注番号 ' + state.order + (specs.length > 1 ? '\n資材指定が' + specs.length + 'つあります：' + specs.join('、') + '（実際に使ったほう）' : specs.length ? '\n資材指定：' + specs[0] + '（資材指定のない商品もあります）' : '') + '\n選んだ資材は、この注文の商品の資材指定として登録されます', def: specs, info });
-}
-// 配送管理アプリの検品書：箱（同梱をまとめた単位）がそろったときに呼ぶ
-function askMatUs(nos){
-  const key = 'U-' + state.us + '-' + nos[0];
-  if (USED[key] || SKIPPED.has(key) || PICK) return;
-  openPick({ key, sub: '箱：No.' + nos.join('、No.'), def: [], info: { client: state.us, nos, src: 'us' } });
-}
-
-// 使用枚数の集計（その月の日ごとの記録を読む：1日につき読み取り1回）
-let UV = null;
-async function showUsage(){
-  $('usageView').classList.add('on');
-  if (!$('uvMonth').value) $('uvMonth').value = todayStr().slice(0, 7);
-  drawOrderBox();
-  await loadUsage();
-}
-async function loadUsage(){
-  const ym = $('uvMonth').value; if (!ym) return;
-  const body = $('uvBody');
-  await authReady;
-  if (!authUser) { body.innerHTML = '<div class="err">ログインしてください</div>'; return; }
-  body.textContent = '読み込み中…';
-  const [y, m] = ym.split('-').map(Number), last = new Date(y, m, 0).getDate(), today = todayStr();
-  const days = [];
-  for (let d = 1; d <= last; d++) { const s = ym + '-' + String(d).padStart(2, '0'); if (s <= today) days.push(s); }
-  try {
-    const snaps = await Promise.all(days.map(d => getDoc(usageRef(d))));
-    const per = {}, tot = {};
-    snaps.forEach((s, i) => {
-      const o = (s.exists() && s.data().orders) || {};
-      Object.values(o).forEach(r => {
-        const k = r.mat || '（不明）', n = Number(r.n) || 1;
-        (per[days[i]] = per[days[i]] || {})[k] = (per[days[i]][k] || 0) + n;
-        tot[k] = (tot[k] || 0) + n;
-      });
-    });
-    const mats = Object.keys(tot).sort((a, b) => tot[b] - tot[a]);
-    const ds = days.filter(d => per[d]);
-    UV = { ym, mats, ds, per, tot };
-    if (!mats.length) { body.innerHTML = '<div class="note" style="font-size:14px">この月の記録はまだありません</div>'; return; }
-    const sum = mats.reduce((s, k) => s + tot[k], 0);
-    body.innerHTML = '<div style="overflow-x:auto"><table class="uv-tbl"><thead><tr><th>資材</th><th>' + m + '月 合計</th></tr></thead><tbody>'
-      + mats.map(k => '<tr><td>' + esc(matFull(k)) + '</td><td>' + tot[k].toLocaleString() + '</td></tr>').join('')
-      + '<tr class="tot"><td>合計（梱包した箱）</td><td>' + sum.toLocaleString() + '</td></tr></tbody></table></div>'
-      + '<div style="font-weight:700;margin:14px 0 6px">日ごと</div>'
-      + '<div style="overflow-x:auto"><table class="uv-tbl"><thead><tr><th>日付</th>' + mats.map(k => '<th>' + esc(k) + '</th>').join('') + '<th>計</th></tr></thead><tbody>'
-      + ds.map(d => '<tr><td>' + md(d) + '</td>' + mats.map(k => '<td>' + (per[d][k] || '') + '</td>').join('') + '<td>' + mats.reduce((s, k) => s + (per[d][k] || 0), 0) + '</td></tr>').join('')
-      + '</tbody></table></div>';
-  } catch (e) { body.innerHTML = '<div class="err">読み込めませんでした：' + esc(e.message) + '</div>'; }
-}
-$('usageBtn').onclick = showUsage;
-$('uvMonth').onchange = loadUsage;
-$('uvClose').onclick = () => { $('usageView').classList.remove('on'); keepFocus(); };
-$('uvCsv').onclick = () => {
-  if (!UV || !UV.mats.length) return;
-  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
-  const lines = [['日付', ...UV.mats.map(matFull), '計'].map(q).join(',')]
-    .concat(UV.ds.map(d => [d, ...UV.mats.map(k => UV.per[d][k] || 0), UV.mats.reduce((s, k) => s + (UV.per[d][k] || 0), 0)].map(q).join(',')))
-    .concat([['合計', ...UV.mats.map(k => UV.tot[k]), UV.mats.reduce((s, k) => s + UV.tot[k], 0)].map(q).join(',')]);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
-  a.download = '資材使用枚数_' + UV.ym + '.csv'; a.click();
-};
 const holdOf = () => (!state.us && state.order) ? HOLDS[cxKey(state.order)] : null;
 const holdWho = () => (authUser && authUser.email) || '';
 function renderHold(allOk){
@@ -1247,7 +929,6 @@ async function checkOrderCanceled(){
 }
 function afterChange() {
   render();
-  maybeAskMat();
   // 梱包OKでもカメラは止めない（そのまま次の検品シートのQRを読めるように）
 }
 
@@ -1269,7 +950,6 @@ async function startCamera() {
       text => {
         const now = Date.now();
         if ($('flash').classList.contains('ng')) return;          // 赤いエラーを閉じるまでは読まない
-        if (PICK) skipPick();   // 次のコードを読んだら、資材は選ばずに進む
         if (text === lastCode && now - lastAt < 1500) return;   // 同じシールを続けて読まない
         lastCode = text; lastAt = now;
         if (/#o=.*&i=/.test(text) || /#u=.*&n=/.test(text)) { openOrder(text.slice(text.indexOf('#') + 1)); return; }   // 検品シートのQR → その注文を開く
@@ -1347,7 +1027,7 @@ async function start() {
     $('progress').textContent = '検品シートのQRを読んでください';
     $('bar').style.width = '0';
     $('allok').classList.remove('show');
-    $('list').innerHTML = orderBoxHtml() + '<div class="note" style="font-size:14px;">' + (isPC ? 'スキャナで検品シートのQR、または荷物の配送伝票（倉庫追跡番号）のバーコードを読むと、その注文の商品が表示されます。バーコードのある商品はシール・PKGIDを読んで照合、ない商品は画像のタイルから選んで照合します。' : '下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。') + '</div><button type="button" class="btn ghost" style="margin-top:14px;width:100%" onclick="document.getElementById(\'usageBtn\').click()">📊 資材の使用枚数を見る</button>';
+    $('list').innerHTML = '<div class="note" style="font-size:14px;">' + (isPC ? 'スキャナで検品シートのQR、または荷物の配送伝票（倉庫追跡番号）のバーコードを読むと、その注文の商品が表示されます。バーコードのある商品はシール・PKGIDを読んで照合、ない商品は画像のタイルから選んで照合します。' : '下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。') + '</div>';
     $('scanBtn').textContent = '📷 検品シートのQRを読む';
     $('resetBtn').style.display = 'none';
     keepFocus();

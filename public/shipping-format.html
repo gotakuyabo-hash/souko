@@ -3825,6 +3825,13 @@ window.openPrintPreview = async () => {
 
   // QRの中身を先に作り、バーコードで照合できない（マスタ未登録の）商品があれば印刷前に知らせる
   groups.forEach(g => { g.packItems = buildPackItems(g.rows, masterMap, packHints); });
+  // 梱包くんの「残り○件」用に、今日印刷した注文を packProgress/{日付} に足す（書き込み1回）
+  try {
+    const pk = v => String(v || '').normalize('NFKC').replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
+    const d0 = new Date(), day = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
+    const plan = {}; groups.forEach(g => { const k = pk(g.orderNo); if (k) plan[k] = { orderNo: String(g.orderNo).trim(), shop: String(g.shop || '').trim().slice(0, 40) }; });
+    if (Object.keys(plan).length) setDoc(doc(db, 'packProgress', day), { date: day, plan, updatedAt: d0.toISOString() }, { merge: true }).catch(e => console.warn('packProgress', e));
+  } catch (e) { console.warn('packProgress', e); }
   const unregNames = [...new Set(groups.flatMap(g => g.packItems.filter(x => x.kind === 'unreg').map(x => x.name || x.code)))];
   // コードが変わった商品（QRは今のzaicoのコードで作った）と、zaicoに見つからないバーコード
   const changedTxt = [...new Map(packHints.changed.map(c => [c.from + '>' + c.to, c])).values()]
