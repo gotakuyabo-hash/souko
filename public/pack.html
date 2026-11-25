@@ -157,7 +157,7 @@ main{ padding:12px 12px 140px; }
     <button type="button" class="mp-btn mp-small" id="mpOther">その他（入力）</button>
     <button type="button" class="mp-btn mp-small" id="mpNone">資材を使っていない（再利用など）</button>
   </div>
-  <div class="mp-row"><button type="button" class="mp-link" id="mpEdit">資材の一覧を編集</button><button type="button" class="mp-link" id="mpCancel" style="display:none">閉じる（変えない）</button></div>
+  <div class="mp-row"><button type="button" class="mp-link" id="mpEdit">資材の一覧を編集</button><button type="button" class="mp-link" id="mpCancel" style="font-size:14px">選ばずに進む</button></div>
   <div id="mpMsg"></div>
 </div></div>
 <!-- 資材の使用枚数（月ごと） -->
@@ -727,6 +727,10 @@ function render() {
   lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）' : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
   const used = USED[orderUsageKey()];
   $('allokMat').innerHTML = used ? '📦 使った資材：' + esc(matFull(used.mat)) + (state.items.every(x => matOf(x.code) && matOf(x.code).mat === used.mat) ? '（資材指定）' : '') + '<button type="button" id="matChange">変更</button>' : '';
+  if (!used && state.items.length && state.items.every(x => x.scanned === x.qty) && !state.canceled && !holdOf()) {
+    $('allokMat').innerHTML = '📦 使った資材：未記録<button type="button" id="matChange">選ぶ</button>';
+    $('matChange').onclick = () => { SKIPPED.delete(orderUsageKey()); maybeAskMat(); };
+  }
   if (used) $('matChange').onclick = () => openPick({ key: orderUsageKey(), codes: state.items.map(x => x.code), change: true, sub: '受注番号 ' + state.order + '\n今：' + used.mat + '\nこの注文の商品の資材指定も、選んだ資材に変わります', def: [used.mat], info: { order: state.order, src: 'sheet' } });
   $('allokSub').textContent = state.label ? '次の検品シートのQRを読むと、次の注文に進みます' : '送り状のバーコードを読んで照合してください（そのあと次の検品シートへ）';
   // 資材指定のSKUがある注文：上に注意を出し、開いたときに1回だけ画面全体で知らせる
@@ -1035,7 +1039,7 @@ function openPick(p){
   PICK = p;
   $('mpTitle').textContent = p.change ? '使った資材を変更' : '使った資材を選んでください';
   $('mpSub').textContent = p.sub || '';
-  $('mpCancel').style.display = p.change ? '' : 'none';
+  $('mpCancel').textContent = p.change ? '閉じる（変えない）' : '選ばずに進む（記録しない）';
   $('mpMsg').textContent = '';
   $('mpFilter').value = '';
   drawPick();
@@ -1077,7 +1081,16 @@ $('mpFilter').addEventListener('input', drawPick);
 $('mpMore').onclick = () => { if (PICK) { PICK.all = true; drawPick(); } };
 $('mpNone').onclick = () => pickMat(MAT_NONE);
 $('mpOther').onclick = () => { const v = prompt('使った資材の名前'); if (v && v.trim()) pickMat(v.trim()); };
-$('mpCancel').onclick = () => { PICK = null; $('matPick').classList.remove('on'); };
+// 選ばずに進む：この注文の資材は記録しない（梱包OKの帯の「選ぶ」からあとで記録できる）
+const SKIPPED = new Set();
+function skipPick(){
+  if (!PICK) return;
+  if (!PICK.change) SKIPPED.add(PICK.key);
+  PICK = null; $('matPick').classList.remove('on');
+  if (state.us) usRender(); else if (state.items.length) render();
+  keepFocus();
+}
+$('mpCancel').onclick = skipPick;
 $('mpEdit').onclick = async () => {
   const v = prompt('ボタンに出す資材の品番（「,」で区切る。並び順＝キー1〜9）\n※ 空欄にすると資材発注システムの一覧に戻します', matList().join(','));
   if (v === null) return;
@@ -1091,8 +1104,9 @@ window.addEventListener('keydown', e => {
   if (!PICK) return;
   if (document.activeElement && document.activeElement.id === 'mpFilter') { if (e.key === 'Escape') { $('mpFilter').value = ''; drawPick(); } return; }
   e.preventDefault(); e.stopPropagation();
-  if (e.key === 'Escape' && PICK.change) { $('mpCancel').onclick(); return; }
-  if (e.key === 'Enter') { if (pkBuf.length > 1) { beep(false); $('mpMsg').textContent = '先に使った資材を選んでください（スキャンは選んでから）'; } pkBuf = ''; clearTimeout(pkTimer); return; }
+  if (e.key === 'Escape') { skipPick(); return; }
+  // スキャナで次のコード（検品シートのQRなど）を読んだ → 資材は選ばずに進み、読んだコードをそのまま使う
+  if (e.key === 'Enter') { const b = pkBuf; pkBuf = ''; clearTimeout(pkTimer); if (b.length > 1) { skipPick(); handleTyped(b); } return; }
   if (e.key.length !== 1) return;
   pkBuf += e.key; clearTimeout(pkTimer);
   pkTimer = setTimeout(() => {
@@ -1104,7 +1118,7 @@ window.addEventListener('keydown', e => {
 function maybeAskMat(){
   if (state.us || !state.items.length || state.canceled || holdOf() || PICK) return;
   if (!state.items.every(x => x.scanned === x.qty)) return;
-  const key = orderUsageKey(); if (USED[key]) return;
+  const key = orderUsageKey(); if (USED[key] || SKIPPED.has(key)) return;
   const specs = [...new Set(state.items.map(x => matOf(x.code)).filter(Boolean).map(m => m.mat))];
   const info = { order: state.order, src: 'sheet' }, codes = state.items.map(x => x.code);
   const allSet = state.items.every(x => matOf(x.code));
@@ -1118,7 +1132,7 @@ function maybeAskMat(){
 // 配送管理アプリの検品書：箱（同梱をまとめた単位）がそろったときに呼ぶ
 function askMatUs(nos){
   const key = 'U-' + state.us + '-' + nos[0];
-  if (USED[key] || PICK) return;
+  if (USED[key] || SKIPPED.has(key) || PICK) return;
   openPick({ key, sub: '箱：No.' + nos.join('、No.'), def: [], info: { client: state.us, nos, src: 'us' } });
 }
 
@@ -1255,7 +1269,7 @@ async function startCamera() {
       text => {
         const now = Date.now();
         if ($('flash').classList.contains('ng')) return;          // 赤いエラーを閉じるまでは読まない
-        if (PICK) { if (text !== lastCode || now - lastAt > 1500) { beep(false); $('mpMsg').textContent = '先に使った資材を選んでください'; } lastCode = text; lastAt = now; return; }
+        if (PICK) skipPick();   // 次のコードを読んだら、資材は選ばずに進む
         if (text === lastCode && now - lastAt < 1500) return;   // 同じシールを続けて読まない
         lastCode = text; lastAt = now;
         if (/#o=.*&i=/.test(text) || /#u=.*&n=/.test(text)) { openOrder(text.slice(text.indexOf('#') + 1)); return; }   // 検品シートのQR → その注文を開く
