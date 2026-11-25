@@ -390,6 +390,9 @@ function usRender(){
             + (f.storage && f.storage.active ? '<div class="us-note">📦 保管中' + (f.storage.memo ? '：' + esc(f.storage.memo) : '') + '</div>' : '')
             + (r.note ? '<div class="us-memo">📝 備考：' + esc(r.note) + '</div>' : '')
             + (stop ? '<div class="us-msg ng" style="margin:0">入れない</div>'
+               + (/^注文番号/.test(stop) ? ''
+                  : r.arrivedAt ? '<div class="code" style="margin-top:6px">入荷日：' + esc(md(r.arrivedAt)) + '（入力済み）</div>'
+                  : '<button class="btn ghost" style="width:100%;margin-top:6px" data-us="arr" data-no="' + r.no + '">入荷日だけ入れる（' + esc(stop) + '）</button>')
                : p ? '<div style="display:flex;gap:8px;align-items:center"><b style="color:var(--ok)">✓ 入れた</b><button class="manual undo" data-us="undo" data-no="' + r.no + '">戻す</button></div>'
                : '<button class="btn" style="width:100%;margin-top:6px" data-us="in" data-no="' + r.no + '">箱に入れた</button>')
             + '</div></div>';
@@ -426,6 +429,13 @@ $('list').addEventListener('click', async e => {
     const r = t.todo[0] || t.stop[0] || t.rows[0];
     US.sel = r.no; usRender(); window.scrollTo({ top:0, behavior:'smooth' });
     if (usStop(r.no)) { beep(false); flash(false, '⚠ No.' + r.no + 'は' + usStop(r.no), '箱に入れないでください\n（タップ・Escで閉じる）'); }
+    return;
+  }
+  if (act === 'arr') {
+    // 出荷保留・問い合わせ中：箱には入れないが、届いているので入荷日だけ入れる
+    b.disabled = true; b.textContent = '入荷日を入れています…';
+    usArriveBg(no);
+    US.q.then(() => usRender());
     return;
   }
   if (act === 'undo') {
