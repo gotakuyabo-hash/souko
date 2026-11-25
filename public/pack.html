@@ -97,6 +97,7 @@ main{ padding:12px 12px 140px; }
 <main>
   <div class="allok" id="allok">✓ 梱包OK<div id="allokSub" style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
   <div id="labelTag" style="display:none;margin:6px 0;padding:8px 10px;border-radius:8px;font-weight:700;font-size:14px"></div>
+  <div id="holdBox" style="display:none;margin:6px 0"></div>
   <div id="list"></div>
   <div class="note" id="cacheNote"></div>
 </main>
@@ -116,7 +117,7 @@ main{ padding:12px 12px 140px; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
@@ -271,7 +272,8 @@ function usStop(no){
   const r = US.rows[no], f = US.flags[no] || {};
   const proc = procOf(f);
   if (proc && hasProc(r) && !matches(r, proc)) return '注文番号が処理したときと違う（シートを確認）';
-  if ((f.hold && f.hold.active) || /出荷保留/.test(r.note || '')) return '出荷保留';
+  // 備考欄の「出荷保留」は、解除した記録（releaseReason）があれば止めない（USくんと同じ扱い）
+  if ((f.hold && f.hold.active) || (/出荷保留/.test(r.note || '') && !(f.hold && f.hold.releaseReason))) return '出荷保留';
   if (f.inquiry && f.inquiry.active) return '問い合わせ中';
   return '';
 }
@@ -405,6 +407,7 @@ function usRender(){
                + (/^注文番号/.test(stop) ? ''
                   : r.arrivedAt ? '<div class="code" style="margin-top:6px">入荷日：' + esc(md(r.arrivedAt)) + '（入力済み）</div>'
                   : '<button class="btn ghost" style="width:100%;margin-top:6px" data-us="arr" data-no="' + r.no + '">入荷日だけ入れる（' + esc(stop) + '）</button>')
+               + (/^(出荷保留|問い合わせ中)$/.test(stop) ? '<button class="btn ghost" style="width:100%;margin-top:6px;border-color:var(--warn);color:var(--warn)" data-us="release" data-no="' + r.no + '">' + esc(stop) + 'を解除して箱に入れる</button>' : '')
                : p ? '<div style="display:flex;gap:8px;align-items:center"><b style="color:var(--ok)">✓ 入れた</b><button class="manual undo" data-us="undo" data-no="' + r.no + '">戻す</button></div>'
                : '<button class="btn" style="width:100%;margin-top:6px" data-us="in" data-no="' + r.no + '">箱に入れた</button>')
             + '</div></div>';
@@ -448,6 +451,28 @@ $('list').addEventListener('click', async e => {
     b.disabled = true; b.textContent = '入荷日を入れています…';
     usArriveBg(no);
     US.q.then(() => usRender());
+    return;
+  }
+  if (act === 'release') {
+    // 出荷保留・問い合わせ中を、梱包くんから解除する（USくんの「問い合わせ・保留・保管」と同じ記録）
+    const stop = usStop(no);
+    if (!confirm('No.' + no + 'の「' + stop + '」を解除しますか？\n解除すると、箱に入れられるようになり、出荷通知CSVにも入ります。' + (/出荷保留/.test((US.rows[no] || {}).note || '') ? '\n（シートの備考欄の「出荷保留」はそのまま残ります。解除した記録が優先されます）' : ''))) return;
+    b.disabled = true;
+    const now = new Date().toISOString(), email = (authUser && authUser.email) || '';
+    try {
+      const f = US.flags[no] = US.flags[no] || {};
+      if (stop === '出荷保留') {
+        const hold = { active:false, releasedAt:now, releasedBy:email, releaseReason:'梱包くんで解除' };
+        await setDoc(ordRef(no), { hold }, { merge:true });
+        f.hold = Object.assign({}, f.hold || {}, hold);
+      } else {
+        const inquiry = { active:false, resolvedAt:serverTimestamp(), resolvedBy:email, resolution:'梱包くんで解除' };
+        await setDoc(ordRef(no), { inquiry }, { merge:true });
+        f.inquiry = Object.assign({}, f.inquiry || {}, { active:false });
+      }
+      beep(true); flash(true, 'No.' + no + 'の' + stop + 'を解除しました', '箱に入れてください', 1500);
+      US.sel = no; usRender();
+    } catch (e) { b.disabled = false; alert('解除できませんでした：' + e.message); }
     return;
   }
   if (act === 'undo') {
@@ -635,9 +660,11 @@ function render() {
   if (state.canceled) {   // 依頼まとめ管理でキャンセル済みにした受注番号
     lt.style.background = '#c0392b'; lt.style.color = '#fff';
     lt.textContent = '✕ この注文はキャンセル済みです。梱包しないでください（' + state.canceled + '）';
-    $('allok').classList.remove('show');
+    $('allok').classList.remove('show'); $('holdBox').style.display = 'none';
     return;
   }
+  renderHold(allOk);
+  if (holdOf()) $('allok').classList.remove('show');
   lt.style.background = state.label ? '#e4f3ea' : '#fff4d6'; lt.style.color = state.label ? '#1e7a46' : '#8a5a00';
   lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）' : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
   $('allokSub').textContent = state.label ? '次の検品シートのQRを読むと、次の注文に進みます' : '送り状のバーコードを読んで照合してください（そのあと次の検品シートへ）';
@@ -731,6 +758,7 @@ function check(code) {
     return;
   }
   if (state.canceled) { beep(false); flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + state.order + '\n梱包しないでください（次の検品シートのQRを読んでください）'); return; }
+  if (holdOf()) { beep(false); flash(false, '⚠ 欠品で保留中の注文です', '受注番号 ' + state.order + '\n商品がそろったら、上のボタンで保留を解除してください（タップ・Escで閉じる）'); return; }
   const it = findItem(raw);
   if (!it) {
     // 商品でなければ、まず送り状として照合 → だめなら（梱包OKのあとなら）次の荷物の倉庫追跡番号として探す
@@ -796,10 +824,59 @@ const cxKey = v => String(v || '').normalize('NFKC').replace(/[\s　\-‐－−�
 let CXMAP = null, cxWatching = false;
 function watchCancels(){
   if (cxWatching || !authUser) return; cxWatching = true;
+  onSnapshot(doc(db, 'settings', 'ship_holds'), snap => {
+    HOLDS = (snap.exists() && snap.data().holds) || {};
+    if (!state.us && state.items.length) render();
+  }, e => console.warn('ship_holds', e));
   onSnapshot(doc(db, 'settings', 'ship_cancels'), snap => {
     CXMAP = (snap.exists() && snap.data().keys) || {};
     if (!state.us && state.order && !state.canceled) checkOrderCanceled();
   }, e => { console.warn('ship_cancels', e); cxWatching = false; });
+}
+/* ---------- 欠品で保留（settings/ship_holds） ----------
+   holds.{受注番号}：保留中（出荷通知CSVに入らない）
+   carry.{受注番号}：保留を解除した注文。送り状を作った日のあとでも、次の出荷通知CSVに自動で入る
+     送り状が同じか作り直したかは、出荷通知のときに「取り消していない送り状のうち新しいほう」で決まる */
+let HOLDS = {};
+const holdOf = () => (!state.us && state.order) ? HOLDS[cxKey(state.order)] : null;
+const holdWho = () => (authUser && authUser.email) || '';
+function renderHold(allOk){
+  const box = $('holdBox'); if (!box) return;
+  const h = holdOf();
+  if (state.us || !state.items.length || !authUser) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  if (h) {
+    const miss = (h.missing || []).map(m => esc(m.name || m.code) + ' ' + m.got + '/' + m.need).join('、');
+    box.innerHTML = '<div style="background:#d68910;color:#fff;border-radius:8px;padding:10px;font-size:14px"><b>⚠ 欠品で保留中</b>（' + esc(String(h.at || '').slice(0, 16).replace('T', ' ')) + ' ' + esc(h.by || '') + '）' + (miss ? '<br>足りない商品：' + miss : '') +
+      '<div style="margin-top:8px"><button type="button" id="holdOk" style="width:100%;padding:10px;border-radius:8px;border:0;font-weight:700">商品がそろった（保留を解除して梱包する）</button></div></div>';
+    $('holdOk').onclick = () => holdRelease();
+    return;
+  }
+  if (allOk) { box.style.display = 'none'; return; }
+  box.innerHTML = '<button type="button" id="holdBtn" style="padding:8px 12px;border-radius:8px;border:1px solid #d68910;background:#fff8e8;color:#8a5a00;font-weight:700">⚠ 欠品で保留にする</button>';
+  $('holdBtn').onclick = holdSet;
+}
+async function holdSet(){
+  const k = cxKey(state.order);
+  const missing = state.items.filter(x => x.scanned < x.qty).map(x => ({ code: x.code, name: (x.unknown ? x.name : (zmap[norm(x.code)] && zmap[norm(x.code)].t)) || x.code, need: x.qty, got: x.scanned }));
+  if (!confirm('受注番号 ' + state.order + ' を欠品で保留にします。\n' + missing.map(m => '・' + m.name + '：' + m.got + '/' + m.need).join('\n') + '\n\n出荷通知CSVには入らなくなります。商品は箱から出して、送り状と一緒に保管してください。')) return;
+  try {
+    const now = new Date();
+    await setDoc(doc(db, 'settings', 'ship_holds'), { holds: { [k]: { orderNo: state.order, at: now.toISOString(), atSec: Math.floor(now / 1000), by: holdWho(), date: todayStr(), missing } }, updatedAt: now.toISOString() }, { merge: true });
+    beep(true); flash(true, '欠品で保留にしました', '受注番号 ' + state.order, 1500);
+  } catch (e) { alert('保留にできませんでした：' + e.message); }
+}
+// 保留の解除（梱包者は「商品がそろった」を押すだけ。送り状が同じか作り直しかは気にしなくてよい）
+//   出荷通知CSVでは、取り消していない送り状のうち、あとから取り込んだほうを使う
+//   作り直したときは、まとまるくんの出荷通知の画面で「送り状が2つ以上ある注文」に出るので、そこで選べる
+async function holdRelease(){
+  const k = cxKey(state.order), h = holdOf(); if (!h) return;
+  if (!confirm('商品がそろったので、保留を解除して梱包しますか？\n解除した注文は、次の出荷通知CSVに自動で入ります。')) return;
+  try {
+    const now = new Date();
+    await setDoc(doc(db, 'settings', 'ship_holds'), { holds: { [k]: deleteField() }, carry: { [k]: { orderNo: state.order, at: now.toISOString(), by: holdWho(), date: h.date || todayStr() } }, updatedAt: now.toISOString() }, { merge: true });
+    beep(true); flash(true, '保留を解除しました', '商品を読んで梱包し、送り状を貼ってください', 1800);
+  } catch (e) { alert('解除できませんでした：' + e.message); }
 }
 async function checkOrderCanceled(){
   const order = state.order; if (!order || state.us) return;

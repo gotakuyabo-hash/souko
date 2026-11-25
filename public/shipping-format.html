@@ -608,7 +608,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -4887,6 +4887,11 @@ async function rbMake(){
     const cs = await getDoc(doc(db, 'settings', 'ship_cancels'));   // 読み取り1回（依頼まとめ管理がまとめて書く）
     Object.keys((cs.exists() && cs.data().keys) || {}).forEach(k => cxSet.add(cleanOrderNoNormalized(k)));
   } catch (e) { out.textContent = 'キャンセル済みの受注番号を読めませんでした：' + e.message; return; }
+  // 欠品で保留中の注文（holds）と、保留を解除した注文（carry）：settings/ship_holds・読み取り1回
+  let holdSet = new Set(), holdCarry = {};
+  try { const hd = await getDoc(doc(db, 'settings', 'ship_holds')); holdSet = new Set(Object.keys((hd.exists() && hd.data().holds) || {}).map(cleanOrderNoNormalized)); holdCarry = (hd.exists() && hd.data().carry) || {}; }
+  catch (e) { out.textContent = '欠品保留の記録を読めませんでした：' + e.message; return; }
+  const carryNotes = [];
   const byOrder = new Map();
   // お客様管理番号のほか、品名・記事の欄ひとつずつも受注番号として探す
   //  USくんで作った送り状：お客様管理番号＝受注番号
@@ -4906,7 +4911,7 @@ async function rbMake(){
   accs.forEach(acc => {
     const files = fs.filter(f => rbAccOf(f.header) === acc);
     const header = [...files[0].header]; while (header.length <= 56) header.push('');
-    const rows = [], none = [], multi = [], done = new Set(), cx = new Set();
+    const rows = [], none = [], multi = [], done = new Set(), cx = new Set(), held = new Set();
     let y = 0, sg = 0; const seen = new Set();
     const rowSeen = new Set();
     files.forEach(f => f.rows.forEach(src => {
@@ -4916,6 +4921,7 @@ async function rbMake(){
       const code = String(src[7] || '').trim();
       if (code === '2' || /^-/.test(code)) { done.add(key); return; }
       if (cxSet.has(key)) { cx.add(String(src[5]).trim()); return; }   // キャンセル済みの受注番号
+      if (holdSet.has(key)) { held.add(String(src[5]).trim()); return; }   // 梱包くんで欠品で保留にした注文
       const list = byOrder.get(key);
       if (!list || !list.length) { if (!seen.has(key)) none.push(String(src[5]).trim()); seen.add(key); return; }
       const pick = list.slice().sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0))[0];   // 作り直しがあれば、あとから取り込んだほう
@@ -4935,10 +4941,40 @@ async function rbMake(){
     if (multi.length) log.push('  ℹ️ 送り状が複数ある注文（あとから取り込んだほうを使用）：' + multi.join('、'));
     if (done.size) log.push(`  ・発送済み・キャンセルなどのため外した注文：${done.size}件`);
     if (cx.size) log.push(`  ・依頼まとめ管理でキャンセル済みにした注文 ${cx.size}件を外しました：` + [...cx].join('、'));
+    if (held.size) log.push(`  ・欠品で保留中の注文 ${held.size}件を外しました：` + [...held].join('、'));
     // 受注CSVはステータスをしぼらずに出してよいので、送り状がない注文は件数だけ出す
     if (none.length) log.push(`  ・この日の送り状がない注文（対象外）：${none.length}件` + (none.length <= 20 ? '（' + none.join('、') + '）' : ''));
     if (!n) log.push('  紐づけできた注文が0件のため、ファイルは作っていません');
   });
+  // 欠品で保留を解除した注文（carry）：送り状を作った日のあとでも、ここで入れる
+  const carried = [];   // { K, key }
+  for (const [K, c] of Object.entries(holdCarry)) {
+    const key = cleanOrderNoNormalized(K);
+    if (cxSet.has(key)) continue;
+    if (plans.some(p => p.rows.some(r => r.key === key))) { carried.push({ K, key }); continue; }
+    let srcFiles = fs.filter(f => f.rows.some(r => cleanOrderNoNormalized(r[5]) === key));
+    if (!srcFiles.length && c.date) {
+      srcFiles = (await rbOrderFiles(c.date, true)).filter(f => f.header && f.header.length > 56 && f.rows.some(r => cleanOrderNoNormalized(r[5]) === key));
+    }
+    if (!srcFiles.length) { carryNotes.push(`${c.orderNo || K}：受注CSVが残っていません（まとまるくんで受注CSVを読み込み直してください）`); continue; }
+    const labels = [];
+    (await getDocs(query(collection(db, 'shipments'), where('keys', 'array-contains', K)))).forEach(d => { const x = d.data(); if (!x.canceled && !(Array.isArray(x.nos) && x.nos.length)) labels.push(x); });
+    if (!labels.length) { carryNotes.push(`${c.orderNo || K}：${c.remake ? '新しい送り状の発行済みCSVがまだ入っていません' : '送り状が見つかりません'}`); continue; }
+    const pick = labels.sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0))[0];
+    const f = srcFiles[0], acc = rbAccOf(f.header);
+    if (!st[acc]) { carryNotes.push(`${c.orderNo || K}：${acc}のステータスコードが未設定です`); continue; }
+    let plan = plans.find(p => p.acc === acc);
+    if (!plan) { const header = [...f.header]; while (header.length <= 56) header.push(''); plan = { acc, header, rows: [], files: [f] }; plans.push(plan); }
+    f.rows.filter(r => cleanOrderNoNormalized(r[5]) === key).forEach(src => {
+      const code = String(src[7] || '').trim(); if (code === '2' || /^-/.test(code)) return;
+      const row = [...src]; while (row.length <= 56) row.push('');
+      row[7] = st[acc]; row[51] = today; row[55] = pick.carrier === 'sagawa' ? '佐川急便' : 'ヤマト運輸'; row[56] = pick.tracking;
+      plan.rows.push({ key, carrier: pick.carrier, row });
+    });
+    carried.push({ K, key });
+  }
+  if (carried.length) log.push('', `ℹ️ 欠品の保留を解除した注文 ${carried.length}件も入れます：` + carried.map(c => (holdCarry[c.K] && holdCarry[c.K].orderNo) || c.K).join('、'));
+  if (carryNotes.length) log.push('', '⚠️ 保留を解除したが入れられなかった注文：\n  ' + carryNotes.join('\n  '));
   // 前回までに出した注文があれば、新しい分だけにするか選ぶ
   const allKeys = new Set(plans.flatMap(p => p.rows.map(r => r.key)));
   const oldKeys = [...allKeys].filter(k => prev.has(k)), newKeys = [...allKeys].filter(k => !prev.has(k));
@@ -4957,6 +4993,9 @@ async function rbMake(){
     if (warns.length) log.push(`  ⚠️ ${p.acc}：Shift_JISにない文字を置き換えた行：\n  ` + warns.join('\n  '));
     use.forEach(r => doneKeys.add(r.key));
   });
+  const carryDone = carried.filter(c => doneKeys.has(c.key));
+  if (carryDone.length) { const del = {}; carryDone.forEach(c => { del[c.K] = deleteField(); }); try { await setDoc(doc(db, 'settings', 'ship_holds'), { carry: del }, { merge: true }); } catch (e) { console.warn('ship_holds', e); } }
+  if (doneKeys.size) checkChecklistRobot(date);   // チェックリストの「Robot-in 出荷通知」にレ点を付ける
   if (doneKeys.size) {
     try { await setDoc(nref, { date, keys: [...new Set([...prev, ...doneKeys])], at: new Date().toISOString(), by: (issuedUser && issuedUser.email) || '' }, { merge: true }); }
     catch (e) { log.push('', '⚠️ 出した注文の記録を保存できませんでした（Firestoreのルールで robotinNotified の読み書きを許可してください）：' + e.message); }
@@ -4965,6 +5004,22 @@ async function rbMake(){
   if (left.length) log.push('', `ℹ️ 受注CSVに見当たらない送り状 ${left.length}件（ほかの店舗・別のアカウントの分など）：` + left.slice(0, 30).map(x => x.orderNo || x.name || x.tracking).join('、') + (left.length > 30 ? ' ほか' : ''));
   out.textContent = log.join('\n');
   rbRenderMulti(rbMultiList);
+}
+// チェックリスト（warehouse_reports/{日付}）の夕方の「Robot-in 出荷通知」にレ点を付ける
+// チェックリストは、ほかのアプリが付けたレ点を消さずに取り込む作り（読み取り1回・書き込み1回）
+async function checkChecklistRobot(date){
+  const TITLE = 'Robot-in 出荷通知';
+  try {
+    await runTransaction(db, async tx => {
+      const ref = doc(db, 'warehouse_reports', date), cur = await tx.get(ref);
+      if (!cur.exists()) return;   // その日のチェックリストをまだ開いていない日は何もしない
+      const d = cur.data(), secs = d.sections || {}, ev = Array.isArray(secs.evening) ? secs.evening.slice() : [];
+      const i = ev.findIndex(x => x && x.type === 'checkbox' && x.title === TITLE);
+      if (i >= 0 && ev[i].checked) return;
+      if (i >= 0) ev[i] = Object.assign({}, ev[i], { checked: true }); else ev.unshift({ type: 'checkbox', title: TITLE, checked: true });
+      tx.set(ref, { sections: Object.assign({}, secs, { evening: ev }), updatedAt: new Date().toISOString(), updatedBy: 'matomaru' }, { merge: true });
+    });
+  } catch (e) { console.warn('checklist', e); }
 }
 // 送り状を作り直した注文（佐川→ネコポスなど。佐川は確定後に削除できないので両方残る）
 // どれを使うか選ぶと、ほかの送り状を取り消し済みにする（次からはその1つだけを使う）

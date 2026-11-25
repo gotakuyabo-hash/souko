@@ -375,7 +375,7 @@ button,input,textarea{font:inherit;color:inherit}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
-import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
    設定
@@ -1560,6 +1560,11 @@ async function rbRun() {
     const cxSet = new Set();   // 依頼まとめ管理で「キャンセル済み」にした受注番号（settings/ship_cancels・読み取り1回）
     const cxd = await getDoc(doc(db, 'settings', 'ship_cancels'));
     Object.keys((cxd.exists() && cxd.data().keys) || {}).forEach(k => cxSet.add(rbClean(k)));
+    // 欠品で保留中の注文（holds）と、保留を解除した注文（carry）：settings/ship_holds・読み取り1回
+    const hd = await getDoc(doc(db, 'settings', 'ship_holds'));
+    const holdSet = new Set(Object.keys((hd.exists() && hd.data().holds) || {}).map(rbClean));
+    const holdCarry = (hd.exists() && hd.data().carry) || {};
+    const carryNotes = [];
     const byOrder = new Map();
     ships.forEach(x => {
       const ks = new Set([rbClean(x.orderNo)]);
@@ -1576,13 +1581,14 @@ async function rbRun() {
       const fs = files.filter(f => rbAcc(f.header) === acc);
       const header = [...fs[0].header]; while (header.length <= 56) header.push('');
       const rows = [], seen = new Set(), rowSeen = new Set();
-      let none = 0; const cx = new Set();
+      let none = 0; const cx = new Set(), held = new Set();
       fs.forEach(f => f.rows.forEach(src => {
         const key = rbClean(src[5]); if (!key) return;
         const rk = [src[1], src[6], src[29]].join('|'); if (rowSeen.has(rk)) return; rowSeen.add(rk);
         const code = String(src[7] || '').trim();
         if (code === '2' || /^-/.test(code)) return;   // 発送済み・キャンセルなどは外す
         if (cxSet.has(key)) { cx.add(key); return; }   // 依頼まとめ管理でキャンセル済みにした受注番号
+        if (holdSet.has(key)) { held.add(key); return; }   // 梱包くんで欠品で保留にした注文
         const list = byOrder.get(key);
         if (!list || !list.length) { if (!seen.has(key)) none++; seen.add(key); return; }
         const pick = list.slice().sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0))[0];
@@ -1591,8 +1597,36 @@ async function rbRun() {
         row[7] = st[acc]; row[51] = today; row[55] = pick.carrier === 'sagawa' ? '佐川急便' : 'ヤマト運輸'; row[56] = pick.tracking;
         rows.push({ key, carrier: pick.carrier, row });
       }));
-      plans.push({ acc, header, rows, none, cx: cx.size });
+      plans.push({ acc, header, rows, none, cx: cx.size, held: held.size });
     });
+    // 欠品で保留を解除した注文（carry）：送り状を作った日のあとでも、ここで入れる
+    const carried = [];   // { K, key }
+    for (const [K, c] of Object.entries(holdCarry)) {
+      const key = rbClean(K);
+      if (cxSet.has(key)) continue;
+      if (plans.some(p => p.rows.some(r => r.key === key))) { carried.push({ K, key }); continue; }
+      let srcFiles = files.filter(f => f.rows.some(r => rbClean(r[5]) === key));
+      if (!srcFiles.length && c.date) {
+        const m = new Map(); (await rbCloudFiles(c.date)).forEach(f => m.set(f.name, f)); (await rbLocalFiles(c.date)).forEach(f => m.set(f.name, f));
+        srcFiles = [...m.values()].filter(f => f.header && f.header.length > 56 && f.rows.some(r => rbClean(r[5]) === key));
+      }
+      if (!srcFiles.length) { carryNotes.push(`${c.orderNo || K}：受注CSVが残っていません（まとまるくんで受注CSVを読み込み直してください）`); continue; }
+      const labels = [];
+      (await getDocs(query(collection(db, 'shipments'), where('keys', 'array-contains', K)))).forEach(d => { const x = d.data(); if (!x.canceled && !(Array.isArray(x.nos) && x.nos.length)) labels.push(x); });
+      if (!labels.length) { carryNotes.push(`${c.orderNo || K}：${c.remake ? '新しい送り状の発行済みCSVがまだ入っていません' : '送り状が見つかりません'}`); continue; }
+      const pick = labels.sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0))[0];
+      const f = srcFiles[0], acc = rbAcc(f.header);
+      if (!st[acc]) { carryNotes.push(`${c.orderNo || K}：${acc}のステータスコードが未設定です`); continue; }
+      let plan = plans.find(p => p.acc === acc);
+      if (!plan) { const header = [...f.header]; while (header.length <= 56) header.push(''); plan = { acc, header, rows: [], none: 0, cx: 0 }; plans.push(plan); }
+      f.rows.filter(r => rbClean(r[5]) === key).forEach(src => {
+        const code = String(src[7] || '').trim(); if (code === '2' || /^-/.test(code)) return;
+        const row = [...src]; while (row.length <= 56) row.push('');
+        row[7] = st[acc]; row[51] = today; row[55] = pick.carrier === 'sagawa' ? '佐川急便' : 'ヤマト運輸'; row[56] = pick.tracking;
+        plan.rows.push({ key, carrier: pick.carrier, row });
+      });
+      carried.push({ K, key });
+    }
     const allKeys = new Set(plans.flatMap(p => p.rows.map(r => r.key)));
     const oldKeys = [...allKeys].filter(k => prev.has(k)), newKeys = [...allKeys].filter(k => !prev.has(k));
     let onlyNew = false;
@@ -1605,12 +1639,16 @@ async function rbRun() {
       const use = p.rows.filter(r => !onlyNew || !prev.has(r.key));
       const orders = new Map(); use.forEach(r => orders.set(r.key, r.carrier));
       const y = [...orders.values()].filter(c => c !== 'sagawa').length, sg = orders.size - y;
-      notes.push(`${p.acc}：${orders.size}件（ヤマト ${y}・佐川 ${sg}）` + (onlyNew && oldKeys.length ? `／出し済み ${p.rows.filter(r => prev.has(r.key)).map(r => r.key).filter((k, i, a) => a.indexOf(k) === i).length}件は外した` : '') + (p.none ? `／送り状なし ${p.none}件` : '') + (p.cx ? `／キャンセル済み ${p.cx}件` : ''));
+      notes.push(`${p.acc}：${orders.size}件（ヤマト ${y}・佐川 ${sg}）` + (onlyNew && oldKeys.length ? `／出し済み ${p.rows.filter(r => prev.has(r.key)).map(r => r.key).filter((k, i, a) => a.indexOf(k) === i).length}件は外した` : '') + (p.none ? `／送り状なし ${p.none}件` : '') + (p.cx ? `／キャンセル済み ${p.cx}件` : '') + (p.held ? `／欠品保留 ${p.held}件` : ''));
       if (!orders.size) return;
       rbSjisDownload([p.header, ...use.map(r => r.row)], `updated_status${st[p.acc]}_${p.acc}_${date.replace(/-/g, '')}${onlyNew ? '_追加' : ''}.csv`);
       orders.forEach((_, k) => doneKeys.add(k));
       made++;
     });
+    // 入れた carry は消す（次からは普通の「出した注文」として扱う）
+    const carryDone = carried.filter(c => doneKeys.has(c.key));
+    if (carryDone.length) { const del = {}; carryDone.forEach(c => { del[c.K] = deleteField(); }); await setDoc(doc(db, 'settings', 'ship_holds'), { carry: del }, { merge: true }).catch(e => console.warn('ship_holds', e)); notes.push(`保留を解除した注文 ${carryDone.length}件を入れた`); }
+    if (carryNotes.length) notes.push('入れられなかった保留解除：' + carryNotes.join('／'));
     if (doneKeys.size) await setDoc(nref, { date, keys: [...new Set([...prev, ...doneKeys])], at: new Date().toISOString(), by: (authUserEmail() || '') }, { merge: true }).catch(e => console.warn('robotinNotified', e));
     RB.msg = (made ? '✓ ダウンロードしました　' : '紐づけできた注文がありませんでした　') + notes.join('　');
     // ダウンロードしたら「Robot-in 出荷通知」にレ点を付ける
