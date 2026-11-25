@@ -2908,20 +2908,23 @@
                 const cName = head.findIndex(h => /^お届け先名(称)?[1１]?$/.test(h) || /^お届け先名称[1１]/.test(h));
                 const cOrder = find(/お客様管理番号/);
                 const cTexts = head.map((h, i) => /品名|記事/.test(h) ? i : -1).filter(i => i >= 0);
+                const cType = find(/送り状種類/);
+                const cDel = find(/^削除区分$/);   // e飛伝で削除した送り状は記録しない
                 if (cTrk < 0) return { rows: [], error: `${fileName}：追跡番号の列が見つかりません` };
                 rows.slice(1).forEach(r => {
                     const trk = clean(r[cTrk]).replace(/[^0-9]/g, '');
                     if (trk.length < 10) return;
+                    if (cDel >= 0 && clean(r[cDel]) && clean(r[cDel]) !== '0') return;
                     out.push({ carrier: sagawa ? 'sagawa' : 'yamato', tracking: trk, date: cDate >= 0 ? normShipDate(r[cDate]) : '',
                         name: cName >= 0 ? clean(r[cName]) : '', orderNo: cOrder >= 0 ? clean(r[cOrder]) : '',
-                        texts: cTexts.map(i => clean(r[i])).filter(Boolean), file: fileName });
+                        texts: cTexts.map(i => clean(r[i])).filter(Boolean), type: cType >= 0 ? clean(r[cType]) : '', file: fileName });
                 });
             } else {
                 rows.forEach(r => {
                     const trk = clean(r[3]).replace(/[^0-9]/g, '');
                     if (!/^\d{10,12}$/.test(trk)) return;
                     out.push({ carrier: 'yamato', tracking: trk, date: normShipDate(r[4]), name: clean(r[15]), orderNo: clean(r[0]),
-                        texts: [26, 27, 28, 29, 30, 31].map(i => clean(r[i])).filter(Boolean), file: fileName });
+                        texts: [26, 27, 28, 29, 30, 31, 32].map(i => clean(r[i])).filter(Boolean), type: clean(r[1]), file: fileName });
                 });
             }
             return { rows: out };
@@ -2937,25 +2940,13 @@
                     </div>
                     <div id="shipResults"></div>
                 </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3 mt-3">
-                    <div class="font-bold text-base">📥 発行済みCSVを取り込む</div>
-                    <label id="shipDrop" class="block border-2 border-slate-200 rounded-xl p-6 text-center text-sm text-slate-500 cursor-pointer" style="border-style:dashed">
-                        ヤマトB2・佐川e飛伝の発行済みCSVを、ここにドラッグ<br>（タップしてファイルを選ぶこともできます。複数まとめてOK）
-                        <input id="shipFile" type="file" accept=".csv,text/csv" multiple style="display:none" onchange="loadShipFiles(this.files)">
-                    </label>
-                    <div id="shipPreview"></div>
-                    <div class="text-xs text-slate-500">Robot-inに取り込むのと同じファイルで大丈夫です。同じファイルを何回入れても、追跡番号ごとに上書きされるだけで重複しません。住所・電話番号は保存しません。</div>
-                </div>`;
+                <div class="text-xs text-slate-500 mt-3 px-1">発行済みCSVの取り込みは、まとまるくん（発行済みデータ）・配送管理アプリ（出荷後の取り込み）で行います。どちらで取り込んだ送り状も、ここで探せます。</div>`;
         }
         function initShipView() {
             const box = document.getElementById('shipModeContainer');
             if (box.dataset.ready) return;
             box.dataset.ready = '1';
             box.innerHTML = shipViewHtml();
-            const drop = document.getElementById('shipDrop');
-            ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = '#4f46e5'; drop.style.background = '#eef2ff'; }));
-            ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; drop.style.background = ''; }));
-            drop.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) loadShipFiles(e.dataTransfer.files); });
         }
 
         window.loadShipFiles = async function(files) {
@@ -2992,14 +2983,14 @@
         window.saveShipFiles = async function(btn) {
             if (!shipParsed.length) return;
             btn.disabled = true;
-            let saved = 0, skipped = 0;
+            let saved = 0, skipped = 0, same = 0;
             try {
                 for (let i = 0; i < shipParsed.length; i += 400) {
                     btn.textContent = `記録中… ${Math.min(i + 400, shipParsed.length)} / ${shipParsed.length}`;
                     const d = await callApi("save_shipments", { rows: shipParsed.slice(i, i + 400) });
-                    saved += d.saved || 0; skipped += d.skipped || 0;
+                    saved += d.saved || 0; skipped += d.skipped || 0; same += d.same || 0;
                 }
-                document.getElementById('shipPreview').innerHTML = `<div class="text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl p-3">✓ ${saved}件を記録しました${skipped ? `（${skipped}件は追跡番号の形が違うため飛ばしました）` : ''}</div>`;
+                document.getElementById('shipPreview').innerHTML = `<div class="text-sm font-bold text-emerald-700 bg-emerald-50 rounded-xl p-3">✓ ${saved}件を記録しました${same ? `（${same}件は記録済みのためそのまま）` : ''}${skipped ? `（${skipped}件は追跡番号の形が違うため飛ばしました）` : ''}</div>`;
                 shipParsed = [];
                 showToast(`${saved}件を記録しました`);
             } catch (e) {
@@ -3011,10 +3002,10 @@
 
         // 送り状の検索結果
         function shipResultHtml(list) {
-            if (!list.length) return '<div class="text-sm text-slate-500">見つかりませんでした（発行済みCSVがまだ取り込まれていないかもしれません）</div>';
+            if (!list.length) return '<div class="text-sm text-slate-500">見つかりませんでした（まとまるくん・配送管理アプリで、発行済みCSVがまだ取り込まれていないかもしれません）</div>';
             return list.map(x => `
                 <div class="border border-slate-200 rounded-xl p-3 mt-2">
-                    <div class="flex items-center gap-2"><span class="font-bold text-sm">🚚 ${esc(x.carrierName || '')}</span><span class="font-mono font-bold">${esc(fmtTrk(x.tracking))}</span></div>
+                    <div class="flex items-center gap-2"><span class="font-bold text-sm">🚚 ${esc(x.carrierName || '')}</span><span class="font-mono font-bold">${esc(fmtTrk(x.tracking))}</span>${x.canceled ? '<span class="text-xs font-bold text-red-600">キャンセルで取消済み</span>' : ''}</div>
                     <div class="text-xs text-slate-600 mt-1">${x.date ? `${esc(shipDateStr(x.date))} 出荷` : '出荷日なし'}${x.name ? `／${esc(x.name)} 様` : ''}${x.orderNo ? `／注文 ${esc(x.orderNo)}` : ''}</div>
                     ${x.items ? `<div class="text-xs text-slate-400 mt-1 clamp-s">${esc(x.items)}</div>` : ''}
                     <div class="grid grid-cols-2 gap-2 mt-2">

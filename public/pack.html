@@ -95,7 +95,8 @@ main{ padding:12px 12px 140px; }
   <div class="bar"><i id="bar"></i></div>
 </header>
 <main>
-  <div class="allok" id="allok">✓ 梱包OK<div style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
+  <div class="allok" id="allok">✓ 梱包OK<div id="allokSub" style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
+  <div id="labelTag" style="display:none;margin:6px 0;padding:8px 10px;border-radius:8px;font-weight:700;font-size:14px"></div>
   <div id="list"></div>
   <div class="note" id="cacheNote"></div>
 </main>
@@ -115,7 +116,7 @@ main{ padding:12px 12px 140px; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const app = initializeApp({
@@ -241,8 +242,18 @@ async function getZaicoMap(codes) {
 const auth = getAuth(app);
 let authUser = null, authReadyResolve;
 const authReady = new Promise(r => authReadyResolve = r);
-onAuthStateChanged(auth, u => { authUser = u; authReadyResolve(); if (state.us && US.needLogin && u) usStart(); });
-const US = { cfgId:'', pre:null, cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve() };
+onAuthStateChanged(auth, u => {
+  authUser = u; authReadyResolve(); if (state.us && US.needLogin && u) usStart();
+  // ログイン必須：ログインしていなければ画面を覆う（キャンセル済みの警告・送り状の照合にログインが要るため）
+  const g = document.getElementById('loginGate'); if (g) g.style.display = u ? 'none' : 'flex';
+  if (u) { const n = document.getElementById('loginNote'); if (n) n.remove(); watchCancels(); if (!state.us && state.order) checkOrderCanceled(); }
+});
+document.getElementById('gateLoginBtn').onclick = () => {
+  document.getElementById('gateErr').textContent = '';
+  const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt:'select_account' });
+  signInWithPopup(auth, p).catch(err => { if (!/popup-closed|cancelled-popup/.test(err.code || '')) document.getElementById('gateErr').textContent = 'ログインできませんでした：' + err.message; });
+};
+const US = { cfgId:'', pre:null, labeled:new Set(), cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve() };
 const ordRef = no => doc(db, 'deliveryClients', state.us, 'orders', String(no));
 const oidOf = s => String(s == null ? '' : s).trim();
 const NO_OID = o => !o || o === '有在庫用';
@@ -315,7 +326,7 @@ async function usStart(){
       const snap = await getDocs(query(collection(db, 'deliveryClients', state.us, 'orders'), where(documentId(), 'in', ids.slice(i, i + 30))));
       snap.forEach(d => { US.flags[Number(d.id)] = d.data(); });
     }
-    US.sel = null; US.pf = '';
+    US.sel = null; US.pf = ''; US.labeled = new Set();
     const lost = state.nos.filter(n => !US.rows[n]);
     $('cacheNote').textContent = lost.length ? '※ シートに見つからないNo.：' + lost.join('、') : '';
     usRender();
@@ -375,7 +386,8 @@ function usRender(){
     const stops = rs.filter(r => usStop(r.no));
     const allIn = rs.every(r => usPacked(r.no) || usStop(r.no)) && !b.missing.length;
     box = '<div class="us-box' + (stops.length ? ' stop' : allIn ? ' ok' : '') + '">'
-      + '<div class="us-bhead"><b>📦 箱：No.' + b.nos.join('、No.') + '</b>' + (b.nos.length + b.missing.length > 1 ? '<span class="us-tag">同梱 ' + (b.nos.length + b.missing.length) + '件</span>' : '') + '<button class="manual undo" data-us="close">閉じる</button></div>'
+      + '<div class="us-bhead"><b>📦 箱：No.' + b.nos.join('、No.') + '</b>' + (b.nos.length + b.missing.length > 1 ? '<span class="us-tag">同梱 ' + (b.nos.length + b.missing.length) + '件</span>' : '') + (b.nos.some(n => US.labeled.has(n)) ? '<span class="us-tag" style="background:var(--ok)">✓ 送り状照合済み</span>' : '<span class="us-tag" style="background:#9aa5ae">送り状 未照合</span>')
+      + '<button class="manual undo" data-us="close">閉じる</button></div>'
       + stops.map(r => '<div class="us-msg ng">⚠ No.' + r.no + 'は' + esc(usStop(r.no)) + 'のため、箱に入れないでください</div>').join('')
       + (b.missing.length ? '<div class="us-msg ng">⚠ 同梱の相手 No.' + b.missing.join('、No.') + ' は別の検品書です。その商品もそろってから閉じてください</div>' : '')
       + (allIn && !stops.length ? '<div class="us-msg ok">✓ この箱は梱包OK</div>' : '')
@@ -399,7 +411,7 @@ function usRender(){
         }).join('') + '</div>';
   }
   const tiles = usTiles(), selSet = new Set(US.sel ? usBundle(US.sel).nos : []);
-  const grid = '<div class="us-ghead"><b>' + (US.sel ? '次の商品' : '商品のPKGIDをスキャン（バーコードがない商品はタップ）') + '</b>'
+  const grid = '<div class="us-ghead"><b>' + (US.sel ? '送り状のバーコードを読むと照合して「箱に入れた」になります／次の商品' : '商品のPKGIDをスキャン（バーコードがない商品はタップ）') + '</b>'
     + (rows.length > 8 ? '<input id="usPf" type="search" placeholder="商品名・No.・お届け先で絞り込み" value="' + esc(US.pf) + '" autocomplete="off">' : '') + '</div>'
     + '<div class="us-grid">' + tiles.map(t => {
       const r = t.rows[0], done = !t.todo.length && !t.stop.length;
@@ -444,17 +456,18 @@ $('list').addEventListener('click', async e => {
   }
   if (act === 'in') { b.disabled = true; if (!(await usPutIn(no))) b.disabled = false; }
 });
-async function usPutIn(no){
+async function usPutIn(no, note){
   if (!(await usSetPack(no, true))) return false;
+  note = note ? note + '\n' : '';
   if (!US.rows[no].arrivedAt) usArriveBg(no);
   beep(true);
   const bd = usBundle(no);
   const full = !bd.missing.length && bd.nos.every(n => usPacked(n) || usStop(n));
   const left = Object.values(US.rows).filter(r => !usPacked(r.no) && !usStop(r.no)).length;
   if (full) {
-    flash(true, left ? '✓ 梱包OK' : '✓ この検品書は全部OK', (bd.nos.length > 1 ? '同梱 ' + bd.nos.length + '件そろいました' : 'No.' + no) + (left ? '\n残り ' + left + '件' : '\n次の検品書のQRを読んでください'), 1300);
+    flash(true, left ? '✓ 梱包OK' : '✓ この検品書は全部OK', note + (bd.nos.length > 1 ? '同梱 ' + bd.nos.length + '件そろいました' : 'No.' + no) + (left ? '\n残り ' + left + '件' : '\n次の検品書のQRを読んでください'), 1300);
     US.sel = null;
-  } else flash(true, '✓ No.' + no + ' 入れた', '同梱のほかの商品も入れてください', 900);
+  } else flash(true, '✓ No.' + no + ' 入れた', note + '同梱のほかの商品も入れてください', 1200);
   usRender(); keepFocus();
   return true;
 }
@@ -509,6 +522,62 @@ async function usTryTracking(raw){
     return true;
   }catch(e){ console.warn(e); $('cacheNote').textContent = ''; return false; }
 }
+// 送り状のバーコード（伝票番号）を、共有の発行済みデータ（shipments）で探す
+//   どのアプリで取り込んだ発行済みCSVも shipments/{yamato|sagawa}_{伝票番号} に入っている。1回の照合で読み取り2回
+async function usLabelLookup(raw){
+  let c = String(raw || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (/^[A-D]\d+[A-D]$/.test(c)) c = c.slice(1, -1);
+  if (!/^\d{10,14}$/.test(c)) return null;
+  // 直前に当たった配送会社から先に見る（見つかれば読み取り1回で済む）
+  let first = 'yamato'; try { first = localStorage.getItem('pack_last_carrier') || 'yamato'; } catch (e) {}
+  let hit = null;
+  for (const k of [first, first === 'yamato' ? 'sagawa' : 'yamato']) {
+    const x = await getDoc(doc(db, 'shipments', k + '_' + c)).catch(() => null);
+    if (x && x.exists()) { hit = x; try { localStorage.setItem('pack_last_carrier', k); } catch (e) {} break; }
+  }
+  if (!hit) return { trk:c, d:null };
+  const d = hit.data();
+  let nos = Array.isArray(d.nos) && d.nos.length ? d.nos.map(Number) : [];
+  if (!nos.length) { const m = String(d.items || '').match(/No\.?\s*([\d,，、\s]+)\)/i); if (m) nos = m[1].split(/[,，、\s]+/).map(Number).filter(Boolean); }
+  return { trk:c, d, nos };
+}
+// 送り状を読んだときの照合。処理したら true（送り状でなければ false）
+async function usLabelCheck(raw){
+  const L = await usLabelLookup(raw);
+  if (!L) return false;
+  if (!L.d) return false;   // 共有の記録にない（倉庫追跡番号かもしれないので、ほかの探し方に回す）
+  if (L.d.canceled) {
+    beep(false);
+    flash(false, '✕ この送り状は取り消し済みです', (L.d.carrierName || '') + ' ' + L.trk + (L.nos.length ? '（No.' + L.nos.join('、No.') + '）' : '') + '\nキャンセルの依頼で取り消された送り状です。貼らないでください（タップ・Escで閉じる）');
+    return true;
+  }
+  const fmt = n => 'No.' + n + (US.rows[n] && US.rows[n].name ? '（' + US.rows[n].name + '）' : '');
+  const mine = L.nos.filter(n => US.rows[n]);
+  if (US.sel) {
+    const bd = usBundle(US.sel);
+    if (L.nos.some(n => bd.nos.includes(n))) {
+      bd.nos.forEach(n => US.labeled.add(n));
+      const target = bd.nos.includes(US.sel) && !usPacked(US.sel) && !usStop(US.sel) ? US.sel : bd.nos.find(n => !usPacked(n) && !usStop(n));
+      if (target) { await usPutIn(target, '✓ 送り状OK（' + (L.d.carrierName || '') + ' ' + L.trk + '）'); return true; }
+      beep(true); flash(true, '✓ 送り状OK', 'No.' + bd.nos.join('、No.') + '\nこの箱の商品は入れ終わっています', 1300); usRender(); return true;
+    }
+    beep(false);
+    flash(false, '✕ 別の注文の送り状です', 'この送り状：' + (L.nos.length ? L.nos.map(fmt).join('、') : (L.d.name || '') + ' ' + (L.d.orderNo || '')) + '\n開いている箱：' + bd.nos.map(fmt).join('、') + '\n貼る送り状を確かめてください（タップ・Escで閉じる）');
+    return true;
+  }
+  if (mine.length) {
+    // 箱を開いていないときに送り状を読んだ → その注文を開く
+    US.sel = mine.find(n => !usPacked(n) && !usStop(n)) || mine[0];
+    usBundle(US.sel).nos.forEach(n => US.labeled.add(n));
+    usRender(); window.scrollTo({ top:0, behavior:'smooth' });
+    if (usStop(US.sel)) { beep(false); flash(false, '⚠ No.' + US.sel + 'は' + usStop(US.sel), '箱に入れないでください\n（タップ・Escで閉じる）'); return true; }
+    beep(true); flash(true, '送り状：' + fmt(US.sel), '商品を確かめて、PKGIDをスキャン（または「箱に入れた」）', 1500);
+    return true;
+  }
+  beep(false);
+  flash(false, '✕ この検品書の注文の送り状ではありません', '読んだ送り状：' + L.trk + (L.nos.length ? '（No.' + L.nos.join('、No.') + '）' : '') + '\n（タップ・Escで閉じる）');
+  return true;
+}
 // 検品書モードで商品のバーコードを読んだとき：PKGIDで注文を探して開く
 // 開いている注文と同じPKGIDをもう一度読むと「箱に入れた」にする（スキャナだけで進められる）
 const pkgNorm = v => String(v || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
@@ -526,11 +595,12 @@ function usCheck(raw){
   if (m && US.rows[Number(m[1])]) { US.sel = Number(m[1]); usRender(); window.scrollTo({ top:0, behavior:'smooth' }); return; }
   const hits = usFindPkg(raw);
   if (!hits.length) {
-    // PKGIDでなければ、次の荷物の倉庫追跡番号かもしれない
-    usTryTracking(raw).then(ok => {
+    // PKGIDでなければ、送り状 → 次の荷物の倉庫追跡番号 の順に探す
+    usLabelCheck(raw).then(done => done || usTryTracking(raw)).then(ok => {
       if (ok) return;
       beep(false);
-      flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGIDにも倉庫追跡番号にも見つかりません。バーコードがない商品は、画像のタイルから選んでください\n（タップ・Escで閉じる）');
+      flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGID・送り状・倉庫追跡番号のどれにも見つかりません。'
+        + (US.sel ? '送り状なら、発行済みデータがまだ取り込まれていないかもしれません（目で確かめて「箱に入れた」を押してください）' : 'バーコードがない商品は、画像のタイルから選んでください') + '\n（タップ・Escで閉じる）');
     });
     return;
   }
@@ -559,6 +629,18 @@ function render() {
   $('bar').style.width = total ? (done / total * 100) + '%' : '0';
   const allOk = state.items.length && state.items.every(x => x.scanned === x.qty);
   $('allok').classList.toggle('show', !!allOk);
+  // 送り状の照合（共有の発行済みデータ shipments で、この受注番号の送り状か確かめる）
+  const lt = $('labelTag');
+  lt.style.display = state.items.length ? '' : 'none';
+  if (state.canceled) {   // 依頼まとめ管理でキャンセル済みにした受注番号
+    lt.style.background = '#c0392b'; lt.style.color = '#fff';
+    lt.textContent = '✕ この注文はキャンセル済みです。梱包しないでください（' + state.canceled + '）';
+    $('allok').classList.remove('show');
+    return;
+  }
+  lt.style.background = state.label ? '#e4f3ea' : '#fff4d6'; lt.style.color = state.label ? '#1e7a46' : '#8a5a00';
+  lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）' : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
+  $('allokSub').textContent = state.label ? '次の検品シートのQRを読むと、次の注文に進みます' : '送り状のバーコードを読んで照合してください（そのあと次の検品シートへ）';
 
   $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
     const z = x.unknown ? null : zmap[norm(x.code)];
@@ -648,16 +730,22 @@ function check(code) {
     usTryTracking(raw).then(ok => { if (!ok) { beep(false); flash(false, '先に検品シートのQRか、荷物の倉庫追跡番号を読んでください', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); } });
     return;
   }
+  if (state.canceled) { beep(false); flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + state.order + '\n梱包しないでください（次の検品シートのQRを読んでください）'); return; }
   const it = findItem(raw);
-  if (!it && state.items.every(x => x.scanned === x.qty)) {
-    // 梱包OKのあとに、次の荷物の倉庫追跡番号を読んだとき
-    usTryTracking(raw).then(ok => { if (!ok) { beep(false); flash(false, '✕ この注文の商品ではありません', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); } });
-    return;
-  }
   if (!it) {
-    beep(false);
-    const z = zmap[norm(raw)];
-    flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + '\n（タップ・Escで閉じる）');
+    // 商品でなければ、まず送り状として照合 → だめなら（梱包OKのあとなら）次の荷物の倉庫追跡番号として探す
+    const allDone = state.items.every(x => x.scanned === x.qty);
+    orderLabelCheck(raw).catch(() => false).then(ok => {
+      if (ok) return;
+      const next = allDone ? usTryTracking(raw) : Promise.resolve(false);
+      return next.then(ok2 => {
+        if (ok2) return;
+        beep(false);
+        const z = zmap[norm(raw)];
+        const lg = !authUser && /^\D?\d{10,14}\D?$/.test(raw.replace(/\s/g, '')) ? '\n※ 送り状の照合にはログインが必要です（画面下の「ログイン」から）' : '';
+        flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + lg + '\n（タップ・Escで閉じる）');
+      });
+    });
     return;
   }
   if (it.scanned >= it.qty) {
@@ -672,6 +760,60 @@ function check(code) {
   const left = state.items.every(x => x.scanned === x.qty);
   flash(true, left ? '✓ 梱包OK' : '✓ OK', `${zmap[norm(it.code)]?.t || it.code}　${it.scanned}/${it.qty}`, left ? 1500 : 600);
   afterChange();
+}
+// まとまるくんの検品シートの注文：送り状を読んだら、その受注番号の送り状か確かめる
+//   USくんの送り状：お客様管理番号＝受注番号。Robot-inのデータから作った送り状：ヤマトは記事、佐川は品名2「No:受注番号」
+const ordKey = v => String(v || '').normalize('NFKC').replace(/^No[:：.]?\s*/i, '').replace(/[\s\-_‐－−ー―]/g, '').toUpperCase();
+function shipOrderKeys(d){
+  const ks = new Set([ordKey(d.orderNo)]);
+  String(d.items || '').split(' / ').forEach(t => { t = t.trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t)) ks.add(ordKey(t)); });
+  (d.keys || []).forEach(k => ks.add(String(k)));
+  ks.delete(''); return ks;
+}
+async function orderLabelCheck(raw){
+  let c = String(raw || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (/^[A-D]\d+[A-D]$/.test(c)) c = c.slice(1, -1);
+  if (!/^\d{10,14}$/.test(c)) return false;
+  await authReady;
+  if (!authUser) return false;
+  const L = await usLabelLookup(c);
+  if (!L || !L.d) return false;
+  const name = (L.d.carrierName || '') + ' ' + L.trk;
+  if (L.d.canceled) { beep(false); flash(false, '✕ この送り状は取り消し済みです', name + '\n貼らないでください（タップ・Escで閉じる）'); return true; }
+  if (shipOrderKeys(L.d).has(ordKey(state.order))) {
+    state.label = name; beep(true);
+    const allOk = state.items.every(x => x.scanned === x.qty);
+    flash(true, '✓ 送り状OK', name + (allOk ? '\n梱包OK・次の検品シートへ' : '\n残りの商品を読んでください'), 1300);
+    render(); return true;
+  }
+  beep(false);
+  flash(false, '✕ 別の注文の送り状です', 'この送り状：' + name + '（' + (L.d.name || '') + (L.d.orderNo ? '・' + L.d.orderNo : '') + '）\n開いている注文：' + state.order + '\n貼る送り状を確かめてください（タップ・Escで閉じる）');
+  return true;
+}
+// 依頼まとめ管理で「キャンセル済み」にした受注番号か（shipCancels/{受注番号を詰めたもの}・読み取り1回）
+const cxKey = v => String(v || '').normalize('NFKC').replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
+// キャンセル済みの一覧（settings/ship_cancels）は、開いたときに1回読み、変更があったときだけ届く
+let CXMAP = null, cxWatching = false;
+function watchCancels(){
+  if (cxWatching || !authUser) return; cxWatching = true;
+  onSnapshot(doc(db, 'settings', 'ship_cancels'), snap => {
+    CXMAP = (snap.exists() && snap.data().keys) || {};
+    if (!state.us && state.order && !state.canceled) checkOrderCanceled();
+  }, e => { console.warn('ship_cancels', e); cxWatching = false; });
+}
+async function checkOrderCanceled(){
+  const order = state.order; if (!order || state.us) return;
+  await authReady; if (!authUser) return;
+  watchCancels();
+  if (!CXMAP) return;   // 届いたら、もう一度確かめる
+  try {
+    const hit = CXMAP[cxKey(order)];
+    if (state.order !== order || !hit) return;
+    state.canceled = String(hit.at || '').slice(0, 16).replace('T', ' ') + ' ' + (hit.by || '');
+    beep(false);
+    flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + order + '\n梱包しないでください。商品は棚に戻してください（タップ・Escで閉じる）');
+    render();
+  } catch (e) { console.warn('shipCancels', e); }
 }
 function afterChange() {
   render();
@@ -783,6 +925,15 @@ async function start() {
   $('resetBtn').style.display = '';
   window.scrollTo(0, 0);
   render();
+  checkOrderCanceled();
+  authReady.then(() => {
+    if (authUser || state.us) return;
+    const n = $('loginNote') || document.createElement('div');
+    n.id = 'loginNote'; n.style.cssText = 'margin:8px 0;font-size:13px';
+    n.innerHTML = '送り状の照合には、社内のGoogleアカウントでのログインが必要です。<button type="button" id="loginBtnOld" style="margin-left:6px">ログイン</button>';
+    $('list').after(n);
+    $('loginBtnOld').onclick = () => { const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt:'select_account' }); signInWithPopup(auth, p).then(() => n.remove()).catch(err => { if (!/popup-closed|cancelled-popup/.test(err.code || '')) alert('ログインできませんでした：' + err.message); }); };
+  });
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
@@ -795,5 +946,13 @@ async function start() {
 }
 start();
 </script>
+<div id="loginGate" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(20,30,40,.6);align-items:center;justify-content:center">
+  <div style="background:#fff;color:#1f2a33;border-radius:14px;padding:26px 22px;max-width:360px;width:calc(100% - 32px);text-align:center">
+    <div style="font-size:18px;font-weight:800;margin-bottom:8px">梱包くん</div>
+    <p style="font-size:13px;color:#5d6b77;margin:0 0 16px">社内のGoogleアカウントでログインしてください。<br>キャンセル済みの注文の警告と、送り状の照合に必要です（この端末で最初の1回だけ）。</p>
+    <button type="button" id="gateLoginBtn" style="width:100%;padding:12px;font-size:16px;font-weight:700;border-radius:10px;border:0;background:#1f5f8b;color:#fff">Googleでログイン</button>
+    <p id="gateErr" style="font-size:12px;color:#c0392b;margin:10px 0 0"></p>
+  </div>
+</div>
 </body>
 </html>

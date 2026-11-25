@@ -382,7 +382,7 @@ details.bd table{margin-top:6px}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction, updateDoc, deleteDoc, deleteField, FieldPath, query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ===== Firebaseの設定（souko-2de57） =====
 const firebaseConfig = {
@@ -927,6 +927,7 @@ function fillSheet(r, force) {
     ${r.noteLabel ? `<div class="note"><label for="noteIn">${esc(r.noteLabel)}</label>
       <div class="note-row"><input id="noteIn" value="${esc(r.note || '')}"><button class="btn" id="saveNote">保存</button></div></div>` : ''}
     ${r.canceled ? '' : hokanPanel(r)}
+    ${shipCancelPanel(r)}
     <div class="actions">
       <button class="primary ${r.done ? 'undo' : ''}" id="toggleDone">${r.canceled ? '取り消しをやめる（未対応に戻す）' : r.done ? '未対応に戻す' : '完了にする'}</button>
       <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">シートで開く</a>
@@ -937,6 +938,7 @@ function fillSheet(r, force) {
   if ($('cancelReq')) $('cancelReq').onclick = () => cancelReq(r.id);
   if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
   bindHokanPanel(r);
+  bindShipCancel(r);
 }
 function closeSheet() { const sh = $('sheet'); sh.classList.remove('open'); sh.dataset.id = ''; sh.dataset.kind = ''; sh.dataset.edit = ''; sh.dataset.dirty = ''; $('bg').style.display = 'none'; }
 function showSheet() { $('bg').style.display = 'block'; requestAnimationFrame(() => $('sheet').classList.add('open')); }
@@ -1162,6 +1164,109 @@ function printHkPack(r){
   if (!items.length) { toast('出庫した商品がありません'); return; }
   const oid = reqOrderId(r) || [sellerKey(r), r.doneDate || todayJST()].filter(Boolean).join(' ');
   printPackSheets([{ orderId: oid, src: 'hk', sub: [r.type, sellerKey(r), r.name].filter(Boolean).join('　'), items }], '保管在庫');
+}
+
+// ---------- キャンセル依頼：共有の送り状データ（shipments）を取り消す ----------
+// まとまるくん・配送管理アプリで取り込んだ発行済みデータは shipments/{yamato|sagawa}_{伝票番号} にある。
+// 受注番号で探して「取り消し済み」の印を付ける（消すのではなく印にするのは、同じ発行済みCSVをもう一度取り込んでも
+// 生き返らないようにするため）。印が付いた送り状は、出荷後の取り込み・出荷通知・梱包くんの照合で使われない。
+// ※ B2クラウド・e飛伝の送り状そのものの削除は、それぞれの画面で行ってください
+const shipNormK = s => half(s).replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
+function shipCancelPanel(r) {
+  const isCx = /キャンセル|取消|取り消/.test(r.type || '') || r.canceled;
+  const oid = reqOrderId(r);
+  return `<details class="bd" id="scBox" style="margin-top:14px" ${isCx ? 'open' : ''}><summary><b>🚚 送り状データを取り消す</b>（キャンセルのとき）</summary>
+    <p class="hint">受注番号で「キャンセル済み」にすると、その受注番号は出荷通知CSV（まとまるくん・チェックリスト・USくん）に入らず、梱包くんでも止まります。あとから送り状を作って取り込んでも同じです。発行済みデータが取り込まれる前でもキャンセル済みにできます。B2クラウド・e飛伝の送り状の削除は、それぞれの画面で行ってください。</p>
+    <div class="note-row" style="margin-top:6px"><input id="scQ" value="${esc(oid)}" placeholder="受注番号（複数は改行・スペース区切り）"><button class="btn" id="scFind">探す</button></div>
+    <div id="scList" style="margin-top:8px"></div></details>`;
+}
+function bindShipCancel(r) {
+  if (!$('scFind')) return;
+  const run = () => findShipsForCancel(r);
+  $('scFind').onclick = run;
+  $('scQ').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); run(); } };
+  $('scQ').oninput = () => { $('sheet').dataset.dirty = '1'; };
+  if ($('scQ').value.trim() && $('scBox').open) run();
+}
+async function findShipsForCancel(r) {
+  const box = $('scList');
+  const words = [...new Set($('scQ').value.split(/[\s,、，]+/).map(shipNormK).filter(k => k.length >= 4))];
+  if (!words.length) { box.innerHTML = '<p class="hint">受注番号を入れてください（4文字以上）</p>'; return; }
+  box.innerHTML = '<p class="hint">探しています…</p>';
+  try {
+    // 受注番号ごとのキャンセル（shipCancels/{受注番号を詰めたもの}）
+    const raw = [...new Set($('scQ').value.split(/[\s,、，]+/).map(v => v.trim()).filter(v => shipNormK(v).length >= 4))].slice(0, 10);
+    const ocx = new Map();
+    for (const w of raw) { const k = shipNormK(w); const d = await getDoc(doc(db, 'shipCancels', k)); ocx.set(k, { word: w, key: k, ...(d.exists() ? d.data() : {}) }); }
+    const setOrderCx = async (keys, on) => {
+      const b = writeBatch(db), now = new Date();
+      keys.forEach(k => { const o = ocx.get(k); b.set(doc(db, 'shipCancels', k), on
+        ? { key: k, orderNo: o.word, canceled: true, at: now.toISOString(), atSec: Math.floor(now / 1000), by: S.user.email, reqId: r.id }
+        : { canceled: false, uncanceledAt: now.toISOString(), uncanceledBy: S.user.email, atSec: Math.floor(now / 1000) }, { merge: true }); });
+      // 各アプリが1回の読み取りで確かめられるよう、1つのドキュメント（settings/ship_cancels）にもまとめる
+      const map = {}; keys.forEach(k => { map[k] = on ? { orderNo: ocx.get(k).word, at: now.toISOString(), atSec: Math.floor(now / 1000), by: S.user.email } : deleteField(); });
+      b.set(doc(db, 'settings', 'ship_cancels'), { keys: map, updatedAt: now.toISOString() }, { merge: true });
+      await b.commit();
+    };
+    const orderHtml = '<div style="margin-bottom:8px">' + [...ocx.values()].map(o => `<div class="pend-row" style="border-top:1px solid var(--line)">
+        <span style="font-size:13px"><b>受注番号 ${esc(o.word)}</b>　${o.canceled ? `<span class="cxl">キャンセル済み</span> <small style="color:var(--sub)">${esc(String(o.at || '').slice(0, 16).replace('T', ' '))} ${esc(o.by || '')}</small>` : '<small style="color:var(--sub)">キャンセル済みにしていません</small>'}</span>
+        ${o.canceled ? `<button class="mini" data-ocundo="${esc(o.key)}">戻す</button>` : `<button class="mini danger" data-occx="${esc(o.key)}">キャンセル済みにする</button>`}</div>`).join('') + '</div>';
+    const bindOrder = () => {
+      box.querySelectorAll('[data-occx]').forEach(b => b.onclick = async () => {
+        const o = ocx.get(b.dataset.occx);
+        if (!confirm(`受注番号 ${o.word} をキャンセル済みにしますか？\n見つかった送り状があれば、それも取り消します。`)) return;
+        try {
+          await setOrderCx([o.key], true);
+          const ids = [...found.values()].filter(x => !x.canceled && (x.keys || []).includes(o.key)).map(x => x.id);
+          if (ids.length) await setCx(ids, true);
+          toast('キャンセル済みにしました' + (ids.length ? `（送り状 ${ids.length}件も取り消し）` : '')); findShipsForCancel(r);
+        } catch (e) { toast('できませんでした：' + e.message); }
+      });
+      box.querySelectorAll('[data-ocundo]').forEach(b => b.onclick = async () => {
+        if (!confirm('キャンセル済みを戻しますか？（取り消した送り状は、必要なら下で個別に戻してください）')) return;
+        try { await setOrderCx([b.dataset.ocundo], false); toast('戻しました'); findShipsForCancel(r); } catch (e) { toast('戻せませんでした：' + e.message); }
+      });
+    };
+    const found = new Map();
+    for (const w of words.slice(0, 10)) {
+      const keys = [w]; if (/^\d{5,6}$/.test(w)) keys.push(String(Number(w)));
+      for (const k of [...new Set(keys)]) {
+        const snap = await getDocs(query(collection(db, 'shipments'), where('keys', 'array-contains', k)));
+        snap.forEach(d => found.set(d.id, { id: d.id, ...d.data() }));
+      }
+    }
+    const list = [...found.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const setCx = async (ids, on) => {
+      const b = writeBatch(db);
+      ids.forEach(id => b.set(doc(db, 'shipments', id), on
+        ? { canceled: true, canceledAt: new Date().toISOString(), canceledBy: S.user.email, canceledReqId: r.id, canceledWord: $('scQ').value.trim().slice(0, 200) }
+        : { canceled: false, uncanceledAt: new Date().toISOString(), uncanceledBy: S.user.email }, { merge: true }));
+      await b.commit();
+    };
+    if (!list.length) { box.innerHTML = orderHtml + '<p class="hint">送り状データはまだ見つかりません（発行済みデータが取り込まれていないか、番号が違うかもしれません）。受注番号をキャンセル済みにしておけば、あとで取り込まれても出荷通知に入りません。</p>'; bindOrder(); return; }
+    const live = list.filter(x => !x.canceled);
+    box.innerHTML = orderHtml + '<p class="hint" style="margin:4px 0">送り状データ</p>' + list.map(x => `<div class="pend-row" style="border-top:1px solid var(--line)">
+        <span style="font-size:13px;${x.canceled ? 'opacity:.6;text-decoration:line-through' : ''}"><b>${esc(x.carrierName || '')} ${esc(x.tracking)}</b>　${esc(x.date || '')}　${esc(x.name || '')}<br>
+          <small style="color:var(--sub)">${esc(x.orderNo || '')}${x.items ? '　' + esc(String(x.items).slice(0, 80)) : ''}</small></span>
+        ${x.canceled ? `<span><span class="cxl">取消済み</span> <button class="mini" data-scundo="${esc(x.id)}">戻す</button></span>`
+                     : `<button class="mini danger" data-sccx="${esc(x.id)}">取り消す</button>`}</div>`).join('')
+      + (live.length > 1 ? `<div class="actions" style="margin-top:6px"><button class="mini danger" id="scAll">見つかった${live.length}件をまとめて取り消す</button></div>` : '');
+    bindOrder();
+    box.querySelectorAll('[data-sccx]').forEach(b => b.onclick = async () => {
+      const x = found.get(b.dataset.sccx);
+      if (!confirm(`${x.carrierName} ${x.tracking}（${x.name || ''}）の送り状データを取り消しますか？`)) return;
+      try { await setCx([x.id], true); toast('送り状データを取り消しました'); findShipsForCancel(r); } catch (e) { toast('取り消せませんでした：' + e.message); }
+    });
+    box.querySelectorAll('[data-scundo]').forEach(b => b.onclick = async () => {
+      try { await setCx([b.dataset.scundo], false); toast('取り消しを戻しました'); findShipsForCancel(r); } catch (e) { toast('戻せませんでした：' + e.message); }
+    });
+    if ($('scAll')) $('scAll').onclick = async () => {
+      if (!confirm(`${live.length}件の送り状データを取り消しますか？`)) return;
+      try { await setCx(live.map(x => x.id), true); toast(`${live.length}件の送り状データを取り消しました`); findShipsForCancel(r); } catch (e) { toast('取り消せませんでした：' + e.message); }
+    };
+  } catch (e) {
+    box.innerHTML = `<p class="err">探せませんでした：${esc(e.code === 'permission-denied' ? 'Firestoreのルールで shipments・shipCancels の読み書きを許可してください' : e.message)}</p>`;
+  }
 }
 
 // ---------- 商品画像（JAN → Yahoo!ショッピングの画像） ----------

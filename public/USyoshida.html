@@ -304,11 +304,21 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <div id="tabAfter" hidden>
       <div class="panel stack">
         <h2 class="h2">発行済みデータの取り込み・出荷通知</h2>
-        <p class="muted small">ヤマト・佐川の発行済みCSVを読み込むと、品名2の「(No.○○)」でシートと紐づけて、配送業者・追跡番号と、紐づけた日（今日）を出荷日として入れます。受注CSVも読み込むと、出荷通知用のCSV（ステータス120）を作れます。</p>
+        <p class="muted small">ヤマト・佐川の発行済みCSVを読み込むと、品名2の「(No.○○)」でシートと紐づけて、配送業者・追跡番号と、紐づけた日（今日）を出荷日として入れます。受注CSVも読み込むと、出荷通知用のCSVを作れます（ステータス番号は、下で選ぶRobot-inのアカウントごとに設定画面で決めます）。</p>
         <div class="files">
           <label>ヤマトの発行済みCSV<input type="file" id="fYamato" accept=".csv"></label>
           <label>佐川の発行済みCSV<input type="file" id="fSagawa" accept=".csv"></label>
           <label>受注CSV（出荷通知を作るときだけ）<input type="file" id="fOrder" accept=".csv"></label>
+        </div>
+        <div class="scope-box">
+          <b class="small">共有の発行済みデータ（コックピット・まとまるくんなどと共通）</b>
+          <p class="muted small" style="margin:0">上でヤマト・佐川の発行済みCSVを読み込むと、共有の記録にも自動で保存します。ほかのアプリで取り込み済みなら、CSVを選ばずに出荷日を選んで読めます。</p>
+          <div class="search-row" style="justify-content:flex-start">
+            <label class="small">出荷日 <input type="date" id="shDate"></label>
+            <button id="btnShLoad" type="button" class="secondary">共有の記録から読む</button>
+            <button id="btnShClear" type="button" class="ghost" hidden>読んだ分を外す</button>
+          </div>
+          <div id="shInfo" class="muted small"></div>
         </div>
         <div class="scope-box">
           <label class="chk"><input type="checkbox" id="onlySearched" checked> 作業タブで検索した注文だけ紐づける（翌日以降に出す送り状は書き込まない）</label>
@@ -319,6 +329,8 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
         <div id="linkActions" class="search-row wrap" hidden>
           <label class="chk"><input type="checkbox" id="excludeInq" checked> 問い合わせ中・出荷保留・保管の注文は出荷通知CSVから外す</label>
           <button id="btnLinkWrite" class="primary">シートに反映する</button>
+          <label class="small">Robot-inのアカウント <select id="robotAcc" style="border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--surface)"></select></label>
+          <span id="robotAccInfo" class="small muted"></span>
           <button id="btnNotifyCsv" class="secondary">出荷通知CSVを保存</button>
         </div>
         <pre id="linkLog" class="log" hidden></pre>
@@ -427,6 +439,8 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <label>ご依頼主：郵便番号<input id="sSZip"></label>
     <label>ご依頼主：住所<input id="sSAddr"></label>
     <label>ご依頼主：建物名（住所2）<input id="sSAddr2"></label>
+    <h3 style="margin:8px 0 0;font-size:15px">Robot-in（出荷通知CSV）</h3>
+    <label>アカウントごとの出荷通知のステータス番号（1行に「名前=番号」。例：ロジ=120）<textarea id="sRobot" rows="3" style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface)"></textarea></label>
     <h3 style="margin:8px 0 0;font-size:15px">梱包くん</h3>
     <label>梱包くん（pack.html）のURL（検品書のQRコードで開くページ。空欄なら、このアプリと同じ場所の pack.html）<input id="sPack" placeholder="https://…/pack.html"></label>
     <h3 style="margin:8px 0 0;font-size:15px">チャットでの報告</h3>
@@ -709,6 +723,7 @@ function openSettings(){
   $('#sSAddr2').value = c.senderAddr2 || DEFAULTS.senderAddr2;
   $('#sRoom').value = c.reportRoomId || DEFAULTS.reportRoomId;
   $('#sPack').value = c.packUrl || '';
+  $('#sRobot').value = c.robotStatuses || DEFAULTS.robotStatuses;
   $('#sTo').value = c.reportTo || DEFAULTS.reportTo;
   settingsMsg('');
   $('#dlgSettings').showModal();
@@ -730,6 +745,7 @@ function readSettingsForm(){
     senderAddr2: $('#sSAddr2').value.trim(),
     reportRoomId: $('#sRoom').value.trim(),
     packUrl: $('#sPack').value.trim(),
+    robotStatuses: $('#sRobot').value.trim(),
     reportTo: $('#sTo').value.trim(),
   };
 }
@@ -741,6 +757,7 @@ const DEFAULTS = {
   senderTel: '080-6457-5057', senderZip: '2140014',
   senderAddr: '神奈川県川崎市多摩区登戸1035', senderAddr2: 'GINZO101',
   reportRoomId: '357129706',
+  robotStatuses: 'ロジ=120\nメディ=212',
   reportTo: '[To:6086404]Harunaさん\n[To:1122307]尾形さん',
 };
 function settingsMsg(text, ok){ const m=$('#settingsMsg'); m.textContent=text; m.className='small '+(ok===true?'st-ok':ok===false?'st-ng':'muted'); }
@@ -1867,7 +1884,7 @@ function switchTab(t){
   if (t==='zaico') zcOpen();
   if (t==='inq') loadInquiryList();
   if (t==='hist') loadHistory();
-  if (t==='after') updateScopeInfo();
+  if (t==='after') { updateScopeInfo(); robotAccRender(); }
 }
 
 /* ===== Firestore の補助 ===== */
@@ -2199,7 +2216,7 @@ $('#btnInqReload').onclick = loadInquiryList;
 $('#inqList').addEventListener('click', e => { const b=e.target.closest('.inqoff'); if (b) toggleInquiry(Number(b.dataset.no)); });
 
 /* ===== 発行済みデータ・出荷通知 ===== */
-const files = { yamato:null, sagawa:null, order:null, orderName:'' };
+const files = { yamato:null, sagawa:null, order:null, orderName:'', yamatoName:'', sagawaName:'', shared:null, canceled:new Set() };   // canceled：依頼まとめ管理で取り消した送り状（yamato_伝票番号）
 let linkPlan = null;
 // 作業タブの検索結果に出ている注文（No.の一覧）
 const searchedNos = () => Object.keys(state.rows || {}).map(Number).filter(Boolean);
@@ -2234,7 +2251,13 @@ function readCsvFile(file){
     const f = e.target.files[0];
     files[key] = null; linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = '';
     if (!f) return;
-    try { files[key] = await readCsvFile(f); if (key==='order') files.orderName = f.name; toast(f.name+' を読み込みました（'+files[key].length+'行）'); }
+    try {
+      files[key] = await readCsvFile(f); files[key+'Name'] = f.name;
+      if (key==='order') files.orderName = f.name;
+      toast(f.name+' を読み込みました（'+files[key].length+'行）');
+      if (key !== 'order') saveSharedShipments(issuedRows(key, files[key], f.name), issuedDeleted(key, files[key]));   // 共有の記録にも保存
+      else robotAccDetectShow();   // 受注CSVの見出し（Ri_列の有無）から、Robot-inのアカウントを自動で選ぶ
+    }
     catch(err){ toast(err.message, 6000); }
   });
 });
@@ -2259,19 +2282,140 @@ function normDate(s){
 // 発行済みCSVの1行 → { carrier, tracking, orderNo, nos, date }
 // ヤマト：見出しなし。A列=お客様管理番号（注文番号）、D列=伝票番号、E列=出荷予定日、AD列=品名2
 // 佐川：1行目は見出し。A列=お問い合せ送り状No.、C列=出荷日、AN列=品名2、AO列=品名3（注文番号）
+// 発行済みCSVの1ファイル → 送り状の行
+// ヤマト：見出しなし。A列=お客様管理番号（注文番号）、B列=送り状種類、D列=伝票番号、E列=出荷予定日、P列=お届け先名、AA〜AF列=品名など、AD列=品名2
+// 佐川：1行目は見出し。A列=お問い合せ送り状No.、C列=出荷日、AN列=品名2、AO列=品名3（注文番号）
+function issuedRows(kind, rows, fileName){
+  const out = [], t = v => String(v == null ? '' : v).trim();
+  if (kind === 'yamato') (rows || []).forEach(r => {
+    if (!r || !/^\d{8,}$/.test(t(r[3]))) return;
+    out.push({ carrier:'ヤマト運輸', type:t(r[1]), tracking:t(r[3]), orderNo:t(r[0]), nos:parseNos(r[29]), date:normDate(r[4]),
+      name:t(r[15]), texts:[26,27,28,29,30,31,32].map(i => t(r[i])).filter(Boolean), file:fileName || '' });
+  });
+  else {
+    const head = ((rows || [])[0] || []).map(t);
+    const cName = head.findIndex(h => /^お届け先名称[1１]?$/.test(h));
+    const cTexts = head.map((h, i) => /品名|記事/.test(h) ? i : -1).filter(i => i >= 0);
+    const cDel = head.findIndex(h => /^削除区分$/.test(h));   // e飛伝で削除した送り状は使わない
+    (rows || []).slice(1).forEach(r => {
+      if (!r || !t(r[0])) return;
+      if (cDel >= 0 && t(r[cDel]) && t(r[cDel]) !== '0') return;
+      out.push({ carrier:'佐川急便', type:'', tracking:t(r[0]), orderNo:t(r[40]), nos:parseNos(r[39]), date:normDate(r[2]),
+        name: cName >= 0 ? t(r[cName]) : '', texts: cTexts.map(i => t(r[i])).filter(Boolean), file:fileName || '' });
+    });
+  }
+  return out;
+}
+// e飛伝で削除した送り状（保存済みなら取り消しにする）
+function issuedDeleted(kind, rows){
+  if (kind !== 'sagawa') return [];
+  const t = v => String(v == null ? '' : v).trim(), head = ((rows || [])[0] || []).map(t);
+  const cDel = head.findIndex(h => /^削除区分$/.test(h)); if (cDel < 0) return [];
+  return (rows || []).slice(1).filter(r => r && t(r[0]) && t(r[cDel]) && t(r[cDel]) !== '0')
+    .map(r => ({ id:'sagawa_' + t(r[0]).replace(/\D/g, ''), date:normDate(r[2]) }));
+}
 function carrierRows(){
-  const out = [];
-  (files.yamato || []).forEach(r => {
-    if (!r || !/^\d{8,}$/.test(String(r[3]||'').trim())) return;
-    out.push({ carrier:'ヤマト運輸', type:String(r[1]||'').trim(), tracking:String(r[3]).trim(), orderNo:String(r[0]||'').trim(), nos:parseNos(r[29]), date:normDate(r[4]) });
-  });
-  (files.sagawa || []).slice(1).forEach(r => {
-    if (!r || !String(r[0]||'').trim()) return;
-    out.push({ carrier:'佐川急便', type:'', tracking:String(r[0]).trim(), orderNo:String(r[40]||'').trim(), nos:parseNos(r[39]), date:normDate(r[2]) });
-  });
+  const seen = new Set(), out = [];
+  // 読み込んだCSVを先に（共有の記録と同じ送り状なら、CSVのほうを使う）
+  [...issuedRows('yamato', files.yamato, files.yamatoName), ...issuedRows('sagawa', files.sagawa, files.sagawaName), ...(files.shared || [])]
+    .forEach(c => {
+      const k = c.carrier + '_' + String(c.tracking).replace(/\D/g, ''); if (seen.has(k)) return; seen.add(k);
+      if (files.canceled.has((SHIP_CODE[c.carrier] || '') + '_' + String(c.tracking).replace(/\D/g, ''))) return;   // キャンセルで取り消した送り状は使わない
+      out.push(Object.assign({}, c));
+    });
   out.forEach((c, i) => c.idx = i);
   return out;
 }
+
+/* ===== 共有の発行済みデータ（shipments） =====
+   コックピットの「🚚 送り状」と同じ保存先・同じ形：shipments/{yamato|sagawa}_{伝票番号}
+   どのアプリで発行済みCSVを読み込んでも、ここにたまる（同じ伝票番号は上書き）。住所・電話番号は保存しない */
+const SHIP_CODE = { 'ヤマト運輸':'yamato', '佐川急便':'sagawa' };
+const SHIP_NAME = { yamato:'ヤマト運輸', sagawa:'佐川急便' };
+const shipNormK = s => String(s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
+const shipNormNameK = s => String(s || '').replace(/[\s　]/g, '').replace(/(様|殿|御中)$/, '');
+function shipKeysK(r){   // コックピットのサーバー（shipKeys）と同じ作り方
+  const keys = new Set(), add = k => { k = String(k || ''); if (k.length >= 4 && k.length <= 60) keys.add(k); };
+  add(shipNormK(r.tracking)); add(shipNormK(r.orderNo)); add(shipNormNameK(r.name));
+  // 欄まるごとが受注番号のもの（Robot-inの送り状：ヤマトの記事・佐川の品名2「No:受注番号」）を先に入れる（30個までで切れないように）
+  (r.texts || []).forEach(t => { const s = String(t || '').trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNormK(s.replace(/^No[:：.]?\s*/i, ''))); });
+  (r.texts || []).forEach(t => {
+    const s = String(t || ''), m = s.match(/No\.?\s*([\d,，、\s]+)/i);
+    if (m) m[1].split(/[,，、\s]+/).filter(Boolean).forEach(n => add(String(Number(n))));
+    (s.match(/[A-Za-z0-9Ａ-Ｚａ-ｚ０-９][A-Za-z0-9Ａ-Ｚａ-ｚ０-９\-‐－_]{4,}/g) || []).forEach(x => add(shipNormK(x)));
+  });
+  (r.nos || []).forEach(n => add(String(n)));
+  return Array.from(keys).slice(0, 30);
+}
+async function saveSharedShipments(list, deleted){
+  const items = [];
+  deleted = deleted || [];
+  (list || []).forEach(c => {
+    const code = SHIP_CODE[c.carrier], trk = String(c.tracking || '').replace(/\D/g, '');
+    if (!code || trk.length < 10 || trk.length > 14) return;
+    const texts = (c.texts || []).slice(0, 8);
+    const data = { carrier:code, carrierName:SHIP_NAME[code], tracking:trk, type:c.type || '',
+      date: /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : '', name:String(c.name || '').slice(0, 60),
+      orderNo:String(c.orderNo || '').slice(0, 60), nos:(c.nos || []).map(Number).filter(Boolean).slice(0, 30),
+      items:texts.join(' / ').slice(0, 300), file:String(c.file || '').slice(0, 100),
+      importedAt:Math.floor(Date.now() / 1000), importedFrom:'配送管理アプリ', importedBy:(state.user && state.user.email) || '' };
+    data.keys = shipKeysK({ tracking:trk, orderNo:data.orderNo, name:data.name, texts, nos:data.nos });
+    items.push([db.collection('shipments').doc(code + '_' + trk), data]);
+  });
+  const liveIds = new Set(items.map(([ref]) => ref.id));
+  deleted = deleted.filter(x => !liveIds.has(x.id));
+  if (!items.length && !deleted.length) return;
+  try {
+    // すでに同じ内容で保存されている送り状は書き込まない（書き込み回数を減らす）
+    // その出荷日の記録をまとめて読み、伝票番号ごとに中身を見比べる
+    const dates = [...new Set([...items.map(([, d]) => d.date), ...deleted.map(x => x.date)].filter(Boolean))];
+    const have = new Map();
+    for (const part of chunk(dates, 30)) {
+      const snap = await db.collection('shipments').where('date', 'in', part).get();
+      snap.forEach(x => have.set(x.id, x.data()));
+    }
+    const sameShip = (a, b) => !!a && ['carrier','tracking','type','date','name','orderNo','items'].every(k => String(a[k] || '') === String(b[k] || ''))
+      && (a.nos || []).join(',') === (b.nos || []).join(',');
+    have.forEach((v, id) => { if (v.canceled) files.canceled.add(id); });   // 取り消し済みの送り状は紐づけに使わない
+    const todo = items.filter(([ref, d]) => !sameShip(have.get(ref.id), d));
+    const skip = items.length - todo.length;
+    // e飛伝で削除された送り状のうち、保存済みでまだ取り消していないもの
+    const cx = deleted.filter(x => have.has(x.id) && !have.get(x.id).canceled);
+    cx.forEach(x => files.canceled.add(x.id));
+    const writes = [...todo, ...cx.map(x => [db.collection('shipments').doc(x.id),
+      { canceled:true, canceledAt:Math.floor(Date.now() / 1000), canceledBy:(state.user && state.user.email) || '', canceledReason:'e飛伝で削除' }])];
+    if (writes.length) await batchSetAll(writes);
+    if (cx.length) toast('e飛伝で削除された送り状 '+cx.length+'件を、取り消し済みにしました', 5000);
+    toast(todo.length ? '共有の発行済みデータに保存しました（新しく '+todo.length+'件'+(skip ? '・保存済み '+skip+'件はそのまま' : '')+'）'
+      : '共有の発行済みデータには、すべて保存済みでした（'+skip+'件）');
+  }
+  catch(e){ console.warn(e); toast('共有の発行済みデータに保存できませんでした（このアプリでの紐づけはそのまま使えます）：'+e.message, 7000); }
+}
+$('#shDate').value = todayStr();
+// 共有の記録を読む（あとから追加で取り込まれた分も、読み直せば入る）
+async function shLoad(quiet){
+  const d = $('#shDate').value;
+  if (!d) { toast('出荷日を選んでください'); return; }
+  const btn = $('#btnShLoad'); btn.disabled = true;
+  const before = files.shared ? files.shared.length : 0;
+  try{
+    const snap = await db.collection('shipments').where('date', '==', d).get();
+    snap.docs.forEach(x => { if (x.data().canceled) files.canceled.add(x.id); });
+    const cxN = snap.docs.filter(x => x.data().canceled).length;
+    files.shared = snap.docs.map(x => x.data()).filter(x => SHIP_NAME[x.carrier] && !x.canceled).map(x => ({
+      carrier:SHIP_NAME[x.carrier], type:x.type || '', tracking:String(x.tracking || ''), orderNo:String(x.orderNo || ''),
+      nos: (Array.isArray(x.nos) && x.nos.length) ? x.nos.map(Number) : parseNos(x.items), date:x.date || '' }));
+    linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = '';
+    const y = files.shared.filter(c => c.carrier === 'ヤマト運輸').length;
+    const added = quiet && files.shared.length > before ? '（前回より '+(files.shared.length - before)+'件増えています）' : '';
+    $('#shInfo').textContent = md(d)+'出荷の共有データ '+files.shared.length+'件（ヤマト '+y+'・佐川 '+(files.shared.length - y)+'）を読みました'+(cxN ? '（キャンセルで取り消した '+cxN+'件は除いています）' : '')+added+'。「紐づけを確認する」に進んでください。あとから追加で取り込まれた分は、もう一度「共有の記録から読む」か「紐づけを確認する」を押すと入ります';
+    $('#btnShClear').hidden = !files.shared.length;
+    if (!files.shared.length && !quiet) toast(md(d)+'出荷の共有データはまだありません');
+  }catch(e){ toast('共有の発行済みデータを読めませんでした（Firestoreのルールで shipments の読み取りを許可してください）：'+e.message, 8000); }
+  finally{ btn.disabled = false; }
+}
+$('#btnShLoad').onclick = () => shLoad(false);
+$('#btnShClear').onclick = () => { files.shared = null; $('#shInfo').textContent = ''; $('#btnShClear').hidden = true; linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = ''; };
 
 // 同じ注文に送り状が複数あるときは、新しく作成したほうを使う
 // 1) このアプリで最後に作った送り状（業者・送り状種類）の記録があれば、それと同じ種類のものを使う
@@ -2305,7 +2449,8 @@ function pickNewest(list, rec){
 }
 
 $('#btnLink').onclick = async () => {
-  if (!files.yamato && !files.sagawa) { toast('ヤマトか佐川の発行済みCSVを読み込んでください'); return; }
+  if (files.shared) await shLoad(true);   // あとから追加で取り込まれた分も入れる
+  if (!files.yamato && !files.sagawa && !(files.shared && files.shared.length)) { toast('ヤマトか佐川の発行済みCSVを読み込むか、共有の記録から読んでください'); return; }
   const btn = $('#btnLink'); btn.disabled = true; btn.textContent = '確認中…';
   try{
     const crows = carrierRows();
@@ -2550,7 +2695,46 @@ async function pushShukkaCounts(dates){
   }
 }
 
-/* --- 出荷通知CSV（受注CSV＋発行済みCSV → ステータス120） --- */
+/* --- 出荷通知CSV（受注CSV＋発行済みCSV → 出荷通知のステータス） ---
+   Robot-inのアカウント（ロジ・メディなど）ごとにステータス番号が違うので、設定画面の「名前=番号」から選ぶ */
+function robotAccs(){
+  const txt = (state.config && state.config.robotStatuses) || DEFAULTS.robotStatuses;
+  return String(txt).split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+    const m = l.match(/^(.+?)\s*[=＝:：]\s*(\d+)$/); return m ? { name:m[1].trim(), status:m[2] } : null;
+  }).filter(Boolean);
+}
+// 受注CSVの見出しでアカウントを見分ける（店舗が増えても設定不要）
+// メディの受注CSVには「Ri_skuコード」など Ri_ で始まる列がある（82列）。ロジにはない（68列）
+function detectRobotAcc(){
+  const head = (files.order && files.order[0]) || [];
+  const medi = head.some(h => /^Ri_/.test(String(h || '').trim()));
+  const rows = (files.order || []).slice(1).filter(r => r && r.length > 5);
+  const acc = head.length ? (medi ? 'メディ' : 'ロジ') : '';
+  return { acc, accs: acc ? [acc] : [], unknown: [], shops:[...new Set(rows.map(r => String(r[3] || '').trim()).filter(Boolean))] };
+}
+function robotAccDetectShow(){
+  const el = $('#robotAccInfo'); if (!el) return;
+  if (!files.order) { el.textContent = ''; return; }
+  const d = detectRobotAcc(), sel = $('#robotAcc');
+  const shops = d.shops.slice(0, 3).join('・') + (d.shops.length > 3 ? ' ほか' : '');
+  if (d.accs.length > 1) { el.innerHTML = '<span class="st-ng">⚠ '+esc(d.accs.join('と'))+'の店舗が混ざっています。受注CSVを分けてください</span>'; return; }
+  if (d.acc && robotAccs().some(a => a.name === d.acc)) {
+    sel.value = d.acc;
+    el.innerHTML = '<span class="st-ok">受注CSVの形から「'+esc(d.acc)+'」と判断しました（店舗：'+esc(shops)+'）</span>' + (d.unknown.length ? '<br><span class="st-warn">知らない店舗：'+esc(d.unknown.map(x => x[1] + '（' + x[0] + '）').join('、'))+'</span>' : '');
+  } else if (d.acc) {
+    el.innerHTML = '<span class="st-ng">受注CSVは「'+esc(d.acc)+'」の店舗ですが、設定画面の「Robot-in（出荷通知CSV）」に「'+esc(d.acc)+'=番号」がありません</span>';
+  } else {
+    el.innerHTML = '<span class="st-warn">店舗（'+esc(shops)+'）からアカウントを決められませんでした。選んでください（次からは自動で選びます）</span>';
+  }
+}
+function robotAccRender(){
+  const sel = $('#robotAcc'); if (!sel) return;
+  const list = robotAccs(), saved = lsGet('dm_robot_acc');
+  sel.innerHTML = list.length ? list.map(a => '<option value="'+esc(a.name)+'">'+esc(a.name)+'（ステータス '+esc(a.status)+'）</option>').join('') : '<option value="">設定画面で登録してください</option>';
+  if (list.some(a => a.name === saved)) sel.value = saved;
+  robotAccDetectShow();
+}
+
 function cleanOrderNoNormalized(str){
   if (!str) return '';
   return String(str).replace(/^No:?[\.\s]*/i,'').replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0)-0xFEE0)).replace(/[\s\-\_\u2010-\u2015\u30fc\uff0d\uff3f]/g,'').trim().toLowerCase();
@@ -2585,8 +2769,12 @@ function isSjisSafe(ch){
 
 $('#btnNotifyCsv').onclick = async () => {
   if (!files.order || files.order.length <= 1) { toast('出荷通知を作るには受注CSVを読み込んでください', 5000); return; }
-  const crows = carrierRows();
-  if (!crows.length) { toast('ヤマトか佐川の発行済みCSVを読み込んでください'); return; }
+  const acc = robotAccs().find(a => a.name === $('#robotAcc').value);
+  if (!acc) { toast('Robot-inのアカウントを選んでください（設定画面の「Robot-in（出荷通知CSV）」で登録できます）', 6000); return; }
+  const det = detectRobotAcc();
+  const warn = det.accs.length > 1 ? '\n\n⚠ 受注CSVに「'+det.accs.join('」と「')+'」の店舗が混ざっています。'
+    : (det.acc && det.acc !== acc.name) ? '\n\n⚠ 受注CSVは「'+det.acc+'」のアカウントの受注CSVです（選んでいるのは「'+acc.name+'」）。' : '';
+  if (!confirm('Robot-in「'+acc.name+'」のアカウント用に、ステータス '+acc.status+' で出荷通知CSVを作ります。よろしいですか？'+warn)) return;
   linkLog('──────── 出荷通知CSVの作成 ────────', true);
 
   // 送り状が複数ある注文だけ、アプリで最後に作った送り状の記録を読む
@@ -2608,6 +2796,14 @@ $('#btnNotifyCsv').onclick = async () => {
       }
     }catch(e){ linkLog('⚠️ 問い合わせ中・出荷保留・保管の注文を読み込めませんでした：'+e.message); }
   }
+
+  // 依頼まとめ管理で「キャンセル済み」にした受注番号（settings/ship_cancels・読み取り1回）
+  const cxSet = new Set();
+  try {
+    const cs = await db.collection('settings').doc('ship_cancels').get();
+    Object.keys((cs.exists && cs.data().keys) || {}).forEach(k => cxSet.add(cleanOrderNoNormalized(k)));
+  } catch(e){ linkLog('⚠️ キャンセル済みの受注番号を読めませんでした：'+e.message); }
+  const skippedCx = [];
 
   // 検索した注文だけにする場合は、その注文番号だけを対象にする
   let scopeOids = null;
@@ -2632,19 +2828,21 @@ $('#btnNotifyCsv').onclick = async () => {
     if (!entry) { unmatched.push(String(src[5]).trim()); continue; }
     entry.used = true;
     if (inqOids.has(key)) { skippedInq.push(String(src[5]).trim()); continue; }
+    if (cxSet.has(key)) { skippedCx.push(String(src[5]).trim()); continue; }
     const row = [...src];
     while (row.length <= 56) row.push('');
-    row[7] = '120'; row[46] = '発払い'; row[51] = today; row[55] = carrier; row[56] = entry.tracking;
+    row[7] = acc.status; row[46] = '発払い'; row[51] = today; row[55] = carrier; row[56] = entry.tracking;
     out.push(row);
     carrier==='ヤマト運輸' ? yc++ : sc++;
   }
 
   const n = out.length - 1;
-  linkLog('🎉 ステータス120（出荷通知の対象）：'+n+'件（ヤマト '+yc+'件 ／ 佐川 '+sc+'件）');
+  linkLog('🎉 Robot-in「'+acc.name+'」 ステータス'+acc.status+'（出荷通知の対象）：'+n+'件（ヤマト '+yc+'件 ／ 佐川 '+sc+'件）');
   if (cmap.multi) linkLog('- 複数口の注文：'+cmap.multi+'件（1口目の伝票番号で紐づけ）');
   logList('ℹ️ 送り状が作り直されていた注文（新しいほうを使用）', cmap.reissued);
   logList('⚠️ 送り状が複数あり、どれが新しいか判断できないため外した注文（手で確認してください）', cmap.unsure);
   logList('⚠️ 問い合わせ中・出荷保留・保管のため外した注文', skippedInq);
+  logList('⚠️ 依頼まとめ管理でキャンセル済みにしたため外した注文', [...new Set(skippedCx)]);
   if (scopeOids) linkLog('ℹ️ 作業タブで検索した注文だけを対象にしました（検索結果にない送り状 '+skippedScope.length+'件は外しています）');
   logList('⚠️ 受注CSVにあるが、追跡番号が見つからなかった注文', unmatched);
   logList('⚠️ ヤマトCSVにあるが、受注CSVに見当たらない注文番号', [...cmap.map.values()].filter(e=>!e.used && e.carrier==='ヤマト運輸').map(e=>e.rawOrderNo));
@@ -2660,7 +2858,7 @@ $('#btnNotifyCsv').onclick = async () => {
   const sj = Encoding.convert(Encoding.stringToCode(csv), { to:'SJIS', from:'UNICODE' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([new Uint8Array(sj)], { type:'text/csv' }));
-  a.download = 'updated_status120_' + (files.orderName || 'order.csv');
+  a.download = 'updated_status' + acc.status + '_' + acc.name + '_' + (files.orderName || 'order.csv');
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   linkLog('\n📥 出荷通知CSVを保存しました。');

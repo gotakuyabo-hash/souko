@@ -291,6 +291,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
       <button class="tab-btn active" data-tab="allInOneTab" onclick="switchTab('allInOneTab')">出荷処理</button>
       <button class="tab-btn" data-tab="masterTab" onclick="switchTab('masterTab')">商品マスタ</button>
       <button class="tab-btn" data-tab="zaicoLogTab" onclick="switchTab('zaicoLogTab')">zaico出庫履歴</button>
+      <button class="tab-btn" data-tab="issuedTab" onclick="switchTab('issuedTab')">発行済みデータ</button>
     </nav>
     <button class="btn-reset" onclick="resetAllData()">読み込みデータをリセット</button>
   </div>
@@ -327,6 +328,7 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
         <h2 class="step-title">CSVを読み込む</h2>
         <span class="step-sub">受注・ヤマト・佐川をまとめて、または何回かに分けて追加できます</span>
       </div>
+      <div id="mainLoginBox" style="margin:0 0 8px;font-size:12px"></div>
       <div class="step-body grid2">
         <div id="dropZone" class="dropzone" tabindex="0" role="button" aria-label="CSVファイルを選択">
           <strong>ここにCSVをドラッグ＆ドロップ</strong>
@@ -538,6 +540,33 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
     </section>
   </div>
 
+  <!-- ===== 発行済みデータタブ（共有の記録 shipments に保存） ===== -->
+  <div id="issuedTab" class="tab-content">
+    <section class="step">
+      <div class="step-head"><h2 class="step-title">発行済みデータを共有の記録に保存</h2></div>
+      <p style="margin:0 0 10px;font-size:13px;color:#5d6b77">ヤマトB2・佐川e飛伝の発行済みCSVを入れると、コックピット・配送管理アプリと共通の記録（送り状の検索・出荷後の取り込みで使います）に保存します。同じ送り状は書き込みません。あとから追加分だけのCSVを入れても大丈夫です。住所・電話番号は保存しません。</p>
+      <div id="issuedLoginBox"></div>
+      <label id="issuedDrop" style="display:block;border:2px dashed #c9d1d6;border-radius:12px;padding:28px;text-align:center;cursor:pointer;font-size:14px;color:#5d6b77">
+        ここに発行済みCSVをドラッグ（クリックして選ぶこともできます。複数まとめてOK）
+        <input id="issuedFile" type="file" accept=".csv,text/csv" multiple style="display:none">
+      </label>
+      <div id="issuedResult" style="margin-top:10px"></div>
+    </section>
+
+    <section class="step">
+      <div class="step-head"><h2 class="step-title">Robot-inの出荷通知CSVを作る</h2></div>
+      <p style="margin:0 0 10px;font-size:13px;color:#5d6b77">「出荷処理」タブ（ピック数算出など）で読み込んだ受注CSVは、14日間残ります（Googleログインしていれば、別のパソコンからも使えます）。その日の受注CSVのうち、送り状を発行した注文だけを取り出して、共有の記録（上で保存した発行済みデータ）の伝票番号を入れ、Robot-inに取り込むCSVを作ります。Robot-inから受注CSVを出し直す必要はありません（発送済み・キャンセルなどは自動で外します）。アカウント（ロジ・メディ）は受注CSVの形で自動で見分け、アカウントごとに1つずつファイルを作ります。</p>
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px">
+        <div class="field" style="margin:0"><label for="rbDate">送り状の出荷日</label><input type="date" id="rbDate"></div>
+        <div class="field" style="margin:0"><label for="rbStatus">ステータスコード（1行に1つ：アカウント=番号）</label><textarea id="rbStatus" rows="2" style="width:200px;font-family:inherit"></textarea></div>
+        <button class="btn btn-primary" id="rbBtn">出荷通知CSVを作る</button>
+      </div>
+      <div id="rbInfo" style="font-size:13px;margin-bottom:6px"></div>
+      <div id="rbResult" style="font-size:13px;white-space:pre-wrap"></div>
+      <div id="rbMulti" style="font-size:13px;margin-top:8px"></div>
+    </section>
+  </div>
+
   <!-- ===== zaico出庫履歴タブ ===== -->
   <div id="zaicoLogTab" class="tab-content">
     <section class="step">
@@ -579,7 +608,8 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -834,10 +864,12 @@ function handleFiles(files) {
         }
 
         const fileRows = rows.slice(dataStartIndex).filter(r => r && r.length > 5 && r.some(c => String(c).trim() !== ''));
-        uploadedFiles.push({
+        const added = {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2),
           name: file.name, type, header: headerRow, rows: fileRows
-        });
+        };
+        uploadedFiles.push(added);
+        if (type === 'order' && typeof rbKeep === 'function') rbKeep(added);   // 出荷通知CSV用に、このブラウザに残す
       }
       updateAccumulatedData(true);
     };
@@ -880,6 +912,7 @@ function updateAccumulatedData(dataChanged) {
   renderOrderSection();
   updateButtons();
   renderPickSection();
+  if (typeof rbRenderInfo === 'function') rbRenderInfo();
 }
 
 function renderSources() {
@@ -3649,8 +3682,45 @@ async function getMasterMapCached() {
 }
 // おまけ扱いにする商品名のキーワード（必要に応じて足してください）
 const PACK_OMAKE_RE = /おまけ|オマケ|ノベルティ|特典|プレゼント|サンプル|試供品|同梱|チラシ|ステッカー/;
-function buildPackItems(rows, masterMap) {
+/* ピック数算出の画面やzaicoの在庫一覧から、マスタ未登録の商品のバーコードを拾うためのヒント
+   （zaico送信と同じバーコードをQRにも入れる。商品マスタに保存する前・zaico送信の前に印刷しても照合できるように）
+   Firestoreは読まない（zaicoの在庫一覧は、画面で読み込み済みのもの／端末に保存してあるものだけ使う） */
+function buildPackHints() {
+  const hints = new Map();   // SKU → { barcode, multiplier }
+  if (!zaicoInvLoadedAt) readZaicoInvCache();
+  const zcodes = (zaicoInvLoadedAt && zaicoInv.length) ? new Set(zaicoInv.map(x => x.code).filter(Boolean)) : null;
+  const zById = zcodes ? new Map(zaicoInv.map(x => [String(x.id), x])) : null;
+  if (pickGroups.length && !pickStale) {
+    try { syncInputs(); } catch (e) { console.warn(e); }   // 画面で打ち込んだだけ（未保存）のバーコードも使う
+    pickGroups.forEach(g => g.skus.forEach(s => {
+      if (s.fromSet || !s.skuCode) return;
+      const bc = String(s.barcode || '').trim();
+      // マスタ登録済みのバーコードはそのまま。未登録で名前から拾っただけのものは、zaicoにあるときだけ使う
+      if (!bc) return;
+      if (s.status !== 'REGISTERED' && zcodes && !zcodes.has(bc)) return;
+      if (s.status !== 'REGISTERED' && !zcodes && bc === s.extractedBarcode) return;
+      hints.set(s.skuCode, { barcode: bc, multiplier: Number(s.multiplier) || 1 });
+    }));
+  }
+  return { hints, zcodes, zById, changed: [] };
+}
+/* zaicoでコード（バーコード欄）が変わった商品：マスタの古いバーコードがzaicoにないときは、
+   マスタに覚えているzaicoの商品IDから、今のzaicoのコードを使う（商品に貼ってあるシールに合わせる） */
+function currentZaicoCode(bc, zaicoItemId, packHints, name) {
+  bc = String(bc || '').trim();
+  if (!packHints || !packHints.zcodes) return bc;
+  if (bc && packHints.zcodes.has(bc)) return bc;
+  const x = zaicoItemId ? packHints.zById.get(String(zaicoItemId)) : null;
+  if (x && x.code && x.code !== bc) {
+    if (bc) packHints.changed.push({ name: name || x.title, from: bc, to: x.code });
+    return x.code;
+  }
+  return bc;
+}
+function buildPackItems(rows, masterMap, packHints = null) {
   const { skuItems } = buildSkuItems(rows);   // セットの親行（子行があるもの）は除く
+  const hints = packHints ? packHints.hints : new Map();
+  const zcodes = packHints ? packHints.zcodes : null;
   // kind: ''＝バーコードで照合 / 'nobc'＝マスタにあるがバーコードなし（おまけ等）/ 'unreg'＝マスタ未登録
   // nobc・unreg はスマホで「目視で確認」するので、商品名も一緒に入れる
   const items = new Map();
@@ -3662,15 +3732,20 @@ function buildPackItems(rows, masterMap) {
     const m = s.skuCode ? masterMap.get(s.skuCode) : null;
     if (m && m.isSet && Array.isArray(m.components) && m.components.length) {
       m.components.forEach(c => {
-        const bc = String(c.barcode || '').trim();
+        const bc = currentZaicoCode(c.barcode, c.zaicoItemId, packHints, c.productName);
         const q = s.orderQty * (Number(c.qty) || 1);
         if (bc) add(bc, q, '');
         else add(c.productName || s.skuCode || s.csvName, q, 'nobc', c.productName || s.csvName);
       });
       return;
     }
-    const bc = m && m.barcode ? String(m.barcode).trim() : '';
-    const q = s.orderQty * (m ? (Number(m.multiplier) || 1) : 1);
+    const h = s.skuCode ? hints.get(s.skuCode) : null;
+    const masterBc = m && m.barcode ? String(m.barcode).trim() : '';
+    // 商品名の最後の語（zaico送信でも使うバーコード）が、zaicoに実在するときは照合に使う
+    const ex = String(s.extractedBarcode || '').trim();
+    const exBc = (ex && zcodes && zcodes.has(ex)) ? ex : '';
+    const bc = currentZaicoCode((h && h.barcode) || masterBc || exBc, m && m.zaicoItemId, packHints, (m && (m.productName || m.product_name)) || s.csvName);
+    const q = s.orderQty * ((h && h.barcode) ? h.multiplier : (m ? (Number(m.multiplier) || 1) : 1));
     if (bc) add(bc, q, '');
     else {
       // マスタにない行でも、名前がおまけっぽいものは「マスタ未登録」ではなく「バーコードなし（おまけ等）」として出す
@@ -3714,6 +3789,9 @@ window.openPrintPreview = async () => {
   let masterMap = new Map();
   try { masterMap = await getMasterMapCached(); }
   catch (e) { console.warn(e); toast('商品マスタを読めなかったため、QRは「マスタ未登録」扱いで作ります'); }
+  // コードが変わった商品に合わせるため、zaicoの在庫の写しを読む（数件の読み取りのみ。5秒で諦めて手元の一覧を使う）
+  try { await Promise.race([loadZaicoInventories(), new Promise(r => setTimeout(r, 5000))]); } catch (e) { console.warn('zaicoの在庫一覧を読めませんでした', e); }
+  const packHints = buildPackHints();
 
   const todayStr = new Date().toLocaleDateString();
   const koBanIdx = COL.KOBAN;
@@ -3744,6 +3822,28 @@ window.openPrintPreview = async () => {
   const shopTotals = new Map();
   groups.forEach(g => { const k = g.kind + '|' + String(g.shop || '').trim(); shopTotals.set(k, (shopTotals.get(k) || 0) + 1); });
   const shopSeen = new Map();
+
+  // QRの中身を先に作り、バーコードで照合できない（マスタ未登録の）商品があれば印刷前に知らせる
+  groups.forEach(g => { g.packItems = buildPackItems(g.rows, masterMap, packHints); });
+  const unregNames = [...new Set(groups.flatMap(g => g.packItems.filter(x => x.kind === 'unreg').map(x => x.name || x.code)))];
+  // コードが変わった商品（QRは今のzaicoのコードで作った）と、zaicoに見つからないバーコード
+  const changedTxt = [...new Map(packHints.changed.map(c => [c.from + '>' + c.to, c])).values()]
+    .map(c => `・${c.name}：${c.from} → ${c.to}`);
+  const notInZaico = packHints.zcodes ? [...new Set(groups.flatMap(g => g.packItems.filter(x => !x.kind && !packHints.zcodes.has(String(x.code))).map(x => x.code)))] : [];
+  if (changedTxt.length || notInZaico.length) {
+    const msg = [
+      changedTxt.length ? `【zaicoでコードが変わっていた商品】QRは今のzaicoのコードで作りました。商品マスタのバーコードも直しておくと、zaico送信もずれません。\n${changedTxt.slice(0, 10).join('\n')}${changedTxt.length > 10 ? `\n…ほか ${changedTxt.length - 10} 件` : ''}` : '',
+      notInZaico.length ? `【zaicoの在庫一覧に見つからないバーコード】梱包くんで照合できない可能性があります。zaicoで今のコードを確認し、商品マスタを直してください。\n${notInZaico.slice(0, 10).map(c => '・' + c).join('\n')}${notInZaico.length > 10 ? `\n…ほか ${notInZaico.length - 10} 件` : ''}` : ''
+    ].filter(Boolean).join('\n\n');
+    if (!confirm(`${msg}\n\nこのまま印刷しますか？`)) { printWin.close(); return; }
+  }
+  if (unregNames.length) {
+    const list = unregNames.slice(0, 15).map(n => '・' + n).join('\n') + (unregNames.length > 15 ? `\n…ほか ${unregNames.length - 15} 件` : '');
+    if (!confirm(`次の ${unregNames.length} 商品は商品マスタに登録されていないため、梱包くんではバーコードで照合できません（目視確認になります）。\n\n${list}\n\n先に「ピック数を算出」→ 商品マスタに登録（zaicoから選ぶ など）してから印刷すると、バーコードで照合できます。\n\nこのまま印刷しますか？`)) {
+      printWin.close();
+      return;
+    }
+  }
 
   const htmlPages = [];
   groups.forEach((group) => {
@@ -3778,7 +3878,7 @@ window.openPrintPreview = async () => {
         </tr>`;
     });
 
-    const qrSrc = packQrDataUrl(group.orderNo, buildPackItems(group.rows, masterMap));
+    const qrSrc = packQrDataUrl(group.orderNo, group.packItems);
     const qrCell = qrSrc
       ? `<td style="width:21mm;padding-left:4px;text-align:center;vertical-align:top;"><img src="${qrSrc}" style="width:19mm;height:19mm;image-rendering:pixelated;display:block;margin:0 auto;"><div style="font-size:6pt;line-height:1.1;margin-top:1px;">スマホで読んで<br>梱包チェック</div></td>`
       : '';
@@ -4468,7 +4568,463 @@ function getTodayString() {
   const d = new Date();
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 }
+
+/* ---------- 発行済みデータ（共有の記録 shipments） ----------
+   コックピット（🚚 送り状）・配送管理アプリと同じ保存先・同じ形：shipments/{yamato|sagawa}_{伝票番号}
+   保存にはGoogleログインが要る（共有の記録はログインした人だけが読み書きできる）
+   同じ内容の送り状はもう一度書き込まない（その出荷日の記録を読んで見比べる） */
+const issuedAuth = getAuth(app);
+let issuedUser = null;
+onAuthStateChanged(issuedAuth, u => {
+  issuedUser = u; issuedRenderLogin(); if (typeof rbRenderInfo === 'function') rbRenderInfo();
+  // ログイン必須：ログインしていなければ画面を覆う
+  const g = document.getElementById('loginGate'); if (g) g.style.display = u ? 'none' : 'flex';
+});
+(() => {
+  const b = document.getElementById('gateLoginBtn'); if (!b) return;
+  b.onclick = () => {
+    document.getElementById('gateErr').textContent = '';
+    const pr = new GoogleAuthProvider(); pr.setCustomParameters({ prompt:'select_account' });
+    signInWithPopup(issuedAuth, pr).catch(e => { if (!/popup-closed|cancelled-popup/.test(e.code || '')) document.getElementById('gateErr').textContent = 'ログインできませんでした：' + e.message; });
+  };
+})();
+function issuedRenderLogin(){
+  // 出荷処理タブにも、ログインの状態とボタンを出す（受注CSVを別のパソコン・チェックリスト用に残すにはログインが要る）
+  const mb = document.getElementById('mainLoginBox');
+  if (mb) {
+    mb.innerHTML = issuedUser
+      ? `<span style="color:#1e8e4f">✓ ログイン中（${escapeHtml(issuedUser.email || '')}）：受注CSVは出荷通知用に残ります</span>`
+      : `<span style="color:#b9770e;font-weight:700">⚠ ログインしていません。受注CSVがチェックリスト・別のパソコンから使えません。</span> <button class="btn btn-sm" id="mainLoginBtn">Googleでログイン</button>`;
+    const mbtn = document.getElementById('mainLoginBtn');
+    if (mbtn) mbtn.onclick = () => { const pr = new GoogleAuthProvider(); pr.setCustomParameters({ prompt:'select_account' }); signInWithPopup(issuedAuth, pr).catch(e => { if (!/popup-closed|cancelled-popup/.test(e.code || '')) alert('ログインできませんでした：' + e.message); }); };
+  }
+  const box = document.getElementById('issuedLoginBox'); if (!box) return;
+  box.innerHTML = issuedUser
+    ? `<p style="margin:0 0 8px;font-size:12px;color:#5d6b77">ログイン中：${escapeHtml(issuedUser.email || issuedUser.displayName || '')}</p>`
+    : `<div style="background:#fff8e8;border:1px solid #d68910;border-radius:8px;padding:10px;margin-bottom:10px;font-size:13px">保存するには、初回だけ社内のGoogleアカウントでログインしてください。<button class="btn btn-sm" id="issuedLoginBtn" style="margin-left:8px">Googleでログイン</button></div>`;
+  const b = document.getElementById('issuedLoginBtn');
+  if (b) b.onclick = () => { const pr = new GoogleAuthProvider(); pr.setCustomParameters({ prompt:'select_account' }); signInWithPopup(issuedAuth, pr).catch(e => { if (!/popup-closed|cancelled-popup/.test(e.code || '')) alert('ログインできませんでした：' + e.message); }); };
+}
+function issuedReadText(file){
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('ファイルを読み込めませんでした：' + file.name));
+    fr.onload = e => { let t; try { t = new TextDecoder('utf-8', { fatal:true }).decode(e.target.result); } catch (_) { t = new TextDecoder('shift_jis').decode(e.target.result); } resolve(t.replace(/^﻿/, '')); };
+    fr.readAsArrayBuffer(file);
+  });
+}
+function issuedParseCsv(text){
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+function issuedDate(s){
+  const t = String(s || '').trim();
+  let m = t.match(/(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/); if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  m = t.match(/^(\d{4})(\d{2})(\d{2})$/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return '';
+}
+// コックピットと同じ読み方（見出しありは見出しの名前で列を探す・見出しなしはヤマトB2の発行済み）
+function issuedRowsFromCsv(rows, fileName){
+  const out = [], deleted = [], clean = v => String(v == null ? '' : v).trim();
+  const head = (rows[0] || []).map(clean);
+  if (head.some(h => /伝票番号|送り状|出荷日|お届け先/.test(h))) {
+    const find = re => head.findIndex(h => re.test(h));
+    const sagawa = head.some(h => /お問い?合せ送り状|お問合せ送り状/.test(h)) || /佐川|e飛伝|sagawa/i.test(fileName);
+    const cTrk = find(/伝票番号|お問い?合せ送り状|送り状(No|番号|NO)/), cDate = find(/出荷(予定)?日/);
+    const cName = head.findIndex(h => /^お届け先名(称)?[1１]?$/.test(h) || /^お届け先名称[1１]/.test(h));
+    const cOrder = find(/お客様管理番号/), cType = find(/送り状種類/), cDel = find(/^削除区分$/);   // e飛伝で削除した送り状は保存しない
+    const cTexts = head.map((h, i) => /品名|記事/.test(h) ? i : -1).filter(i => i >= 0);
+    if (cTrk < 0) return { rows:[], error:`${fileName}：追跡番号の列が見つかりません` };
+    rows.slice(1).forEach(r => {
+      const trk = clean(r[cTrk]).replace(/[^0-9]/g, ''); if (trk.length < 10) return;
+      // e飛伝で削除した送り状：保存しない。保存済みなら取り消しにする（作り直したときに古い送り状を使わないため）
+      if (cDel >= 0 && clean(r[cDel]) && clean(r[cDel]) !== '0') { deleted.push({ carrier: sagawa ? 'sagawa' : 'yamato', tracking:trk, date: cDate >= 0 ? issuedDate(r[cDate]) : '' }); return; }
+      out.push({ carrier: sagawa ? 'sagawa' : 'yamato', tracking:trk, date: cDate >= 0 ? issuedDate(r[cDate]) : '', name: cName >= 0 ? clean(r[cName]) : '',
+        orderNo: cOrder >= 0 ? clean(r[cOrder]) : '', type: cType >= 0 ? clean(r[cType]) : '', texts: cTexts.map(i => clean(r[i])).filter(Boolean), file:fileName });
+    });
+  } else {
+    rows.forEach(r => {
+      const trk = clean(r[3]).replace(/[^0-9]/g, ''); if (!/^\d{10,12}$/.test(trk)) return;
+      out.push({ carrier:'yamato', tracking:trk, date:issuedDate(r[4]), name:clean(r[15]), orderNo:clean(r[0]), type:clean(r[1]),
+        texts:[26,27,28,29,30,31,32].map(i => clean(r[i])).filter(Boolean), file:fileName });
+    });
+  }
+  return { rows:out, deleted };
+}
+const shipNormK = s => String(s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
+const shipNormNameK = s => String(s || '').replace(/[\s　]/g, '').replace(/(様|殿|御中)$/, '');
+function shipNosK(texts){
+  const out = [];
+  (texts || []).forEach(t => { const m = String(t || '').match(/No\.?\s*([\d,，、\s]+)\)/i); if (m) m[1].split(/[,，、\s]+/).map(Number).filter(Boolean).forEach(n => { if (!out.includes(n)) out.push(n); }); });
+  return out.slice(0, 30);
+}
+function shipKeysK(r){   // コックピットのサーバー（shipKeys）と同じ作り方
+  const keys = new Set(), add = k => { k = String(k || ''); if (k.length >= 4 && k.length <= 60) keys.add(k); };
+  add(shipNormK(r.tracking)); add(shipNormK(r.orderNo)); add(shipNormNameK(r.name));
+  // 欄まるごとが受注番号のもの（Robot-inの送り状：ヤマトの記事・佐川の品名2「No:受注番号」）を先に入れる（30個までで切れないように）
+  (r.texts || []).forEach(t => { const s = String(t || '').trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNormK(s.replace(/^No[:：.]?\s*/i, ''))); });
+  (r.texts || []).forEach(t => {
+    const s = String(t || ''), m = s.match(/No\.?\s*([\d,，、\s]+)/i);
+    if (m) m[1].split(/[,，、\s]+/).filter(Boolean).forEach(n => add(String(Number(n))));
+    (s.match(/[A-Za-z0-9Ａ-Ｚａ-ｚ０-９][A-Za-z0-9Ａ-Ｚａ-ｚ０-９\-‐－_]{4,}/g) || []).forEach(x => add(shipNormK(x)));
+  });
+  (r.nos || []).forEach(n => add(String(n)));
+  return Array.from(keys).slice(0, 30);
+}
+// このパソコンで保存した送り状の控え（localStorage・30日）。同じ内容の送り状は、読みにも書きにも行かない
+//   まとまるくん・USくんで共通（同じ置き場所・同じ作り方）。別のパソコンで同じCSVを入れたときだけ、書き込みが重複する（中身は同じなので問題なし）
+const SHIP_SAVED_KEY = 'ship_saved_v1';
+function shipSavedLoad(){ try { return JSON.parse(localStorage.getItem(SHIP_SAVED_KEY) || '{}') || {}; } catch (e) { return {}; } }
+function shipSavedStore(m){
+  const lim = Math.floor(Date.now() / 1000) - 30 * 86400;
+  Object.keys(m).forEach(k => { if (!m[k] || (m[k][1] || 0) < lim) delete m[k]; });
+  try { localStorage.setItem(SHIP_SAVED_KEY, JSON.stringify(m)); } catch (e) { console.warn('ship_saved', e); }
+}
+function shipSig(d){
+  const s = [d.carrier, d.tracking, d.type, d.date, d.name, d.orderNo, d.items, (d.nos || []).join(',')].map(v => String(v == null ? '' : v)).join('\u0001');
+  let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36) + s.length.toString(36);
+}
+async function issuedSave(files){
+  const box = document.getElementById('issuedResult');
+  if (!issuedUser) { box.innerHTML = '<p style="color:#c0392b;font-weight:700">先にGoogleでログインしてください</p>'; return; }
+  box.innerHTML = '<p>読み込み中…</p>';
+  const all = {}, errors = [], deleted = {};
+  for (const f of Array.from(files || [])) {
+    try {
+      const r = issuedRowsFromCsv(issuedParseCsv(await issuedReadText(f)), f.name);
+      if (r.error) errors.push(r.error); else if (!r.rows.length) errors.push(`${f.name}：送り状の行が見つかりませんでした`);
+      r.rows.forEach(x => { all[x.carrier + '_' + x.tracking] = x; });
+      (r.deleted || []).forEach(x => { deleted[x.carrier + '_' + x.tracking] = x; });
+    } catch (e) { errors.push(e.message); }
+  }
+  const list = Object.entries(all).map(([id, r]) => {
+    const texts = r.texts.slice(0, 8);
+    const data = { carrier:r.carrier, carrierName: r.carrier === 'sagawa' ? '佐川急便' : 'ヤマト運輸', tracking:r.tracking, type:r.type || '',
+      date:r.date, name:r.name.slice(0, 60), orderNo:r.orderNo.slice(0, 60), nos:shipNosK(texts), items:texts.join(' / ').slice(0, 300),
+      file:String(r.file || '').slice(0, 100), importedAt:Math.floor(Date.now() / 1000), importedFrom:'まとまるくん', importedBy:issuedUser.email || '' };
+    data.keys = shipKeysK({ tracking:data.tracking, orderNo:data.orderNo, name:data.name, texts, nos:data.nos });
+    return { id, data };
+  });
+  Object.keys(all).forEach(id => delete deleted[id]);   // 同じ伝票番号が生きている行もあれば、取り消さない
+  if (!list.length && !Object.keys(deleted).length) { box.innerHTML = errors.length ? `<p style="color:#c0392b">${errors.map(escapeHtml).join('<br>')}</p>` : '<p>送り状がありませんでした</p>'; return; }
+  try {
+    // このパソコンで保存済み・同じ内容の送り状は、読みにも書きにも行かない（Firestoreの読み取りを使わない）
+    const saved = shipSavedLoad(), nowSec = Math.floor(Date.now() / 1000);
+    const todo = list.filter(x => { const e = saved[x.id]; return !e || e[0] !== shipSig(x.data); });
+    // e飛伝で削除された送り状：取り消しの印を付ける（このパソコンで一度付けたものは、もう書かない）
+    const cx = Object.keys(deleted).filter(id => !(saved['cx:' + id]));
+    const writes = [...todo.map(x => [x.id, x.data]),
+      ...cx.map(id => [id, { canceled:true, canceledAt:nowSec, canceledBy:issuedUser.email || '', canceledReason:'e飛伝で削除' }])];
+    for (let i = 0; i < writes.length; i += 400) {
+      const batch = writeBatch(db);
+      writes.slice(i, i + 400).forEach(([id, data]) => batch.set(doc(db, 'shipments', id), data, { merge:true }));
+      await batch.commit();
+    }
+    todo.forEach(x => { saved[x.id] = [shipSig(x.data), nowSec]; });
+    cx.forEach(id => { saved['cx:' + id] = ['1', nowSec]; });
+    shipSavedStore(saved);
+    const y = list.filter(x => x.data.carrier === 'yamato').length;
+    box.innerHTML = (errors.length ? `<p style="color:#c0392b">${errors.map(escapeHtml).join('<br>')}</p>` : '')
+      + `<p style="font-weight:700;color:#1e8e4f">✓ ${list.length}件（ヤマト ${y}・佐川 ${list.length - y}）を確認しました：新しく保存 ${todo.length}件${list.length - todo.length ? `・保存済みのためそのまま ${list.length - todo.length}件` : ''}</p>`
+      + (cx.length ? `<p style="font-weight:700;color:#b9770e">e飛伝で削除された送り状 ${cx.length}件を、取り消し済みにしました（出荷通知・紐づけに使いません）</p>` : '');
+    toast(`発行済みデータを保存しました（新しく ${todo.length}件）`);
+  } catch (e) {
+    box.innerHTML = `<p style="color:#c0392b;font-weight:700">保存できませんでした：${escapeHtml(e.message)}（Firestoreのルールで shipments の読み書きを許可してください）</p>`;
+  }
+}
+(() => {
+  const drop = document.getElementById('issuedDrop'), input = document.getElementById('issuedFile');
+  if (!drop || !input) return;
+  input.addEventListener('change', () => { issuedSave(input.files); input.value = ''; });
+  ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = '#0f5f8a'; }));
+  ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; }));
+  drop.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) issuedSave(e.dataTransfer.files); });
+  issuedRenderLogin();
+})();
+
+/* ---------- Robot-in 出荷通知CSV ----------
+   受注CSV（出荷処理タブで読み込んだもの）× 共有の記録 shipments（その出荷日・キャンセル済みは除く）を受注番号で紐づける
+   アカウントは受注CSVの見出しで見分ける：メディは「Ri_skuコード」など Ri_ で始まる列がある。ロジにはない
+   書き換える列：H ステータスコード・AZ 出荷完了日・BD 配送会社・BE 送り状番号（配送方法などはそのまま） */
+const RB_DEFAULT = 'ロジ=120\nメディ=212';
+function rbStatuses(){
+  const map = {};
+  String(document.getElementById('rbStatus').value || '').split(/\r?\n/).forEach(l => {
+    const m = l.match(/^\s*(.+?)\s*[=＝:：]\s*(-?\d+)\s*$/); if (m) map[m[1]] = m[2];
+  });
+  return map;
+}
+function rbAccOf(header){ return (header || []).some(h => /^Ri_/.test(String(h || '').trim())) ? 'メディ' : 'ロジ'; }
+function rbIsOrderFile(f){ return f && f.type === 'order' && !f.cwId && f.header && f.header.length > 56; }
+// ピック数算出などで読み込んだ受注CSVを、日付ごとに残す。14日たったら消す
+//  ・このブラウザ（IndexedDB）：読み書きの回数は0
+//  ・Firestore robotinOrders：別のパソコンでも出荷通知を作れるように。1ファイル＝1〜数ドキュメント（行ごとには書かない）
+//    ログインしているときだけ。データはJSONの文字列で、25万文字ごとに分ける（1ドキュメント1MBまでのため）
+const RB_DB = 'matomaru_robotin', RB_STORE = 'orders', RB_KEEP_DAYS = 14;
+function rbYmd(d){ d = d || new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function rbDb(){
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('このブラウザでは保存できません')); return; }
+    const rq = indexedDB.open(RB_DB, 1);
+    rq.onupgradeneeded = () => { const st = rq.result.createObjectStore(RB_STORE, { keyPath:'id' }); st.createIndex('date', 'date'); };
+    rq.onsuccess = () => resolve(rq.result); rq.onerror = () => reject(rq.error);
+  });
+}
+async function rbKeep(f){
+  if (!rbIsOrderFile(f)) return;
+  try {
+    const db2 = await rbDb(), date = rbYmd();
+    const tx = db2.transaction(RB_STORE, 'readwrite'), st = tx.objectStore(RB_STORE);
+    // 同じ日に同じ名前のファイルを入れ直したときは上書き
+    st.put({ id: date + '|' + f.name, date, name: f.name, header: f.header, rows: f.rows, savedAt: Date.now() });
+    const limit = Date.now() - RB_KEEP_DAYS * 86400000;
+    st.openCursor().onsuccess = e => { const c = e.target.result; if (!c) return; if ((c.value.savedAt || 0) < limit) c.delete(); c.continue(); };
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  } catch (e) { console.warn('受注CSVをブラウザに残せませんでした', e); }
+  await rbKeepCloud(f);
+  rbRenderInfo();
+}
+function rbHash(str){ let h = 5381; for (const ch of String(str)) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0; return h.toString(36); }
+async function rbKeepCloud(f){
+  if (!issuedUser) { rbCloudNote = '別のパソコンでも使うには、「発行済みデータ」タブでGoogleログインしてから受注CSVを読み込んでください'; return; }
+  try {
+    const date = rbYmd(), savedAt = Date.now(), json = JSON.stringify({ header:f.header, rows:f.rows }), SIZE = 250000;
+    const parts = Math.max(1, Math.ceil(json.length / SIZE)), base = date + '_' + rbHash(f.name);
+    const batch = writeBatch(db);
+    for (let i = 0; i < parts; i++) batch.set(doc(db, 'robotinOrders', base + '_' + i), { date, name:f.name.slice(0, 120), part:i, parts, savedAt, savedBy: issuedUser.email || '', data: json.slice(i * SIZE, (i + 1) * SIZE) });
+    await batch.commit();
+    rbCloudNote = ''; rbCloudCache = null;
+    // 14日より前のものは、1日1回だけ消す
+    const today = rbYmd(); let last = ''; try { last = localStorage.getItem('mm_robot_purge') || ''; } catch (_) {}
+    if (last !== today) {
+      const limit = rbYmd(new Date(Date.now() - RB_KEEP_DAYS * 86400000));
+      const old = await getDocs(query(collection(db, 'robotinOrders'), where('date', '<', limit)));
+      if (!old.empty) { const b2 = writeBatch(db); old.forEach(d => b2.delete(d.ref)); await b2.commit(); }
+      try { localStorage.setItem('mm_robot_purge', today); } catch (_) {}
+    }
+  } catch (e) { rbCloudNote = '別のパソコン用に保存できませんでした：' + e.message + '（Firestoreのルールで robotinOrders の読み書きを許可してください）'; console.warn(e); }
+}
+let rbCloudNote = '';
+let rbCloudCache = null;   // 画面の表示のたびに読まないよう、5分はそのまま使う（作るときは読み直す）
+async function rbKeptCloud(date, fresh){
+  if (!issuedUser) return [];
+  if (!fresh && rbCloudCache && rbCloudCache.date === date && Date.now() - rbCloudCache.at < 300000) return rbCloudCache.list;
+  const snap = await getDocs(query(collection(db, 'robotinOrders'), where('date', '==', date)));
+  const by = new Map();
+  snap.forEach(d => { const v = d.data(); const g = by.get(v.name) || {}; (g[v.savedAt] = g[v.savedAt] || []).push(v); by.set(v.name, g); });
+  const out = [];
+  by.forEach((g, name) => {
+    const latest = Math.max(...Object.keys(g).map(Number)), list = g[latest].sort((a, b) => a.part - b.part);
+    if (list.length !== list[0].parts) return;   // 途中までしかないものは使わない
+    try { const o = JSON.parse(list.map(x => x.data).join('')); out.push({ date, name, header:o.header, rows:o.rows, savedAt:latest, by:list[0].savedBy }); } catch (_) {}
+  });
+  rbCloudCache = { date, at: Date.now(), list: out };
+  return out;
+}
+async function rbKept(date){
+  try {
+    const db2 = await rbDb();
+    return await new Promise((resolve, reject) => {
+      const rq = db2.transaction(RB_STORE).objectStore(RB_STORE).index('date').getAll(date);
+      rq.onsuccess = () => resolve(rq.result || []); rq.onerror = () => reject(rq.error);
+    });
+  } catch (e) { console.warn(e); return []; }
+}
+// 出荷通知に使う受注CSV：その日にこのブラウザに残したもの＋いま読み込んでいるもの（同じ名前は1つに）
+async function rbOrderFiles(date, fresh){
+  const map = new Map();
+  try { (await rbKeptCloud(date, fresh)).forEach(f => map.set(f.name, { name:f.name, header:f.header, rows:f.rows, kept:true, by:f.by })); }
+  catch (e) { rbCloudNote = '別のパソコンで読み込んだ受注CSVを読めませんでした：' + e.message; }
+  (await rbKept(date)).forEach(f => map.set(f.name, { name:f.name, header:f.header, rows:f.rows, kept:true }));
+  uploadedFiles.filter(rbIsOrderFile).forEach(f => map.set(f.name, { name:f.name, header:f.header, rows:f.rows, kept:false }));
+  return [...map.values()];
+}
+async function rbRenderInfo(){
+  const el = document.getElementById('rbInfo'); if (!el) return;
+  const date = (document.getElementById('rbDate') || {}).value || rbYmd();
+  const fs = await rbOrderFiles(date);
+  if (!fs.length) { el.innerHTML = `<span style="color:#5d6b77">${escapeHtml(date)} に読み込んだ受注CSVがありません。「出荷処理」タブで受注CSVを読み込むと${RB_KEEP_DAYS}日間残り、ここで使えます（ログインしていれば別のパソコンでも）。</span>` + (rbCloudNote ? `<div style="color:#b9770e;margin-top:4px">⚠ ${escapeHtml(rbCloudNote)}</div>` : ''); return; }
+  const st = rbStatuses();
+  el.innerHTML = `<div style="margin-bottom:2px">使う受注CSV（${escapeHtml(date)} に読み込んだもの）</div>` + fs.map(f => { const a = rbAccOf(f.header);
+    return `・${escapeHtml(f.name)}（${f.rows.length}行${f.by ? '・' + escapeHtml(f.by) : ''}）→ <b>${a}</b>` + (st[a] ? `：ステータス ${st[a]}` : ' <span style="color:#c0392b;font-weight:700">ステータスコードが未設定です</span>'); }).join('<br>')
+    + (rbCloudNote ? `<div style="color:#b9770e;margin-top:4px">⚠ ${escapeHtml(rbCloudNote)}</div>` : '');
+}
+async function rbMake(){
+  const out = document.getElementById('rbResult');
+  const st = rbStatuses(), date = document.getElementById('rbDate').value;
+  const fs = date ? await rbOrderFiles(date, true) : [];
+  if (date && !fs.length) { alert(date + ' に読み込んだ受注CSVがありません。「出荷処理」タブで受注CSVを読み込んでください'); return; }
+  if (!issuedUser) { alert('共有の記録を読むには、上の「Googleでログイン」を押してください'); return; }
+  if (!date) { alert('送り状の出荷日を選んでください'); return; }
+  const accs = [...new Set(fs.map(f => rbAccOf(f.header)))];
+  const noSt = accs.filter(a => !st[a]);
+  if (noSt.length) { alert(`${noSt.join('・')}のステータスコードを入れてください（例：${noSt[0]}=212）`); return; }
+  if (!confirm(accs.map(a => `${a}：ステータス ${st[a]}`).join('\n') + `\n\n出荷日 ${date} の送り状で、出荷通知CSVを作ります。よろしいですか？`)) return;
+  out.textContent = '共有の記録を読み込み中…';
+  const rbMultiList = []; document.getElementById('rbMulti').innerHTML = '';
+  let ships = [];
+  try {
+    const snap = await getDocs(query(collection(db, 'shipments'), where('date', '==', date)));
+    snap.forEach(d => ships.push(d.data()));
+  } catch (e) { out.textContent = '共有の記録を読めませんでした：' + e.message; return; }
+  const canceled = ships.filter(x => x.canceled).length;
+  // US吉田様の送り状（品名に「(No.○○)」があるもの）は使わない：出荷保留を外す必要があるのでUSくんで作る
+  const usCount = ships.filter(x => !x.canceled && Array.isArray(x.nos) && x.nos.length).length;
+  ships = ships.filter(x => !x.canceled && !(Array.isArray(x.nos) && x.nos.length));
+  // 依頼まとめ管理で「キャンセル済み」にした受注番号
+  const cxSet = new Set();
+  try {
+    const cs = await getDoc(doc(db, 'settings', 'ship_cancels'));   // 読み取り1回（依頼まとめ管理がまとめて書く）
+    Object.keys((cs.exists() && cs.data().keys) || {}).forEach(k => cxSet.add(cleanOrderNoNormalized(k)));
+  } catch (e) { out.textContent = 'キャンセル済みの受注番号を読めませんでした：' + e.message; return; }
+  const byOrder = new Map();
+  // お客様管理番号のほか、品名・記事の欄ひとつずつも受注番号として探す
+  //  USくんで作った送り状：お客様管理番号＝受注番号
+  //  Robot-inのデータから作った送り状（まとまるくん含む）：お客様管理番号は別の番号。ヤマトは記事（AG列）に受注番号、佐川は品名2に「No:受注番号」
+  ships.forEach(x => {
+    const ks = new Set([cleanOrderNoNormalized(x.orderNo)]);
+    String(x.items || '').split(' / ').forEach(t => { if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t.trim())) ks.add(cleanOrderNoNormalized(t.trim())); });
+    ks.forEach(k => { if (!k) return; if (!byOrder.has(k)) byOrder.set(k, []); byOrder.get(k).push(x); });
+  });
+  const now = new Date(), today = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+  const log = [`出荷日 ${date} の送り状：${ships.length}件` + (canceled ? `（キャンセルで取消済みの ${canceled}件は使いません）` : '') + (usCount ? `（US吉田様の ${usCount}件はUSくんで作るので外しました）` : '')];
+  const used = new Set(), plans = [];
+  // この日にもう出した注文（robotinNotified/{日付}）。追加の依頼で作り直すときは、新しい注文だけにする
+  const nref = doc(db, 'robotinNotified', date);
+  let prev = new Set();
+  try { const ns = await getDoc(nref); prev = new Set((ns.exists() && ns.data().keys) || []); } catch (e) { console.warn('robotinNotified', e); }
+  accs.forEach(acc => {
+    const files = fs.filter(f => rbAccOf(f.header) === acc);
+    const header = [...files[0].header]; while (header.length <= 56) header.push('');
+    const rows = [], none = [], multi = [], done = new Set(), cx = new Set();
+    let y = 0, sg = 0; const seen = new Set();
+    const rowSeen = new Set();
+    files.forEach(f => f.rows.forEach(src => {
+      const key = cleanOrderNoNormalized(src[5]); if (!key) return;
+      const rk = [src[1], src[6], src[29]].join('|'); if (rowSeen.has(rk)) return; rowSeen.add(rk);   // 同じ行が2つのファイルにあれば1つに
+      // 発送済み（2）・キャンセルなど（マイナス）の注文は対象にしない
+      const code = String(src[7] || '').trim();
+      if (code === '2' || /^-/.test(code)) { done.add(key); return; }
+      if (cxSet.has(key)) { cx.add(String(src[5]).trim()); return; }   // キャンセル済みの受注番号
+      const list = byOrder.get(key);
+      if (!list || !list.length) { if (!seen.has(key)) none.push(String(src[5]).trim()); seen.add(key); return; }
+      const pick = list.slice().sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0))[0];   // 作り直しがあれば、あとから取り込んだほう
+      if (!seen.has(key)) {
+        if (list.length > 1) { multi.push(`${String(src[5]).trim()}（${list.length}件 → ${pick.tracking}）`); rbMultiList.push({ orderNo:String(src[5]).trim(), list, pick }); }
+        pick.carrier === 'sagawa' ? sg++ : y++;
+      }
+      seen.add(key); list.forEach(x => used.add(x.carrier + x.tracking));
+      const row = [...src]; while (row.length <= 56) row.push('');
+      row[7] = st[acc]; row[51] = today; row[55] = pick.carrier === 'sagawa' ? '佐川急便' : 'ヤマト運輸'; row[56] = pick.tracking;
+      rows.push({ key, carrier: pick.carrier, row });
+    }));
+    const n = y + sg;
+    const pl = { acc, header, rows, files, logAt: log.length + 1 };
+    plans.push(pl);
+    log.push('', `■ ${acc}（ステータス ${st[acc]}）：${n}件（ヤマト ${y}・佐川 ${sg}）`);
+    if (multi.length) log.push('  ℹ️ 送り状が複数ある注文（あとから取り込んだほうを使用）：' + multi.join('、'));
+    if (done.size) log.push(`  ・発送済み・キャンセルなどのため外した注文：${done.size}件`);
+    if (cx.size) log.push(`  ・依頼まとめ管理でキャンセル済みにした注文 ${cx.size}件を外しました：` + [...cx].join('、'));
+    // 受注CSVはステータスをしぼらずに出してよいので、送り状がない注文は件数だけ出す
+    if (none.length) log.push(`  ・この日の送り状がない注文（対象外）：${none.length}件` + (none.length <= 20 ? '（' + none.join('、') + '）' : ''));
+    if (!n) log.push('  紐づけできた注文が0件のため、ファイルは作っていません');
+  });
+  // 前回までに出した注文があれば、新しい分だけにするか選ぶ
+  const allKeys = new Set(plans.flatMap(p => p.rows.map(r => r.key)));
+  const oldKeys = [...allKeys].filter(k => prev.has(k)), newKeys = [...allKeys].filter(k => !prev.has(k));
+  let onlyNew = false;
+  if (oldKeys.length) {
+    if (confirm(`出荷日 ${date} は、もう出荷通知CSVを作っています。\n前回までに出した ${oldKeys.length}件は外して、新しい ${newKeys.length}件だけ作ります。よろしいですか？\n（キャンセルを押すと、全部作り直すか選べます）`)) onlyNew = true;
+    else if (!confirm(`前回までに出した注文も含めて、全部（${allKeys.size}件）作り直しますか？\n※ Robot-inで発送済みに移した注文を取り込むと、もう一度ステータス${Object.values(st).join('・')}に戻ります。ファイルをなくしたときだけ使ってください。`)) { out.textContent = log.join('\n') + '\n\nやめました（ファイルは作っていません）'; return; }
+    log.push('', onlyNew ? `ℹ️ 前回までに出した ${oldKeys.length}件は外しました（新しい ${newKeys.length}件だけ）` : `ℹ️ 前回までに出した ${oldKeys.length}件も含めて、全部作り直しました`);
+  }
+  const doneKeys = new Set();
+  plans.forEach(p => {
+    const use = p.rows.filter(r => !onlyNew || !prev.has(r.key));
+    if (!use.length) { if (p.rows.length) log.push(`  ${p.acc}：新しい注文がないため、ファイルは作っていません`); return; }
+    const base = (p.files[0].name || 'order.csv').replace(/\.csv$/i, '');
+    const warns = exportCsvGeneric([p.header, ...use.map(r => r.row)], `updated_status${st[p.acc]}_${p.acc}_${base}${onlyNew ? '_追加' : ''}.csv`, r => '受注番号 ' + r[5]);
+    if (warns.length) log.push(`  ⚠️ ${p.acc}：Shift_JISにない文字を置き換えた行：\n  ` + warns.join('\n  '));
+    use.forEach(r => doneKeys.add(r.key));
+  });
+  if (doneKeys.size) {
+    try { await setDoc(nref, { date, keys: [...new Set([...prev, ...doneKeys])], at: new Date().toISOString(), by: (issuedUser && issuedUser.email) || '' }, { merge: true }); }
+    catch (e) { log.push('', '⚠️ 出した注文の記録を保存できませんでした（Firestoreのルールで robotinNotified の読み書きを許可してください）：' + e.message); }
+  }
+  const left = ships.filter(x => !used.has(x.carrier + x.tracking));
+  if (left.length) log.push('', `ℹ️ 受注CSVに見当たらない送り状 ${left.length}件（ほかの店舗・別のアカウントの分など）：` + left.slice(0, 30).map(x => x.orderNo || x.name || x.tracking).join('、') + (left.length > 30 ? ' ほか' : ''));
+  out.textContent = log.join('\n');
+  rbRenderMulti(rbMultiList);
+}
+// 送り状を作り直した注文（佐川→ネコポスなど。佐川は確定後に削除できないので両方残る）
+// どれを使うか選ぶと、ほかの送り状を取り消し済みにする（次からはその1つだけを使う）
+const RB_CAR = { yamato:'ヤマト', sagawa:'佐川' };
+function rbRenderMulti(items){
+  const box = document.getElementById('rbMulti'); if (!box) return;
+  if (!items.length) { box.innerHTML = ''; return; }
+  const when = x => x.importedAt ? new Date(x.importedAt * 1000).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+  box.innerHTML = `<div style="border:1px solid #d68910;background:#fff8e8;border-radius:8px;padding:10px">
+    <p style="margin:0 0 6px;font-weight:700">送り状が2つ以上ある注文 ${items.length}件：いまは、あとから取り込んだ送り状で作っています。違うときは、使う送り状を選んでください（ほかの送り状は取り消し済みになり、もう一度「出荷通知CSVを作る」を押すと反映されます）</p>`
+    + items.map((m, i) => `<div style="padding:6px 0;border-top:1px dashed #e0c48a"><b>${escapeHtml(m.orderNo)}</b><br>`
+      + m.list.map((x, j) => `<label style="display:inline-flex;gap:4px;align-items:center;margin-right:14px"><input type="radio" name="rbm${i}" value="${j}" ${x === m.pick ? 'checked' : ''}>${RB_CAR[x.carrier] || x.carrier} ${escapeHtml(x.tracking)}${x.type ? '（種類 ' + escapeHtml(x.type) + '）' : ''} <span style="color:#5d6b77">${escapeHtml(when(x))}取込</span></label>`).join('')
+      + `<button class="btn btn-sm" data-rbm="${i}">これを使う</button></div>`).join('') + '</div>';
+  box.querySelectorAll('[data-rbm]').forEach(b => b.onclick = async () => {
+    const m = items[Number(b.dataset.rbm)], sel = box.querySelector(`input[name="rbm${b.dataset.rbm}"]:checked`);
+    if (!m || !sel) return;
+    const keep = m.list[Number(sel.value)], others = m.list.filter(x => x !== keep);
+    if (!confirm(`${m.orderNo} は ${RB_CAR[keep.carrier]} ${keep.tracking} を使います。\nほかの送り状（${others.map(x => RB_CAR[x.carrier] + ' ' + x.tracking).join('、')}）は取り消し済みにします。よろしいですか？`)) return;
+    try {
+      const batch = writeBatch(db);
+      others.forEach(x => batch.set(doc(db, 'shipments', x.carrier + '_' + x.tracking), { canceled:true, canceledAt:Math.floor(Date.now() / 1000), canceledBy:(issuedUser && issuedUser.email) || '', canceledReason:'作り直し（' + keep.carrier + '_' + keep.tracking + 'を使用）' }, { merge:true }));
+      await batch.commit();
+      b.textContent = '✓ 取り消しました'; b.disabled = true;
+      toast('ほかの送り状を取り消しました。もう一度「出荷通知CSVを作る」を押してください');
+    } catch (e) { alert('取り消せませんでした：' + e.message); }
+  });
+}
+(() => {
+  const d = document.getElementById('rbDate'), t = document.getElementById('rbStatus'), b = document.getElementById('rbBtn');
+  if (!d || !t || !b) return;
+  const n = new Date(); d.value = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+  // ステータスコードは settings/robotin_notify に保存（チェックリスト・別のパソコンと共通）
+  let saved = null; try { saved = localStorage.getItem('mm_robot_status'); } catch (_) {}
+  t.value = saved || RB_DEFAULT;
+  getDoc(doc(db, 'settings', 'robotin_notify')).then(snap => {
+    const v = snap.exists() && snap.data().statuses;
+    if (v && document.activeElement !== t) { t.value = v; try { localStorage.setItem('mm_robot_status', v); } catch (_) {} rbRenderInfo(); }
+  }).catch(e => console.warn('robotin_notify', e));
+  let stTimer = null;
+  t.addEventListener('input', () => {
+    try { localStorage.setItem('mm_robot_status', t.value); } catch (_) {}
+    rbRenderInfo();
+    clearTimeout(stTimer);
+    stTimer = setTimeout(() => setDoc(doc(db, 'settings', 'robotin_notify'), { statuses: t.value, updatedAt: new Date().toISOString() }, { merge: true })
+      .catch(e => toast('ステータスコードを保存できませんでした：' + e.message)), 1200);
+  });
+  b.onclick = () => rbMake();
+  d.addEventListener('change', () => rbRenderInfo());
+  rbRenderInfo();
+})();
 </script>
+<!-- ログイン必須：ログインするまで画面を覆う -->
+<div id="loginGate" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(20,30,40,.55);align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:28px 26px;max-width:380px;width:calc(100% - 32px);text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.25)">
+    <div style="font-size:18px;font-weight:800;margin-bottom:8px">まとまるくん</div>
+    <p style="font-size:13px;color:#5d6b77;margin:0 0 16px">社内のGoogleアカウントでログインしてください。<br>受注CSV・発行済みデータを、チェックリストや別のパソコンと共有するために必要です。</p>
+    <button class="btn btn-primary" id="gateLoginBtn" style="width:100%">Googleでログイン</button>
+    <p id="gateErr" style="font-size:12px;color:#c0392b;margin:10px 0 0"></p>
+  </div>
+</div>
 <div class="zp-overlay" id="zaicoPicker" onclick="if(event.target===this) closeZaicoPicker()">
   <div class="zp-box">
     <div class="zp-head">
