@@ -185,6 +185,11 @@ button,input,textarea{font:inherit;color:inherit}
 .teisha-list .t-imgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .teisha-list .t-imgs a{display:block;width:72px;height:72px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
 .teisha-list .t-imgs img{width:100%;height:100%;object-fit:contain;display:block}
+.mat-row{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}
+.mat-row img{width:56px;height:42px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;flex:none}
+.mat-row .m-main{flex:1;min-width:0;font-size:13px}
+.mat-row .m-code{font-weight:800;font-family:ui-monospace,Menlo,Consolas,monospace}
+.mat-row .m-num{font-weight:800;color:var(--danger)}
 .teisha-list .t-done{font-size:12px;font-weight:800;color:var(--ok);background:var(--ok-soft);border-radius:999px;padding:3px 10px}
 
 /* ===== ニッシントーア報告 ===== */
@@ -276,6 +281,7 @@ button,input,textarea{font:inherit;color:inherit}
         <div class="bar"><i id="clProgressBar"></i></div>
       </div>
     </div>
+    <div class="panel panel-pad teisha" id="matOrderBox" hidden></div>
     <div class="panel panel-pad teisha" id="teishaBox" hidden></div>
     <p class="edit-note" id="clEditNote" hidden>編集中です。項目名の変更・並び替え・削除・追加ができます。終わったら「編集を終える」を押してください。</p>
     <div id="clSections"><p class="empty">読み込み中…</p></div>
@@ -375,7 +381,7 @@ button,input,textarea{font:inherit;color:inherit}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
-import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction, deleteField, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* =========================================================
    設定
@@ -1277,6 +1283,61 @@ $('skHistoryBtn').onclick = openHistory;
 $('historyClose').onclick = () => { $('historyModal').hidden = true; };
 
 /* =========================================================
+   資材の発注（梱包くん pack.html が数えている settings/material_counter）
+   used.{品番}＝前回の発注から使った枚数、point.{品番}＝発注点（発注するたびに決める。なければ info.lot＝いつもの発注数量）
+   使った枚数が発注点に届いた資材を出す。「発注した」で、発注した枚数を引いて次の発注点を決める
+   読み取り：開いたときに1回＋梱包くんで資材を記録するたびに1回
+   ========================================================= */
+const MAT_ORDER_URL = PINNED_LINKS.noon.find(p => /資材発注/.test(p.title))?.url || '';
+const MATORD = { used: {}, info: {}, point: {}, busy: '' };
+const matPoint = k => Number(MATORD.point[k]) || Number(MATORD.info[k]?.lot) || 0;
+function matDue() {
+  return Object.keys(MATORD.used)
+    .map(k => ({ code: k, name: MATORD.info[k]?.name || '', img: MATORD.info[k]?.img || '', lot: Number(MATORD.info[k]?.lot) || 0, used: Number(MATORD.used[k]) || 0, point: matPoint(k) }))
+    .filter(x => x.point > 0 && x.used >= x.point)
+    .sort((a, b) => b.used / b.point - a.used / a.point);
+}
+function renderMatOrders() {
+  const box = $('matOrderBox'), due = matDue();
+  box.hidden = !due.length;
+  if (!due.length) { box.replaceChildren(); return; }
+  box.replaceChildren(
+    h('div', { class: 'teisha-head' },
+      h('p', { class: 'teisha-title' }, `📦 資材を発注してください ${due.length}件`),
+      MAT_ORDER_URL ? h('a', { class: 'btn', href: MAT_ORDER_URL, target: '_blank', rel: 'noopener noreferrer' }, '資材発注を開く') : null),
+    h('p', { class: 'small muted', style: 'margin:4px 0 0' }, '梱包くんで数えた「前回の発注から使った枚数」が、発注点に届きました。'),
+    ...due.map(x => h('div', { class: 'mat-row' },
+      x.img ? h('img', { src: x.img, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
+      h('div', { class: 'm-main' },
+        h('span', { class: 'm-code' }, x.code), ' ', x.name, h('br'),
+        h('span', { class: 'm-num' }, `${fmt(x.used)}枚使いました`), `（発注点 ${fmt(x.point)}枚）`, x.lot ? `　いつもの発注 ${fmt(x.lot)}枚` : ''),
+      h('button', { type: 'button', class: 'btn btn-primary', disabled: MATORD.busy === x.code, onclick: () => matOrdered(x) }, MATORD.busy === x.code ? '記録中…' : '発注した'))));
+}
+async function matOrdered(x) {
+  const v = prompt(`${x.code} ${x.name}\n何枚発注しましたか？（使った枚数 ${x.used}枚から引きます）`, String(x.lot || x.used));
+  if (v === null) return;
+  const q = toNum(String(v).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, ''));
+  if (!q) { toast('枚数を入れてください', 'error'); return; }
+  const pv = prompt('次は何枚使ったら知らせますか？（発注点）', String(x.point || q));
+  if (pv === null) return;
+  const pt = toNum(String(pv).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '')) || q;
+  MATORD.busy = x.code; renderMatOrders();
+  try {
+    const user = await signedInUser(), now = new Date().toISOString();
+    await setDoc(doc(db, 'settings', 'material_counter'), { used: { [x.code]: increment(-q) }, point: { [x.code]: pt }, ordered: { [x.code]: { qty: q, point: pt, at: now, by: user?.email || '', from: 'チェックリスト' } }, updatedAt: now }, { merge: true });
+    toast(`${x.code}：${fmt(q)}枚発注を記録しました（次は ${fmt(pt)}枚使ったら知らせます）`);
+  } catch (e) { console.error(e); toast('記録できませんでした：' + (e.message || e), 'error'); }
+  finally { MATORD.busy = ''; renderMatOrders(); }
+}
+function watchMatOrders() {
+  onSnapshot(doc(db, 'settings', 'material_counter'), snap => {
+    const d = snap.exists() ? snap.data() : {};
+    MATORD.used = d.used || {}; MATORD.info = d.info || {}; MATORD.point = d.point || {};
+    renderMatOrders();
+  }, e => console.warn('material_counter', e));
+}
+
+/* =========================================================
    定者さんの備考つき依頼
    GAS（shukka_auto.gs の runTeisha）が、ShopeeMateの「定者」「依頼済み」で
    備考欄に書き込みがある注文を settings/teisha_remarks に保存する。ここでは表示するだけ
@@ -2097,6 +2158,7 @@ function watchShip() {
   watchStaff();
   watchShip();
   watchTeisha();
+  watchMatOrders();
   watchIraiSummary();
   watchIraiLive();
 })();
