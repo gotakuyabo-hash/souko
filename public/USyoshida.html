@@ -351,7 +351,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
     <div id="tabHist" hidden>
       <div class="panel stack">
         <p class="muted small">印刷した検品書の履歴です。「開く」を押すと、そのときの注文をシートの最新の状態で表示して全件選択するので、検品が終わったらそのまま「入荷済みにする」で入荷日を入れられます。</p>
-        <div class="search-row"><span id="histCount" class="muted"></span><button id="btnHistReload" class="ghost">再読み込み</button></div>
+        <div class="search-row"><span id="histCount" class="muted"></span><button id="btnHistReload" class="ghost">再読み込み</button><button id="btnHistMulti" class="primary" disabled>選んだ履歴の注文をまとめて検索</button></div>
         <div id="histList"></div>
       </div>
     </div>
@@ -2731,12 +2731,14 @@ async function loadHistory(){
     histDocs = [];
     snap.forEach(d => histDocs.push(Object.assign({ id:d.id }, d.data())));
     $('#histCount').textContent = '直近 '+histDocs.length+'件';
+    setTimeout(histSelUpdate, 0);
     if (!histDocs.length) { $('#histList').innerHTML = '<p class="muted">まだ履歴がありません。検品書を印刷すると、ここに残ります。</p>'; return; }
-    $('#histList').innerHTML = '<div class="tbl-wrap"><table class="res"><thead><tr><th>印刷日時</th><th>印刷した人</th><th>倉庫追跡番号</th><th>注文</th><th></th></tr></thead><tbody>'
+    $('#histList').innerHTML = '<div class="tbl-wrap"><table class="res"><thead><tr><th><input type="checkbox" id="histAll" aria-label="すべて選ぶ"></th><th>印刷日時</th><th>印刷した人</th><th>倉庫追跡番号・No.</th><th>注文</th><th></th></tr></thead><tbody>'
       + histDocs.map((d, i) => {
-        const keys = (d.groups||[]).map(g => g.key);
+        // 倉庫追跡番号がない注文（No.指定など）は、No.を出す
+        const keys = (d.groups||[]).map(g => (!g.key || /追跡番号なし/.test(g.key)) ? 'No.'+(g.nos||[]).join('、No.') : g.key);
         const shown = keys.slice(0, 3).join('、') + (keys.length > 3 ? ' ほか'+(keys.length-3)+'件' : '');
-        return '<tr><td>'+esc(fmtTs(d.printedAt))+'</td><td>'+esc(d.printedByName || d.printedBy)+'</td>'
+        return '<tr><td><input type="checkbox" class="histsel" data-i="'+i+'" aria-label="この履歴を選ぶ"></td><td>'+esc(fmtTs(d.printedAt))+'</td><td>'+esc(d.printedByName || d.printedBy)+'</td>'
           + '<td>'+esc(shown)+'</td><td>'+(d.count||0)+'件</td>'
           + '<td><button type="button" class="secondary mini histopen" data-i="'+i+'">開く</button></td></tr>';
       }).join('')
@@ -2749,6 +2751,34 @@ function fmtTs(ts){
   return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 $('#btnHistReload').onclick = loadHistory;
+// 履歴を複数選んで、その注文をまとめて検索する（出荷通知の前など）
+function histSelNos(){
+  const nos = new Set();
+  document.querySelectorAll('#histList .histsel:checked').forEach(c => { const d = histDocs[Number(c.dataset.i)]; (d && d.nos || []).forEach(n => nos.add(Number(n))); });
+  return [...nos].filter(Boolean).sort((a,b) => a - b);
+}
+function histSelUpdate(){
+  const n = document.querySelectorAll('#histList .histsel:checked').length, nos = histSelNos();
+  const b = $('#btnHistMulti');
+  b.disabled = !n;
+  b.textContent = n ? '選んだ履歴 '+n+'件の注文（'+nos.length+'件）をまとめて検索' : '選んだ履歴の注文をまとめて検索';
+  const all = document.querySelectorAll('#histList .histsel'), a = $('#histAll');
+  if (a) a.checked = all.length > 0 && n === all.length;
+}
+$('#histList').addEventListener('change', e => {
+  if (e.target.id === 'histAll') document.querySelectorAll('#histList .histsel').forEach(c => { c.checked = e.target.checked; });
+  if (e.target.id === 'histAll' || e.target.classList.contains('histsel')) histSelUpdate();
+});
+$('#btnHistMulti').onclick = async () => {
+  const nos = histSelNos();
+  if (!nos.length) { toast('履歴を選んでください'); return; }
+  document.querySelector('.seg button[data-mode="no"]').click();
+  $('#q').value = nos.join(' ');
+  updateCount();
+  switchTab('work');
+  await doSearch(true);
+  toast('選んだ履歴の注文 '+nos.length+'件を全件選択しました', 5000);
+};
 $('#histList').addEventListener('click', async e => {
   const b = e.target.closest('.histopen');
   if (!b) return;
