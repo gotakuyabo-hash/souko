@@ -242,7 +242,7 @@ const auth = getAuth(app);
 let authUser = null, authReadyResolve;
 const authReady = new Promise(r => authReadyResolve = r);
 onAuthStateChanged(auth, u => { authUser = u; authReadyResolve(); if (state.us && US.needLogin && u) usStart(); });
-const US = { cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve() };
+const US = { cfgId:'', pre:null, cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve() };
 const ordRef = no => doc(db, 'deliveryClients', state.us, 'orders', String(no));
 const oidOf = s => String(s == null ? '' : s).trim();
 const NO_OID = o => !o || o === '有在庫用';
@@ -281,7 +281,7 @@ async function usStart(){
   $('resetBtn').style.display = 'none';
   $('cacheNote').textContent = '';
   $('allok').classList.remove('show');
-  $('orderNo').textContent = '検品書：' + (state.trk || '') + '（' + state.nos.length + '件）';
+  $('orderNo').textContent = (state.nos.length ? '検品書：' : '荷物：') + (state.trk || '') + (state.nos.length ? '（' + state.nos.length + '件）' : '');
   $('progress').textContent = '読み込み中…';
   $('bar').style.width = '0';
   window.scrollTo(0, 0);
@@ -294,11 +294,21 @@ async function usStart(){
   }
   US.needLogin = false;
   try{
-    const cs = await getDoc(doc(db, 'deliveryClients', state.us));
-    US.cfg = cs.data();
+    try{ localStorage.setItem('pack_us_client', state.us); }catch(e){}
+    if (!US.cfg || US.cfgId !== state.us) { US.cfg = (await getDoc(doc(db, 'deliveryClients', state.us))).data(); US.cfgId = state.us; }
     if (!US.cfg || !US.cfg.gasUrl) throw new Error('配送管理アプリの設定（お客様ID ' + state.us + '）が読めません');
-    const j = await usGas('search', { mode:'no', values: state.nos });
-    US.rows = {}; (j.rows || []).forEach(r => { US.rows[r.no] = r; });
+    let list;
+    if (state.nos.length) list = (await usGas('search', { mode:'no', values: state.nos })).rows || [];
+    else {
+      // 倉庫追跡番号をスキャンして開いたとき：その荷物の注文のうち、まだ出荷していないもの
+      const all = (US.pre && US.pre.trk === state.trk) ? US.pre.rows : ((await usGas('search', { mode:'tracking', values:[state.trk] })).rows || []);
+      US.pre = null;
+      list = all.filter(r => !r.shippedAt);
+      if (!list.length) throw new Error(all.length ? '倉庫追跡番号 ' + state.trk + ' の注文は、全部出荷済みです' : '倉庫追跡番号 ' + state.trk + ' の注文がシートにありません');
+      state.nos = list.map(r => r.no).sort((a,b) => a - b);
+      $('orderNo').textContent = '荷物：' + state.trk + '（' + state.nos.length + '件' + (all.length > list.length ? '・出荷済み ' + (all.length - list.length) + '件は除く' : '') + '）';
+    }
+    US.rows = {}; list.forEach(r => { US.rows[r.no] = r; });
     US.flags = {};
     const ids = Object.keys(US.rows);
     for (let i = 0; i < ids.length; i += 30) {
@@ -465,6 +475,30 @@ function usArriveBg(no){
     }catch(e){ $('cacheNote').textContent = '⚠ No.' + no + 'の入荷日を入れられませんでした：' + e.message + '（配送管理アプリの「入荷済みにする」で入れてください）'; }
   });
 }
+// 倉庫追跡番号（荷物の配送伝票のバーコード）を読んだとき：シートで探して、あればその荷物を開く
+function trkCode(raw){
+  let c = String(raw || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (/^[A-D]\d{6,}[A-D]$/.test(c)) c = c.slice(1, -1);   // ヤマト・佐川の伝票のバーコード（前後の英字）
+  return /^[0-9A-Z]{8,30}$/.test(c) && /\d{6,}/.test(c) ? c : '';
+}
+const usClient = () => state.us || (() => { try{ return localStorage.getItem('pack_us_client'); }catch(e){ return null; } })() || '150';
+async function usTryTracking(raw){
+  const c = trkCode(raw); if (!c) return false;
+  const cid = usClient();
+  await authReady;
+  if (!authUser) { openOrder('u=' + encodeURIComponent(cid) + '&t=' + c); return true; }   // ログインの案内を出す
+  try{
+    if (!US.cfg || US.cfgId !== cid) { US.cfg = (await getDoc(doc(db, 'deliveryClients', cid))).data(); US.cfgId = cid; }
+    if (!US.cfg || !US.cfg.gasUrl) return false;
+    $('cacheNote').textContent = '倉庫追跡番号 ' + c + ' をシートで探しています…';
+    const j = await usGas('search', { mode:'tracking', values:[c] });
+    $('cacheNote').textContent = '';
+    if (!j.rows || !j.rows.length) return false;
+    US.pre = { trk:c, rows:j.rows };
+    openOrder('u=' + encodeURIComponent(cid) + '&t=' + c);
+    return true;
+  }catch(e){ console.warn(e); $('cacheNote').textContent = ''; return false; }
+}
 // 検品書モードで商品のバーコードを読んだとき：PKGIDで注文を探して開く
 // 開いている注文と同じPKGIDをもう一度読むと「箱に入れた」にする（スキャナだけで進められる）
 const pkgNorm = v => String(v || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
@@ -482,8 +516,12 @@ function usCheck(raw){
   if (m && US.rows[Number(m[1])]) { US.sel = Number(m[1]); usRender(); window.scrollTo({ top:0, behavior:'smooth' }); return; }
   const hits = usFindPkg(raw);
   if (!hits.length) {
-    beep(false);
-    flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGIDが見つかりません。バーコードがない商品は、画像のタイルから選んでください\n（タップ・Escで閉じる）');
+    // PKGIDでなければ、次の荷物の倉庫追跡番号かもしれない
+    usTryTracking(raw).then(ok => {
+      if (ok) return;
+      beep(false);
+      flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGIDにも倉庫追跡番号にも見つかりません。バーコードがない商品は、画像のタイルから選んでください\n（タップ・Escで閉じる）');
+    });
     return;
   }
   // 開いている注文のPKGIDをもう一度読んだ → 箱に入れた
@@ -596,8 +634,16 @@ function check(code) {
   const raw = String(code || '').trim();
   if (!raw) return;
   if (state.us) { usCheck(raw); return; }
-  if (!state.items.length) { beep(false); flash(false, '先に検品シートのQRを読んでください', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); return; }
+  if (!state.items.length) {
+    usTryTracking(raw).then(ok => { if (!ok) { beep(false); flash(false, '先に検品シートのQRか、荷物の倉庫追跡番号を読んでください', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); } });
+    return;
+  }
   const it = findItem(raw);
+  if (!it && state.items.every(x => x.scanned === x.qty)) {
+    // 梱包OKのあとに、次の荷物の倉庫追跡番号を読んだとき
+    usTryTracking(raw).then(ok => { if (!ok) { beep(false); flash(false, '✕ この注文の商品ではありません', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); } });
+    return;
+  }
   if (!it) {
     beep(false);
     const z = zmap[norm(raw)];
@@ -632,7 +678,7 @@ async function startCamera() {
   const F = window.Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
     verbose: false,
-    formatsToSupport: [F.CODE_128, F.CODE_39, F.EAN_13, F.EAN_8, F.UPC_A, F.ITF, F.QR_CODE],
+    formatsToSupport: [F.CODE_128, F.CODE_39, F.CODABAR, F.EAN_13, F.EAN_8, F.UPC_A, F.ITF, F.QR_CODE],
     experimentalFeatures: { useBarCodeDetectorIfSupported: true }
   });
   try {
@@ -717,7 +763,7 @@ async function start() {
     $('progress').textContent = '検品シートのQRを読んでください';
     $('bar').style.width = '0';
     $('allok').classList.remove('show');
-    $('list').innerHTML = '<div class="note" style="font-size:14px;">' + (isPC ? 'スキャナで検品シート（検品書）のQRを読むと、その注文の商品が表示されます。バーコードのある商品はシールを読んで照合、配送管理アプリの検品書は画像のタイルから選んで照合します。' : '下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。') + '</div>';
+    $('list').innerHTML = '<div class="note" style="font-size:14px;">' + (isPC ? 'スキャナで検品シートのQR、または荷物の配送伝票（倉庫追跡番号）のバーコードを読むと、その注文の商品が表示されます。バーコードのある商品はシール・PKGIDを読んで照合、ない商品は画像のタイルから選んで照合します。' : '下の「📷」ボタンでカメラを起動し、検品シートのQRを読むと、その注文の商品が表示されます。続けて商品のシールを読んで照合します。') + '</div>';
     $('scanBtn').textContent = '📷 検品シートのQRを読む';
     $('resetBtn').style.display = 'none';
     keepFocus();
