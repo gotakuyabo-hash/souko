@@ -216,7 +216,7 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 /* ===== 検品書（印刷） ===== */
 #printArea{display:none}
 @media print{
-  @page{size:A4 portrait;margin:7mm}
+  @page{size:100mm 150mm;margin:0}
   body{background:#fff;color:#000;padding:0}
   body > *:not(#printArea){display:none!important}
   #printArea{display:block}
@@ -231,6 +231,14 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .phead .pqr{width:24mm;height:24mm;flex:none;align-self:center}
 .phead .pqr svg{width:100%;height:100%;display:block}
 .phead .pqrn{font-size:7pt;text-align:center;align-self:center;line-height:1.2}
+.qlab{width:100mm;height:150mm;box-sizing:border-box;padding:6mm 5mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4mm;text-align:center;break-after:page;page-break-after:always;overflow:hidden;color:#000}
+.qlab:last-child{break-after:auto;page-break-after:auto}
+.qlab .pqr{width:78mm;height:78mm}
+.qlab .pqr svg{width:100%;height:100%;display:block}
+.qlab .qlabel{font-size:20pt;font-weight:700;letter-spacing:.02em;word-break:break-all;line-height:1.25;max-height:52mm;overflow:hidden}
+.qlab .qlabel.small{font-size:14pt}
+.qlab .qsub{font-size:11pt}
+.qlab .qfoot{font-size:9pt;margin-top:auto}
 .ptable{width:100%;border-collapse:collapse;table-layout:fixed}
 .ptable th,.ptable td{border:1px solid #777;padding:2px 3px;vertical-align:top;word-break:break-all}
 .ptable th{background:#e6e6e6;font-weight:700;text-align:left}
@@ -1193,64 +1201,30 @@ function packQr(key, nos){
   const text = packUrlBase() + '#u=' + encodeURIComponent(state.clientId) + '&n=' + nos.join(',') + '&t=' + encodeURIComponent(normTracking(key) || key);
   try{
     const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
-    return '<div class="pqr">'+qr.createSvgTag({ cellSize:2, margin:0, scalable:true })+'</div><div class="pqrn">梱包くんで<br>読む</div>';
+    return '<div class="pqr">'+qr.createSvgTag({ cellSize:2, margin:0, scalable:true })+'</div>';
   }catch(e){ console.warn('QRコードを作れませんでした', e); return ''; }
 }
 
 async function printSheets(){
   if (!state.selected.size) { toast('印刷する注文を選んでください'); return; }
+  if (typeof qrcode !== 'function') { toast('QRコードの部品を読み込めませんでした。ページを読み込み直してください', 6000); return; }
   const today = todayStr();
-  const pages = [];
-  // ページもNo.順（各ページの一番小さいNo.の順）
+  // 検品書：100×150mmのラベルに、QRコードとNo.（または倉庫追跡番号）だけ。梱包くんで読むと、その注文がタイルで出る（商品・数量・備考は梱包くんで見る）
+  // 倉庫追跡番号で検索したとき：カード＝倉庫追跡番号＋QR ／ No.で検索したとき（No.指定の依頼など）：カード＝No.＋QR
   const groups = state.groups.slice().sort((x,y) => Math.min(...x.rows) - Math.min(...y.rows));
+  const cards = [];
   groups.forEach(g => {
-    const rows = g.rows.filter(no => state.selected.has(no)).map(no => state.rows[no]);
-    if (!rows.length) return;
-    // シートと同じNo.順に並べる（同梱は行の色で分かる）
-    rows.sort((a,b) => Number(a.no) - Number(b.no));
-    const oidCount = {};
-    rows.forEach(r => { const o=String(r.orderId).trim(); if (o && o!=='有在庫用') oidCount[o]=(oidCount[o]||0)+1; });
-    const shops = [...new Set(rows.map(r=>r.shop).filter(Boolean))].join('、');
-
-    const body = rows.map(r => {
-      const inf = infoOf(r);
-      const isBundle = (oidCount[String(r.orderId).trim()]||0) > 1 || /同梱/.test(r.note||'');
-      const img = r.imageUrl ? '<img src="'+esc(r.imageUrl)+'" alt="">' : '<span class="pnoimg">画像なし</span>';
-      const note = esc(r.note) + inf.partners.map(p=>'<span class="pbadge">'+esc(p)+'</span>').join('');
-      return '<tr class="'+(inf.highlight?'hl ':'')+(isBundle?'bundle':'')+'">'
-        + '<td>'+r.no+'</td>'
-        + '<td>'+esc(r.name)+'</td>'
-        + '<td>'+esc(r.item)+'</td><td>'+img+'</td><td>'+esc(r.inboundTracking)+'</td><td>'+esc(r.pkgId)+'</td>'
-        + '<td'+(qtyNum(r.qty)>=2 ? ' class="pqty2"' : '')+'>'+esc(r.qty)+'</td><td>'+esc(md(r.deliveryDate))+'</td><td>'+esc(r.deliveryTime)+'</td>'
-        + '<td class="pnote">'+note+'</td></tr>';
-    }).join('');
-
-    pages.push('<section class="ppage"><div class="phead">'+packQr(g.key, rows.map(r => r.no))+'<span class="ptrk">'+esc(g.key)+'</span>'
-      + '<span class="pmeta">'+esc(shops)+' ／ '+rows.length+'件</span><span class="pdate">印刷日 '+md(today)+'</span></div>'
-      + '<table class="ptable"><colgroup>'
-      + '<col style="width:5%"><col style="width:11%"><col style="width:28%"><col style="width:8%">'
-      + '<col style="width:11%"><col style="width:9%"><col style="width:4%"><col style="width:6%"><col style="width:6%"><col style="width:12%">'
-      + '</colgroup><thead><tr><th>No</th><th>名前</th>'
-      + '<th>商品</th><th>画像</th><th>倉庫までの追跡番号</th><th>発送状況</th>'
-      + '<th>数量</th><th>指定日</th><th>時間指定</th><th>備考欄</th></tr></thead><tbody>'+body+'</tbody></table></section>');
+    const nos = g.rows.filter(no => state.selected.has(no)).sort((a,b) => a - b);
+    if (!nos.length) return;
+    const label = state.mode === 'no'
+      ? '<div class="qlabel'+(nos.length > 6 ? ' small' : '')+'">No.'+nos.join('、No.')+'</div>'
+      : '<div class="qlabel'+(String(g.key).length > 16 ? ' small' : '')+'">'+esc(g.key)+'</div><div class="qsub">'+nos.length+'件</div>';
+    cards.push('<div class="qcard">'+packQr(g.key, nos)+label+'</div>');
   });
-
-  const area = $('#printArea');
-  area.innerHTML = pages.join('');
-
-  // 画像の読み込みを待ってから印刷する
-  const imgs = [...area.querySelectorAll('img')];
-  toast('画像を読み込んでいます…');
-  await Promise.all(imgs.map(img => new Promise(res => {
-    let fin = false;
-    const done = ok => { if (fin) return; fin = true; if (!ok) img.outerHTML = '<span class="pnoimg">画像なし</span>'; res(); };
-    if (img.complete && img.naturalWidth) return done(true);
-    img.onload = () => done(true);
-    img.onerror = () => done(false);
-    setTimeout(() => done(img.complete && img.naturalWidth > 0), 8000);
-  })));
-  const noUrl = area.querySelectorAll('.pnoimg').length;
-  if (noUrl && !confirm('画像がない注文が'+noUrl+'件あります（「画像なし」と印刷されます）。このまま印刷しますか？')) { area.innerHTML=''; return; }
+  if (!cards.length) { toast('印刷する注文を選んでください'); return; }
+  // 100×150mmのラベルに1枚ずつ
+  $('#printArea').innerHTML = cards.map((c, i) => c.replace('<div class="qcard">', '<section class="qlab">').replace(/<\/div>$/, '')
+    + '<div class="qfoot">検品書　'+(i+1)+' / '+cards.length+'　印刷日 '+md(today)+'</div></section>').join('');
   savePrintHistory();
   window.print();
 }
