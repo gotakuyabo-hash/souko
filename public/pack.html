@@ -46,7 +46,7 @@ main{ padding:12px 12px 140px; }
 #flash.on{ display:flex; }
 #flash.ok{ background:rgba(30,142,79,.92); }
 #flash.ng{ background:rgba(192,57,43,.95); }
-#flash .big{ font-size:44px; }
+#flash .big{ font-size:44px; white-space:pre-line; line-height:1.25; }
 #flash .small{ font-size:17px; margin-top:10px; word-break:break-all; white-space:pre-line; }
 .err{ background:#fdeeee; border:1px solid var(--ng); color:var(--ng); padding:14px; border-radius:10px; font-size:15px; }
 .note{ font-size:12px; color:var(--muted); margin-top:6px; }
@@ -73,8 +73,14 @@ main{ padding:12px 12px 140px; }
 .us-timg{ width:100%; height:auto; aspect-ratio:1/1; object-fit:contain; border-radius:6px; background:#f5f6f6; }
 .us-tile .tn{ font-size:12px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .us-tile .tm{ font-size:12px; color:var(--muted); }
-.us-tile .tq{ position:absolute; top:4px; right:4px; background:var(--ink); color:#fff; border-radius:4px; padding:0 6px; font-weight:700; font-size:14px; }
-.us-tile .tq.many{ background:var(--ng); }
+.us-tile .tq{ position:absolute; top:4px; right:4px; background:var(--ink); color:#fff; border-radius:6px; padding:2px 8px; font-weight:700; font-size:18px; line-height:1.2; box-shadow:0 0 0 2px #fff; }
+.us-tile .tq.many{ background:var(--ng); font-size:20px; }
+.us-tile .tnote{ font-size:12px; line-height:1.35; background:#fff3c4; border:1px solid var(--warn); border-radius:4px; padding:2px 4px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-wrap; }
+.us-qty{ display:inline-flex; align-items:baseline; gap:6px; margin:6px 0; padding:6px 14px; border-radius:8px; background:#e8eef2; font-weight:700; font-size:16px; }
+.us-qty b{ font-size:34px; line-height:1; }
+.us-qty.many{ background:var(--ng); color:#fff; }
+.us-qty small{ font-size:12px; font-weight:400; }
+.us-memo{ background:#fff3c4; border:2px solid var(--warn); border-radius:8px; padding:8px 10px; font-size:15px; font-weight:700; white-space:pre-wrap; margin-top:6px; word-break:break-all; }
 .us-tile .tc{ position:absolute; top:4px; left:4px; background:var(--accent); color:#fff; border-radius:4px; padding:0 6px; font-weight:700; font-size:12px; }
 .us-tile .tb{ font-size:11px; font-weight:700; color:#7a4d00; background:#fff8e8; border:1px solid var(--warn); border-radius:4px; padding:0 4px; width:max-content; }
 .us-tile.done{ opacity:.45; border-color:var(--ok); } .us-tile.stop{ border-color:var(--ng); }
@@ -332,7 +338,7 @@ const usImg = (r, cls) => r.imageUrl ? '<img class="' + cls + '" src="' + esc(r.
 function usTiles(){
   const map = new Map();
   Object.values(US.rows).sort((a,b) => a.no - b.no).forEach(r => {
-    const k = squash(r.item) + '|' + (r.imageUrl || '');
+    const k = squash(r.item) + '|' + (r.imageUrl || '') + '|' + squash(r.note) + '|' + qtyNum(r.qty);   // 備考・数量が違う注文は別のタイルにする
     if (!map.has(k)) map.set(k, { key:k, rows:[] });
     map.get(k).rows.push(r);
   });
@@ -368,11 +374,11 @@ function usRender(){
           const spec = (r.deliveryDate || r.deliveryTime) ? '<span class="us-tag warn">指定 ' + esc(md(r.deliveryDate)) + ' ' + esc(r.deliveryTime || '') + '</span>' : '';
           return '<div class="us-it' + (p ? ' done' : '') + '">' + usImg(r, 'us-big')
             + '<div class="info"><div class="code"><b style="font-size:16px;color:var(--ink)">No.' + r.no + '</b>　' + esc(r.shop || '') + ' ' + spec + '</div>'
+            + '<div class="us-qty' + (q >= 2 ? ' many' : '') + '">数量 <b>' + (q || 1) + '</b> 個' + (q >= 2 ? '　⚠ ' + q + '個入れる' : '') + (String(r.qty || '').trim() && String(r.qty).trim() !== String(q) ? '<small>（シート：' + esc(r.qty) + '）</small>' : '') + '</div>'
             + '<div class="title">' + esc(r.item || '（商品名なし）') + '</div>'
             + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : '<b style="color:var(--warn)">バーコードなし</b>　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
             + (f.storage && f.storage.active ? '<div class="us-note">📦 保管中' + (f.storage.memo ? '：' + esc(f.storage.memo) : '') + '</div>' : '')
-            + (r.note ? '<div class="us-note">' + esc(r.note) + '</div>' : '')
-            + '<div class="count' + (q >= 2 ? ' us-many' : '') + '">×' + esc(r.qty || '1') + '</div>'
+            + (r.note ? '<div class="us-memo">📝 備考：' + esc(r.note) + '</div>' : '')
             + (stop ? '<div class="us-msg ng" style="margin:0">入れない</div>'
                : p ? '<div style="display:flex;gap:8px;align-items:center"><b style="color:var(--ok)">✓ 入れた</b><button class="manual undo" data-us="undo" data-no="' + r.no + '">戻す</button></div>'
                : '<button class="btn" style="width:100%;margin-top:6px" data-us="in" data-no="' + r.no + '">箱に入れた</button>')
@@ -388,10 +394,11 @@ function usRender(){
       return '<button class="us-tile' + (done ? ' done' : '') + (t.stop.length ? ' stop' : '') + (t.rows.some(x => selSet.has(x.no)) ? ' sel' : '') + '" data-us="pick" data-key="' + esc(t.key) + '">'
         + usImg(r, 'us-timg')
         + (t.rows.length > 1 ? '<span class="tc">' + t.rows.length + '注文</span>' : '')
-        + '<span class="tq' + (many ? ' many' : '') + '">' + (done ? '✓' : '×' + t.qty) + '</span>'
+        + '<span class="tq' + (qtyNum(r.qty) >= 2 && !done ? ' many' : '') + '">' + (done ? '✓' : (qtyNum(r.qty) || 1) + '個') + '</span>'
         + '<span class="tn">' + esc(r.item || '（商品名なし）') + '</span>'
+        + (r.note ? '<span class="tnote">📝 ' + esc(r.note) + '</span>' : '')
         + (t.rows.every(hasPkg) ? '' : '<span class="tb">バーコードなし</span>')
-        + '<span class="tm">' + (t.rows.length > 1 ? 'No.' + r.no + ' ほか' : 'No.' + r.no)
+        + '<span class="tm">' + (t.rows.length > 1 ? t.rows.length + '注文（各' + (qtyNum(r.qty) || 1) + '個）' : 'No.' + r.no)
         + (t.stop.length ? ' <b style="color:var(--ng)">' + esc(usStop(t.stop[0].no)) + '</b>' : done ? ' 済' : t.rows.length > 1 ? ' 残り' + t.todo.length : '') + '</span></button>';
     }).join('') + '</div>';
   const hadPf = document.activeElement && document.activeElement.id === 'usPf';
@@ -489,7 +496,7 @@ function usCheck(raw){
   if (!todo.length) { beep(false); flash(false, 'この商品は梱包済みです', 'No.' + hits.map(x => x.no).join('、No.') + '\n二重に梱包していないか確かめてください（タップ・Escで閉じる）'); return; }
   const q = qtyNum(r.qty);
   beep(true);
-  flash(true, 'No.' + r.no + (q >= 2 ? '　×' + q + '個' : ''), 'お届け先：' + (r.name || '') + '\n送り状を貼って箱に入れたら、もう一度スキャン（または「箱に入れた」）', 1500);
+  flash(true, 'No.' + r.no + '\n数量 ' + (q || 1) + '個' + (q >= 2 ? '（⚠ ' + q + '個入れる）' : ''), 'お届け先：' + (r.name || '') + (r.note ? '\n📝 備考：' + String(r.note).slice(0, 80) : '') + '\n送り状を貼って箱に入れたら、もう一度スキャン（または「箱に入れた」）', (q >= 2 || r.note) ? 2500 : 1500);
 }
 
 /* ---------- 画面 ---------- */
