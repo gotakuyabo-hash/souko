@@ -234,6 +234,8 @@ table.res th{background:var(--bg);border-top:0;white-space:nowrap}
 .qlab{width:100mm;height:150mm;box-sizing:border-box;padding:6mm 5mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4mm;text-align:center;break-after:page;page-break-after:always;overflow:hidden;color:#000}
 .qlab:last-child{break-after:auto;page-break-after:auto}
 .qlab .pqr{width:78mm;height:78mm}
+.qlab.qno .pqr{width:40mm;height:40mm}   /* No.指定の依頼分：QRは小さく、No.を大きく */
+.qlab.qno .qlabel{max-height:80mm}
 .qlab .pqr svg{width:100%;height:100%;display:block}
 .qlab .qlabel{font-size:20pt;font-weight:700;letter-spacing:.02em;word-break:break-all;line-height:1.25;max-height:52mm;overflow:hidden}
 .qlab .qlabel.small{font-size:14pt}
@@ -1264,11 +1266,11 @@ async function printSheets(){
     const label = state.mode === 'no'
       ? '<div class="qlabel'+(nos.length > 6 ? ' small' : '')+'">No.'+nos.join('、No.')+'</div>'
       : '<div class="qlabel'+(String(g.key).length > 16 ? ' small' : '')+'">'+esc(g.key)+'</div><div class="qsub">'+nos.length+'件</div>';
-    cards.push('<div class="qcard">'+packQr(g.key, nos)+label+'</div>');
+    cards.push('<div class="qcard'+(state.mode === 'no' ? ' qno' : '')+'">'+packQr(g.key, nos)+label+'</div>');
   });
   if (!cards.length) { toast('印刷する注文を選んでください'); return; }
   // 100×150mmのラベルに1枚ずつ
-  $('#printArea').innerHTML = cards.map((c, i) => c.replace('<div class="qcard">', '<section class="qlab">').replace(/<\/div>$/, '')
+  $('#printArea').innerHTML = cards.map((c, i) => c.replace(/^<div class="qcard( qno)?">/, (m, q) => '<section class="qlab'+(q || '')+'">').replace(/<\/div>$/, '')
     + '<div class="qfoot">検品書　'+(i+1)+' / '+cards.length+'　印刷日 '+md(today)+'</div></section>').join('');
   savePrintHistory();
   window.print();
