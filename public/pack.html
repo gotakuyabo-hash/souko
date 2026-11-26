@@ -674,7 +674,7 @@ function render() {
 
   $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
     const z = x.unknown ? null : zmap[norm(x.code)];
-    const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : '（zaicoに見つかりません）');
+    const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : (x.name || '（zaicoに見つかりません）'));
     const img = x.unknown
       ? `<div class="noimg" style="font-size:40px;">${x.kind === 'nobc' ? '🎁' : '❓'}</div>`
       : (z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>');
@@ -762,7 +762,13 @@ function check(code) {
   }
   if (state.canceled) { beep(false); flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + state.order + '\n梱包しないでください（次の検品シートのQRを読んでください）'); return; }
   if (holdOf()) { beep(false); flash(false, '⚠ 欠品で保留中の注文です', '受注番号 ' + state.order + '\n商品がそろったら、上のボタンで保留を解除してください（タップ・Escで閉じる）'); return; }
-  const it = findItem(raw);
+  let it = findItem(raw);
+  if (!it) {
+    // バーコードなしで載っている商品：商品名の「JAN：9144」の数字で終わるバーコードなら、その商品として数える
+    const d = norm(raw).replace(/\D/g, '');
+    const cand = d.length >= 8 ? state.items.filter(x => x.unknown && x.scanned < x.qty && janTail(x.name) && d.endsWith(janTail(x.name))) : [];
+    if (cand.length === 1) { it = cand[0]; it.code = norm(raw); it.unknown = false; it.kind = ''; it.resolved = true; }
+  }
   if (!it) {
     // 商品でなければ、まず送り状として照合 → だめなら（梱包OKのあとなら）次の荷物の倉庫追跡番号として探す
     const allDone = state.items.every(x => x.scanned === x.qty);
@@ -774,7 +780,9 @@ function check(code) {
         beep(false);
         const z = zmap[norm(raw)];
         const lg = !authUser && /^\D?\d{10,14}\D?$/.test(raw.replace(/\s/g, '')) ? '\n※ 送り状の照合にはログインが必要です（画面下の「ログイン」から）' : '';
-        flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + lg + '\n（タップ・Escで閉じる）');
+        const nb = state.items.filter(x => x.unknown && x.scanned < x.qty);
+        const nbMsg = nb.length ? '\n\n※ この注文には、バーコードが登録されていない商品が ' + nb.length + ' 種類あります（オレンジの点線の枠）。\nその商品なら「入れた」ボタンで数えてください。\n分割くんの商品マスタでJANを入れると、次からスキャンで照合できます。' : '';
+        flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + lg + nbMsg + '\n（タップ・Escで閉じる）');
       });
     });
     return;
@@ -927,6 +935,36 @@ async function checkOrderCanceled(){
     render();
   } catch (e) { console.warn('shipCancels', e); }
 }
+/* ---------- バーコードなしで載っている商品のバーコードを探す ----------
+   分割くんの検品書では、マスタにJANがない商品が「!SKU」「?SKU:商品名」で載る。
+   ① 分割くんの商品マスタ（products_master/SKU）にあとからJANを入れていれば、それを使う
+   ② 商品名の「（JAN：9144）」の数字で終わるzaicoのコードが1つだけなら、それを使う */
+const janTail = s => { const m = toHalf(s).match(/JAN\s*[:：]?\s*(\d{4,13})/i); return m ? m[1] : ''; };
+function zaicoByTail(tail) {
+  if (!tail) return '';
+  const hits = Object.keys(zmap).filter(c => c.length >= 8 && c.endsWith(tail));
+  return hits.length === 1 ? hits[0] : '';
+}
+async function resolveNoBarcode() {
+  const order = state.order;
+  for (const x of state.items) {
+    if (!x.unknown) continue;
+    let jan = '', name = x.name;
+    if (!name) {   // 商品名がない＝古い分割くんの検品書（!SKU）。マスタを1回だけ読む
+      try {
+        const m = (await getDoc(doc(db, 'products_master', x.code))).data();
+        if (m && Array.isArray(m.items) && m.items.length === 1) {
+          name = name || m.items[0].jpName || '';
+          jan = norm(m.items[0].jan || '');
+        }
+      } catch (e) { console.warn('products_master', e); }
+    }
+    if (state.order !== order) return;   // 読んでいる間に次の注文へ進んだ
+    if (name && !x.name) x.name = name;
+    jan = jan || zaicoByTail(janTail(name));
+    if (jan) { x.code = jan; x.unknown = false; x.kind = ''; x.resolved = true; }
+  }
+}
 function afterChange() {
   render();
   // 梱包OKでもカメラは止めない（そのまま次の検品シートのQRを読めるように）
@@ -1049,6 +1087,7 @@ async function start() {
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
+    await resolveNoBarcode();
     $('cacheNote').innerHTML = z.withImg ? '' : esc('※ 画像のURLを取得できませんでした（' + (z.imgError || '関数の設定が必要です') + '）') + ' <a href="#" id="reloadZaico">zaicoから読み直す</a>';
   } catch (e) {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
