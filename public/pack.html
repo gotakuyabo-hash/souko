@@ -255,7 +255,57 @@ document.getElementById('gateLoginBtn').onclick = () => {
   const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt:'select_account' });
   signInWithPopup(auth, p).catch(err => { if (!/popup-closed|cancelled-popup/.test(err.code || '')) document.getElementById('gateErr').textContent = 'ログインできませんでした：' + err.message; });
 };
-const US = { cfgId:'', pre:null, labeled:new Set(), cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve() };
+const US = { cfgId:'', pre:null, labeled:new Set(), cfg:null, rows:{}, flags:{}, sel:null, needLogin:false, pf:'', q:Promise.resolve(), codeOf:{}, codeSrc:{}, master:null };
+/* ---------- US：商品のバーコード（No.指定の注文など、PKGIDがない商品を照合する） ----------
+   usItemMaster/{お客様ID} に登録した「商品名 → zaicoのコード」で照合する（シートの商品名はzaicoにないので、目で見て手で登録）
+   登録のしかた：商品を選んで ① 商品のバーコードを読む ／ ② 「zaicoの商品から選ぶ」で画像を見て選ぶ
+   読み取り：箱を開いたとき usItemMaster 1回（zaicoの写しは「選ぶ」を開いたときだけ。端末に6時間保存） */
+const usNameKey = v => String(v || '').normalize('NFKC').replace(/[\s　]+/g, '').toLowerCase().slice(0, 200);
+async function usLoadCodes(){
+  US.codeOf = {}; US.codeSrc = {};
+  try {
+    if (!US.master) { const md = await getDoc(doc(db, 'usItemMaster', state.us)); US.master = (md.exists() && md.data().items) || {}; }
+  } catch (e) { console.warn('usItemMaster', e); US.master = US.master || {}; }
+  Object.values(US.rows).forEach(r => {
+    const k = usNameKey(r.item); if (!k) return;
+    const m = US.master[k];
+    if (m && m.code) { US.codeOf[r.no] = norm(m.code); US.codeSrc[r.no] = '登録済み' + (m.zname ? '：' + m.zname : ''); }
+  });
+}
+async function usLearnCode(no, raw, zname){
+  const r = US.rows[no]; if (!r) return false;
+  const code = norm(raw), k = usNameKey(r.item);
+  if (!code || !k) return false;
+  if (!confirm((zname ? 'zaicoの商品「' + zname + '」（' + raw + '）' : '読んだバーコード ' + raw) + ' を、次の商品として登録しますか？\n\n' + (r.item || '') + '\n\n次からは、この商品名の注文はバーコードで照合できます。')) return false;
+  try {
+    const item = { code, zname: String(zname || '').slice(0, 120), name: String(r.item || '').slice(0, 200), by: (authUser && authUser.email) || '', at: new Date().toISOString() };
+    await setDoc(doc(db, 'usItemMaster', state.us), { items: { [k]: item } }, { merge: true });
+    US.master = US.master || {}; US.master[k] = item;
+    Object.values(US.rows).forEach(x => { if (usNameKey(x.item) === k) { US.codeOf[x.no] = code; US.codeSrc[x.no] = '登録済み' + (item.zname ? '：' + item.zname : ''); } });
+    return true;
+  } catch (e) { alert('登録できませんでした：' + e.message); return false; }
+}
+// zaicoの在庫の写しから、画像を見て選ぶ
+async function usPickZaico(no){
+  const r = US.rows[no]; if (!r) return;
+  let z;
+  try { $('cacheNote').textContent = 'zaicoの在庫を読み込んでいます…'; z = await getZaicoMap([]); } catch (e) { alert('zaicoの在庫を読めませんでした：' + e.message); return; } finally { $('cacheNote').textContent = ''; }
+  const all = Object.entries(z.map || {}).map(([code, v]) => ({ code, t: v.t || '', img: v.img || '' }));
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto';
+  ov.innerHTML = '<div style="background:#fff;color:#1f2a33;border-radius:12px;max-width:560px;width:100%;padding:14px"><div style="font-weight:800;margin-bottom:4px">zaicoの商品から選ぶ</div><div style="font-size:13px;margin-bottom:8px;color:#5d6b77">シートの商品名：' + esc(r.item || '') + '</div><input id="zpQ" placeholder="商品名・コードで探す（スペースで区切ると全部を含むもの）" style="width:100%;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:8px"><div id="zpList" style="margin-top:8px;max-height:60vh;overflow:auto"></div><button type="button" id="zpClose" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #ccc;background:#fff">閉じる</button></div>';
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); keepFocus(); };
+  const paint = () => {
+    const ws = String($('zpQ').value || '').normalize('NFKC').toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = (ws.length ? all.filter(x => { const t = (x.t + ' ' + x.code).normalize('NFKC').toLowerCase(); return ws.every(w => t.includes(w)); }) : []).slice(0, 60);
+    $('zpList').innerHTML = !ws.length ? '<div style="font-size:13px;color:#66727c">商品名の一部を入れてください</div>' : !hits.length ? '<div style="font-size:13px;color:#66727c">見つかりません</div>'
+      : hits.map((x, i) => '<button type="button" data-zp="' + i + '" style="display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:6px;margin:0 0 6px;border:1px solid #ddd;border-radius:8px;background:#fff">' + (x.img ? '<img src="' + esc(x.img) + '" style="width:56px;height:56px;object-fit:contain;flex:none" referrerpolicy="no-referrer">' : '<span style="width:56px;height:56px;flex:none;background:#eee;border-radius:6px"></span>') + '<span style="font-size:13px">' + esc(x.t) + '<br><small style="color:#66727c">' + esc(x.code) + '</small></span></button>').join('');
+    $('zpList').querySelectorAll('[data-zp]').forEach(b => b.onclick = async () => { const x = hits[Number(b.dataset.zp)]; if (await usLearnCode(no, x.code, x.t)) { close(); usRender(); beep(true); flash(true, '登録しました', 'これからは商品のバーコードで照合できます', 1300); } });
+  };
+  $('zpQ').addEventListener('input', paint); $('zpClose').onclick = close;
+  setTimeout(() => $('zpQ').focus(), 50); paint();
+}
 const ordRef = no => doc(db, 'deliveryClients', state.us, 'orders', String(no));
 const oidOf = s => String(s == null ? '' : s).trim();
 const NO_OID = o => !o || o === '有在庫用';
@@ -330,6 +380,7 @@ async function usStart(){
       snap.forEach(d => { US.flags[Number(d.id)] = d.data(); });
     }
     US.sel = null; US.pf = ''; US.labeled = new Set();
+    await usLoadCodes();
     const lost = state.nos.filter(n => !US.rows[n]);
     $('cacheNote').textContent = lost.length ? '※ シートに見つからないNo.：' + lost.join('、') : '';
     usRender();
@@ -401,7 +452,7 @@ function usRender(){
             + '<div class="info"><div class="code"><b style="font-size:16px;color:var(--ink)">No.' + r.no + '</b>　' + esc(r.shop || '') + ' ' + spec + '</div>'
             + '<div class="us-qty' + (q >= 2 ? ' many' : '') + '">数量 <b>' + (q || 1) + '</b> 個' + (q >= 2 ? '　⚠ ' + q + '個入れる' : '') + (String(r.qty || '').trim() && String(r.qty).trim() !== String(q) ? '<small>（シート：' + esc(r.qty) + '）</small>' : '') + '</div>'
             + '<div class="title">' + esc(r.item || '（商品名なし）') + '</div>'
-            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : '<b style="color:var(--warn)">バーコードなし</b>　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
+            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : US.codeOf[r.no] ? 'バーコード ' + esc(US.codeOf[r.no]) + '<small>（' + esc(US.codeSrc[r.no] || '') + '）</small>　' : '<b style="color:var(--warn)">バーコード未登録</b> <button class="manual" data-us="zpick" data-no="' + r.no + '">zaicoの商品から選ぶ</button>（商品のバーコードを読んでも登録できます）　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
             + (f.storage && f.storage.active ? '<div class="us-note">📦 保管中' + (f.storage.memo ? '：' + esc(f.storage.memo) : '') + '</div>' : '')
             + (r.note ? '<div class="us-memo">📝 備考：' + esc(r.note) + '</div>' : '')
             + (stop ? '<div class="us-msg ng" style="margin:0">入れない</div>'
@@ -454,6 +505,7 @@ $('list').addEventListener('click', async e => {
     US.q.then(() => usRender());
     return;
   }
+  if (act === 'zpick') { usPickZaico(no); return; }
   if (act === 'release') {
     // 出荷保留・問い合わせ中を、梱包くんから解除する（USくんの「問い合わせ・保留・保管」と同じ記録）
     const stop = usStop(no);
@@ -556,12 +608,12 @@ async function usLabelLookup(raw){
   if (!/^\d{10,14}$/.test(c)) return null;
   // 直前に当たった配送会社から先に見る（見つかれば読み取り1回で済む）
   let first = 'yamato'; try { first = localStorage.getItem('pack_last_carrier') || 'yamato'; } catch (e) {}
-  let hit = null;
+  let hit = null, err = null;
   for (const k of [first, first === 'yamato' ? 'sagawa' : 'yamato']) {
-    const x = await getDoc(doc(db, 'shipments', k + '_' + c)).catch(() => null);
+    const x = await getDoc(doc(db, 'shipments', k + '_' + c)).catch(e => { err = e; return null; });
     if (x && x.exists()) { hit = x; try { localStorage.setItem('pack_last_carrier', k); } catch (e) {} break; }
   }
-  if (!hit) return { trk:c, d:null };
+  if (!hit) return { trk:c, d:null, err };
   const d = hit.data();
   let nos = Array.isArray(d.nos) && d.nos.length ? d.nos.map(Number) : [];
   if (!nos.length) { const m = String(d.items || '').match(/No\.?\s*([\d,，、\s]+)\)/i); if (m) nos = m[1].split(/[,，、\s]+/).map(Number).filter(Boolean); }
@@ -614,6 +666,8 @@ function usFindPkg(code){
   let hits = Object.values(US.rows).filter(r => pkgList(r).includes(c));
   // バーコードに余分な文字が付いているとき（前後に文字が付くなど）は、含まれているかで探す
   if (!hits.length && c.length >= 8) hits = Object.values(US.rows).filter(r => pkgList(r).some(t => t.length >= 8 && (c.includes(t) || t.includes(c))));
+  // PKGIDでなければ、商品のバーコード（覚えたコード・zaicoの商品名一致）で探す
+  if (!hits.length) { const z = norm(code); if (z) hits = Object.values(US.rows).filter(r => US.codeOf[r.no] && US.codeOf[r.no] === z); }
   return hits.sort((a,b) => a.no - b.no);
 }
 function usCheck(raw){
@@ -622,8 +676,19 @@ function usCheck(raw){
   const hits = usFindPkg(raw);
   if (!hits.length) {
     // PKGIDでなければ、送り状 → 次の荷物の倉庫追跡番号 の順に探す
-    usLabelCheck(raw).then(done => done || usTryTracking(raw)).then(ok => {
+    // JANコード（8・13桁）で、選んでいる商品にバーコードがまだないときは、先に「覚えるか」を聞く（送り状・追跡番号の検索を待たない）
+    const sel0 = US.sel && US.rows[US.sel], rt = String(raw).trim();
+    if (sel0 && /^(\d{8}|\d{13})$/.test(rt) && !hasPkg(sel0) && !US.codeOf[sel0.no] && !usPacked(sel0.no) && !usStop(sel0.no)) {
+      usLearnCode(sel0.no, raw).then(ok => { if (ok) usCheck(raw); else { beep(false); flash(false, '覚えませんでした', '目で確かめて「箱に入れた」を押してください（タップ・Escで閉じる）'); } });
+      return;
+    }
+    usLabelCheck(raw).then(done => done || usTryTracking(raw)).then(async ok => {
       if (ok) return;
+      // 選んでいる商品にバーコードがまだないときは、読んだコードをその商品のバーコードとして覚える
+      const sel = US.sel && US.rows[US.sel];
+      if (sel && !hasPkg(sel) && !US.codeOf[sel.no] && /^[0-9A-Za-z\-]{6,20}$/.test(String(raw).trim()) && !usPacked(sel.no) && !usStop(sel.no)) {
+        if (await usLearnCode(sel.no, raw)) { usCheck(raw); return; }
+      }
       beep(false);
       flash(false, '✕ この検品書の商品ではありません', '読んだコード：' + raw + '\nPKGID・送り状・倉庫追跡番号のどれにも見つかりません。'
         + (US.sel ? '送り状なら、発行済みデータがまだ取り込まれていないかもしれません（目で確かめて「箱に入れた」を押してください）' : 'バーコードがない商品は、画像のタイルから選んでください') + '\n（タップ・Escで閉じる）');
@@ -674,7 +739,7 @@ function render() {
 
   $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
     const z = x.unknown ? null : zmap[norm(x.code)];
-    const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : (x.name || '（zaicoに見つかりません）'));
+    const title = x.unknown ? (x.name || x.code) : (z && z.t ? z.t : '（zaicoに見つかりません）');
     const img = x.unknown
       ? `<div class="noimg" style="font-size:40px;">${x.kind === 'nobc' ? '🎁' : '❓'}</div>`
       : (z && z.img ? `<img src="${esc(z.img)}" alt="" loading="lazy">` : '<div class="noimg">画像なし</div>');
@@ -757,18 +822,18 @@ function check(code) {
   if (!raw) return;
   if (state.us) { usCheck(raw); return; }
   if (!state.items.length) {
-    usTryTracking(raw).then(ok => { if (!ok) { beep(false); flash(false, '先に検品シートのQRか、荷物の倉庫追跡番号を読んでください', '読んだコード：' + raw + '\n（タップ・Escで閉じる）'); } });
+    usTryTracking(raw).then(async ok => {
+      if (ok) return;
+      // 送り状を読んだ場合は、どの注文の送り状かを出す（照合は検品シートを開いてから）
+      let msg = '';
+      try { const L = authUser ? await usLabelLookup(raw) : null; if (L && L.d) msg = '\nこの送り状：' + (L.d.carrierName || '') + ' ' + L.trk + '（' + (L.d.name || '') + (L.d.orderNo ? '・' + L.d.orderNo : '') + '）' + (L.d.canceled ? '【取り消し済み】' : ''); else if (L && L.err) msg = '\n送り状の記録を読めませんでした：' + (L.err.code || L.err.message); else if (L) msg = '\n伝票番号 ' + L.trk + ' の送り状の記録はありません'; } catch (e) {}
+      beep(false); flash(false, '先に検品シートのQRか、荷物の倉庫追跡番号を読んでください', '読んだコード：' + raw + msg + '\n（送り状の照合は、検品シートを開いてから読みます。タップ・Escで閉じる）');
+    });
     return;
   }
   if (state.canceled) { beep(false); flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + state.order + '\n梱包しないでください（次の検品シートのQRを読んでください）'); return; }
   if (holdOf()) { beep(false); flash(false, '⚠ 欠品で保留中の注文です', '受注番号 ' + state.order + '\n商品がそろったら、上のボタンで保留を解除してください（タップ・Escで閉じる）'); return; }
-  let it = findItem(raw);
-  if (!it) {
-    // バーコードなしで載っている商品：商品名の「JAN：9144」の数字で終わるバーコードなら、その商品として数える
-    const d = norm(raw).replace(/\D/g, '');
-    const cand = d.length >= 8 ? state.items.filter(x => x.unknown && x.scanned < x.qty && janTail(x.name) && d.endsWith(janTail(x.name))) : [];
-    if (cand.length === 1) { it = cand[0]; it.code = norm(raw); it.unknown = false; it.kind = ''; it.resolved = true; }
-  }
+  const it = findItem(raw);
   if (!it) {
     // 商品でなければ、まず送り状として照合 → だめなら（梱包OKのあとなら）次の荷物の倉庫追跡番号として探す
     const allDone = state.items.every(x => x.scanned === x.qty);
@@ -780,9 +845,7 @@ function check(code) {
         beep(false);
         const z = zmap[norm(raw)];
         const lg = !authUser && /^\D?\d{10,14}\D?$/.test(raw.replace(/\s/g, '')) ? '\n※ 送り状の照合にはログインが必要です（画面下の「ログイン」から）' : '';
-        const nb = state.items.filter(x => x.unknown && x.scanned < x.qty);
-        const nbMsg = nb.length ? '\n\n※ この注文には、バーコードが登録されていない商品が ' + nb.length + ' 種類あります（オレンジの点線の枠）。\nその商品なら「入れた」ボタンで数えてください。\n分割くんの商品マスタでJANを入れると、次からスキャンで照合できます。' : '';
-        flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + lg + nbMsg + '\n（タップ・Escで閉じる）');
+        flash(false, '✕ この注文の商品ではありません', (z && z.t ? z.t + '　' : '') + '読んだコード：' + raw + lg + '\n（タップ・Escで閉じる）');
       });
     });
     return;
@@ -814,9 +877,15 @@ async function orderLabelCheck(raw){
   if (/^[A-D]\d+[A-D]$/.test(c)) c = c.slice(1, -1);
   if (!/^\d{10,14}$/.test(c)) return false;
   await authReady;
-  if (!authUser) return false;
+  if (!authUser) { beep(false); flash(false, '送り状の照合にはログインが必要です', '伝票番号 ' + c + '\n画面の「Googleでログイン」からログインしてください（タップ・Escで閉じる）'); return true; }
   const L = await usLabelLookup(c);
-  if (!L || !L.d) return false;
+  if (!L) return false;
+  if (!L.d) {
+    if (L.err) { beep(false); flash(false, '送り状の記録を読めませんでした', '伝票番号 ' + c + '\n' + (L.err.code === 'permission-denied' ? 'Firestoreのルールで shipments の読み取りが許可されていません' : (L.err.message || L.err)) + '（タップ・Escで閉じる）'); return true; }
+    if (state.items.every(x => x.scanned === x.qty)) return false;   // 梱包OKのあとは、次の荷物の倉庫追跡番号かもしれない
+    beep(false); flash(false, '送り状の記録が見つかりません', '伝票番号 ' + c + '\nこの送り状の発行済みCSVが、まだまとまるくん（またはUSくん）に入っていないかもしれません（タップ・Escで閉じる）');
+    return true;
+  }
   const name = (L.d.carrierName || '') + ' ' + L.trk;
   if (L.d.canceled) { beep(false); flash(false, '✕ この送り状は取り消し済みです', name + '\n貼らないでください（タップ・Escで閉じる）'); return true; }
   if (shipOrderKeys(L.d).has(ordKey(state.order))) {
@@ -934,36 +1003,6 @@ async function checkOrderCanceled(){
     flash(false, '✕ キャンセル済みの注文です', '受注番号 ' + order + '\n梱包しないでください。商品は棚に戻してください（タップ・Escで閉じる）');
     render();
   } catch (e) { console.warn('shipCancels', e); }
-}
-/* ---------- バーコードなしで載っている商品のバーコードを探す ----------
-   分割くんの検品書では、マスタにJANがない商品が「!SKU」「?SKU:商品名」で載る。
-   ① 分割くんの商品マスタ（products_master/SKU）にあとからJANを入れていれば、それを使う
-   ② 商品名の「（JAN：9144）」の数字で終わるzaicoのコードが1つだけなら、それを使う */
-const janTail = s => { const m = toHalf(s).match(/JAN\s*[:：]?\s*(\d{4,13})/i); return m ? m[1] : ''; };
-function zaicoByTail(tail) {
-  if (!tail) return '';
-  const hits = Object.keys(zmap).filter(c => c.length >= 8 && c.endsWith(tail));
-  return hits.length === 1 ? hits[0] : '';
-}
-async function resolveNoBarcode() {
-  const order = state.order;
-  for (const x of state.items) {
-    if (!x.unknown) continue;
-    let jan = '', name = x.name;
-    if (!name) {   // 商品名がない＝古い分割くんの検品書（!SKU）。マスタを1回だけ読む
-      try {
-        const m = (await getDoc(doc(db, 'products_master', x.code))).data();
-        if (m && Array.isArray(m.items) && m.items.length === 1) {
-          name = name || m.items[0].jpName || '';
-          jan = norm(m.items[0].jan || '');
-        }
-      } catch (e) { console.warn('products_master', e); }
-    }
-    if (state.order !== order) return;   // 読んでいる間に次の注文へ進んだ
-    if (name && !x.name) x.name = name;
-    jan = jan || zaicoByTail(janTail(name));
-    if (jan) { x.code = jan; x.unknown = false; x.kind = ''; x.resolved = true; }
-  }
 }
 function afterChange() {
   render();
@@ -1087,7 +1126,6 @@ async function start() {
   try {
     const z = await getZaicoMap(state.items.filter(x => !x.unknown).map(x => x.code));
     zmap = z.map || {};
-    await resolveNoBarcode();
     $('cacheNote').innerHTML = z.withImg ? '' : esc('※ 画像のURLを取得できませんでした（' + (z.imgError || '関数の設定が必要です') + '）') + ' <a href="#" id="reloadZaico">zaicoから読み直す</a>';
   } catch (e) {
     $('cacheNote').textContent = '※ zaicoの商品名・画像を読めませんでした：' + e.message + '（照合はできます）';
