@@ -309,6 +309,28 @@ async function usPickZaico(no){
 const ordRef = no => doc(db, 'deliveryClients', state.us, 'orders', String(no));
 const oidOf = s => String(s == null ? '' : s).trim();
 const NO_OID = o => !o || o === '有在庫用';
+// 同梱の相手が別の荷物（別便）で届いているときは、その注文もシートから取り寄せて一緒に出す
+//   ① 備考の「同梱 No.○○」のNo. ② 同じ注文番号の注文（GASの検索1〜2回。出荷済みは除く）
+async function usLoadBundleExtras(){
+  const base = Object.values(US.rows);
+  const want = new Set();
+  base.forEach(r => { if (/同梱/.test(r.note || '')) noteNos(r.note).forEach(n => { if (!US.rows[n]) want.add(n); }); });
+  const oids = [...new Set(base.map(r => oidOf(r.orderId)).filter(o => !NO_OID(o)))];
+  const extra = [];
+  try { if (want.size) extra.push(...((await usGas('search', { mode:'no', values:[...want] })).rows || [])); } catch (e) { console.warn('同梱のNo.を探せませんでした', e); }
+  try {
+    if (oids.length) { const j = await usGas('search', { mode:'oid', values:oids }); if (j.mode === 'oid' || !j.mode) extra.push(...(j.rows || [])); }
+  } catch (e) { console.warn('同じ注文番号の注文を探せませんでした', e); }
+  let n = 0;
+  extra.forEach(r => {
+    if (!r || !r.no || US.rows[r.no] || r.shippedAt) return;
+    // 同じ注文番号か、同梱の備考でつながっているものだけ
+    const linked = want.has(r.no) || (!NO_OID(oidOf(r.orderId)) && oids.includes(oidOf(r.orderId)));
+    if (!linked) return;
+    r.extra = true; US.rows[r.no] = r; n++;
+  });
+  if (n) US.extraNote = '別便で届いた同梱の商品 ' + n + '件も出しています（PKGIDで読めます）'; else US.extraNote = '';
+}
 const squash = s => String(s == null ? '' : s).replace(/\s+/g, '').slice(0, 60);
 const keyOf = r => { const o = oidOf(r && r.orderId); return NO_OID(o) ? (o || '空欄') + '|' + squash(r && r.name) + '|' + squash((r && r.asin) || (r && r.item)) : o; };
 const hasProc = r => !!(r && (r.arrivedAt || r.shippedAt || r.tracking));
@@ -373,6 +395,7 @@ async function usStart(){
       $('orderNo').textContent = '荷物：' + state.trk + '（' + state.nos.length + '件' + (all.length > list.length ? '・出荷済み ' + (all.length - list.length) + '件は除く' : '') + '）';
     }
     US.rows = {}; list.forEach(r => { US.rows[r.no] = r; });
+    await usLoadBundleExtras();   // 別便で届いた同梱の商品も、PKGIDで読めるように
     US.flags = {};
     const ids = Object.keys(US.rows);
     for (let i = 0; i < ids.length; i += 30) {
@@ -382,7 +405,7 @@ async function usStart(){
     US.sel = null; US.pf = ''; US.labeled = new Set();
     await usLoadCodes();
     const lost = state.nos.filter(n => !US.rows[n]);
-    $('cacheNote').textContent = lost.length ? '※ シートに見つからないNo.：' + lost.join('、') : '';
+    $('cacheNote').textContent = (lost.length ? '※ シートに見つからないNo.：' + lost.join('、') + '　' : '') + (US.extraNote || '');
     usRender();
   }catch(e){
     $('progress').textContent = '読み込めませんでした';
@@ -452,7 +475,7 @@ function usRender(){
             + '<div class="info"><div class="code"><b style="font-size:16px;color:var(--ink)">No.' + r.no + '</b>　' + esc(r.shop || '') + ' ' + spec + '</div>'
             + '<div class="us-qty' + (q >= 2 ? ' many' : '') + '">数量 <b>' + (q || 1) + '</b> 個' + (q >= 2 ? '　⚠ ' + q + '個入れる' : '') + (String(r.qty || '').trim() && String(r.qty).trim() !== String(q) ? '<small>（シート：' + esc(r.qty) + '）</small>' : '') + '</div>'
             + '<div class="title">' + esc(r.item || '（商品名なし）') + '</div>'
-            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : US.codeOf[r.no] ? 'バーコード ' + esc(US.codeOf[r.no]) + '<small>（' + esc(US.codeSrc[r.no] || '') + '）</small>　' : '<b style="color:var(--warn)">バーコード未登録</b> <button class="manual" data-us="zpick" data-no="' + r.no + '">zaicoの商品から選ぶ</button>（商品のバーコードを読んでも登録できます）　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
+            + '<div class="code">お届け先：<b style="color:var(--ink)">' + esc(r.name || '') + '</b>　' + (r.extra ? '<b style="color:#1f5f8b">📦 別便で届いた同梱の商品</b>　' : '') + (hasPkg(r) ? 'PKGID ' + esc(r.pkgId) + '　' : US.codeOf[r.no] ? 'バーコード ' + esc(US.codeOf[r.no]) + '<small>（' + esc(US.codeSrc[r.no] || '') + '）</small>　' : '<b style="color:var(--warn)">バーコード未登録</b> <button class="manual" data-us="zpick" data-no="' + r.no + '">zaicoの商品から選ぶ</button>（商品のバーコードを読んでも登録できます）　') + (r.arrivedAt ? '入荷 ' + esc(md(r.arrivedAt)) : '未入荷') + '</div>'
             + (f.storage && f.storage.active ? '<div class="us-note">📦 保管中' + (f.storage.memo ? '：' + esc(f.storage.memo) : '') + '</div>' : '')
             + (r.note ? '<div class="us-memo">📝 備考：' + esc(r.note) + '</div>' : '')
             + (stop ? '<div class="us-msg ng" style="margin:0">入れない</div>'
