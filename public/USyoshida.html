@@ -558,6 +558,7 @@ const state = {
   storDone: {},    // No → 保管品として出荷済みの情報
   mism: {},        // No → 処理したときの注文番号（今のシートの注文番号と違うときだけ）
   pack: {},        // No → 梱包済みの記録（梱包チェック）
+  itemMaster: null, itemMasterFor: '',   // 梱包くんの照合用「シートの商品名 → zaicoのコード」（usItemMaster/{お客様ID}）
 };
 
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
@@ -827,6 +828,7 @@ async function doSearch(preselect){
     state.rows = {};
     const byRowNum = {};
     j.rows.forEach(r => { state.rows[r.no] = r; byRowNum[r.rowNumber] = r; });
+    if (!state.itemMaster || state.itemMasterFor !== state.clientId) itemMasterLoad().then(() => render());   // 照合用の登録（読み取り1回）
 
     state.groups = [];
     state.notFound = j.results.filter(r => !r.rowNumbers.length).map(r => r.key);
@@ -1037,6 +1039,7 @@ function rowHtml(r){
     + img
     + '<div><div class="l1"><b>No.'+r.no+'</b><span>'+esc(r.shop)+'</span>'+badges+'</div>'
     + '<div class="item">'+esc(r.item)+'</div>'
+    + itemRegHtml(r)
     + '<div class="l3 muted">'+esc(r.name)+' ／ 数量 '+esc(r.qty)+' ／ 注文番号 '+esc(r.orderId)+'</div></div>'
     + '<div class="side"><span>'+spec+'</span>'
     + (r.arrivedAt ? '<span class="arr">入荷 '+esc(md(r.arrivedAt))+'</span>' : '<span class="todo">未入荷</span>')
@@ -1979,6 +1982,7 @@ function rowButtons(no){
   return h;
 }
 async function rowAction(act, no, el){
+  if (act==='itemReg') return itemRegOpen(no);
   if (act==='pastOff') return setPastHold(el && el.dataset.id, false);
   if (act==='holdShip') return holdShip(no, el && el.dataset.id);
   if (act==='inq') return toggleInquiry(no);
@@ -1988,6 +1992,70 @@ async function rowAction(act, no, el){
   if (act==='storOff') return storageOff(no);
   if (act==='storShip') return storageShip(no, true);
   if (act==='storUnship') return storageShip(no, false);
+}
+/* ===== 梱包くんの照合用：シートの商品名 → zaicoの商品（目で見て登録） =====
+   保存先：usItemMaster/{お客様ID}.items.{商品名を詰めたもの} = { code, zname, name, by, at }
+   梱包くんは、PKGIDがない商品（No.指定など）をこのコードで照合する */
+const usNameKey = v => String(v || '').normalize('NFKC').replace(/[\s　]+/g, '').toLowerCase().slice(0, 200);
+async function itemMasterLoad(force){
+  if (!force && state.itemMaster && state.itemMasterFor === state.clientId) return state.itemMaster;
+  try { const d = await db.collection('usItemMaster').doc(state.clientId).get(); state.itemMaster = (d.exists && d.data().items) || {}; }
+  catch(e){ console.warn('usItemMaster', e); state.itemMaster = state.itemMaster || {}; }
+  state.itemMasterFor = state.clientId;
+  return state.itemMaster;
+}
+function itemRegHtml(r){
+  if (r.pkgId) return '';
+  const m = state.itemMaster && state.itemMasterFor === state.clientId ? state.itemMaster[usNameKey(r.item)] : null;
+  return m
+    ? '<div class="small" style="color:var(--ok,#1e8e4f)">🔗 照合用に登録済み：'+esc(m.zname || '')+'（'+esc(m.code)+'） <button type="button" class="ghost mini" data-act="itemReg" data-no="'+r.no+'">変更</button></div>'
+    : '<div class="small"><span class="muted">照合用の商品が未登録</span> <button type="button" class="ghost mini" data-act="itemReg" data-no="'+r.no+'">zaicoの商品を登録</button></div>';
+}
+async function itemRegOpen(no){
+  const r = state.rows[no]; if (!r) return;
+  await itemMasterLoad();
+  if (!ZC.at) zcReadCache();
+  if (!ZINV.failed) zinvStart(); else if (!ZC.at && !ZC.loading) zcLoadDirect();
+  const k = usNameKey(r.item), cur = state.itemMaster[k];
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto';
+  ov.innerHTML = '<div class="panel stack" style="max-width:620px;width:100%;background:var(--surface,#fff)">'
+    + '<b>梱包くんの照合用に、zaicoの商品を登録</b>'
+    + '<div class="small">シートの商品名：<b>'+esc(r.item || '')+'</b></div>'
+    + (r.imageUrl ? '<img src="'+esc(r.imageUrl)+'" alt="" style="max-width:120px;max-height:120px;object-fit:contain">' : '')
+    + (cur ? '<div class="small">今の登録：'+esc(cur.zname || '')+'（'+esc(cur.code)+'）</div>' : '')
+    + '<div class="zc-tools"><input id="irQ" type="search" placeholder="zaicoの商品名・バーコードで探す" autocomplete="off" style="flex:1"><label class="small"><input type="checkbox" id="irAll"> すべてのショップ</label></div>'
+    + '<div id="irList" style="max-height:55vh;overflow:auto"></div>'
+    + '<div class="row-actions" style="display:flex;gap:8px;justify-content:flex-end">'+(cur ? '<button type="button" class="ghost" id="irDel">登録を消す</button>' : '')+'<button type="button" class="ghost" id="irClose">閉じる</button></div></div>';
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  const paint = () => {
+    if (!ZC.at) { $('#irList').innerHTML = '<p class="muted">zaicoの在庫を読み込み中…</p>'; setTimeout(() => document.body.contains(ov) && paint(), 800); return; }
+    const words = $('#irQ').value.trim().toLowerCase().split(/[\s　]+/).filter(Boolean).map(zcHalf);
+    const all = $('#irAll').checked;
+    const list = ZC.items.filter(x => (all || x.shop === ZC_MY_SHOP) && (!words.length || words.every(w => zcHalf(x.title+' '+x.code).toLowerCase().includes(w))))
+      .sort((a,b) => a.title.localeCompare(b.title, 'ja')).slice(0, 80);
+    $('#irList').innerHTML = list.length ? list.map((x, i) => '<button type="button" class="zc-row" data-ir="'+i+'" style="width:100%"><span><span class="t">'+esc(x.title || '（商品名なし）')+'</span><span class="d">'+(x.code ? 'JAN '+esc(x.code) : '<span class="st-ng">バーコードなし（登録できません）</span>')+(x.place ? '・保管場所 '+esc(x.place) : '')+(all ? '・'+esc(x.shop || '') : '')+'</span></span><span class="q">'+esc(zcFmt(zcQty(x)))+'<small>'+esc(x.unit || '')+'</small></span></button>').join('')
+      : '<p class="muted">当てはまる商品はありません</p>';
+    $('#irList').querySelectorAll('[data-ir]').forEach(b => b.onclick = async () => {
+      const x = list[Number(b.dataset.ir)];
+      if (!x.code) { toast('この商品はzaicoにバーコードがないので、照合には使えません'); return; }
+      if (!confirm('「'+r.item+'」\nを、zaicoの「'+x.title+'」（'+x.code+'）として登録しますか？\n同じ商品名の注文は、梱包くんでこのバーコードで照合できるようになります。')) return;
+      const item = { code:x.code, zname:String(x.title || '').slice(0,120), name:String(r.item || '').slice(0,200), by:(state.user && state.user.email) || '', at:new Date().toISOString() };
+      try { await db.collection('usItemMaster').doc(state.clientId).set({ items:{ [k]: item } }, { merge:true }); state.itemMaster[k] = item; toast('登録しました'); close(); render(); }
+      catch(e){ toast('登録できませんでした：'+e.message, 6000); }
+    });
+  };
+  $('#irQ').addEventListener('input', paint); $('#irAll').onchange = paint;
+  $('#irClose').onclick = close;
+  if ($('#irDel')) $('#irDel').onclick = async () => {
+    if (!confirm('この商品名の登録を消しますか？')) return;
+    try { await db.collection('usItemMaster').doc(state.clientId).set({ items:{ [k]: firebase.firestore.FieldValue.delete() } }, { merge:true }); delete state.itemMaster[k]; toast('登録を消しました'); close(); render(); }
+    catch(e){ toast('消せませんでした：'+e.message, 6000); }
+  };
+  // 最初はシートの商品名の一部で探しておく（ぴったりでなくても候補が出やすいように、先頭の語で）
+  $('#irQ').value = String(r.item || '').normalize('NFKC').split(/[\s　]+/).filter(Boolean).slice(0, 1).join(' ').slice(0, 20);
+  setTimeout(() => $('#irQ').focus(), 50); paint();
 }
 function afterStatusChange(){
   if (state.groups.length) render();
