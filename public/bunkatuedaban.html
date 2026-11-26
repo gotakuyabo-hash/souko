@@ -1884,9 +1884,17 @@ const shukkaAuto = (() => {
             let template = null;
             const first = await getDoc(ref);
             if (!first.exists()) {
-                const qs = await getDocs(query(collection(db, 'warehouse_reports'), where(documentId(), '<', date), orderBy(documentId(), 'desc'), limit(1)));
-                if (!qs.empty) {
-                    template = JSON.parse(JSON.stringify(qs.docs[0].data().sections || {}));
+                // 「新しい順に1件」は索引が必要でエラー（failed-precondition）になるため、直近の範囲で読んで一番新しい日を選ぶ
+                let last = null;
+                for (const days of [14, 60]) {
+                    const d0 = new Date(date + 'T00:00:00'); d0.setDate(d0.getDate() - days);
+                    const from = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
+                    const qs = await getDocs(query(collection(db, 'warehouse_reports'), where(documentId(), '>=', from), where(documentId(), '<', date)));
+                    last = qs.docs.filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x.id)).sort((a, b) => b.id.localeCompare(a.id))[0] || null;
+                    if (last) break;
+                }
+                if (last) {
+                    template = JSON.parse(JSON.stringify(last.data().sections || {}));
                     Object.values(template).forEach(arr => Array.isArray(arr) && arr.forEach(it => {
                         if (it && 'value' in it) it.value = '';
                         if (it && 'checked' in it) it.checked = false;
