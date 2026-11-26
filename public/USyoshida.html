@@ -2846,6 +2846,13 @@ $('#btnNotifyCsv').onclick = async () => {
     : (det.acc && det.acc !== acc.name) ? '\n\n⚠ 受注CSVは「'+det.acc+'」のアカウントの受注CSVです（選んでいるのは「'+acc.name+'」）。' : '';
   if (!confirm('Robot-in「'+acc.name+'」のアカウント用に、ステータス '+acc.status+' で出荷通知CSVを作ります。よろしいですか？'+warn)) return;
   linkLog('──────── 出荷通知CSVの作成 ────────', true);
+  try { await notifyCsvRun(acc); }
+  catch(e){ console.error(e); linkLog('\n❌ 出荷通知CSVを作れませんでした：'+(e.message || e)); toast('出荷通知CSVを作れませんでした：'+(e.message || e), 8000); }
+};
+async function notifyCsvRun(acc){
+  if (files.shared) await shLoad(true);   // あとから追加で取り込まれた分も入れる
+  if (!files.yamato && !files.sagawa && !(files.shared && files.shared.length)) { linkLog('❌ ヤマトか佐川の発行済みCSVを読み込むか、共有の記録から読んでください'); toast('ヤマトか佐川の発行済みCSVを読み込むか、共有の記録から読んでください', 6000); return; }
+  const crows = carrierRows();
 
   // 送り状が複数ある注文だけ、アプリで最後に作った送り状の記録を読む
   const cnt = {};
@@ -2932,7 +2939,7 @@ $('#btnNotifyCsv').onclick = async () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   linkLog('\n📥 出荷通知CSVを保存しました。');
-};
+}
 
 /* ===== Robot-in の受注反映履歴 ===== */
 let robotPlan = null;
