@@ -1661,9 +1661,10 @@ const shukkaAuto = (() => {
             }).catch(err => { alert('コピーに失敗しました'); });
         }
 
-        function openInspectionModal() {
+        async function openInspectionModal() {
             if (!processedDataRows.length) return;
             if (!confirmIfUnmatched()) return;
+            await fillAutoJan();
             const area = document.getElementById('inspectionPrintArea');
             area.innerHTML = '';
             let map = {};
@@ -1708,11 +1709,11 @@ const shukkaAuto = (() => {
                 `;
                 area.appendChild(slip);
             });
-            const noJan = new Set(processedDataRows.filter(r => r.matched && !r.jan).map(r => r.jpName));
+            const noJan = new Set(processedDataRows.filter(r => r.matched && !r.jan && !r.autoJan).map(r => r.jpName));
             if (noJan.size) {
                 const note = document.createElement('p');
                 note.className = 'no-print text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2';
-                note.innerText = `バーコード（JAN）が未登録の商品が ${noJan.size} 種類あります。梱包チェックでは「目視で確認した」で数えます。\n・${[...noJan].slice(0, 5).join('\n・')}${noJan.size > 5 ? '\n…ほか' : ''}`;
+                note.innerText = `バーコード（JAN）が未登録の商品が ${noJan.size} 種類あります。梱包チェックではスキャンで照合できないので「入れた」ボタンで数えます。\n商品マスタ管理で「zaicoから選ぶ」でJANを入れると、スキャンで照合できるようになります。\n・${[...noJan].slice(0, 5).join('\n・')}${noJan.size > 5 ? '\n…ほか' : ''}`;
                 area.prepend(note);
             }
             document.getElementById('inspectionModal').classList.remove('hidden');
@@ -1721,14 +1722,36 @@ const shukkaAuto = (() => {
         // ===== 梱包チェック（pack.html）用のQR =====
         // 中身：pack.html#o=受注番号&i=バーコード*数量,…（バーコードがない商品は !SKU*数量 → 目視で確認）
         const PACK_URL = 'https://souko-2de57.web.app/pack.html';
+        // バーコードがない商品は「?SKU:商品名*数量」（梱包くんで商品名を表示し、商品名の「JAN：9144」でも照合できる）
+        // ※セット商品（1つのSKUに複数の商品）は商品ごとに分けて載せる
         function packUrl(sn, rows) {
             const sum = new Map();
             rows.forEach(r => {
-                const code = r.jan ? r.jan : '!' + (r.sku || r.lookupKey || r.jpName || '').slice(0, 40);
-                sum.set(code, (sum.get(code) || 0) + r.baseQty * r.multiplier);
+                const jan = r.jan || r.autoJan || '';
+                const key = jan ? jan : '?' + (r.sku || r.lookupKey || '').slice(0, 40) + '\u0000' + String(r.jpName || '').slice(0, 30);
+                sum.set(key, (sum.get(key) || 0) + r.baseQty * r.multiplier);
             });
-            const items = [...sum].map(([c, q]) => (c.startsWith('!') ? '!' + encodeURIComponent(c.slice(1)) : encodeURIComponent(c)) + '*' + q).join(',');
+            const enc = s => encodeURIComponent(s).replace(/[*,:]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+            const items = [...sum].map(([k, q]) => {
+                if (!k.startsWith('?')) return enc(k) + '*' + q;
+                const [code, name] = k.slice(1).split('\u0000');
+                return '?' + enc(code || name) + ':' + enc(name) + '*' + q;
+            }).join(',');
             return `${PACK_URL}#o=${encodeURIComponent(sn)}&i=${items}`;
+        }
+
+        // マスタにJANがない商品：商品名の「（JAN：9144）」の数字で終わるzaicoのコードが1つだけなら、それを使う
+        async function fillAutoJan() {
+            const need = processedDataRows.filter(r => r.matched && !r.jan);
+            if (!need.length) return;
+            try { if (!zaicoMap) await loadZaico(false); } catch (e) { console.warn('zaicoを読めませんでした', e); return; }
+            const codes = Object.keys(zaicoMap || {});
+            need.forEach(r => {
+                const m = toHalfWidth(r.jpName).match(/JAN\s*[:：]?\s*(\d{4,13})/i);
+                if (!m) return;
+                const hits = codes.filter(c => c.length >= 8 && c.endsWith(m[1]));
+                r.autoJan = hits.length === 1 ? hits[0] : '';
+            });
         }
         function packQrHtml(sn, rows) {
             if (typeof qrcode !== 'function') return '<div class="text-[10px] text-rose-500">QRを作れません</div>';
