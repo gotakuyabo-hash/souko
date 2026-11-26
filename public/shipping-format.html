@@ -3778,6 +3778,24 @@ function packQrDataUrl(orderNo, items) {
 }
 
 /* ---------- 検品シート ---------- */
+// 印刷用のタブの中で「このまま印刷する／やめる」を聞く
+// （元の画面で confirm を出すと、印刷用のタブが前に出ているため、ブラウザが自動で「キャンセル」にして閉じてしまう）
+function askInPrintWin(win, msg){
+  return new Promise(resolve => {
+    try {
+      const d = win.document;
+      d.open();
+      d.write('<html><head><meta charset="utf-8"><title>確認</title></head><body style="font-family:sans-serif;padding:20px;max-width:720px">'
+        + '<p style="font-weight:700;font-size:16px;margin:0 0 10px">印刷の前に確認してください</p>'
+        + '<pre style="white-space:pre-wrap;font-family:inherit;font-size:14px;background:#fff8e8;border:1px solid #e0c48a;border-radius:8px;padding:12px">' + escapeHtml(msg) + '</pre>'
+        + '<div style="display:flex;gap:10px;margin-top:14px"><button id="ok" style="padding:10px 18px;font-size:15px;font-weight:700">このまま印刷する</button><button id="ng" style="padding:10px 18px;font-size:15px">やめる</button></div></body></html>');
+      d.close();
+      d.getElementById('ok').onclick = () => { d.body.innerHTML = '<p style="padding:20px">検品シートを作っています…</p>'; resolve(true); };
+      d.getElementById('ng').onclick = () => resolve(false);
+      win.focus();
+    } catch (e) { resolve(confirm(msg + '\n\nこのまま印刷しますか？')); }
+  });
+}
 window.openPrintPreview = async () => {
   const allOrders = getAllOrderRows();
   if (!allOrders.length) { alert('受注データがありません。'); return; }
@@ -3842,11 +3860,11 @@ window.openPrintPreview = async () => {
       changedTxt.length ? `【zaicoでコードが変わっていた商品】QRは今のzaicoのコードで作りました。商品マスタのバーコードも直しておくと、zaico送信もずれません。\n${changedTxt.slice(0, 10).join('\n')}${changedTxt.length > 10 ? `\n…ほか ${changedTxt.length - 10} 件` : ''}` : '',
       notInZaico.length ? `【zaicoの在庫一覧に見つからないバーコード】梱包くんで照合できない可能性があります。zaicoで今のコードを確認し、商品マスタを直してください。\n${notInZaico.slice(0, 10).map(c => '・' + c).join('\n')}${notInZaico.length > 10 ? `\n…ほか ${notInZaico.length - 10} 件` : ''}` : ''
     ].filter(Boolean).join('\n\n');
-    if (!confirm(`${msg}\n\nこのまま印刷しますか？`)) { printWin.close(); return; }
+    if (!(await askInPrintWin(printWin, msg))) { printWin.close(); return; }
   }
   if (unregNames.length) {
     const list = unregNames.slice(0, 15).map(n => '・' + n).join('\n') + (unregNames.length > 15 ? `\n…ほか ${unregNames.length - 15} 件` : '');
-    if (!confirm(`次の ${unregNames.length} 商品は商品マスタに登録されていないため、梱包くんではバーコードで照合できません（目視確認になります）。\n\n${list}\n\n先に「ピック数を算出」→ 商品マスタに登録（zaicoから選ぶ など）してから印刷すると、バーコードで照合できます。\n\nこのまま印刷しますか？`)) {
+    if (!(await askInPrintWin(printWin, `次の ${unregNames.length} 商品は商品マスタに登録されていないため、梱包くんではバーコードで照合できません（目視確認になります）。\n\n${list}\n\n先に「ピック数を算出」→ 商品マスタに登録（zaicoから選ぶ など）してから印刷すると、バーコードで照合できます。`))) {
       printWin.close();
       return;
     }
