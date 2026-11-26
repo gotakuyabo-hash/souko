@@ -1060,7 +1060,24 @@ function handleTyped(v) {
   else check(v);
 }
 $('manualInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value; e.target.value = ''; handleTyped(v); }
+  if (e.key === 'Enter') { e.preventDefault(); clearTimeout(SCAN.timer); const v = e.target.value; e.target.value = ''; SCAN.times = []; handleTyped(v); }
+});
+// Enterを送らない設定のスキャナー用：速く続けて入った文字（スキャナー）は、入力が止まったら自動で確定する
+//   手で打つ速さでは確定しない（1文字あたり平均40ミリ秒未満・6文字以上のときだけ）
+const SCAN = { times: [], timer: null };
+$('manualInput').addEventListener('input', e => {
+  const now = performance.now(), el = e.target;
+  if (!el.value) { SCAN.times = []; return; }
+  SCAN.times.push(now);
+  clearTimeout(SCAN.timer);
+  SCAN.timer = setTimeout(() => {
+    const t = SCAN.times, v = el.value;
+    SCAN.times = [];
+    if (v.length < 6 || t.length < 6) return;
+    const avg = (t[t.length - 1] - t[0]) / (t.length - 1);
+    if (avg >= 40) return;   // 手入力はEnterで確定
+    el.value = ''; handleTyped(v);
+  }, 150);
 });
 
 // パソコン（マウスで操作する端末）では、入力欄にずっとカーソルを置いておく（クリック不要でスキャナが使える）
