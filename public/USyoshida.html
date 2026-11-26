@@ -2468,6 +2468,8 @@ async function shLoad(quiet){
   if (!d) { toast('出荷日を選んでください'); return; }
   const btn = $('#btnShLoad'); btn.disabled = true;
   const before = files.shared ? files.shared.length : 0;
+  const sigOf = list => (list || []).map(c => c.carrier + c.tracking + '|' + c.orderNo).sort().join(',');
+  const beforeSig = sigOf(files.shared);
   try{
     const snap = await db.collection('shipments').where('date', '==', d).get();
     snap.docs.forEach(x => { if (x.data().canceled) files.canceled.add(x.id); });
@@ -2475,7 +2477,8 @@ async function shLoad(quiet){
     files.shared = snap.docs.map(x => x.data()).filter(x => SHIP_NAME[x.carrier] && !x.canceled).map(x => ({
       carrier:SHIP_NAME[x.carrier], type:x.type || '', tracking:String(x.tracking || ''), orderNo:String(x.orderNo || ''),
       nos: (Array.isArray(x.nos) && x.nos.length) ? x.nos.map(Number) : parseNos(x.items), date:x.date || '' }));
-    linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = '';
+    // 中身が変わったときだけ、確認済みの紐づけ（シートへの反映ボタン）を消す
+    if (sigOf(files.shared) !== beforeSig) { linkPlan = null; $('#linkActions').hidden = true; $('#linkResult').innerHTML = ''; }
     const y = files.shared.filter(c => c.carrier === 'ヤマト運輸').length;
     const added = quiet && files.shared.length > before ? '（前回より '+(files.shared.length - before)+'件増えています）' : '';
     $('#shInfo').textContent = md(d)+'出荷の共有データ '+files.shared.length+'件（ヤマト '+y+'・佐川 '+(files.shared.length - y)+'）を読みました'+(cxN ? '（キャンセルで取り消した '+cxN+'件は除いています）' : '')+added+'。「紐づけを確認する」に進んでください。あとから追加で取り込まれた分は、もう一度「共有の記録から読む」か「紐づけを確認する」を押すと入ります';
