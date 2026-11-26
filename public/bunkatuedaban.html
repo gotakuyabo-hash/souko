@@ -1403,7 +1403,10 @@ const shukkaAuto = (() => {
                 }
                 items.set(code, (items.get(code) || 0) + qty);
             });
-            return 'o=' + encodeURIComponent(sn) + '&s=medi&i=' + [...items].map(([c, q]) => c + '*' + q).join(',');
+            // l=追跡番号：梱包くんで、貼るShopeeの送り状がこの注文のものか照合する
+            const tr = processedDataRows.find(r => (String(r.orderSn ?? '').trim() || 'UNKNOWN') === sn && String(r.trackingNum ?? '').trim());
+            const trk = tr ? String(tr.trackingNum).trim() : '';
+            return 'o=' + encodeURIComponent(sn) + (trk ? '&l=' + encodeURIComponent(trk) : '') + '&s=medi&i=' + [...items].map(([c, q]) => c + '*' + q).join(',');
         }
 
         function packQrHtml(sn) {
