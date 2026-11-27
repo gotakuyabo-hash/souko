@@ -8,6 +8,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -221,17 +224,31 @@ const shukkaAuto = (() => {
                 break-after: auto !important;
             }
         }
-    </style>
+    
+        /* ===== 見た目の整理（2026-11） ===== */
+        body{font-family:"BIZ UDPGothic","Hiragino Sans","Yu Gothic",Meiryo,sans-serif}
+        header .text-xl{font-size:1.125rem;letter-spacing:.02em}
+        button{transition:background-color .15s,border-color .15s,color .15s}
+        .act-group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+        .act-label{font-size:11px;font-weight:700;color:#64748b;margin-right:2px;white-space:nowrap}
+        .act-sep{width:1px;align-self:stretch;background:#e2e8f0;margin:0 6px}
+        @media (max-width:640px){.act-sep{display:none}}
+        input[type=text],input[type=date],select,textarea{border-color:#cbd5e1}
+        input:focus,select:focus,textarea:focus{outline:2px solid #6366f1;outline-offset:0;border-color:#6366f1}
+        tbody tr:hover{background-color:#f8fafc}
+        tbody tr.row-unmatched:hover{background:#ffe4e6}
+
+</style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans">
 
-    <header class="bg-indigo-700 text-white shadow-md no-print">
+    <header class="bg-slate-800 text-white shadow-md no-print">
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
             <div class="flex items-center space-x-3">
-                <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                <i class="fa-solid fa-boxes-packing text-xl text-slate-300"></i>
                 <h1 class="text-xl font-bold">分割くん吉原</h1>
             </div>
-            <div class="flex bg-indigo-900/60 p-1 rounded-xl">
+            <div class="flex bg-white/10 p-1 rounded-xl gap-0.5">
                 <button onclick="switchTab('orders')" id="tabBtnOrders" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-900 shadow-sm">受注処理</button>
                 <button onclick="switchTab('master')" id="tabBtnMaster" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">商品マスタ管理 (<span id="masterCountBadge">0</span>)</button>
                 <button onclick="switchTab('tracking')" id="tabBtnTracking" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-indigo-100 hover:text-white">追跡番号の追記</button>
@@ -245,7 +262,7 @@ const shukkaAuto = (() => {
         <div id="tabContentOrders" class="space-y-6">
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-file-excel text-emerald-600 mr-2"></i>パッキングリスト（複数Excel一括）</h2>
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-file-excel text-slate-400 mr-2"></i>パッキングリスト（複数Excel一括）</h2>
                     <button onclick="resetApp()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg"><i class="fa-solid fa-rotate-right mr-1"></i>リセット</button>
                 </div>
                 <label id="dropZone" for="fileInput" class="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50 rounded-xl p-8 text-center cursor-pointer block">
@@ -273,13 +290,21 @@ const shukkaAuto = (() => {
                         <p class="text-sm text-slate-500" id="resultSubtitle">合計 0 行</p>
                         <p id="unmatchedAlert" class="hidden mt-2 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></p>
                     </div>
-                    <div class="flex flex-wrap gap-2 text-xs">
-                        <button onclick="registerAllToMaster()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2.5 rounded-xl font-medium" title="マスタ登録済みSKUの商品名・棚番・倍率だけを更新します"><i class="fa-solid fa-database mr-1"></i>登録済みSKUを一括更新</button>
-                        <button onclick="openWriteModal()" class="bg-teal-600 hover:bg-teal-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-import mr-1"></i>出庫シートに書き込み</button>
-                        <button onclick="openSheetCopyModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-paste mr-1"></i>シート用データコピー</button>
-                        <button onclick="openInspectionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-print mr-1"></i>検品書(100×150)印刷</button>
-                        <button onclick="openTotalPickingModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-clipboard-list mr-1"></i>トータルピック</button>
-                        <button onclick="downloadExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-xl font-medium"><i class="fa-solid fa-file-excel mr-1"></i>Excel保存</button>
+                    <div class="flex flex-wrap items-center gap-y-2">
+                        <div class="act-group">
+                            <span class="act-label">印刷</span>
+                            <button onclick="openInspectionModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg font-semibold text-sm inline-flex items-center gap-1.5"><i class="fa-solid fa-print"></i>検品書(100×150)</button>
+                            <button onclick="openTotalPickingModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg font-semibold text-sm inline-flex items-center gap-1.5"><i class="fa-solid fa-clipboard-list"></i>トータルピック</button>
+                        </div>
+                        <span class="act-sep"></span>
+                        <div class="act-group">
+                            <span class="act-label">データ</span>
+                            <button onclick="openWriteModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 rounded-lg font-semibold text-sm inline-flex items-center gap-1.5"><i class="fa-solid fa-file-import text-slate-400"></i>出庫シートに書き込み</button>
+                            <button onclick="openSheetCopyModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 rounded-lg font-semibold text-sm inline-flex items-center gap-1.5"><i class="fa-solid fa-paste text-slate-400"></i>シート用データコピー</button>
+                            <button onclick="downloadExcel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 rounded-lg font-semibold text-sm inline-flex items-center gap-1.5"><i class="fa-solid fa-file-excel text-slate-400"></i>Excel保存</button>
+                        </div>
+                        <span class="act-sep"></span>
+                        <button onclick="registerAllToMaster()" class="text-slate-500 hover:text-indigo-700 hover:bg-indigo-50 px-3 py-2 rounded-lg text-xs font-semibold" title="マスタ登録済みSKUの商品名・棚番・倍率だけを更新します"><i class="fa-solid fa-database mr-1"></i>登録済みSKUを一括更新</button>
                     </div>
                 </div>
 
@@ -312,11 +337,12 @@ const shukkaAuto = (() => {
         <div id="tabContentMaster" class="hidden space-y-6">
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center flex-wrap gap-2">
-                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-database text-indigo-600 mr-2"></i>Firestore商品マスタ管理</h2>
-                    <div class="flex space-x-2 text-xs">
-                        <button onclick="openBulkMasterModal()" class="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg border border-emerald-200 font-medium"><i class="fa-solid fa-file-csv mr-1"></i>CSV・コピペ一括登録</button>
-                        <button onclick="loadDefaultPresets()" class="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-lg border border-indigo-200 font-medium">初期プリセット一括登録</button>
-                        <button onclick="clearMasterFirestore()" class="text-rose-600 px-3 py-2 rounded-lg border border-rose-200 hover:bg-rose-50 font-medium">全クリア</button>
+                    <h2 class="text-lg font-semibold"><i class="fa-solid fa-database text-slate-400 mr-2"></i>Firestore商品マスタ管理</h2>
+                    <div class="flex flex-wrap items-center gap-2 text-xs">
+                        <button onclick="openBulkMasterModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg font-semibold"><i class="fa-solid fa-file-csv mr-1 text-slate-400"></i>CSV・コピペ一括登録</button>
+                        <button onclick="loadDefaultPresets()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg font-semibold">初期プリセット一括登録</button>
+                        <span class="act-sep"></span>
+                        <button onclick="clearMasterFirestore()" class="text-rose-600 px-3 py-2 rounded-lg hover:bg-rose-50 font-semibold"><i class="fa-solid fa-trash-can mr-1"></i>全クリア</button>
                     </div>
                 </div>
                 <div class="flex gap-3 bg-slate-50 p-4 rounded-xl border items-center">
@@ -386,10 +412,10 @@ const shukkaAuto = (() => {
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-barcode text-teal-600 mr-2"></i>追跡番号の追記</h2>
+                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-barcode text-slate-400 mr-2"></i>追跡番号の追記</h2>
                         <p class="text-xs text-slate-500 mt-1">出庫シートで追跡番号（G列）が空欄の<b>Shopeeの注文</b>（受注番号が数字6桁＋英数字8桁）を、発送日ごとに表示します（直近60日）。<br>Shopee以外の注文には追記しません。</p>
                     </div>
-                    <button onclick="loadPending(true)" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                    <button onclick="loadPending(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
                 </div>
                 <p id="pendingStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
                 <div class="overflow-x-auto border rounded-xl">
@@ -417,7 +443,7 @@ const shukkaAuto = (() => {
                     </div>
                     <div class="flex justify-between items-center flex-wrap gap-2">
                         <p id="fillSummary" class="text-xs text-slate-600">上の表で発送日を選んでください。</p>
-                        <button id="fillBtn" onclick="submitFillTracking()" class="bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium" disabled><i class="fa-solid fa-pen-to-square mr-1"></i>選んだ発送日に追記</button>
+                        <button id="fillBtn" onclick="submitFillTracking()" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs py-2.5 px-4 rounded-lg font-medium" disabled><i class="fa-solid fa-pen-to-square mr-1"></i>選んだ発送日に追記</button>
                     </div>
                     <div id="fillResult" class="hidden text-sm rounded-lg px-3 py-2"></div>
                 </div>
@@ -428,10 +454,10 @@ const shukkaAuto = (() => {
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <div class="flex justify-between items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-teal-600 mr-2"></i>月別出荷件数（出庫シートから集計）</h2>
+                        <h2 class="text-lg font-semibold"><i class="fa-solid fa-calendar-days text-slate-400 mr-2"></i>月別出荷件数（出庫シートから集計）</h2>
                         <p class="text-xs text-slate-500 mt-1">出荷件数 ＝ 発送日が入っている行の受注番号の数（同じ受注番号は1件）。発送日が空の行は数えません。<br>Shopee ＝ 受注番号がShopeeの形式（数字6桁＋英数字8桁）のもの。それ以外は「その他」に入ります。</p>
                     </div>
-                    <button onclick="loadMonthly(true)" class="bg-teal-600 hover:bg-teal-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
+                    <button onclick="loadMonthly(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 px-4 rounded-lg font-medium"><i class="fa-solid fa-rotate mr-1"></i>最新に更新</button>
                 </div>
                 <p id="monthlyStatus" class="text-xs text-slate-500">「最新に更新」を押すと出庫シートから読み込みます。</p>
                 <div class="overflow-x-auto border rounded-xl">
@@ -473,8 +499,8 @@ const shukkaAuto = (() => {
                 </div>
             </div>
             <div class="flex justify-end space-x-2 pt-3 border-t">
-                <button onclick="closeMasterModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">キャンセル</button>
-                <button onclick="saveMasterToFirestore()" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs font-medium">Firestoreに保存</button>
+                <button onclick="closeMasterModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-xs font-medium">キャンセル</button>
+                <button onclick="saveMasterToFirestore()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold">Firestoreに保存</button>
             </div>
         </div>
     </div>
@@ -482,7 +508,7 @@ const shukkaAuto = (() => {
     <div id="zaicoPicker" class="hidden fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-xl w-full p-5 space-y-3 max-h-[85vh] flex flex-col">
             <div class="flex justify-between items-center">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-boxes-stacked text-teal-600 mr-2"></i>zaicoの在庫から選ぶ</h3>
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-boxes-stacked text-slate-400 mr-2"></i>zaicoの在庫から選ぶ</h3>
                 <button onclick="closeZaicoPicker()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <input type="text" id="zaicoSearch" oninput="renderZaicoPicker()" placeholder="商品名・JANで検索（スペースで区切ると全部ふくむもの）" class="w-full border rounded-lg px-3 py-2 text-sm">
@@ -494,7 +520,7 @@ const shukkaAuto = (() => {
     <div id="bulkMasterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-file-csv text-emerald-600 mr-2"></i>CSV・コピペマスタ一括登録</h3>
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-file-csv text-slate-400 mr-2"></i>CSV・コピペマスタ一括登録</h3>
                 <button onclick="closeBulkMasterModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <p class="text-xs text-slate-500">
@@ -506,8 +532,8 @@ const shukkaAuto = (() => {
                 <textarea id="bulkMasterTextarea" rows="10" placeholder="SKU001, 商品A, 1-A, 1&#10;SKU002, 商品B, 1-B, 2" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50"></textarea>
             </div>
             <div class="flex justify-end space-x-2 pt-2 border-t">
-                <button onclick="closeBulkMasterModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">キャンセル</button>
-                <button onclick="saveBulkMasterToFirestore()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-xs font-medium">一括登録を実行</button>
+                <button onclick="closeBulkMasterModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-xs font-medium">キャンセル</button>
+                <button onclick="saveBulkMasterToFirestore()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold">一括登録を実行</button>
             </div>
         </div>
     </div>
@@ -515,7 +541,7 @@ const shukkaAuto = (() => {
     <div id="sheetCopyModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-purple-600 mr-2"></i>シート貼り付け用データ (order_sn, product_name_jp, total_quantity)</h3>
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-paste text-slate-400 mr-2"></i>シート貼り付け用データ (order_sn, product_name_jp, total_quantity)</h3>
                 <button onclick="closeSheetCopyModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <p class="text-xs text-slate-500">以下のボックス内を選択してコピーするか、ボタンをクリックしてクリップボードにコピーしてください。</p>
@@ -523,8 +549,8 @@ const shukkaAuto = (() => {
                 <textarea id="sheetCopyTextarea" rows="10" class="w-full font-mono text-xs border rounded-xl p-3 bg-slate-50 select-all" readonly></textarea>
             </div>
             <div class="flex justify-end space-x-2 pt-2 border-t">
-                <button onclick="closeSheetCopyModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">閉じる</button>
-                <button onclick="copySheetDataToClipboard()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-regular fa-copy mr-1"></i>クリップボードにコピー</button>
+                <button onclick="closeSheetCopyModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-xs font-medium">閉じる</button>
+                <button onclick="copySheetDataToClipboard()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold"><i class="fa-regular fa-copy mr-1"></i>クリップボードにコピー</button>
             </div>
         </div>
     </div>
@@ -532,9 +558,9 @@ const shukkaAuto = (() => {
     <div id="inspectionModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3 no-print">
-                <h3 class="font-bold"><i class="fa-solid fa-print text-amber-600 mr-2"></i>検品書プレビュー (100mm×150mm)</h3>
+                <h3 class="font-bold"><i class="fa-solid fa-print text-slate-400 mr-2"></i>検品書プレビュー (100mm×150mm)</h3>
                 <div class="flex space-x-2">
-                    <button onclick="printInspection()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>検品書を印刷</button>
+                    <button onclick="printInspection()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>検品書を印刷</button>
                     <button onclick="closeInspectionModal()"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
@@ -545,9 +571,9 @@ const shukkaAuto = (() => {
     <div id="totalPickingModal" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3 no-print">
-                <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-blue-600 mr-2"></i>トータルピックリスト <span class="text-xs font-normal text-slate-500">(行をドラッグして並び替え可能)</span></h3>
+                <h3 class="font-bold"><i class="fa-solid fa-clipboard-list text-slate-400 mr-2"></i>トータルピックリスト <span class="text-xs font-normal text-slate-500">(行をドラッグして並び替え可能)</span></h3>
                 <div class="flex space-x-2">
-                    <button onclick="printPicking()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
+                    <button onclick="printPicking()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded font-medium"><i class="fa-solid fa-print mr-1"></i>ピックリストを印刷</button>
                     <button onclick="closeTotalPickingModal()"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
@@ -565,7 +591,7 @@ const shukkaAuto = (() => {
     <div id="writeModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center">
-                <h3 class="font-bold text-lg"><i class="fa-solid fa-file-import text-teal-600 mr-2"></i>出庫シートに書き込み</h3>
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-file-import text-slate-400 mr-2"></i>出庫シートに書き込み</h3>
                 <button onclick="closeWriteModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="grid grid-cols-2 gap-3 text-sm">
@@ -594,8 +620,8 @@ const shukkaAuto = (() => {
             <p class="text-xs text-slate-500">※出庫シートにすでにある受注番号は、自動でスキップします（二重計上防止）。</p>
             <div id="writeResult" class="hidden text-sm rounded-lg px-3 py-2"></div>
             <div class="flex justify-end space-x-2">
-                <button onclick="closeWriteModal()" class="bg-slate-100 px-4 py-2 rounded text-xs">閉じる</button>
-                <button id="writeSubmitBtn" onclick="submitWriteToSheet()" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded text-xs font-medium"><i class="fa-solid fa-paper-plane mr-1"></i>書き込む</button>
+                <button onclick="closeWriteModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-xs font-medium">閉じる</button>
+                <button id="writeSubmitBtn" onclick="submitWriteToSheet()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold"><i class="fa-solid fa-paper-plane mr-1"></i>書き込む</button>
             </div>
         </div>
     </div>
