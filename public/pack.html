@@ -113,6 +113,7 @@ main{ padding:12px 12px 140px; }
 <div id="readerWrap">
   <div id="reader"></div>
   <div id="readerMsg">シールのバーコードを枠に入れてください</div>
+  <button class="btn ghost close" id="camSwitchBtn" style="background:#fff">🔄 カメラ切り替え（いま：背面）</button>
   <button class="btn ghost close" id="closeBtn">閉じる</button>
 </div>
 <div id="flash"><div class="big" id="flashBig"></div><div class="small" id="flashSmall"></div></div>
@@ -1127,7 +1128,25 @@ function afterChange() {
 
 /* ---------- カメラ（html5-qrcode：iPhoneのSafariでも動く） ---------- */
 let scanner = null, lastCode = '', lastAt = 0;
+// 使うカメラ（'environment' = 背面 / 'user' = フロント）。端末に覚えておき、次に開いたときも同じカメラで起動する
+const CAM_KEY = 'pack_cam_facing';
+let camFacing = (() => { try { return localStorage.getItem(CAM_KEY) === 'user' ? 'user' : 'environment'; } catch (e) { return 'environment'; } })();
+function camLabel() { $('camSwitchBtn').textContent = '🔄 カメラ切り替え（いま：' + (camFacing === 'user' ? 'フロント' : '背面') + '）'; }
+camLabel();
+// 据え置きで使うとき、カメラを開いている間は画面が自動で消えないようにする
+let wakeLock = null;
+async function lockScreen() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {} }
+function unlockScreen() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('readerWrap').classList.contains('on')) lockScreen(); });
+$('camSwitchBtn').onclick = async () => {
+  camFacing = camFacing === 'user' ? 'environment' : 'user';
+  try { localStorage.setItem(CAM_KEY, camFacing); } catch (e) {}
+  camLabel();
+  if (scanner) { try { await scanner.stop(); scanner.clear(); } catch (e) {} scanner = null; }
+  startCamera();
+};
 async function startCamera() {
+  lockScreen();
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}   // 音を鳴らせるようにする
   $('readerWrap').classList.add('on');
   $('readerMsg').textContent = 'シールのバーコードを枠に入れてください';
@@ -1139,7 +1158,7 @@ async function startCamera() {
     experimentalFeatures: { useBarCodeDetectorIfSupported: true }
   });
   try {
-    await scanner.start({ facingMode: 'environment' }, { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.45) }) },
+    await scanner.start({ facingMode: camFacing }, { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.45) }) },
       text => {
         const now = Date.now();
         if ($('flash').classList.contains('ng')) return;          // 赤いエラーを閉じるまでは読まない
@@ -1155,6 +1174,7 @@ async function startCamera() {
 }
 async function stopCamera() {
   $('readerWrap').classList.remove('on');
+  unlockScreen();
   if (scanner) { try { await scanner.stop(); scanner.clear(); } catch (e) {} scanner = null; }
 }
 $('scanBtn').onclick = startCamera;
