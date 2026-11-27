@@ -260,6 +260,7 @@ details.bd table{margin-top:6px}
       <div class="meta" id="meta">読み込み中…</div>
     </div>
     <div style="text-align:right">
+      <button class="btn" id="openCx">🚚 キャンセル（受注番号）</button>
       <button class="btn" id="syncNow">今すぐ更新</button>
       <div class="user" style="margin-top:4px"><span id="userEmail"></span>　<button id="logout">ログアウト</button></div>
     </div>
@@ -939,6 +940,19 @@ function fillSheet(r, force) {
   if ($('saveNote')) $('saveNote').onclick = () => saveNote(r.id, $('noteIn').value);
   bindHokanPanel(r);
   bindShipCancel(r);
+}
+// チャットなど、依頼フォーム以外で来たキャンセル：受注番号だけでキャンセル済みにする
+function openCancelOnly() {
+  const r = { id: 'chat-' + Date.now().toString(36), type: 'キャンセル', fields: [], order: '' };
+  const sh = $('sheet');
+  sh.dataset.id = r.id; sh.dataset.kind = 'cx'; sh.dataset.dirty = '';
+  sh.innerHTML = `<div class="sheet-h"><div><h2>キャンセル（受注番号で止める）</h2><div class="sub">チャットなどで来たキャンセル依頼用</div></div><button class="close" id="closeSheet" aria-label="閉じる">×</button></div>`
+    + shipCancelPanel(r);
+  $('closeSheet').onclick = closeSheet;
+  bindShipCancel(r);
+  $('scBox').open = true;
+  showSheet();
+  setTimeout(() => $('scQ') && $('scQ').focus(), 100);
 }
 function closeSheet() { const sh = $('sheet'); sh.classList.remove('open'); sh.dataset.id = ''; sh.dataset.kind = ''; sh.dataset.edit = ''; sh.dataset.dirty = ''; $('bg').style.display = 'none'; }
 function showSheet() { $('bg').style.display = 'block'; requestAnimationFrame(() => $('sheet').classList.add('open')); }
@@ -2887,6 +2901,7 @@ formFromHash();
 window.addEventListener('hashchange', () => { if (formFromHash()) render(); });
 
 // ---------- イベント ----------
+$('openCx').onclick = () => openCancelOnly();
 $('syncNow').onclick = syncNow;
 $('views').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.v; render(); };
 $('sq').oninput = e => { S.sq = e.target.value; render(); };

@@ -554,6 +554,13 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
     </section>
 
     <section class="step">
+      <div class="step-head"><h2 class="step-title">キャンセル（受注番号で止める）</h2></div>
+      <p style="margin:0 0 10px;font-size:13px;color:#5d6b77">チャットなどで来たキャンセルはここで。キャンセル済みにした受注番号は、出荷通知CSVに入らず（伝票番号を紐づけない）、梱包くんでも止まります。依頼まとめ管理と同じ記録です。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="mmCxQ" placeholder="受注番号（複数はスペース区切り）" style="flex:1;min-width:240px;padding:8px 10px;border:1px solid #ccd5dc;border-radius:8px"><button class="btn btn-primary" id="mmCxBtn">探す</button></div>
+      <div id="mmCxList" style="font-size:13px;margin-top:8px"></div>
+    </section>
+
+    <section class="step">
       <div class="step-head"><h2 class="step-title">Robot-inの出荷通知CSVを作る</h2></div>
       <p style="margin:0 0 10px;font-size:13px;color:#5d6b77">「出荷処理」タブ（ピック数算出など）で読み込んだ受注CSVは、14日間残ります（Googleログインしていれば、別のパソコンからも使えます）。その日の受注CSVのうち、送り状を発行した注文だけを取り出して、共有の記録（上で保存した発行済みデータ）の伝票番号を入れ、Robot-inに取り込むCSVを作ります。Robot-inから受注CSVを出し直す必要はありません（発送済み・キャンセルなどは自動で外します）。アカウント（ロジ・メディ）は受注CSVの形で自動で見分け、アカウントごとに1つずつファイルを作ります。</p>
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px">
@@ -5030,6 +5037,59 @@ async function rbMake(){
   out.textContent = log.join('\n');
   rbRenderMulti(rbMultiList);
 }
+/* ---------- キャンセル（受注番号で止める）：依頼まとめ管理と同じ記録 ----------
+   shipCancels/{受注番号を詰めたもの} と settings/ship_cancels（1つにまとめた一覧）に書く。見つかった送り状は取り消し済みにする */
+async function mmCxFind(){
+  const box = document.getElementById('mmCxList');
+  if (!issuedUser) { box.innerHTML = '<p style="color:#c0392b">ログインしてください</p>'; return; }
+  const raw = [...new Set(String(document.getElementById('mmCxQ').value || '').split(/[\s,、，]+/).map(v => v.trim()).filter(v => shipNormK(v).length >= 4))].slice(0, 10);
+  if (!raw.length) { box.innerHTML = '<p style="color:#5d6b77">受注番号を入れてください（4文字以上）</p>'; return; }
+  box.innerHTML = '<p style="color:#5d6b77">探しています…</p>';
+  try {
+    const cxd = await getDoc(doc(db, 'settings', 'ship_cancels'));
+    const cxMap = (cxd.exists() && cxd.data().keys) || {};
+    // もう出荷通知CSVに出した注文か（直近7日）
+    const sent = new Map();
+    for (let i = 0; i < 7; i++) {
+      const id = new Date(Date.now() - i * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      try { const nd = await getDoc(doc(db, 'robotinNotified', id)); if (nd.exists()) (nd.data().keys || []).forEach(k => { if (!sent.has(k)) sent.set(k, id); }); } catch (e) { break; }
+    }
+    const items = [];
+    for (const w of raw) {
+      const k = shipNormK(w), ships = [];
+      (await getDocs(query(collection(db, 'shipments'), where('keys', 'array-contains', k)))).forEach(d => ships.push({ id: d.id, ...d.data() }));
+      items.push({ word: w, key: k, cx: cxMap[k] || null, ships, sentOn: sent.get(cleanOrderNoNormalized(w)) || '' });
+    }
+    box.innerHTML = items.map((it, i) => `<div style="border-top:1px solid #e3e8ec;padding:8px 0">
+      <b>受注番号 ${escapeHtml(it.word)}</b>　${it.cx ? `<span style="color:#c0392b;font-weight:700">キャンセル済み</span> <small style="color:#5d6b77">${escapeHtml(String(it.cx.at || '').slice(0, 16).replace('T', ' '))} ${escapeHtml(it.cx.by || '')}</small> <button class="btn btn-sm" data-cxundo="${i}">戻す</button>` : `<button class="btn btn-sm" style="border-color:#c0392b;color:#c0392b" data-cxset="${i}">キャンセル済みにする</button>`}
+      ${it.sentOn ? `<div style="color:#c0392b;font-size:12px;margin-top:4px">⚠ ${escapeHtml(it.sentOn.slice(5).replace('-', '/'))}に出荷通知CSVに出し済みです。Robot-inで発送済みに移す前に、この注文のチェックを外すか、キャンセルのステータスに移してください。</div>` : ''}
+      <div style="font-size:12px;color:#5d6b77;margin-top:4px">${it.ships.length ? '送り状：' + it.ships.map(x => `${x.carrier === 'sagawa' ? '佐川' : 'ヤマト'} ${escapeHtml(x.tracking)}（${escapeHtml(x.date || '')}）${x.canceled ? '【取り消し済み】' : ''}`).join('、') : '送り状の記録はまだありません（あとで取り込んでも出荷通知には入りません）'}</div></div>`).join('');
+    const setCx = async (it, on) => {
+      const b = writeBatch(db), now = new Date(), by = issuedUser.email || '';
+      b.set(doc(db, 'shipCancels', it.key), on ? { key: it.key, orderNo: it.word, canceled: true, at: now.toISOString(), atSec: Math.floor(now / 1000), by, reqId: 'matomaru' }
+        : { canceled: false, uncanceledAt: now.toISOString(), uncanceledBy: by, atSec: Math.floor(now / 1000) }, { merge: true });
+      b.set(doc(db, 'settings', 'ship_cancels'), { keys: { [it.key]: on ? { orderNo: it.word, at: now.toISOString(), atSec: Math.floor(now / 1000), by } : deleteField() }, updatedAt: now.toISOString() }, { merge: true });
+      if (on) it.ships.filter(x => !x.canceled).forEach(x => b.set(doc(db, 'shipments', x.id), { canceled: true, canceledAt: now.toISOString(), canceledBy: by, canceledReqId: 'matomaru', canceledWord: it.word }, { merge: true }));
+      await b.commit();
+    };
+    box.querySelectorAll('[data-cxset]').forEach(btn => btn.onclick = async () => {
+      const it = items[Number(btn.dataset.cxset)];
+      if (!confirm(`受注番号 ${it.word} をキャンセル済みにしますか？\n送り状 ${it.ships.filter(x => !x.canceled).length}件も取り消します。`)) return;
+      try { await setCx(it, true); toast('キャンセル済みにしました'); mmCxFind(); } catch (e) { alert('できませんでした：' + e.message); }
+    });
+    box.querySelectorAll('[data-cxundo]').forEach(btn => btn.onclick = async () => {
+      const it = items[Number(btn.dataset.cxundo)];
+      if (!confirm('キャンセル済みを戻しますか？（取り消した送り状は、依頼まとめ管理で個別に戻してください）')) return;
+      try { await setCx(it, false); toast('戻しました'); mmCxFind(); } catch (e) { alert('戻せませんでした：' + e.message); }
+    });
+  } catch (e) { box.innerHTML = `<p style="color:#c0392b">探せませんでした：${escapeHtml(e.message)}</p>`; }
+}
+(() => {
+  const b = document.getElementById('mmCxBtn'), q = document.getElementById('mmCxQ');
+  if (!b || !q) return;
+  b.onclick = () => mmCxFind();
+  q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); mmCxFind(); } });
+})();
 // チェックリスト（warehouse_reports/{日付}）の夕方の「Robot-in 出荷通知」にレ点を付ける
 // チェックリストは、ほかのアプリが付けたレ点を消さずに取り込む作り（読み取り1回・書き込み1回）
 async function checkChecklistRobot(date){
