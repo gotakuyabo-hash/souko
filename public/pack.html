@@ -143,7 +143,7 @@ const norm = s => toHalf(s).trim().toUpperCase();
    ?コード:商品名*数量 ＝ マスタにあるがバーコードなし（おまけ等）、!コード:商品名*数量 ＝ マスタ未登録。どちらも目視で確認 ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', items: [], us: '', nos: [], trk: '', mat: '' };
+  const out = { order: '', items: [], us: '', nos: [], trk: '', mat: '', skus: [] };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
@@ -152,6 +152,7 @@ function parseHash() {
     if (k === 'u') out.us = safeDecode(v);
     if (k === 'n') out.nos = [...new Set(v.split(',').map(Number).filter(Boolean))];
     if (k === 't') out.trk = safeDecode(v);
+    if (k === 'k') out.skus = [...new Set(v.split(',').map(safeDecode).map(x => x.trim()).filter(Boolean))].slice(0, 30);   // この注文のSKU（資材を直すとき用）
     if (k === 'm') out.mat = safeDecode(v).trim().slice(0, 60);   // 指定資材（まとまるくんの商品マスタで登録したもの。複数は「+」区切り）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
@@ -751,6 +752,56 @@ async function loadMaterials(names) {
   } catch (e) { console.warn('pack_materials', e); }
 }
 
+/* ---------- 梱包くんで資材を直す（商品マスタ product_masters/{SKU}.material を書き換える） ----------
+   検品書のQRの k=（この注文のSKU）があるときだけ。開いたときにSKUの数だけ読み取り、直したSKUだけ書き込む */
+async function openMatEdit(){
+  await authReady;
+  if (!authUser) { alert('資材を直すにはログインが必要です'); return; }
+  const skus = state.skus.slice();
+  if (!skus.length) return;
+  let masters;
+  try {
+    MAT = null; await loadMaterials(['\u0000']);   // 資材マスタに足したばかりの資材も選べるように、開くたびに読み直す（読み取り1回）
+    masters = await Promise.all(skus.map(s => getDoc(doc(db, 'product_masters', s)).then(d => d.exists() ? d.data() : null)));
+  } catch (e) { alert('商品マスタを読めませんでした：' + e.message); return; }
+  const names = Object.keys((MAT && MAT.items) || {});
+  const opts = cur => '<option value="">（指定なし）</option>' + [...new Set([...names, ...(cur ? [cur] : [])])].map(n => '<option value="' + esc(n) + '"' + (n === cur ? ' selected' : '') + '>' + esc(n) + (names.includes(n) ? '' : '（資材マスタにない）') + '</option>').join('');
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto';
+  ov.innerHTML = '<div style="background:#fff;color:#1c2733;border-radius:12px;max-width:520px;width:100%;padding:14px">'
+    + '<div style="font-weight:800;font-size:17px;margin-bottom:4px">📦 資材を直す</div>'
+    + '<div style="font-size:13px;color:#5d6b77;margin-bottom:10px">商品マスタの資材が変わります。次からの検品書もこの資材になります。</div>'
+    + skus.map((s, i) => { const m = masters[i];
+        const img = (m && m.material && MAT && MAT.items && MAT.items[m.material] && MAT.items[m.material].img) || '';
+        return '<div style="border:1px solid #d3d9d7;border-radius:10px;padding:8px;margin-bottom:8px">'
+          + '<div style="font-weight:700;font-size:14px;word-break:break-all">' + esc((m && (m.productName || m.product_name)) || '（商品マスタにありません）') + '</div>'
+          + '<div style="font-size:12px;color:#5d6b77;word-break:break-all">SKU ' + esc(s) + (m && m.isSet ? '（セット品）' : '') + '</div>'
+          + (m ? '<select data-me="' + i + '" style="width:100%;font-size:17px;padding:8px;margin-top:6px;border-radius:8px">' + opts(m.material || '') + '</select>' : '')
+          + '</div>'; }).join('')
+    + '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" id="meCancel" style="flex:1;padding:12px;border-radius:8px;border:1px solid #ccc;background:#fff;font-size:15px">やめる</button>'
+    + '<button type="button" id="meSave" style="flex:2;padding:12px;border-radius:8px;border:0;background:#0f5f8a;color:#fff;font-weight:700;font-size:15px">保存する</button></div></div>';
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); keepFocus(); };
+  ov.querySelector('#meCancel').onclick = close;
+  ov.querySelector('#meSave').onclick = async () => {
+    const btn = ov.querySelector('#meSave'); btn.disabled = true; btn.textContent = '保存しています…';
+    const now = new Date().toISOString(), cur = masters.map(m => (m && m.material) || '');
+    const next = cur.slice();
+    ov.querySelectorAll('[data-me]').forEach(sel => { next[Number(sel.dataset.me)] = sel.value; });
+    try {
+      for (let i = 0; i < skus.length; i++) {
+        if (!masters[i] || next[i] === cur[i]) continue;
+        await setDoc(doc(db, 'product_masters', skus[i]), { material: next[i], materialAt: now, materialBy: authUser.email || '', materialFrom: '梱包くん' }, { merge: true });
+      }
+      // この注文の表示も直す（梱包OKのときに数える資材もこれになる）
+      state.mat = [...new Set(next.filter(Boolean))].join('+');
+      if (state.mat) loadMaterials(state.mat.split('+'));
+      close(); render(); beep(true); flash(true, '資材を直しました', state.mat ? state.mat.split('+').join(' ＋ ') : '指定なし', 1300);
+    } catch (e) { btn.disabled = false; btn.textContent = '保存する'; alert('保存できませんでした：' + e.message); }
+  };
+}
+document.addEventListener('click', e => { if (e.target && e.target.id === 'matEdit') openMatEdit(); });
+
 /* ---------- 画面 ---------- */
 let state = parseHash();
 let zmap = {};
@@ -767,13 +818,14 @@ function render() {
   $('allok').classList.toggle('show', !!allOk);
   // 指定資材（検品書のQRに入っているときだけ表示）
   const mt = $('matTag');
-  mt.style.display = state.mat && state.items.length ? '' : 'none';
+  mt.style.display = state.items.length && (state.mat || state.skus.length) ? '' : 'none';
   const mats = state.mat ? state.mat.split('+').map(s => s.trim()).filter(Boolean) : [];
   const mimg = (MAT && MAT.items) || {};
   mt.innerHTML = mats.length ? '<div>📦 資材指定</div><div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px">'
     + mats.map(m => { const u = mimg[m] && mimg[m].img; return '<div style="background:#fff;border-radius:8px;padding:6px;min-width:110px">'
       + (u ? '<img src="' + esc(u) + '" alt="" style="width:120px;height:120px;object-fit:contain;display:block;margin:0 auto 4px" referrerpolicy="no-referrer" onerror="this.remove()">' : '')
-      + '<div>' + esc(m) + '</div></div>'; }).join('') + '</div>' : '';
+      + '<div>' + esc(m) + '</div></div>'; }).join('') + '</div>' : '<div style="font-size:16px">📦 資材：未設定</div>';
+  if (state.skus.length) mt.innerHTML += '<button type="button" id="matEdit" class="manual" style="margin-top:8px;font-size:14px">✏️ 資材を直す</button>';
   // 送り状の照合（共有の発行済みデータ shipments で、この受注番号の送り状か確かめる）
   const lt = $('labelTag');
   lt.style.display = state.items.length ? '' : 'none';

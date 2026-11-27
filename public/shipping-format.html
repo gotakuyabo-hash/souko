@@ -3856,7 +3856,13 @@ function packMaterialsOf(rows, masterMap) {
   });
   return [...set].filter(Boolean);
 }
-function packQrDataUrl(orderNo, items, mats) {
+// この注文のSKU（梱包くんで資材を直すとき用）。QRが細かくなりすぎないよう、合わせて160文字まで
+function packSkusOf(rows) {
+  const list = [...new Set(rows.map(r => r[COL.SKU] !== undefined ? String(r[COL.SKU]).trim() : '').filter(Boolean))];
+  const enc = list.map(encodeURIComponent).join(',');
+  return enc.length <= 160 ? list : [];
+}
+function packQrDataUrl(orderNo, items, mats, skus) {
   if (typeof qrcode !== 'function') return '';
   const enc = encodeURIComponent;
   const list = items.map(x => {
@@ -3864,7 +3870,7 @@ function packQrDataUrl(orderNo, items, mats) {
     const nm = x.kind ? ':' + enc(String(x.name || '').replace(/\s+/g, ' ').trim().slice(0, 12)) : '';
     return pre + enc(String(x.code).slice(0, 40)) + nm + '*' + x.qty;
   }).join(',');
-  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}` + (mats && mats.length ? '&m=' + enc(mats.join('+')) : '');
+  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}` + (skus && skus.length ? '&k=' + skus.map(enc).join(',') : '') + (mats && mats.length ? '&m=' + enc(mats.join('+')) : '');
   try {
     const qr = qrcode(0, 'M');   // 0 = 中身の長さに合わせて自動
     qr.addData(url, 'Byte');
@@ -3999,7 +4005,7 @@ window.openPrintPreview = async () => {
         </tr>`;
     });
 
-    const qrSrc = packQrDataUrl(group.orderNo, group.packItems, group.mats);
+    const qrSrc = packQrDataUrl(group.orderNo, group.packItems, group.mats, packSkusOf(group.rows));
     const qrCell = qrSrc
       ? `<td style="width:21mm;padding-left:4px;text-align:center;vertical-align:top;"><img src="${qrSrc}" style="width:19mm;height:19mm;image-rendering:pixelated;display:block;margin:0 auto;"><div style="font-size:6pt;line-height:1.1;margin-top:1px;">スマホで読んで<br>梱包チェック</div></td>`
       : '';
