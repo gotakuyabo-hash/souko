@@ -82,6 +82,10 @@ textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px;
 .row{display:grid;grid-template-columns:28px 72px 1fr 210px;gap:12px;padding:10px 14px;border-top:1px solid var(--line);align-items:start;cursor:pointer}
 .row:first-child{border-top:0}
 .row.is-sel{background:var(--sel)}
+.row.is-done{background:color-mix(in srgb,var(--danger) 9%,transparent);box-shadow:inset 6px 0 0 var(--danger)}
+.row.is-done.is-sel{background:color-mix(in srgb,var(--danger) 16%,var(--sel))}
+.done-box{border:2px solid var(--danger);color:var(--danger);border-radius:6px;padding:6px 10px;margin-top:8px;font-weight:700}
+.done-box .chip{font-weight:400}
 .row img,.noimg{width:72px;height:72px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:4px}
 .noimg{display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--danger);text-align:center}
 .l1{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
@@ -560,6 +564,8 @@ const state = {
   storDone: {},    // No → 保管品として出荷済みの情報
   mism: {},        // No → 処理したときの注文番号（今のシートの注文番号と違うときだけ）
   pack: {},        // No → 梱包済みの記録（梱包チェック）
+  robot: {},       // No → Robot-inの受注反映結果（このアプリで反映したときの記録）
+  shipRec: {},     // No → 共有の発行済みデータ（shipments）で見つかった送り状
   itemMaster: null, itemMasterFor: '',   // 梱包くんの照合用「シートの商品名 → zaicoのコード」（usItemMaster/{お客様ID}）
 };
 
@@ -866,9 +872,16 @@ async function doSearch(preselect){
       const proc = procOf(saved[r.no]);
       if (proc && hasProc(r) && !matches(r, proc)) state.mism[r.no] = keyLabel(proc);
     });
+    await checkShipments(j.rows);
+    // 発送済みの注文は、全件選択のときも選択から外しておく
+    const doneNos = j.rows.filter(shipDone).map(r => r.no).sort((a,b)=>a-b);
+    if (preselect) doneNos.forEach(no => state.selected.delete(no));
     render();
     const mn = Object.keys(state.mism).length;
-    if (mn) toast('注文番号が処理したときと違う注文が'+mn+'件あります（赤い「注文番号が違う」の印）。入荷日・出荷情報は前の注文のものです', 8000);
+    const msgs = [];
+    if (doneNos.length) msgs.push('発送済みの注文が'+doneNos.length+'件あります（No.'+doneNos.join('、')+'）'+(preselect ? '。選択から外しました' : ''));
+    if (mn) msgs.push('注文番号が処理したときと違う注文が'+mn+'件あります（赤い「注文番号が違う」の印）。入荷日・出荷情報は前の注文のものです');
+    if (msgs.length) toast(msgs.join(' ／ '), 9000);
     saveOrders(j.rows, saved);
   }catch(e){ toast(e.message, 6000); }
   finally{ btn.disabled = false; btn.textContent = '検索する'; }
@@ -963,6 +976,47 @@ $('#q').addEventListener('blur', () => setTimeout(closeSugg, 120));
 /* ===== 同梱・注意の判定 ===== */
 // 備考欄のNo.（5〜6桁。電話番号など長い数字の一部は拾わない）
 function noteNos(note){ return (String(note||'').match(/(?<!\d)\d{5,6}(?!\d)/g) || []).map(Number); }
+// 発送済みか：別の日に届いたNo.の依頼でも分かるように、記録を読んで判断する
+//  ・共有の発行済みデータ（shipments）：まとまるくん・コックピット・このアプリのどれで取り込んだ送り状も入る。Robot-inの履歴に出ない注文もここで分かる
+//  ・すでに読んでいる記録（追加の読み取りなし）：シートの出荷日・追跡番号・W列、このアプリのRobot-inの記録
+// 注文番号が処理したときと違う行は、アプリの記録（前の注文のもの）は使わない
+function shippedOf(r){
+  if (!r) return null;
+  const src = [];
+  const sh = state.shipRec[r.no];
+  if (sh) src.push('送り状発行済み（'+(sh.carrier ? sh.carrier+' ' : '')+sh.tracking+(sh.date ? '・'+md(sh.date)+'出荷' : '')+'）');
+  if (r.shippedAt || r.tracking) src.push('シートに出荷情報あり（'+[r.shippedAt ? '出荷日 '+md(r.shippedAt) : '', r.tracking ? (r.carrier ? r.carrier+' ' : '')+r.tracking : ''].filter(Boolean).join(' ／ ')+'）');
+  const sheet = String(r.note2 == null ? '' : r.note2).trim();
+  const fs = state.mism[r.no] ? null : state.robot[r.no];
+  if (/成功/.test(sheet) || (fs && /成功/.test(fs.status))) src.push('Robot-inの出荷通知 成功');
+  return src.length ? { src, text:'発送済み：'+src.join('、')+'。二重発送にならないよう確認してください' } : null;
+}
+const shipDone = r => !!shippedOf(r);
+// 共有の発行済みデータから、検索した注文の送り状を探す
+// 注文番号30件ごとに1回だけ問い合わせる（読み取りは見つかった送り状の数だけ。見つからなければ1回分）
+// 有在庫用・空欄の注文はNo.で探し、お届け先名が同じものだけ使う（No.はほかのお客様と重なるため）
+async function checkShipments(rows){
+  const byKey = {}, add = (k, r, needName) => { if (k && k.length >= 4) (byKey[k] = byKey[k] || []).push({ r, needName }); };
+  rows.forEach(r => {
+    delete state.shipRec[r.no];
+    const o = oidOf(r.orderId);
+    if (!NO_OID(o)) add(shipNormK(o), r, false);
+    else if (r.name) add(String(r.no), r, true);
+  });
+  try{
+    for (const part of chunk(Object.keys(byKey), 30)) {
+      const snap = await db.collection('shipments').where('keys', 'array-contains-any', part).get();
+      snap.forEach(d => {
+        const v = d.data(); if (v.canceled) return;
+        (v.keys || []).forEach(k => (byKey[k] || []).forEach(({ r, needName }) => {
+          if (needName && shipNormNameK(v.name) !== shipNormNameK(r.name)) return;
+          const cur = state.shipRec[r.no];
+          if (!cur || String(v.date || '') > String(cur.date || '')) state.shipRec[r.no] = { carrier:v.carrierName || SHIP_NAME[v.carrier] || '', tracking:v.tracking || '', date:v.date || '' };
+        }));
+      });
+    }
+  }catch(e){ console.warn('共有の発行済みデータの確認に失敗', e); toast('送り状発行済みかの確認ができませんでした：'+e.message, 6000); }
+}
 function groupOf(no){ const g = state.groups.find(g => g.rows.indexOf(no) >= 0); return g ? g.key : ''; }
 function infoOf(r){
   const badges = [];
@@ -994,6 +1048,8 @@ function infoOf(r){
   const sd = state.storDone[r.no];
   if (sd && !st) { badges.unshift({ t:'保管品・出荷済み', warn:false }); partners.unshift('保管品として出荷済み（'+md(sd.shippedAt)+(sd.shippedBy ? ' ／ '+sd.shippedBy : '')+'）'); }
   if (st) { badges.unshift({ t:'保管', warn:true }); partners.unshift('保管中'+(st.memo ? '：'+st.memo : '')+(st.from==='inquiry' ? '（問い合わせ中から）' : '')); }
+  const sp = shippedOf(r);
+  if (sp) { badges.unshift({ t:'発送済み', warn:true }); partners.unshift(sp.text); }
   const pm = state.mism[r.no];
   if (pm) { badges.unshift({ t:'注文番号が違う', warn:true }); partners.unshift('処理したときの注文番号：'+pm+'（入荷日・出荷情報はこの注文のものです。シートを確認してください）'); }
   return { badges, partners, highlight: !!(r.deliveryDate || r.deliveryTime || r.note) };
@@ -1008,6 +1064,9 @@ function render(){
     + ' ／ 該当なし '+state.notFound.length+'件</span></div>';
   if (state.notFound.length) html += '<div class="chips" aria-label="該当なしの'+label+'">'+state.notFound.map(k=>'<span class="chip">'+esc(k)+'</span>').join('')+'</div>';
   if (state.dupKeys.length) html += '<p class="small muted" style="margin-top:6px">ほかの番号と同じ注文だったため、まとめて表示した番号：'+state.dupKeys.map(esc).join('、')+'</p>';
+  const doneNos = state.groups.reduce((a,g)=>a.concat(g.rows),[]).filter(no => shipDone(state.rows[no])).sort((a,b)=>a-b);
+  if (doneNos.length) html += '<div class="done-box">⚠ 発送済みの注文 '+doneNos.length+'件（送り状の発行済みデータ・シートの出荷情報から判断）'
+    + '<div class="chips">'+doneNos.map(no => '<span class="chip">No.'+no+'</span>').join('')+'</div></div>';
   $('#summary').innerHTML = html;
 
   $('#groups').innerHTML = state.groups.map((g, gi) => {
@@ -1036,7 +1095,7 @@ function rowHtml(r){
   const badges = inf.badges.map(b=>'<span class="badge'+(b.warn?' warn':'')+'">'+esc(b.t)+'</span>').join('');
   const spec = (r.deliveryDate || r.deliveryTime) ? '指定 '+esc(md(r.deliveryDate))+' '+esc(r.deliveryTime) : '指定なし';
   const noteText = [r.note, ...inf.partners].filter(Boolean).join('\n');
-  return '<label class="row'+(sel?' is-sel':'')+'">'
+  return '<label class="row'+(sel?' is-sel':'')+(shipDone(r)?' is-done':'')+'">'
     + '<input type="checkbox" class="rsel" data-no="'+r.no+'" '+(sel?'checked':'')+' aria-label="No.'+r.no+'を選択">'
     + img
     + '<div><div class="l1"><b>No.'+r.no+'</b><span>'+esc(r.shop)+'</span>'+badges+'</div>'
@@ -1461,6 +1520,8 @@ function makeLabel(rows, key, splitFrom){
   const stopNos = holdNos.concat(storNos);
   if (holdNos.length) errors.push('出荷保留の注文を含みます（No.'+holdNos.join('、')+'）');
   if (storNos.length) warns.push('保管品を含みます（No.'+storNos.join('、')+'）。出荷するときはチェックを入れてください。出荷後の取り込みで保管は自動で解除されます');
+  const doneNos = rows.filter(shipDone).map(r => r.no);
+  if (doneNos.length) warns.push('発送済みの注文を含みます（No.'+doneNos.join('、')+'）。二重発送にならないか確認し、出す場合はチェックを入れてください');
   const mismNos = rows.filter(r => state.mism[r.no]).map(r => r.no);
   if (mismNos.length) errors.push('注文番号が処理したときと違う注文を含みます（No.'+mismNos.join('、')+'）。シートを確認してください');
 
@@ -1486,7 +1547,7 @@ function makeLabel(rows, key, splitFrom){
     key, rows, splitFrom, zip7, tel, name, addr, ya, carrier, okinawa, tm, dd, t, item, edited, errors, warns, orig, convNotes,
     type: L.types[key] || '0',
     // エラーがあってもCSVに含める（外したいときはチェックを外す）。注文番号が違う注文は、最初は外しておく
-    include: L.include[key] !== undefined ? L.include[key] !== false : !(mismNos.length || stopNos.length),
+    include: L.include[key] !== undefined ? L.include[key] !== false : !(mismNos.length || stopNos.length || doneNos.length),
   };
 }
 
@@ -1929,10 +1990,11 @@ async function loadInquiryFlags(nos){
   try{
     for (const part of chunk([...new Set(nos)].map(String), 30)) {
       const snap = await ordersCol().where(firebase.firestore.FieldPath.documentId(),'in',part).get();
-      part.forEach(id => { const n = Number(id); delete state.inq[n]; delete state.hold[n]; delete state.stor[n]; delete state.storDone[n]; delete state.pack[n]; });
+      part.forEach(id => { const n = Number(id); delete state.inq[n]; delete state.hold[n]; delete state.stor[n]; delete state.storDone[n]; delete state.pack[n]; delete state.robot[n]; });
       snap.forEach(d => {
         const v=d.data(), n=Number(d.id); saved[n] = v;
         if (v.pack && v.pack.done) state.pack[n] = v.pack;
+        if (v.robotStatus) state.robot[n] = { status:String(v.robotStatus).trim(), at: v.robotAt && v.robotAt.toDate ? v.robotAt.toDate() : null };
         if (v.inquiry && v.inquiry.active) state.inq[n] = v.inquiry;
         if (v.hold && v.hold.active) state.hold[n] = v.hold;
         if (v.storage && v.storage.active) state.stor[n] = v.storage;
