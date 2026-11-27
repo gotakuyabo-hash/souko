@@ -1863,7 +1863,7 @@ function shipKeys(r) {
   add(shipNorm(r.orderNo));
   add(shipNormName(r.name));
   // 欄まるごとが受注番号のもの（Robot-inの送り状：ヤマトの記事・佐川の品名2「No:受注番号」）を先に入れる（30個までで切れないように）
-  (r.texts || []).forEach(t => { const s = String(t || "").trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNorm(s.replace(/^No[:：.]?\s*/i, ""))); });
+  (r.texts || []).forEach(t => { const s = String(t || "").trim(); const m = s.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) add(shipNorm(m[1])); else if (/^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNorm(s.replace(/^No[:：.]?\s*/i, ""))); });
   (r.texts || []).forEach(t => {
     const s = String(t || "");
     // (No.10266,10267) の No.
