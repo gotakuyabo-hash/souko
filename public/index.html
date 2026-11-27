@@ -178,8 +178,9 @@
                        cards: [
                 { id: "shipping-format", category: "shipping", title: "📑 まとまるくん", desc: "受注CSV・ヤマト・佐川CSV整形、検品シート印刷", href: "shipping-format.html", badge: 0 },
                 { id: "pack", category: "shipping", title: "📦 梱包くん", desc: "検品シートのQRを読み、商品シールをスキャンして梱包内容を照合（zaicoの画像つき）", href: "pack.html", badge: 0 },
+                { id: "materials", category: "others", title: "🗃️ 資材マスタ", desc: "梱包資材の名前と写真を登録（まとまるくんで商品ごとに指定 → 梱包くん・検品シートに表示）", href: "materials.html", badge: 0 },
                 { id: "shipping-simulator", category: "shipping", title: "🔀 振り分けくん", desc: "ステータス変更（220更新）、タイムスタンプ自動入力", href: "shipping-simulator.html", badge: 0 },
-                { id: "option-list", category: "shipping", title: "🎥 撮影オプション", desc: "動画撮影オプション加入セラーの一覧・管理番号で加入確認", href: "option-list.html", badge: 0 },
+                { id: "option-list", category: "others", title: "🎥 撮影オプション", desc: "動画撮影オプション加入セラーの一覧・管理番号で加入確認", href: "option-list.html", badge: 0 },
                 { id: "notes", category: "communication", title: "📒 連絡くん", desc: "共有ノート・スタッフ間依頼・資材発注依頼", href: "notes.html", badge: 0 },
                 { id: "checklist", category: "communication", title: "✅ 日次くん", desc: "出勤時〜終業時までのチェックリスト・出荷件数集計", href: "checklist.html", badge: 0 },
                 { id: "chat-reply", category: "communication", title: "💬 バーストくん", desc: "未読ルーム一斉表示・スタッフ間連絡アプリ連携", href: "chat-reply.html", badge: 0 },
@@ -188,10 +189,7 @@
                 { id: "bunkatusku", category: "shipping", title: "🧩 分割くん吉原", desc: "Shopeeパッキングリストを分割・和名変換し、検品書とピックリストを作成（吉原）", href: "bunkatusku.html", badge: 0 },
                 { id: "bunkatuedaban", category: "shipping", title: "💊 分割くんmedi", desc: "Shopeeパッキングリストを分割・和名変換し、検品書とピックリストを作成（medi）", href: "bunkatuedaban.html", badge: 0 },
                 { id: "USyoshida", category: "shipping", title: "🗽 USくん", desc: "倉庫追跡番号で配送管理シートを検索し、検品書・送り状データ作成", href: "USyoshida.html", badge: 0 },
-                { id: "cloudfanding", category: "others", title: "🎁 クラファンくん", desc: "クラファンの見積作成と、佐川・ヤマトの送り状CSV出力", href: "cloudfanding.html", badge: 0 },
-                { id: "timer", category: "others", title: "⏱️ ストップウォッチくん", desc: "タイム計測、日別・サービス別・担当者別集計、履歴管理", href: "timer.html", badge: 0 },
                 { id: "label", category: "others", title: "🏷️ ラベルくん", desc: "処理済みラベル・QRコード作成", href: "label.html", badge: 0 },
-                { id: "syntyoku", category: "others", title: "📈 進捗くん", desc: "当日の作業の進み具合をひと目で確認", href: "sintyoku.html", badge: 0 },
                 { id: "henso", category: "others", title: "↩️ 返送くん", desc: "US返送を処理するアプリ", href: "henso.html", badge: 0 },
                 { id: "shopeesheet", category: "shipping", title: "🛒 ラザダくん", desc: "Lazada・Shopeeの配送管理（未出荷件数、ラベル印刷、出荷・入庫・在庫）", href: "shopeesheet.html", badge: 0 },
                 { id: "irai", category: "shipping", title: "📥 依頼くん", desc: "Shopee・RSショップ・自己配の3つの依頼フォームをまとめて管理", href: "irai.html", badge: 0 },
@@ -210,8 +208,10 @@
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    if (parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.order)) return parsed;
+                    if (parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.order)) return applyForcedMoves(parsed);
                 }
+                // 保存がない端末は、すでにコードどおりのカテゴリなので移す必要はない
+                localStorage.setItem(FORCED_MOVES.key, '1');
                 const legacy = localStorage.getItem(LEGACY_KEY);
                 if (legacy) {
                     const old = JSON.parse(legacy);
@@ -230,6 +230,19 @@
                 console.error("Data load error:", e);
             }
             return null;
+        }
+
+        // コードでカテゴリを移したツールを、並び替え済みの端末でも1回だけ移す
+        //  （端末に保存したカテゴリが優先されるため。移したあとは、その端末で自由に動かせる）
+        const FORCED_MOVES = { key: 'warehouse_portal_moves_v1', moves: { 'option-list': 'others', 'materials': 'others' } };
+        function applyForcedMoves(layout) {
+            try {
+                if (localStorage.getItem(FORCED_MOVES.key)) return layout;
+                layout.order.forEach(o => { if (FORCED_MOVES.moves[o.id]) o.category = FORCED_MOVES.moves[o.id]; });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+                localStorage.setItem(FORCED_MOVES.key, '1');
+            } catch (e) { console.error('Move error:', e); }
+            return layout;
         }
 
         // コードの定義 ＋ 端末の配置情報 → 画面に出すデータを組み立てる
