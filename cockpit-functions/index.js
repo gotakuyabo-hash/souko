@@ -2471,18 +2471,36 @@ async function fixWho(p) {
   await logWho(acc, rid, who, p.text, "fix");
   return { ok: true };
 }
-let whoCache = { at: 0, docs: null };
+// ===== お手本の記録（cw_who_log・cw_triage_fixes）の読み方 =====
+//   以前：5分たつたびに最新300件を全部読み直していた（1日で約2.3万回の読み取り）
+//   いま：サーバー起動直後だけ300件を読み、あとは「前回読んだものより新しい記録」だけを読む
+//         （新しい記録がなければ1回分の読み取りで済む）
+const EXAMPLE_KEEP = 300;
+const EXAMPLE_REFRESH_MS = 5 * 60 * 1000;
+async function refreshExamples(c) {
+  if (c.docs && Date.now() - c.at < EXAMPLE_REFRESH_MS) return c.docs;
+  if (!c.docs || !c.lastAt) {
+    const snap = await db.collection(c.col).orderBy("at", "desc").limit(EXAMPLE_KEEP).get();
+    c.docs = snap.docs.map(d => d.data());
+  } else {
+    const snap = await db.collection(c.col).where("at", ">", c.lastAt).orderBy("at", "desc").limit(EXAMPLE_KEEP).get();
+    if (!snap.empty) c.docs = snap.docs.map(d => d.data()).concat(c.docs).slice(0, EXAMPLE_KEEP);
+  }
+  const top = c.docs.find(x => x && x.at);
+  c.lastAt = top ? top.at : null;
+  c.at = Date.now();
+  return c.docs;
+}
+
+const whoCache = { col: "cw_who_log", at: 0, docs: null, lastAt: null };
 async function loadWhoExamples(roomIds) {
   const res = { global: "", byRoom: {} };
   try {
-    if (!whoCache.docs || Date.now() - whoCache.at > 5 * 60 * 1000) {
-      const snap = await db.collection("cw_who_log").orderBy("at", "desc").limit(300).get();
-      whoCache = { at: Date.now(), docs: snap.docs.map(d => d.data()) };
-    }
+    const docs = await refreshExamples(whoCache);
     const want = {};
     (roomIds || []).forEach(r => { want[r] = true; });
     const g = [];
-    whoCache.docs.forEach(x => {
+    docs.forEach(x => {
       const line = "・「" + String(x.text || "").slice(0, 120) + "」" + (x.sub ? "（" + x.sub + "）" : "") + " → " + x.who
         + (x.source === "fix" ? "（スタッフが手で指定）" : x.source ? "（" + x.source + "）" : "");
       if (g.length < WHO_EXAMPLES) g.push(line);
@@ -2528,16 +2546,13 @@ function fixLine(x) {
   return "・「" + text + "」→ " + x.cat + (x.cat === "check" && x.sub ? "（" + normSub(x.sub) + "）" : "")
     + (x.before ? "　※AIは " + x.before + (x.beforeSub ? "（" + normSub(x.beforeSub) + "）" : "") + " と誤判定" : "");
 }
-// 読み込み回数を抑えるため、直した例は5分だけ使い回す（直した時はすぐ読み直す）
-let fixCache = { at: 0, docs: null };
+// 読み込み回数を抑えるため、直した例は5分だけ使い回し、その後は新しい分だけ読む（refreshExamples）
+const fixCache = { col: "cw_triage_fixes", at: 0, docs: null, lastAt: null };
 async function loadTriageExamples(roomIds) {
   const res = { global: "", byRoom: {} };
   try {
-    if (!fixCache.docs || Date.now() - fixCache.at > 5 * 60 * 1000) {
-      const snap = await db.collection("cw_triage_fixes").orderBy("at", "desc").limit(300).get();
-      fixCache = { at: Date.now(), docs: snap.docs.map(d => d.data()) };
-    }
-    const qs = { forEach: fn => fixCache.docs.forEach(x => fn({ data: () => x })) };
+    const docs = await refreshExamples(fixCache);
+    const qs = { forEach: fn => docs.forEach(x => fn({ data: () => x })) };
     const want = {};
     (roomIds || []).forEach(r => { want[r] = true; });
     const global = [];
@@ -2942,9 +2957,17 @@ exports.lineWebhook = onRequest(
 );
 
 // 定期同期の最後に：仕分け待ちのトークをAIで仕分ける（Chatworkと同じ仕分け）
+//   仕分け待ちの確認は3分に1回だけ（毎分だと、0件でも1日約1,400回の読み取りになるため）
+//   ※ メッセージ自体は届いた時点で画面に出る。遅れるのは仕分けの表示だけ（最大3分）
+const LINE_TRIAGE_EVERY_SEC = 180;
+let lineTriageCheckedAt = 0;
 async function syncLine() {
   const now = nowSec();
-  const snap = await db.collection("cw_rooms").where("account", "==", LINE_ACC).where("needTriage", "==", true).limit(TRIAGE_MAX_PER_SYNC).get();
+  const checkTriage = now - lineTriageCheckedAt >= LINE_TRIAGE_EVERY_SEC;
+  if (checkTriage) lineTriageCheckedAt = now;
+  const snap = checkTriage
+    ? await db.collection("cw_rooms").where("account", "==", LINE_ACC).where("needTriage", "==", true).limit(TRIAGE_MAX_PER_SYNC).get()
+    : { empty: true };
   if (!snap.empty) {
     const msgCol = msgCollection();
     const isMineMsg = m => String(m.account && m.account.account_id) === LINE_SELF_ID;
