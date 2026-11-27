@@ -340,6 +340,7 @@ const shukkaAuto = (() => {
                     <h2 class="text-lg font-semibold"><i class="fa-solid fa-database text-slate-400 mr-2"></i>Firestore商品マスタ管理</h2>
                     <div class="flex flex-wrap items-center gap-2 text-xs">
                         <button onclick="openBulkMasterModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg font-semibold"><i class="fa-solid fa-file-csv mr-1 text-slate-400"></i>CSV・コピペ一括登録</button>
+                        <button onclick="openJanBulkModal()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg font-semibold"><i class="fa-solid fa-barcode mr-1"></i>JAN一括登録</button>
                         <button onclick="loadDefaultPresets()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg font-semibold">初期プリセット一括登録</button>
                         <span class="act-sep"></span>
                         <button onclick="clearMasterFirestore()" class="text-rose-600 px-3 py-2 rounded-lg hover:bg-rose-50 font-semibold"><i class="fa-solid fa-trash-can mr-1"></i>全クリア</button>
@@ -517,7 +518,47 @@ const shukkaAuto = (() => {
         </div>
     </div>
 
-    <div id="bulkMasterModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div id="janBulkModal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-4xl w-full p-6 space-y-3 max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-barcode text-slate-400 mr-2"></i>JAN一括登録（商品名ごと）</h3>
+                <button onclick="closeJanBulkModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-slate-500">同じ商品名の商品は、<b>その商品が入っているSKUすべて</b>（例：MYSHIPRO1〜3・SGSHIPRO1〜3・セット商品）に同じJANが入ります。空欄の行は変更しません。</p>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+                <button onclick="janAutoFill()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg font-semibold"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>zaicoから自動で入れる（空欄だけ）</button>
+                <button onclick="document.getElementById('janPasteBox').classList.toggle('hidden')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg font-semibold"><i class="fa-solid fa-paste mr-1 text-slate-400"></i>貼り付けで入れる</button>
+                <input type="text" id="janSearch" oninput="renderJanRows()" placeholder="商品名・SKUで絞り込み" class="border rounded-lg px-3 py-2 flex-grow min-w-[140px]">
+                <label class="flex items-center gap-1 whitespace-nowrap"><input type="checkbox" id="janOnlyMissing" onchange="renderJanRows()" checked>JAN未登録のみ</label>
+            </div>
+            <div id="janPasteBox" class="hidden bg-slate-50 border rounded-xl p-3 space-y-2 text-xs">
+                <p class="text-slate-600">1行に「<b>商品名 または SKU</b>」と「<b>JAN</b>」を、タブかカンマで区切って貼り付け（Excelから2列コピーでOK）。<br>SKUで指定できるのは、商品が1つだけのSKUです。</p>
+                <textarea id="janPasteText" rows="5" class="w-full font-mono border rounded-lg p-2 bg-white" placeholder="SHINSE プロテイン300g（JAN：9144）	4573xxxxx9144&#10;MYHINTAB1, 4573xxxxx9021"></textarea>
+                <div class="flex justify-between items-center gap-2">
+                    <p id="janPasteResult" class="text-slate-600"></p>
+                    <button onclick="applyJanPaste()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap">下の表に反映</button>
+                </div>
+            </div>
+            <p id="janStatus" class="text-xs text-slate-500"></p>
+            <div class="overflow-y-auto border rounded-xl flex-grow">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-slate-100 text-slate-600 sticky top-0 border-b">
+                        <tr><th class="px-3 py-2">商品名</th><th class="px-3 py-2 w-24 text-center">SKU数</th><th class="px-3 py-2 w-72">JAN</th></tr>
+                    </thead>
+                    <tbody id="janBody" class="divide-y"></tbody>
+                </table>
+            </div>
+            <div class="flex justify-between items-center gap-2 pt-2 border-t flex-wrap">
+                <label class="text-xs flex items-center gap-1"><input type="checkbox" id="janWithImg" checked>写真がない商品は、zaicoの写真も入れる</label>
+                <div class="space-x-2">
+                    <button onclick="closeJanBulkModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-xs font-medium">閉じる</button>
+                    <button id="janSaveBtn" onclick="saveJanBulk()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold"><i class="fa-solid fa-floppy-disk mr-1"></i>入力したJANを保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="bulkMasterModal"class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="font-bold text-sm"><i class="fa-solid fa-file-csv text-slate-400 mr-2"></i>CSV・コピペマスタ一括登録</h3>
@@ -1150,8 +1191,177 @@ const shukkaAuto = (() => {
             row.querySelector('.modal-jan').value = code;
             const nameEl = row.querySelector('.modal-jpname');
             if (!nameEl.value.trim()) nameEl.value = z.t;
-            if (!row.dataset.img && z.img) setRowImage(row, z.img);
+            if (!row.dataset.img && z.img && row.querySelector('.modal-img')) setRowImage(row, z.img);
             closeZaicoPicker();
+        }
+
+        // ===== JAN一括登録（商品名ごと） =====
+        // 同じ商品名の商品を1行にまとめ、入れたJANをその商品名が入っている全SKUに反映する
+        let janRows = [];       // [{ name, skus:[], jans:Set, missing:件数, hasImg }]
+        let janInputs = {};     // 商品名 → 入力中のJAN（絞り込みで表から消えても残す）
+        let janWhy = {};        // 商品名 → 自動で入れた理由
+
+        function buildJanRows() {
+            const g = new Map();
+            multiplierMaster.forEach(m => m.items.forEach(it => {
+                if (!g.has(it.jpName)) g.set(it.jpName, { name: it.jpName, skus: [], jans: new Set(), missing: 0, hasImg: false });
+                const x = g.get(it.jpName);
+                if (!x.skus.includes(m.key)) x.skus.push(m.key);
+                if (it.jan) x.jans.add(it.jan); else x.missing++;
+                if (it.img) x.hasImg = true;
+            }));
+            janRows = [...g.values()].sort((a, b) => (b.missing > 0) - (a.missing > 0) || a.name.localeCompare(b.name, 'ja'));
+        }
+
+        function openJanBulkModal() {
+            if (!multiplierMaster.length) { alert('マスタがありません'); return; }
+            janInputs = {}; janWhy = {};
+            buildJanRows();
+            document.getElementById('janPasteResult').innerText = '';
+            document.getElementById('janStatus').innerText = '';
+            document.getElementById('janBulkModal').classList.remove('hidden');
+            renderJanRows();
+        }
+
+        function closeJanBulkModal() { document.getElementById('janBulkModal').classList.add('hidden'); }
+
+        function renderJanRows() {
+            const q = toHalfWidth(document.getElementById('janSearch').value).toLowerCase().trim();
+            const only = document.getElementById('janOnlyMissing').checked;
+            const list = janRows.filter(r =>
+                (!only || r.missing > 0 || janInputs[r.name]) &&
+                (!q || toHalfWidth(r.name + ' ' + r.skus.join(' ')).toLowerCase().includes(q)));
+            const missingKinds = janRows.filter(r => r.missing > 0).length;
+            const entered = Object.values(janInputs).filter(v => normJan(v)).length;
+            document.getElementById('janStatus').innerHTML =
+                `商品 ${janRows.length} 種類のうち、JAN未登録 <b class="text-amber-700">${missingKinds}</b> 種類 ／ 表示中 ${list.length} 種類 ／ 入力済み <b class="text-indigo-700">${entered}</b> 種類`;
+            document.getElementById('janBody').innerHTML = list.length ? list.map(r => {
+                const i = janRows.indexOf(r);
+                const cur = [...r.jans];
+                const curHtml = cur.length === 0 ? '<span class="text-amber-600">未登録</span>'
+                    : cur.length === 1 ? `登録済み：<span class="font-mono">${esc(cur[0])}</span>${r.missing ? `<span class="text-amber-600">（${r.missing}件は未登録）</span>` : ''}`
+                    : `<span class="text-rose-600">SKUごとにJANが違います：${cur.map(esc).join(' / ')}</span>`;
+                return `<tr data-item-row="1" data-img="${r.hasImg ? '1' : ''}" class="${r.missing ? '' : 'bg-slate-50/60'}">
+                    <td class="px-3 py-2">
+                        <div class="font-semibold text-slate-800">${esc(r.name)}</div>
+                        <div class="text-[10px] text-slate-500">${curHtml}</div>
+                        <input type="hidden" class="modal-jpname" value="${esc(r.name)}">
+                    </td>
+                    <td class="px-3 py-2 text-center" title="${esc(r.skus.join(', '))}">${r.skus.length}<div class="text-[10px] text-slate-400 truncate max-w-[90px] mx-auto">${esc(r.skus[0])}${r.skus.length > 1 ? ' ほか' : ''}</div></td>
+                    <td class="px-3 py-2">
+                        <div class="flex gap-1">
+                            <input type="text" inputmode="numeric" data-idx="${i}" value="${esc(janInputs[r.name] || '')}" placeholder="${cur.length === 1 ? esc(cur[0]) : 'JAN'}"
+                                oninput="janInputs[janRows[this.dataset.idx].name]=this.value; delete janWhy[janRows[this.dataset.idx].name]"
+                                class="modal-jan w-full border rounded px-2 py-1 font-mono">
+                            <button type="button" onclick="janPick(this.closest('[data-item-row]'))" class="whitespace-nowrap bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 rounded px-2 py-1 text-[11px] font-bold">zaico</button>
+                        </div>
+                        ${janWhy[r.name] ? `<div class="text-[10px] text-teal-700 mt-0.5">${esc(janWhy[r.name])}</div>` : ''}
+                    </td>
+                </tr>`;
+            }).join('') : '<tr><td colspan="3" class="px-3 py-6 text-center text-slate-400">該当する商品がありません</td></tr>';
+        }
+
+        // zaicoの一覧から1件選ぶ（選んだら表に反映）
+        async function janPick(row) {
+            await openZaicoPicker(row);
+            const obs = setInterval(() => {
+                if (!document.getElementById('zaicoPicker').classList.contains('hidden')) return;
+                clearInterval(obs);
+                const inp = row.querySelector('.modal-jan');
+                const name = row.querySelector('.modal-jpname').value;
+                if (normJan(inp.value) && inp.value !== (janInputs[name] || '')) { janInputs[name] = inp.value; janWhy[name] = 'zaicoから選択'; renderJanRows(); }
+            }, 200);
+        }
+
+        // 商品名からzaicoのJANを推測する（確実に1つに決まるときだけ）
+        function guessJan(name) {
+            const codes = Object.keys(zaicoMap || {});
+            const m = toHalfWidth(name).match(/JAN\s*[:：]?\s*(\d{4,13})/i);
+            if (m) {
+                if (m[1].length >= 8 && zaicoMap[m[1]]) return { code: m[1], why: '商品名のJANと一致' };
+                const hits = codes.filter(c => c.length >= 8 && c.endsWith(m[1]));
+                if (hits.length === 1) return { code: hits[0], why: `商品名の「JAN：${m[1]}」で見つけました（${zaicoMap[hits[0]].t}）` };
+                if (hits.length > 1) return { code: '', why: `「${m[1]}」で終わるJANが${hits.length}件あります。「zaico」ボタンで選んでください` };
+            }
+            const norm = s => toHalfWidth(s).replace(/\s+/g, '').toLowerCase();
+            const n = norm(name);
+            const t = codes.filter(c => norm(zaicoMap[c].t) === n);
+            if (t.length === 1) return { code: t[0], why: 'zaicoの商品名と一致' };
+            return null;
+        }
+
+        async function janAutoFill() {
+            const st = document.getElementById('janStatus');
+            st.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>zaicoの在庫一覧を読み込み中...';
+            try { if (!zaicoMap) await loadZaico(false); }
+            catch (e) { st.innerHTML = `<span class="text-rose-600">${esc(e.message)}</span>`; return; }
+            let filled = 0, multi = 0;
+            janRows.filter(r => r.missing > 0 && !normJan(janInputs[r.name])).forEach(r => {
+                const g = guessJan(r.name);
+                if (!g) return;
+                janWhy[r.name] = g.why;
+                if (g.code) { janInputs[r.name] = g.code; filled++; } else multi++;
+            });
+            renderJanRows();
+            alert(`zaicoから ${filled} 種類のJANを入れました。` + (multi ? `\n候補が複数あるものが ${multi} 種類あります（「zaico」ボタンで選んでください）。` : '') + '\n\n内容を確認してから「入力したJANを保存」を押してください。');
+        }
+
+        function applyJanPaste() {
+            const lines = document.getElementById('janPasteText').value.split(/\r?\n/).filter(l => l.trim());
+            const byName = new Map(janRows.map(r => [toHalfWidth(r.name).replace(/\s+/g, ' ').trim(), r]));
+            let ok = 0; const ng = [];
+            lines.forEach(line => {
+                const cols = (line.includes('\t') ? line.split('\t') : line.split(',')).map(s => s.trim()).filter(Boolean);
+                if (cols.length < 2) { ng.push(line); return; }
+                const jan = normJan(cols[cols.length - 1]);
+                const label = cols.slice(0, -1).join(',');
+                let row = byName.get(toHalfWidth(label).replace(/\s+/g, ' ').trim());
+                if (!row) {
+                    const m = masterMap.get(label.toLowerCase());
+                    if (m && m.items.length === 1) row = janRows.find(r => r.name === m.items[0].jpName);
+                }
+                if (!row || !jan) { ng.push(line); return; }
+                janInputs[row.name] = jan; janWhy[row.name] = '貼り付けから'; ok++;
+            });
+            document.getElementById('janPasteResult').innerHTML = `${ok} 件を反映しました` +
+                (ng.length ? `<br><span class="text-rose-600">見つからなかった行 ${ng.length} 件：${ng.slice(0, 3).map(esc).join(' ／ ')}${ng.length > 3 ? ' ほか' : ''}</span>` : '');
+            renderJanRows();
+        }
+
+        async function saveJanBulk() {
+            const changes = new Map();
+            janRows.forEach(r => {
+                const v = normJan(janInputs[r.name]);
+                if (!v) return;
+                if (r.missing === 0 && r.jans.size === 1 && r.jans.has(v)) return; // 変更なし
+                changes.set(r.name, v);
+            });
+            if (!changes.size) { alert('保存するJANがありません'); return; }
+            const odd = [...changes].filter(([, v]) => !/^\d{8}$|^\d{13}$/.test(v));
+            const overwrite = janRows.filter(r => changes.has(r.name) && r.jans.size && !r.jans.has(changes.get(r.name)));
+            const withImg = document.getElementById('janWithImg').checked;
+            const docs = multiplierMaster.filter(m => m.items.some(it => changes.has(it.jpName))).map(cloneMaster);
+            docs.forEach(d => d.items.forEach(it => {
+                if (!changes.has(it.jpName)) return;
+                it.jan = changes.get(it.jpName);
+                const z = zaicoMap && zaicoMap[it.jan];
+                if (withImg && !it.img && z && z.img) it.img = z.img;
+            }));
+            let msg = `${changes.size} 種類の商品のJANを保存します（SKU ${docs.length} 件が変わります）。`;
+            if (overwrite.length) msg += `\n\n※登録済みのJANを上書きするもの：${overwrite.length} 種類\n・${overwrite.slice(0, 5).map(r => r.name).join('\n・')}`;
+            if (odd.length) msg += `\n\n※8桁・13桁の数字ではないJAN：${odd.length} 件（例：${odd[0][1]}）`;
+            if (!confirm(msg + '\n\nよろしいですか？')) return;
+            const btn = document.getElementById('janSaveBtn');
+            btn.disabled = true; btn.innerHTML = SPIN + '保存中...';
+            try {
+                await commitMasterDocs(docs);
+                // 保存した内容で表を作り直す（マスタの反映を待たずに）
+                docs.forEach(d => { const m = multiplierMaster.find(x => x.key === d.key); if (m) m.items = d.items; });
+                janInputs = {}; janWhy = {};
+                buildJanRows(); renderJanRows();
+                alert(`${changes.size} 種類（SKU ${docs.length} 件）のJANを保存しました`);
+            } catch (e) { console.error(e); alert('保存に失敗しました'); }
+            btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk mr-1"></i>入力したJANを保存';
         }
 
         function toHalfWidth(v) {
