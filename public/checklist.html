@@ -185,6 +185,8 @@ button,input,textarea{font:inherit;color:inherit}
 .teisha-list .t-imgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .teisha-list .t-imgs a{display:block;width:72px;height:72px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
 .teisha-list .t-imgs img{width:100%;height:100%;object-fit:contain;display:block}
+.teisha-list .t-stock{font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
+.teisha-list .t-nostock{font-size:12px;font-weight:800;color:var(--danger);background:var(--danger-soft);border-radius:999px;padding:2px 8px;white-space:nowrap}
 .teisha-list .t-done{font-size:12px;font-weight:800;color:var(--ok);background:var(--ok-soft);border-radius:999px;padding:3px 10px}
 
 /* ===== ニッシントーア報告 ===== */
@@ -1293,7 +1295,7 @@ const whoOf = x => (x && x.who && TEISHA_WHO[x.who]) ? x.who : '定者';
 // Lazadaくん（shopeesheet.html）と同じGAS。出庫は、Lazadaくんの「手動出庫」と同じ形でシートに記録する
 const LZ_API_URL = 'https://script.google.com/macros/s/AKfycbzY5useeP498fwPPMOqw4QYXyHfMP59-uXi8aeR_6XpMrIJ67pTFmqPlFFVbxGO3y95bg/exec';
 const TEISHA_SELLER_WORD = '定者';
-const TEISHA = { data: null, outs: {}, busy: '', qty: {} };   // qty：画面で直した数量（注文番号|コード → 数）
+const TEISHA = { data: null, outs: {}, busy: '', qty: {}, stockData: null, stockSid: '', stockVer: null, stockUnsub: null };   // qty：画面で直した数量（注文番号|コード → 数）
 const normCode = v => String(v == null ? '' : v).replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s/g, '');
 
 // 備考から商品コード（JAN）と、そのあとに書かれた商品名を取り出す
@@ -1339,7 +1341,7 @@ function renderTeisha() {
         const inp = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', value: String(l.qty), 'aria-label': `${l.code}の出庫数`,
           style: 'width:64px;font-size:15px;font-weight:800;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)' });
         inp.addEventListener('change', () => { const v = parseInt(inp.value, 10); TEISHA.qty[x.orderNo + '|' + l.code] = v > 0 ? v : 1; if (!(v > 0)) inp.value = '1'; });
-        return h('span', { class: 't-sub', style: 'display:inline-flex;align-items:center;gap:4px' }, l.code + ' ', inp, '個');
+        return h('span', { class: 't-sub', style: 'display:inline-flex;align-items:center;gap:4px' }, l.code + ' ', inp, '個', teishaStockBadge(l.code));
       }),
       h('button', { type: 'button', class: 'btn btn-primary', disabled: !!TEISHA.busy, onclick: () => teishaOut(x.orderNo) },
         TEISHA.busy === x.orderNo ? '出庫中…' : '📦 在庫から出庫')
@@ -1374,6 +1376,50 @@ async function lzReadCache(sid) {
   if (!meta.parts || parts.length !== meta.parts) return null;
   return JSON.parse(parts.map(p => p.s).join(''));
 }
+// 定者さんの在庫数（Lazadaくんの在庫タブと同じ数え方：入庫 − 出荷済みの注文 − 手動出庫）
+function teishaStockMap(data) {
+  const map = new Map();
+  if (!data) return map;
+  const nm = new Map();
+  (data.inbound || []).concat(data.stock || []).forEach(r => { const c = normCode(r.code), n = String(r.name || '').trim(); if (c && n) nm.set(n, c); });
+  const codeOf = (c, n) => normCode(c) || nm.get(String(n || '').trim()) || '';
+  const add = (c, q) => { if (c) map.set(c, (map.get(c) || 0) + q); };
+  (data.stock || []).forEach(r => add(codeOf(r.code, r.name), 0));
+  (data.inbound || []).forEach(b => { if (b.inQty !== '' && b.inQty != null) add(codeOf(b.code, b.name), Number(b.inQty) || 0); });
+  (data.orders || []).forEach(o => { const c = codeOf(o.code, o.item); if (o.shipped && map.has(c)) add(c, -(Number(o.qty) || 0)); });
+  const man = data.manual || [];
+  man.forEach(m => add(codeOf(m.code, m.name), -(Number(m.qty) || 0)));
+  // チェックリストで出庫して、まだLazadaくんの保存に入っていない分も引く
+  Object.entries(TEISHA.outs || {}).forEach(([no, o]) => {
+    if (!Array.isArray(o?.lines) || man.some(m => String(m.note || '').indexOf(no) >= 0)) return;
+    o.lines.forEach(l => add(normCode(l.code), -(Number(l.qty) || 0)));
+  });
+  return map;
+}
+function teishaStockBadge(code) {
+  if (!TEISHA.stockData) return null;
+  const n = teishaStockMap(TEISHA.stockData).get(code);
+  if (n == null) return h('span', { class: 't-nostock' }, '在庫に未登録');
+  if (n <= 0) return h('span', { class: 't-nostock' }, '無在庫' + (n < 0 ? `（${n}）` : ''));
+  return h('span', { class: 't-stock' }, `在庫 ${n}`);
+}
+// Lazadaくんが保存し直したときだけ読み直す（読み取りを少なくするため）
+function watchTeishaStock() {
+  const seller = SHIP.sellers.find(sv => String(sv.name || '').indexOf(TEISHA_SELLER_WORD) >= 0);
+  const sid = seller ? seller.id : '';
+  if (sid === TEISHA.stockSid) return;
+  if (TEISHA.stockUnsub) { TEISHA.stockUnsub(); TEISHA.stockUnsub = null; }
+  TEISHA.stockSid = sid; TEISHA.stockData = null; TEISHA.stockVer = null;
+  if (!sid) return;
+  TEISHA.stockUnsub = onSnapshot(doc(db, 'delivery_cache', sid), snap => {
+    const v = snap.exists() ? snap.data().v : null;
+    if (v == null || v === TEISHA.stockVer) return;
+    TEISHA.stockVer = v;
+    lzReadCache(sid).then(d => { if (TEISHA.stockSid === sid && d) { TEISHA.stockData = d; renderTeisha(); } })
+      .catch(e => console.warn('teisha stock', e));
+  }, e => console.warn('delivery_cache', e));
+}
+
 async function lzRun(user, sheetId, fn, args) {
   const idToken = await user.getIdToken();
   let res;
@@ -1410,8 +1456,11 @@ async function teishaOut(orderNo) {
     const ok = lines.filter(l => l.name), ng = lines.filter(l => !l.name);
     if (!ok.length) throw new Error('備考の商品コード（' + lines.map(l => l.code).join('・') + '）が、定者さんの在庫に見つかりません。Lazadaくんの「手動出庫」から記録してください');
 
-    const msg = `注文 ${orderNo} の分を、定者さんの在庫から出庫します。\n\n` + ok.map(l => `・${l.name} ×${l.qty}（${l.code}）`).join('\n')
-      + (ng.length ? '\n\n※在庫に見つからないコードは出庫しません：' + ng.map(l => l.code).join('、') : '');
+    const sm = teishaStockMap(data);
+    const stTxt = c => { const n = sm.get(c); return n == null ? '' : n <= 0 ? '・無在庫' : `・在庫 ${n}`; };
+    const msg = `注文 ${orderNo} の分を、定者さんの在庫から出庫します。\n\n` + ok.map(l => `・${l.name} ×${l.qty}（${l.code}${stTxt(l.code)}）`).join('\n')
+      + (ng.length ? '\n\n※在庫に見つからないコードは出庫しません：' + ng.map(l => l.code).join('、') : '')
+      + (ok.some(l => sm.has(l.code) && l.qty > sm.get(l.code)) ? '\n\n⚠ 在庫より多く出庫する商品があります' : '');
     if (!(await confirmAsync(msg, '出庫する'))) return;
 
     const done = [];
@@ -2078,6 +2127,7 @@ function watchShip() {
     SHIP.sellers = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
     SHIP.loaded = true; SHIP.error = false;
     paintShip();
+    watchTeishaStock();
   }, e => { console.warn('deliverySellers', e); SHIP.error = true; paintShip(); });
 }
 
