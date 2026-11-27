@@ -278,6 +278,7 @@ button,input,textarea{font:inherit;color:inherit}
         <div class="bar"><i id="clProgressBar"></i></div>
       </div>
     </div>
+    <div class="panel panel-pad teisha" id="matBox" hidden style="border-color:var(--danger)"></div>
     <div class="panel panel-pad teisha" id="teishaBox" hidden></div>
     <p class="edit-note" id="clEditNote" hidden>編集中です。項目名の変更・並び替え・削除・追加ができます。終わったら「編集を終える」を押してください。</p>
     <div id="clSections"><p class="empty">読み込み中…</p></div>
@@ -1859,6 +1860,35 @@ $('rpSaveSettings').onclick = async () => {
 };
 
 /* =========================================================
+   資材の発注（梱包くんが数えた使用枚数が、資材マスタで決めた発注点に届いたら知らせる）
+   settings/pack_material_usage の mats.{資材名} = { used, point, orderedAt }
+   読み取り：開いたときに1回＋変わったときだけ
+   ========================================================= */
+const MAT = { mats: null };
+function renderMat() {
+  const box = $('matBox');
+  const mats = MAT.mats || {};
+  const hit = Object.entries(mats)
+    .filter(([, u]) => Number(u?.point) > 0 && (Number(u?.used) || 0) >= Number(u.point))
+    .sort((a, b) => (Number(b[1].used) / Number(b[1].point)) - (Number(a[1].used) / Number(a[1].point)));
+  if (!hit.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const since = u => { const m = String(u?.orderedAt || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? `${Number(m[1])}/${Number(m[2])}の発注から` : ''; };
+  box.replaceChildren(
+    h('div', { class: 'teisha-head' },
+      h('p', { class: 'teisha-title', style: 'color:var(--danger)' }, `📦 資材の発注 ${hit.length}件`),
+      h('a', { class: 'btn', href: APP_BASE + 'materials.html', target: '_blank', rel: 'noopener noreferrer' }, '資材マスタを開く')),
+    h('ul', { class: 'teisha-list' }, hit.map(([name, u]) => h('li', {},
+      h('span', {}, h('span', { class: 't-no' }, name), h('span', { class: 't-remark' }, `　${fmt(u.used)}枚使用`), h('span', { class: 't-sub' }, `（発注点 ${fmt(u.point)}枚${since(u) ? '・' + since(u) : ''}）`)),
+      /^https?:\/\//i.test(u.url || '') ? h('span', { class: 't-act' }, h('a', { class: 'btn btn-primary', href: u.url, target: '_blank', rel: 'noopener noreferrer' }, '🛒 商品ページを開く')) : null))),
+    h('p', { class: 'small muted', style: 'margin:8px 0 0' }, '発注したら、資材マスタで「発注した（0に戻す）」を押してください。'));
+}
+function watchMaterials() {
+  onSnapshot(doc(db, 'settings', 'pack_material_usage'), snap => { MAT.mats = (snap.exists() && snap.data().mats) || {}; renderMat(); },
+    e => console.warn('pack_material_usage', e));
+}
+
+/* =========================================================
    スタッフ依頼（未対応件数）
    ========================================================= */
 function updatePortalBadge(cardId, count) {
@@ -2150,6 +2180,7 @@ function watchShip() {
   watchStaff();
   watchShip();
   watchTeisha();
+  watchMaterials();
   watchIraiSummary();
   watchIraiLive();
 })();

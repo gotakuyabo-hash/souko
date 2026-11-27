@@ -119,7 +119,7 @@ main{ padding:12px 12px 140px; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 // 品名・記事の欄から受注番号を取り出す：「No:受注番号」は短くても記号（#など）があってもそのまま（例：No:#1163）。それ以外は欄まるごとが番号のときだけ
 const segOrderNo = (t => { t = String(t).trim(); const m = t.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) return m[1].trim(); return /^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t) ? t : ''; });
@@ -984,7 +984,19 @@ function markPacked(){
   const k = cxKey(state.order);
   if (state.doneWritten === k || (PROG && PROG.done && PROG.done[k])) return;
   state.doneWritten = k;
-  setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: { at: new Date().toISOString(), by: holdWho() } } }, { merge: true }).catch(e => { console.warn('packProgress', e); state.doneWritten = ''; });
+  setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: { at: new Date().toISOString(), by: holdWho() } } }, { merge: true })
+    .then(() => countMaterials())
+    .catch(e => { console.warn('packProgress', e); state.doneWritten = ''; });
+}
+/* ---------- 資材の使用枚数（settings/pack_material_usage の mats.{資材名}.used） ----------
+   梱包OKになった注文ごとに、指定資材を1枚ずつ足す（書き込み1回）。
+   資材マスタの画面で「発注した」を押すと0に戻る。チェックリストは used が発注点（point）に届いたら知らせる */
+function countMaterials(){
+  const mats = state.mat ? [...new Set(state.mat.split('+').map(s => s.trim()).filter(Boolean))] : [];
+  if (!mats.length) return;
+  const upd = {}; mats.forEach(m => { upd[m] = { used: increment(1) }; });
+  return setDoc(doc(db, 'settings', 'pack_material_usage'), { mats: upd, updatedAt: new Date().toISOString() }, { merge: true })
+    .catch(e => console.warn('資材の使用枚数を記録できませんでした', e));
 }
 function renderDayProg(){
   const el = $('dayProg'); if (!el) return;

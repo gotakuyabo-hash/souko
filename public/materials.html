@@ -18,6 +18,11 @@ main{ padding:12px; max-width:900px; margin:0 auto; }
 .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
 .card{ background:#fff; border:2px solid var(--line); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:6px; }
 .card.dirty{ border-color:#d68910; }
+.card.alert{ border-color:var(--ng); background:#fdeeee; }
+.use{ background:#f4f7f9; border-radius:8px; padding:8px; font-size:13px; }
+.use b.n{ font-size:22px; }
+.use.alert{ background:#c0392b; color:#fff; }
+.btn.order{ background:#fff; color:var(--ok); border:2px solid var(--ok); padding:6px 10px; font-size:13px; }
 .card img, .card .noimg{ width:100%; aspect-ratio:1/1; object-fit:contain; background:#f5f6f6; border-radius:8px; }
 .card .noimg{ display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; }
 .card label{ font-size:11px; color:var(--muted); }
@@ -44,7 +49,7 @@ textarea{ width:100%; min-height:140px; font-family:monospace; font-size:12px; p
   <div class="grid" id="grid"></div>
   <details class="panel" style="margin-top:16px">
     <summary style="cursor:pointer;font-weight:700">まとめて取り込む（JSONを貼る）</summary>
-    <p class="note">{"items":{"資材名":{"img":"写真のURL","num":"型番"}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
+    <p class="note">{"items":{"資材名":{"img":"写真のURL","url":"商品ページのURL","num":"型番"}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
     <textarea id="json" placeholder='{"items":{ "k80": { "img": "https://…", "num": "K-80" } }}'></textarea>
     <div style="margin-top:8px;display:flex;gap:8px"><button class="btn ghost" id="importBtn">取り込む</button><button class="btn ghost" id="exportBtn">今の一覧をJSONで出す</button></div>
   </details>
@@ -69,6 +74,9 @@ const app = initializeApp({
 });
 const db = getFirestore(app), auth = getAuth(app);
 const REF = doc(db, 'settings', 'pack_materials');
+// 使用枚数と発注点（梱包くんが used を足す。発注点 point・前回の発注 orderedAt はこの画面で入れる）
+const UREF = doc(db, 'settings', 'pack_material_usage');
+let usage = {};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 
@@ -88,37 +96,73 @@ $('loginBtn').onclick = () => {
 
 async function load(){
   try {
-    const d = await getDoc(REF);
+    const [d, u] = await Promise.all([getDoc(REF), getDoc(UREF)]);
+    usage = (u.exists() && u.data().mats) || {};
     const items = (d.exists() && d.data().items) || {};
-    rows = Object.entries(items).map(([name, v]) => ({ name, img: v.img || '', num: v.num || '', shop: v.shop || '' }));
+    rows = Object.entries(items).map(([name, v]) => ({ name, img: v.img || '', url: v.url || '', num: v.num || '', shop: v.shop || '' }));
     dirty = false; $('saveBtn').disabled = true;
     setMsg(rows.length ? '登録済み ' + rows.length + '件' : 'まだ登録がありません。「＋ 資材を追加」か、下の「まとめて取り込む」から登録してください');
     paint();
   } catch (e) { setMsg('読み込めませんでした：' + e.message, 'ng'); }
 }
 
+const fmtDay = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? Number(m[2]) + '/' + Number(m[3]) : ''; };
+const isAlert = name => { const u = usage[name]; return !!(u && Number(u.point) > 0 && (Number(u.used) || 0) >= Number(u.point)); };
+function usageHtml(name){
+  if (!name) return '';
+  const u = usage[name] || {}, used = Number(u.used) || 0, pt = Number(u.point) || 0, al = isAlert(name);
+  return '<div class="use' + (al ? ' alert' : '') + '">' + (al ? '⚠ 発注点に届きました<br>' : '')
+    + (u.orderedAt ? fmtDay(u.orderedAt) + 'の発注から' : '使用枚数') + '　<b class="n">' + used + '</b> 枚'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px"><span>発注点</span><input type="number" min="0" data-pt="' + esc(name) + '" value="' + (pt || '') + '" placeholder="枚" style="width:80px;color:var(--ink)"><span>枚使ったら</span></div>'
+    + '<button class="btn order" style="width:100%;margin-top:6px" data-order="' + esc(name) + '">発注した（0に戻す）</button></div>';
+}
 function paint(){
   $('grid').innerHTML = rows.map((r, i) => '<div class="card" data-i="' + i + '">'
     + (r.img ? '<img src="' + esc(r.img) + '" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML=\'<div class=&quot;noimg&quot;>写真を読めません</div>\'">' : '<div class="noimg">写真なし</div>')
     + '<label>資材名（QRの m= と同じ）</label><input class="name" data-f="name" value="' + esc(r.name) + '">'
     + '<label>写真のURL</label><input data-f="img" value="' + esc(r.img) + '" placeholder="https://…">'
+    + '<label>商品ページのURL（発注するページ）</label><div style="display:flex;gap:4px"><input data-f="url" value="' + esc(r.url) + '" placeholder="https://…">' + (/^https?:\/\//.test(r.url) ? '<a class="btn ghost" style="padding:4px 8px;font-size:12px;text-decoration:none" href="' + esc(r.url) + '" target="_blank" rel="noopener">開く</a>' : '') + '</div>'
     + '<label>型番</label><input data-f="num" value="' + esc(r.num) + '">'
     + '<label>購入先</label><input data-f="shop" value="' + esc(r.shop) + '" placeholder="空欄＝ダンボールワン">'
+    + usageHtml(r.name)
     + '<button class="btn del" data-del="' + i + '">削除</button></div>').join('');
+  rows.forEach((r, i) => { if (isAlert(r.name)) document.querySelector('.card[data-i="' + i + '"]').classList.add('alert'); });
 }
 $('grid').addEventListener('input', e => {
   const c = e.target.closest('.card'), f = e.target.dataset.f; if (!c || !f) return;
   rows[Number(c.dataset.i)][f] = e.target.value.trim(); c.classList.add('dirty'); markDirty();
 });
 // 写真のURLを変えたら、入力欄から出たときに写真を出し直す
-$('grid').addEventListener('change', e => { if (e.target.dataset.f === 'img') paint(); });
+$('grid').addEventListener('change', e => { if (e.target.dataset.f === 'img' || e.target.dataset.f === 'url') paint(); });
 $('grid').addEventListener('click', e => {
   const b = e.target.closest('[data-del]'); if (!b) return;
   const r = rows[Number(b.dataset.del)];
   if (!confirm('「' + (r.name || '（名前なし）') + '」を削除しますか？（「保存」を押すまでは反映されません）')) return;
   rows.splice(Number(b.dataset.del), 1); markDirty(); paint();
 });
-$('addBtn').onclick = () => { rows.unshift({ name:'', img:'', num:'', shop:'' }); markDirty(); paint(); document.querySelector('.card input.name').focus(); };
+// 発注点：入力欄から出たときに保存（使用枚数のドキュメントに書く。資材マスタの「保存」とは別）
+$('grid').addEventListener('change', async e => {
+  const name = e.target.dataset && e.target.dataset.pt; if (name === undefined) return;
+  const point = Math.max(0, Number(e.target.value) || 0);
+  try {
+    await setDoc(UREF, { mats: { [name]: { point } }, updatedAt: new Date().toISOString() }, { merge: true });
+    usage[name] = Object.assign({}, usage[name], { point });
+    setMsg(name + 'の発注点を ' + (point || 'なし') + (point ? ' 枚' : '') + ' にしました', 'ok'); paint();
+  } catch (err) { setMsg('発注点を保存できませんでした：' + err.message, 'ng'); }
+});
+$('grid').addEventListener('click', async e => {
+  const b = e.target.closest('[data-order]'); if (!b) return;
+  const name = b.dataset.order, u = usage[name] || {};
+  const v = prompt(name + 'を発注しましたか？\n使用枚数を0に戻します（いま ' + (Number(u.used) || 0) + ' 枚）。\n\n次の発注点（何枚使ったら知らせるか）：', u.point || '');
+  if (v === null) return;
+  const point = Math.max(0, Number(v) || 0), now = new Date().toISOString();
+  try {
+    await setDoc(UREF, { mats: { [name]: { used: 0, point, orderedAt: now, orderedBy: (user && user.email) || '', lastUsed: Number(u.used) || 0 } }, updatedAt: now }, { merge: true });
+    usage[name] = Object.assign({}, u, { used: 0, point, orderedAt: now });
+    setMsg(name + '：使用枚数を0に戻しました（次の発注点 ' + (point || 'なし') + '）', 'ok'); paint();
+  } catch (err) { setMsg('記録できませんでした：' + err.message, 'ng'); }
+});
+$('addBtn').onclick = () => { rows.unshift({ name:'', img:'', url:'', num:'', shop:'' }); markDirty(); paint(); document.querySelector('.card input.name').focus(); };
 
 $('saveBtn').onclick = async () => {
   const names = rows.map(r => r.name);
@@ -127,11 +171,15 @@ $('saveBtn').onclick = async () => {
   if (dup.length) return setMsg('資材名が重なっています：' + [...new Set(dup)].join('、'), 'ng');
   if (names.some(n => /[+&#=]/.test(n))) return setMsg('資材名に + & # = は使えません（QRで区切りに使うため）', 'ng');
   const items = {};
-  rows.forEach(r => { items[r.name] = { img: r.img, num: r.num }; if (r.shop) items[r.name].shop = r.shop; });
+  rows.forEach(r => { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; });
   $('saveBtn').disabled = true;
   try {
     // merge なしで丸ごと書く（削除した資材も消えるように）
     await setDoc(REF, { items, updatedAt: new Date().toISOString(), updatedBy: (user && user.email) || '' });
+    // チェックリストのアラートから商品ページに飛べるように、使用枚数のドキュメントにもURLを写す（チェックリストの読み取りを1つで済ませるため）
+    const urls = {}; rows.forEach(r => { urls[r.name] = { url: r.url || '' }; });
+    await setDoc(UREF, { mats: urls }, { merge: true }).catch(e => console.warn('URLを写せませんでした', e));
+    rows.forEach(r => { usage[r.name] = Object.assign({}, usage[r.name], { url: r.url || '' }); });
     dirty = false; setMsg('保存しました（' + rows.length + '件）。梱包くんには最大12時間で反映されます', 'ok');
     document.querySelectorAll('.card.dirty').forEach(c => c.classList.remove('dirty'));
   } catch (e) { $('saveBtn').disabled = false; setMsg('保存できませんでした：' + e.message, 'ng'); }
@@ -142,7 +190,7 @@ $('importBtn').onclick = () => {
   const items = j.items || j; let n = 0;
   Object.entries(items).forEach(([name, v]) => {
     if (!name || typeof v !== 'object') return;
-    const r = { name, img: String(v.img || ''), num: String(v.num || ''), shop: String(v.shop || '') };
+    const r = { name, img: String(v.img || ''), url: String(v.url || ''), num: String(v.num || ''), shop: String(v.shop || '') };
     const i = rows.findIndex(x => x.name === name);
     if (i >= 0) rows[i] = r; else rows.push(r);
     n++;
@@ -151,7 +199,7 @@ $('importBtn').onclick = () => {
   markDirty(); paint(); setMsg(n + '件を取り込みました。内容を確かめて「保存」を押してください', 'ok');
 };
 $('exportBtn').onclick = () => {
-  const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, num: r.num }; if (r.shop) items[r.name].shop = r.shop; } });
+  const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; } });
   $('json').value = JSON.stringify({ items }, null, 2);
 };
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
