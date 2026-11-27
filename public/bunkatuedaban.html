@@ -1438,20 +1438,105 @@ const shukkaAuto = (() => {
             return 'o=' + encodeURIComponent(sn) + (trk ? '&l=' + encodeURIComponent(trk) : '') + '&s=medi&i=' + [...items].map(([c, q]) => c + '*' + q).join(',');
         }
 
+        // QR画像だけを返す（検品書の左上に置く）
         function packQrHtml(sn) {
-            if (typeof qrcode !== 'function') return '<div class="text-[10px] text-rose-600 text-center">QRを作れませんでした（ページを再読み込みしてください）</div>';
+            if (typeof qrcode !== 'function') return '<div class="w-full h-full border-2 border-dashed border-slate-500 flex items-center justify-center text-center text-[10px] font-bold leading-tight">QRを作れません<br>再読み込み<br>してください</div>';
             try {
                 const qr = qrcode(0, 'M');
                 qr.addData(packBaseUrl() + '#' + packHashFor(sn));
                 qr.make();
-                return `<div class="flex items-center justify-center gap-3 pt-3 mt-2 border-t border-slate-300">
-                    <img src="${qr.createDataURL(4, 0)}" alt="梱包チェック用QR" style="width:30mm;height:30mm;image-rendering:pixelated">
-                    <div class="text-[11px] text-slate-600 leading-snug">梱包チェック<br>このQRを読んでから<br>商品のJANを読む</div>
-                </div>`;
+                return `<img src="${qr.createDataURL(4, 0)}" alt="梱包チェック用QR" style="width:32mm;height:32mm;image-rendering:pixelated">`;
             } catch (e) {
                 console.warn(e);
-                return '<div class="text-[10px] text-rose-600 text-center">商品が多すぎてQRに入りませんでした（目視で確認してください）</div>';
+                return '<div class="w-full h-full border-2 border-dashed border-slate-500 flex items-center justify-center text-center text-[10px] font-bold leading-tight">商品が多く<br>QRに入りません<br>目視で確認</div>';
             }
+        }
+
+        // バーコードで照合できない商品か（JANでない・セット商品・マスタ未登録 → 梱包くんで「目視」）
+        function needsVisualCheck(baseSku) {
+            return !imageJanOf({ baseSku: baseSku || '' });
+        }
+
+        // 検品書に載せる中身を注文ごとにまとめる → { 注文番号: { tracking, items:[{ name, sku, qty, visual }] } }
+        function buildInspectionOrders() {
+            const orders = {};
+            if (inspectionMode === 'raw') {
+                const raw = buildRawInspectionMap();
+                Object.keys(raw).forEach(sn => {
+                    orders[sn] = {
+                        tracking: raw[sn].tracking,
+                        items: raw[sn].items.map(it => ({
+                            name: it.text, sku: it.sku, qty: it.qty,
+                            visual: needsVisualCheck(parseSkuAndMultiplier(it.sku).baseSku)
+                        }))
+                    };
+                });
+                return orders;
+            }
+            processedDataRows.forEach(r => {
+                const sn = String(r.orderSn ?? '').trim() || "UNKNOWN";
+                if (!orders[sn]) orders[sn] = { tracking: r.trackingNum, items: [] };
+                orders[sn].items.push({
+                    name: r.jpName, sku: r.sku, qty: String(r.baseQty * r.multiplier),
+                    visual: needsVisualCheck(r.baseSku)
+                });
+            });
+            return orders;
+        }
+
+        // 検品書1枚（スキャン照合用：QR・注文番号・追跡番号を上に大きく、商品は確認用に一覧）
+        function buildInspectionSlip(sn, o) {
+            const slip = document.createElement('div');
+            slip.className = "inspection-slip bg-white border-2 border-slate-800 p-3 rounded-xl mx-auto mb-6 shadow-sm flex flex-col text-slate-900";
+            slip.style.width = "100mm";
+            slip.style.minHeight = "146mm";
+
+            const raw = inspectionMode === 'raw';
+            const total = o.items.reduce((t, it) => t + (parseInt(it.qty, 10) || 0), 0);
+            const unknown = o.items.some(it => !it.qty);
+            const visualCount = o.items.filter(it => it.visual).length;
+            const tracking = String(o.tracking ?? '').trim();
+
+            const rowsHtml = o.items.map(it => `
+                <tr class="border-b border-slate-300">
+                    <td class="py-1.5 pr-1 leading-snug break-all ${raw ? 'text-xs' : 'text-sm'} font-semibold">
+                        ${it.visual ? '<span class="inline-block border border-slate-800 text-[10px] font-bold px-1 mr-1 rounded align-middle">目視</span>' : ''}${escapeHtml(it.name)}
+                        ${it.sku ? `<div class="text-[10px] text-slate-500 font-normal font-mono">${escapeHtml(it.sku)}</div>` : ''}
+                    </td>
+                    <td class="py-1.5 w-12 text-center align-top font-bold ${it.qty ? 'text-xl' : 'text-xs'}">${it.qty ? escapeHtml(it.qty) : '要確認'}</td>
+                </tr>`).join('');
+
+            slip.innerHTML = `
+                <div class="flex gap-3 items-start border-b-2 border-slate-800 pb-3">
+                    <div class="shrink-0" style="width:32mm;height:32mm">${packQrHtml(sn)}</div>
+                    <div class="min-w-0 flex-grow space-y-1.5">
+                        <div>
+                            <div class="text-[10px] text-slate-500 font-bold">注文番号</div>
+                            <div class="font-mono font-bold text-base leading-tight break-all">${escapeHtml(sn)}</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] text-slate-500 font-bold">追跡番号</div>
+                            <div class="font-mono font-bold text-sm leading-tight break-all">${escapeHtml(tracking || '-')}</div>
+                        </div>
+                        <div class="text-xs font-bold pt-0.5">
+                            ${o.items.length}品目　合計 <span class="text-xl">${total}</span> 個${unknown ? '<span class="text-[10px]">＋要確認</span>' : ''}
+                        </div>
+                    </div>
+                </div>
+                <table class="w-full text-left border-collapse mt-1">
+                    <thead>
+                        <tr class="text-[10px] text-slate-500 border-b border-slate-800">
+                            <th class="py-1 font-bold">${raw ? '商品情報（パッキングリストのまま）' : '商品名'}</th>
+                            <th class="py-1 w-12 text-center font-bold">数量</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+                <div class="mt-auto pt-2 border-t border-dashed border-slate-400 text-[10px] text-slate-600 text-center leading-snug">
+                    ① QRを読む → ② 商品のバーコードを読む${visualCount ? '<br>「目視」はバーコードがない商品です（画面で確認を押す）' : ''}
+                </div>
+            `;
+            return slip;
         }
 
         function openInspectionModal() {
@@ -1459,86 +1544,8 @@ const shukkaAuto = (() => {
             updateInspectionModeButtons();
             const area = document.getElementById('inspectionPrintArea');
             area.innerHTML = '';
-            if (inspectionMode === 'raw') { renderRawInspection(area); return; }
-            const map = {};
-            processedDataRows.forEach(r => {
-                const sn = String(r.orderSn ?? '').trim() || "UNKNOWN";
-                if (!map[sn]) map[sn] = { tracking: r.trackingNum, items: [] };
-                map[sn].items.push(r);
-            });
-
-            Object.keys(map).forEach(sn => {
-                const o = map[sn];
-                const slip = document.createElement('div');
-                slip.className = "inspection-slip bg-white border-2 border-slate-800 p-4 rounded-xl mx-auto mb-6 shadow-sm";
-                slip.style.width = "100mm";
-                slip.style.minHeight = "146mm";
-
-                const itemsHtml = o.items.map(it => `
-                    <tr class="border-b text-base">
-                        <td class="py-2.5 px-1 font-bold leading-snug">${escapeHtml(it.jpName)}<br><span class="text-xs text-slate-600 font-normal">棚: ${escapeHtml(it.shelf || '-')} | SKU: ${escapeHtml(it.sku || '-')}</span></td>
-                        <td class="py-2.5 px-1 text-center font-bold text-indigo-600 text-2xl">${it.baseQty * it.multiplier}</td>
-                    </tr>
-                `).join('');
-
-                slip.innerHTML = `
-                    <div class="flex justify-between border-b-2 border-slate-800 pb-2 mb-3">
-                        <div><div class="text-xs text-slate-500 font-bold">注文番号</div><div class="text-sm font-mono font-bold break-all">${escapeHtml(sn)}</div></div>
-                        <div class="text-right"><div class="text-xs text-slate-500 font-bold">追跡番号</div><div class="text-sm font-mono font-bold break-all">${escapeHtml(o.tracking)}</div></div>
-                    </div>
-                    <table class="w-full text-left border-collapse mb-4">
-                        <thead>
-                            <tr class="bg-slate-100 text-sm text-slate-700 border-b">
-                                <th class="py-1.5 px-1">商品名</th>
-                                <th class="py-1.5 px-1 text-center w-16">数量</th>
-                            </tr>
-                        </thead>
-                        <tbody>${itemsHtml}</tbody>
-                    </table>
-                    ${packQrHtml(sn)}
-                    <div class="text-center pt-4 border-t border-dashed text-sm text-slate-500 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
-                `;
-                area.appendChild(slip);
-            });
-            document.getElementById('inspectionModal').classList.remove('hidden');
-        }
-
-        // 元データのままの検品書（英語・計算なし）
-        function renderRawInspection(area) {
-            const map = buildRawInspectionMap();
-            Object.keys(map).forEach(sn => {
-                const o = map[sn];
-                const slip = document.createElement('div');
-                slip.className = "inspection-slip bg-white border-2 border-slate-800 p-4 rounded-xl mx-auto mb-6 shadow-sm";
-                slip.style.width = "100mm";
-                slip.style.minHeight = "146mm";
-
-                const itemsHtml = o.items.map(it => `
-                    <tr class="border-b">
-                        <td class="py-2 px-1 text-sm font-semibold leading-snug break-all">${escapeHtml(it.text)}${it.sku ? `<br><span class="text-xs text-slate-600 font-normal">SKU: ${escapeHtml(it.sku)}</span>` : ''}</td>
-                        <td class="py-2 px-1 text-center font-bold text-indigo-600 text-2xl align-top">${it.qty ? escapeHtml(it.qty) : '<span class="text-sm text-rose-600">要確認</span>'}</td>
-                    </tr>
-                `).join('');
-
-                slip.innerHTML = `
-                    <div class="flex justify-between border-b-2 border-slate-800 pb-2 mb-3">
-                        <div><div class="text-xs text-slate-500 font-bold">注文番号</div><div class="text-sm font-mono font-bold break-all">${escapeHtml(sn)}</div></div>
-                        <div class="text-right"><div class="text-xs text-slate-500 font-bold">追跡番号</div><div class="text-sm font-mono font-bold break-all">${escapeHtml(o.tracking)}</div></div>
-                    </div>
-                    <table class="w-full text-left border-collapse mb-4">
-                        <thead>
-                            <tr class="bg-slate-100 text-sm text-slate-700 border-b">
-                                <th class="py-1.5 px-1">商品情報（パッキングリストのまま）</th>
-                                <th class="py-1.5 px-1 text-center w-16">数量</th>
-                            </tr>
-                        </thead>
-                        <tbody>${itemsHtml}</tbody>
-                    </table>
-                    ${packQrHtml(sn)}
-                    <div class="text-center pt-4 border-t border-dashed text-sm text-slate-500 mt-auto">検品確認印: [ &nbsp; &nbsp; &nbsp; ]</div>
-                `;
-                area.appendChild(slip);
-            });
+            const orders = buildInspectionOrders();
+            Object.keys(orders).forEach(sn => area.appendChild(buildInspectionSlip(sn, orders[sn])));
             document.getElementById('inspectionModal').classList.remove('hidden');
         }
 

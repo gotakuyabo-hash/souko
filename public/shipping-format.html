@@ -491,6 +491,7 @@ details.help p{margin:6px 0 0;padding:10px 12px;background:#f4f6f7;border-radius
         <div class="set-form">
           <input type="text" id="setSku" placeholder="セットのSKUコード（受注CSVのSKU）">
           <input type="text" id="setName" placeholder="セット名（例：お試し3点セット）">
+          <span id="setMatWrap" style="min-width:160px" title="梱包に使う資材（梱包くん・検品シートに出ます）"></span>
         </div>
         <div id="setCompArea"></div>
         <div class="set-add">
@@ -2486,8 +2487,16 @@ window.addSetComponentFromZaico = async (search = '') => {
   if (search) { document.getElementById('zpSearch').value = search; renderZaicoPicker(); }
 };
 
+// セット品の指定資材（選んでいる値は setMaterial に持つ。検索などで一覧を描き直しても消えないように）
+let setMaterial = '';
+function renderSetMat() {
+  const w = document.getElementById('setMatWrap'); if (!w) return;
+  w.innerHTML = materialSelectHtml('setMat', setMaterial).replace('<select ', '<select onchange="setMaterialChanged(this.value)" ');
+}
+window.setMaterialChanged = v => { setMaterial = v; };
 window.clearSetForm = () => {
   setEditingSku = '';
+  setMaterial = ''; renderSetMat();
   document.getElementById('setSku').value = '';
   document.getElementById('setName').value = '';
   setComps.splice(0, setComps.length);
@@ -2511,7 +2520,7 @@ window.saveSetMaster = async () => {
   const data = {
     skuCode: sku, productName: name || sku, isSet: true,
     components: setComps.map(c => ({ barcode: c.barcode, productName: c.productName, qty: Number(c.qty) || 1, shelfNumber: c.shelfNumber, zaicoItemId: c.zaicoItemId ?? null })),
-    barcode: '', shelfNumber: '', multiplier: 1, updatedAt: new Date()
+    barcode: '', shelfNumber: '', multiplier: 1, material: setMaterial, updatedAt: new Date()
   };
   try {
     masterMapCache = null; await setDoc(doc(db, 'product_masters', sku), data);
@@ -2535,6 +2544,7 @@ window.editSetMaster = (sku) => {
   setEditingSku = sku;
   document.getElementById('setSku').value = sku;
   document.getElementById('setName').value = m.productName || '';
+  setMaterial = m.material || ''; renderSetMat();
   setComps.splice(0, setComps.length, ...(m.components || []).map(c => ({ ...c, qty: Number(c.qty) || 1, shelfNumber: c.shelfNumber || '' })));
   renderSetComps();
   document.getElementById('setSection').scrollIntoView({ behavior: 'smooth' });
@@ -2555,13 +2565,13 @@ window.renderSetList = () => {
   if (!area) return;
   renderSetComps();
   const q = normKey(document.getElementById('setSearch').value);
-  const sets = masterItemsCache.filter(it => it.isSet).filter(m => !q || normKey(`${m.skuCode || m.id} ${m.productName} ${(m.components || []).map(c => c.productName + ' ' + c.barcode).join(' ')}`).includes(q))
+  const sets = masterItemsCache.filter(it => it.isSet).filter(m => !q || normKey(`${m.skuCode || m.id} ${m.productName} ${m.material || ''} ${(m.components || []).map(c => c.productName + ' ' + c.barcode).join(' ')}`).includes(q))
     .sort((a, b) => String(a.skuCode || a.id).localeCompare(String(b.skuCode || b.id)));
   if (!sets.length) { area.innerHTML = `<p class="empty">${q ? '見つかりません。' : 'まだセット品はありません。'}</p>`; return; }
   area.innerHTML = `<div class="set-list">${sets.map(m => {
     const sku = m.skuCode || m.id;
     return `<div class="set-card">
-      <div class="set-head"><span class="badge badge-set">セット</span><b>${escapeHtml(m.productName)}</b><code>${escapeHtml(sku)}</code><span class="spacer" style="flex:1"></span>
+      <div class="set-head"><span class="badge badge-set">セット</span><b>${escapeHtml(m.productName)}</b><code>${escapeHtml(sku)}</code>${m.material ? `<span class="badge" style="background:#fff3c4;color:#7a4d00;border:1px solid #d68910">📦 ${escapeHtml(m.material)}</span>` : ''}<span class="spacer" style="flex:1"></span>
         <button class="btn btn-ghost btn-sm" onclick="editSetMaster('${escapeHtml(sku)}')">編集</button>
         <button class="btn btn-ghost btn-sm" onclick="deleteSetMaster('${escapeHtml(sku)}')">削除</button></div>
       <ul>${(m.components || []).map(c => `<li>${escapeHtml(c.productName)} ×${escapeHtml(c.qty)}　<span class="zaico-reg-ok">${escapeHtml(c.barcode)}・棚 ${escapeHtml(c.shelfNumber) || 'なし'}</span></li>`).join('')}</ul>
@@ -3827,7 +3837,17 @@ function buildPackItems(rows, masterMap, packHints = null) {
    バーコードで照合 → コード*数量
    おまけ等（バーコードなし） → ?コード:商品名*数量
    マスタ未登録 → !コード:商品名*数量   （商品名はQRが細かくなりすぎないよう12文字まで） */
-function packQrDataUrl(orderNo, items) {
+/* この注文の指定資材（商品マスタの「資材」）。複数あるときは「+」でつなぐ。セット品は親のSKUの資材を使う */
+function packMaterialsOf(rows, masterMap) {
+  const set = new Set();
+  rows.forEach(r => {
+    const sku = r[COL.SKU] !== undefined ? String(r[COL.SKU]).trim() : '';
+    const m = sku ? masterMap.get(sku) : null;
+    if (m && m.material) set.add(String(m.material).trim());
+  });
+  return [...set].filter(Boolean);
+}
+function packQrDataUrl(orderNo, items, mats) {
   if (typeof qrcode !== 'function') return '';
   const enc = encodeURIComponent;
   const list = items.map(x => {
@@ -3835,7 +3855,7 @@ function packQrDataUrl(orderNo, items) {
     const nm = x.kind ? ':' + enc(String(x.name || '').replace(/\s+/g, ' ').trim().slice(0, 12)) : '';
     return pre + enc(String(x.code).slice(0, 40)) + nm + '*' + x.qty;
   }).join(',');
-  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}`;
+  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}` + (mats && mats.length ? '&m=' + enc(mats.join('+')) : '');
   try {
     const qr = qrcode(0, 'M');   // 0 = 中身の長さに合わせて自動
     qr.addData(url, 'Byte');
@@ -3909,7 +3929,7 @@ window.openPrintPreview = async () => {
   const shopSeen = new Map();
 
   // QRの中身を先に作り、バーコードで照合できない（マスタ未登録の）商品があれば印刷前に知らせる
-  groups.forEach(g => { g.packItems = buildPackItems(g.rows, masterMap, packHints); });
+  groups.forEach(g => { g.packItems = buildPackItems(g.rows, masterMap, packHints); g.mats = packMaterialsOf(g.rows, masterMap); });
   // 梱包くんの「残り○件」用に、今日印刷した注文を packProgress/{日付} に足す（書き込み1回）
   try {
     const pk = v => String(v || '').normalize('NFKC').replace(/[\s　\-‐－−ー―]/g, '').toUpperCase();
@@ -3970,7 +3990,7 @@ window.openPrintPreview = async () => {
         </tr>`;
     });
 
-    const qrSrc = packQrDataUrl(group.orderNo, group.packItems);
+    const qrSrc = packQrDataUrl(group.orderNo, group.packItems, group.mats);
     const qrCell = qrSrc
       ? `<td style="width:21mm;padding-left:4px;text-align:center;vertical-align:top;"><img src="${qrSrc}" style="width:19mm;height:19mm;image-rendering:pixelated;display:block;margin:0 auto;"><div style="font-size:6pt;line-height:1.1;margin-top:1px;">スマホで読んで<br>梱包チェック</div></td>`
       : '';
@@ -3982,6 +4002,7 @@ window.openPrintPreview = async () => {
       </div>
       <table style="width:100%;margin-bottom:6px;"><tr><td style="font-size:11.5pt;font-weight:bold;border-bottom:2px solid #333;padding-bottom:2px;">${escapeHtml(group.name) || '（宛名なし）'} 様</td><td style="text-align:right;font-weight:bold;font-size:10.5pt;color:#c0392b;">${escapeHtml(group.shop) || '（ショップなし）'}<br><span style="font-size:8.5pt;color:#333;font-weight:normal;">このショップの ${shopCountLabel}</span></td>${qrCell}</tr></table>
       <table style="width:100%;border-collapse:collapse;margin-bottom:6px;background:#f8f9fa;border:1px solid #ccc;"><tr><td style="padding:3px 5px;font-size:9pt;"><b>受注番号:</b> ${escapeHtml(group.orderNo)}</td><td style="padding:3px 5px;font-size:9pt;text-align:right;"><b>発行日:</b> ${todayStr}</td></tr></table>
+      ${group.mats.length ? `<div style="margin-bottom:6px;padding:3px 6px;border:2px solid #000;border-radius:4px;font-size:11pt;font-weight:900;">📦 資材：${group.mats.map(escapeHtml).join(' ＋ ')}</div>` : ''}
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="background:#2c3e50;color:#fff;font-size:9pt;"><th style="width:12%;padding:4px;text-align:center;">確認</th><th style="width:73%;padding:4px;text-align:left;">商品名 / コード</th><th style="width:15%;padding:4px;text-align:center;">数量</th></tr></thead>
         <tbody>${itemRowsHtml}</tbody>
@@ -3994,18 +4015,36 @@ window.openPrintPreview = async () => {
   printWin.document.close();
 };
 
+/* ---------- 資材マスタ（settings/pack_materials：資材マスタの画面 materials.html で登録） ----------
+   商品マスタの「資材」欄の選択肢に使う。商品マスタを開いたときに1回だけ読む */
+let packMaterialsCache = null;
+async function loadPackMaterials(force) {
+  if (packMaterialsCache && !force) return packMaterialsCache;
+  try {
+    const d = await getDoc(doc(db, 'settings', 'pack_materials'));
+    packMaterialsCache = Object.keys((d.exists() && d.data().items) || {});
+  } catch (e) { console.warn('資材マスタを読めませんでした', e); packMaterialsCache = packMaterialsCache || []; }
+  return packMaterialsCache;
+}
+function materialSelectHtml(id, cur) {
+  const list = [...(packMaterialsCache || [])];
+  if (cur && !list.includes(cur)) list.push(cur);   // 資材マスタから消した資材でも、今の値は残して見せる
+  return `<select id="${id}" style="width:100%"><option value="">（指定なし）</option>${list.map(n => `<option value="${escapeHtml(n)}"${n === cur ? ' selected' : ''}>${escapeHtml(n)}${(packMaterialsCache || []).includes(n) ? '' : '（資材マスタにない）'}</option>`).join('')}</select>`;
+}
+
 /* ---------- 商品マスタ ---------- */
 window.loadMasterItems = async () => {
   const area = document.getElementById('masterResultArea');
   if (area) area.innerHTML = '<p class="empty">マスタデータを取得しています…</p>';
   try {
-    const snap = await getDocs(collection(db, "product_masters")); masterMapCache = new Map(snap.docs.map(d => [d.id, d.data()]));
+    const [snap] = await Promise.all([getDocs(collection(db, "product_masters")), loadPackMaterials(true)]); masterMapCache = new Map(snap.docs.map(d => [d.id, d.data()]));
     masterItemsCache = [];
     snap.forEach(d => masterItemsCache.push({ id: d.id, ...d.data() }));
     document.getElementById('masterSearch').value = '';
     document.getElementById('shelfFilter').value = '';
     renderMasterTable(masterItemsCache);
     renderSetList();
+    renderSetMat();
   } catch (err) {
     if (area) area.innerHTML = `<div class="notice warn">マスタを取得できませんでした：${escapeHtml(err.message)}</div>`;
   }
@@ -4029,16 +4068,17 @@ function renderMasterTable(items) {
     name: it.productName || it.product_name || '',
     barcode: it.barcode || '',
     shelf: it.shelfNumber || it.shelf_number || '',
-    mult: it.multiplier || 1
+    mult: it.multiplier || 1,
+    material: it.material || ''
   }));
   const counts = barcodeCounts();
 
   let html = `<p class="empty" style="margin:0 0 8px">${masterRendered.length} 件を表示中</p>
     <div class="table-wrap tall"><table><thead><tr>
-      <th>商品名</th><th>SKUコード</th><th>バーコード</th><th>倍率</th><th>棚番</th><th></th>
+      <th>商品名</th><th>SKUコード</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>資材</th><th></th>
     </tr></thead><tbody>`;
   if (!masterRendered.length) {
-    html += `<tr><td colspan="6" class="empty" style="text-align:center">該当するマスタはありません。</td></tr>`;
+    html += `<tr><td colspan="7" class="empty" style="text-align:center">該当するマスタはありません。</td></tr>`;
   } else {
     masterRendered.forEach((m, i) => {
       const shared = m.barcode && (counts.get(String(m.barcode).trim()) || 0) > 1;
@@ -4049,6 +4089,7 @@ function renderMasterTable(items) {
           ${shared ? `<div class="badges"><span class="badge badge-merge">同じバーコード ${counts.get(String(m.barcode).trim())}SKU</span></div>` : ''}</td>
         <td style="width:80px"><input type="number" min="1" id="master_mult_${i}" value="${m.mult}"></td>
         <td style="width:120px"><input type="text" id="master_shelf_${i}" value="${escapeHtml(m.shelf)}" placeholder="棚番"></td>
+        <td style="width:140px">${materialSelectHtml('master_mat_' + i, m.material)}</td>
         <td style="white-space:nowrap">
           <button class="btn btn-ghost btn-sm" onclick="updateMaster(${i})">保存</button>
           <button class="btn btn-danger btn-sm" onclick="deleteMaster(${i})">削除</button>
@@ -4068,7 +4109,8 @@ window.filterMasterTable = () => {
     const sku = String(item.skuCode || item.id || '').toLowerCase();
     const bc = String(item.barcode || '').toLowerCase();
     const sh = String(item.shelfNumber || item.shelf_number || '').toLowerCase();
-    const mKw = name.includes(kw) || sku.includes(kw) || bc.includes(kw) || sh.includes(kw);
+    const mat = String(item.material || '').toLowerCase();
+    const mKw = name.includes(kw) || sku.includes(kw) || bc.includes(kw) || sh.includes(kw) || mat.includes(kw);
     const mSh = (skw === '') ? true : (skw === '空欄' || skw === '未設定') ? sh === '' : sh.includes(skw);
     return mKw && mSh;
   });
@@ -4098,7 +4140,8 @@ function readMasterRow(i) {
     productName: document.getElementById(`master_name_${i}`).value.trim(),
     barcode: document.getElementById(`master_bc_${i}`).value.trim(),
     multiplier: Number(document.getElementById(`master_mult_${i}`).value) || 1,
-    shelfNumber: document.getElementById(`master_shelf_${i}`).value.trim()
+    shelfNumber: document.getElementById(`master_shelf_${i}`).value.trim(),
+    material: document.getElementById(`master_mat_${i}`).value
   };
 }
 

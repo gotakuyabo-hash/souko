@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>資材マスタ</title>
+<style>
+:root{ --ink:#1c2733; --muted:#5d6b77; --line:#d3d9d7; --ok:#1e8e4f; --ng:#c0392b; --accent:#0f5f8a; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:"BIZ UDPGothic","Hiragino Sans",sans-serif; color:var(--ink); background:#eef1f0; }
+header{ background:#fff; border-bottom:1px solid var(--line); padding:12px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+header h1{ font-size:18px; margin:0; flex:1; }
+main{ padding:12px; max-width:900px; margin:0 auto; }
+.btn{ font-size:15px; font-weight:700; padding:10px 14px; border-radius:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; }
+.btn.ghost{ background:#fff; color:var(--accent); border:2px solid var(--accent); }
+.btn.del{ background:#fff; color:var(--ng); border:1px solid var(--ng); padding:6px 10px; font-size:13px; }
+.btn:disabled{ opacity:.5; }
+.grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+.card{ background:#fff; border:2px solid var(--line); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:6px; }
+.card.dirty{ border-color:#d68910; }
+.card img, .card .noimg{ width:100%; aspect-ratio:1/1; object-fit:contain; background:#f5f6f6; border-radius:8px; }
+.card .noimg{ display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; }
+.card label{ font-size:11px; color:var(--muted); }
+.card input{ width:100%; font-size:14px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+.card input.name{ font-size:17px; font-weight:700; }
+.panel{ background:#fff; border-radius:12px; padding:12px; margin-bottom:12px; }
+textarea{ width:100%; min-height:140px; font-family:monospace; font-size:12px; padding:8px; border:1px solid var(--line); border-radius:8px; }
+.msg{ font-size:14px; margin:8px 0; min-height:20px; }
+.msg.ng{ color:var(--ng); } .msg.ok{ color:var(--ok); }
+.note{ font-size:12px; color:var(--muted); }
+#gate{ position:fixed; inset:0; background:rgba(20,30,40,.6); display:none; align-items:center; justify-content:center; z-index:99; }
+#gate .box{ background:#fff; border-radius:14px; padding:24px; max-width:340px; width:calc(100% - 32px); text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 資材マスタ</h1>
+  <button class="btn ghost" id="addBtn">＋ 資材を追加</button>
+  <button class="btn" id="saveBtn" disabled>保存</button>
+</header>
+<main>
+  <div class="msg" id="msg">読み込み中…</div>
+  <div class="note" style="margin-bottom:10px">ここで登録した資材名と写真は、梱包くんで「資材指定」として表示されます（検品書のQRの <code>m=資材名</code> と同じ名前にしてください）。写真は商品ページの画像のURLを貼ります。</div>
+  <div class="grid" id="grid"></div>
+  <details class="panel" style="margin-top:16px">
+    <summary style="cursor:pointer;font-weight:700">まとめて取り込む（JSONを貼る）</summary>
+    <p class="note">{"items":{"資材名":{"img":"写真のURL","num":"型番"}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
+    <textarea id="json" placeholder='{"items":{ "k80": { "img": "https://…", "num": "K-80" } }}'></textarea>
+    <div style="margin-top:8px;display:flex;gap:8px"><button class="btn ghost" id="importBtn">取り込む</button><button class="btn ghost" id="exportBtn">今の一覧をJSONで出す</button></div>
+  </details>
+</main>
+<div id="gate"><div class="box">
+  <div style="font-weight:800;font-size:18px;margin-bottom:8px">資材マスタ</div>
+  <p class="note" style="margin:0 0 14px">社内のGoogleアカウントでログインしてください。</p>
+  <button class="btn" id="loginBtn" style="width:100%">Googleでログイン</button>
+  <p id="gateErr" class="msg ng"></p>
+</div></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
+  authDomain: "souko-2de57.firebaseapp.com",
+  projectId: "souko-2de57",
+  storageBucket: "souko-2de57.firebasestorage.app"
+});
+const db = getFirestore(app), auth = getAuth(app);
+const REF = doc(db, 'settings', 'pack_materials');
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+// rows：画面で編集中の一覧（[{name, img, num, shop}]）。保存するときに items（資材名 → 中身）に直して1回で書く
+let rows = [], dirty = false, user = null;
+const setMsg = (t, cls) => { $('msg').textContent = t; $('msg').className = 'msg ' + (cls || ''); };
+const markDirty = () => { dirty = true; $('saveBtn').disabled = false; };
+
+onAuthStateChanged(auth, async u => {
+  user = u; $('gate').style.display = u ? 'none' : 'flex';
+  if (u) await load();
+});
+$('loginBtn').onclick = () => {
+  const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt:'select_account' });
+  signInWithPopup(auth, p).catch(e => { if (!/popup-closed|cancelled-popup/.test(e.code || '')) $('gateErr').textContent = 'ログインできませんでした：' + e.message; });
+};
+
+async function load(){
+  try {
+    const d = await getDoc(REF);
+    const items = (d.exists() && d.data().items) || {};
+    rows = Object.entries(items).map(([name, v]) => ({ name, img: v.img || '', num: v.num || '', shop: v.shop || '' }));
+    dirty = false; $('saveBtn').disabled = true;
+    setMsg(rows.length ? '登録済み ' + rows.length + '件' : 'まだ登録がありません。「＋ 資材を追加」か、下の「まとめて取り込む」から登録してください');
+    paint();
+  } catch (e) { setMsg('読み込めませんでした：' + e.message, 'ng'); }
+}
+
+function paint(){
+  $('grid').innerHTML = rows.map((r, i) => '<div class="card" data-i="' + i + '">'
+    + (r.img ? '<img src="' + esc(r.img) + '" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML=\'<div class=&quot;noimg&quot;>写真を読めません</div>\'">' : '<div class="noimg">写真なし</div>')
+    + '<label>資材名（QRの m= と同じ）</label><input class="name" data-f="name" value="' + esc(r.name) + '">'
+    + '<label>写真のURL</label><input data-f="img" value="' + esc(r.img) + '" placeholder="https://…">'
+    + '<label>型番</label><input data-f="num" value="' + esc(r.num) + '">'
+    + '<label>購入先</label><input data-f="shop" value="' + esc(r.shop) + '" placeholder="空欄＝ダンボールワン">'
+    + '<button class="btn del" data-del="' + i + '">削除</button></div>').join('');
+}
+$('grid').addEventListener('input', e => {
+  const c = e.target.closest('.card'), f = e.target.dataset.f; if (!c || !f) return;
+  rows[Number(c.dataset.i)][f] = e.target.value.trim(); c.classList.add('dirty'); markDirty();
+});
+// 写真のURLを変えたら、入力欄から出たときに写真を出し直す
+$('grid').addEventListener('change', e => { if (e.target.dataset.f === 'img') paint(); });
+$('grid').addEventListener('click', e => {
+  const b = e.target.closest('[data-del]'); if (!b) return;
+  const r = rows[Number(b.dataset.del)];
+  if (!confirm('「' + (r.name || '（名前なし）') + '」を削除しますか？（「保存」を押すまでは反映されません）')) return;
+  rows.splice(Number(b.dataset.del), 1); markDirty(); paint();
+});
+$('addBtn').onclick = () => { rows.unshift({ name:'', img:'', num:'', shop:'' }); markDirty(); paint(); document.querySelector('.card input.name').focus(); };
+
+$('saveBtn').onclick = async () => {
+  const names = rows.map(r => r.name);
+  if (names.some(n => !n)) return setMsg('資材名が空の資材があります', 'ng');
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  if (dup.length) return setMsg('資材名が重なっています：' + [...new Set(dup)].join('、'), 'ng');
+  if (names.some(n => /[+&#=]/.test(n))) return setMsg('資材名に + & # = は使えません（QRで区切りに使うため）', 'ng');
+  const items = {};
+  rows.forEach(r => { items[r.name] = { img: r.img, num: r.num }; if (r.shop) items[r.name].shop = r.shop; });
+  $('saveBtn').disabled = true;
+  try {
+    // merge なしで丸ごと書く（削除した資材も消えるように）
+    await setDoc(REF, { items, updatedAt: new Date().toISOString(), updatedBy: (user && user.email) || '' });
+    dirty = false; setMsg('保存しました（' + rows.length + '件）。梱包くんには最大12時間で反映されます', 'ok');
+    document.querySelectorAll('.card.dirty').forEach(c => c.classList.remove('dirty'));
+  } catch (e) { $('saveBtn').disabled = false; setMsg('保存できませんでした：' + e.message, 'ng'); }
+};
+
+$('importBtn').onclick = () => {
+  let j; try { j = JSON.parse($('json').value); } catch (e) { return setMsg('JSONの形が正しくありません：' + e.message, 'ng'); }
+  const items = j.items || j; let n = 0;
+  Object.entries(items).forEach(([name, v]) => {
+    if (!name || typeof v !== 'object') return;
+    const r = { name, img: String(v.img || ''), num: String(v.num || ''), shop: String(v.shop || '') };
+    const i = rows.findIndex(x => x.name === name);
+    if (i >= 0) rows[i] = r; else rows.push(r);
+    n++;
+  });
+  if (!n) return setMsg('取り込める資材がありませんでした', 'ng');
+  markDirty(); paint(); setMsg(n + '件を取り込みました。内容を確かめて「保存」を押してください', 'ok');
+};
+$('exportBtn').onclick = () => {
+  const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, num: r.num }; if (r.shop) items[r.name].shop = r.shop; } });
+  $('json').value = JSON.stringify({ items }, null, 2);
+};
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+</script>
+</body>
+</html>

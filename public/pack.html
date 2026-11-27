@@ -97,6 +97,7 @@ main{ padding:12px 12px 140px; }
 </header>
 <main>
   <div class="allok" id="allok">✓ 梱包OK<div id="allokSub" style="font-size:14px;font-weight:400;margin-top:6px;">次の検品シートのQRを読むと、次の注文に進みます</div></div>
+  <div id="matTag" style="display:none;margin:6px 0;padding:10px 12px;border-radius:10px;background:#fff3c4;border:3px solid #d68910;color:#5a3a00;font-weight:800;font-size:22px;text-align:center"></div>
   <div id="labelTag" style="display:none;margin:6px 0;padding:8px 10px;border-radius:8px;font-weight:700;font-size:14px"></div>
   <div id="holdBox" style="display:none;margin:6px 0"></div>
   <div id="list"></div>
@@ -142,7 +143,7 @@ const norm = s => toHalf(s).trim().toUpperCase();
    ?コード:商品名*数量 ＝ マスタにあるがバーコードなし（おまけ等）、!コード:商品名*数量 ＝ マスタ未登録。どちらも目視で確認 ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', items: [], us: '', nos: [], trk: '' };
+  const out = { order: '', items: [], us: '', nos: [], trk: '', mat: '' };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
@@ -151,6 +152,7 @@ function parseHash() {
     if (k === 'u') out.us = safeDecode(v);
     if (k === 'n') out.nos = [...new Set(v.split(',').map(Number).filter(Boolean))];
     if (k === 't') out.trk = safeDecode(v);
+    if (k === 'm') out.mat = safeDecode(v).trim().slice(0, 60);   // 指定資材（まとまるくんの商品マスタで登録したもの。複数は「+」区切り）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
@@ -734,6 +736,21 @@ function usCheck(raw){
   flash(true, 'No.' + r.no + '\n数量 ' + (q || 1) + '個' + (q >= 2 ? '（⚠ ' + q + '個入れる）' : ''), 'お届け先：' + (r.name || '') + (r.note ? '\n📝 備考：' + String(r.note).slice(0, 80) : '') + '\n送り状を貼って箱に入れたら、もう一度スキャン（または「箱に入れた」）', (q >= 2 || r.note) ? 2500 : 1500);
 }
 
+/* ---------- 資材の写真（settings/pack_materials の items.{資材名}.img）----------
+   まとまるくんで登録する資材マスタ。QRに資材名（m=）がある注文を開いたときだけ読み、端末に12時間保存して使い回す */
+const MAT_KEY = 'pack_materials_v1', MAT_AGE = 12 * 60 * 60 * 1000;
+let MAT = (() => { try { return JSON.parse(localStorage.getItem(MAT_KEY) || 'null'); } catch (e) { return null; } })();
+async function loadMaterials(names) {
+  const fresh = MAT && Date.now() - MAT.at < MAT_AGE && names.every(n => MAT.items && MAT.items[n]);
+  if (fresh) return;
+  try {
+    const d = await getDoc(doc(db, 'settings', 'pack_materials'));
+    MAT = { at: Date.now(), items: (d.exists() && d.data().items) || {} };
+    try { localStorage.setItem(MAT_KEY, JSON.stringify(MAT)); } catch (e) {}
+    if (!state.us && state.items.length) render();
+  } catch (e) { console.warn('pack_materials', e); }
+}
+
 /* ---------- 画面 ---------- */
 let state = parseHash();
 let zmap = {};
@@ -748,6 +765,15 @@ function render() {
   if (allOk) markPacked();
   renderDayProg();
   $('allok').classList.toggle('show', !!allOk);
+  // 指定資材（検品書のQRに入っているときだけ表示）
+  const mt = $('matTag');
+  mt.style.display = state.mat && state.items.length ? '' : 'none';
+  const mats = state.mat ? state.mat.split('+').map(s => s.trim()).filter(Boolean) : [];
+  const mimg = (MAT && MAT.items) || {};
+  mt.innerHTML = mats.length ? '<div>📦 資材指定</div><div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px">'
+    + mats.map(m => { const u = mimg[m] && mimg[m].img; return '<div style="background:#fff;border-radius:8px;padding:6px;min-width:110px">'
+      + (u ? '<img src="' + esc(u) + '" alt="" style="width:120px;height:120px;object-fit:contain;display:block;margin:0 auto 4px" referrerpolicy="no-referrer" onerror="this.remove()">' : '')
+      + '<div>' + esc(m) + '</div></div>'; }).join('') + '</div>' : '';
   // 送り状の照合（共有の発行済みデータ shipments で、この受注番号の送り状か確かめる）
   const lt = $('labelTag');
   lt.style.display = state.items.length ? '' : 'none';
@@ -1140,6 +1166,7 @@ function openOrder(hash) {
 window.addEventListener('hashchange', () => { state = parseHash(); start(); });
 
 async function start() {
+  $('matTag').style.display = 'none';
   if (state.us) { $('resetBtn').style.display = 'none'; return usStart(); }
   US.sel = null;
   if (!state.items.length) {
@@ -1158,6 +1185,7 @@ async function start() {
   window.scrollTo(0, 0);
   render();
   checkOrderCanceled();
+  if (state.mat) authReady.then(() => loadMaterials(state.mat.split('+').map(s => s.trim()).filter(Boolean)));
   authReady.then(() => {
     if (authUser || state.us) return;
     const n = $('loginNote') || document.createElement('div');
