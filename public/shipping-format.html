@@ -572,6 +572,7 @@ details.help p{margin:6px 0 0;padding:10px 12px;background:#f4f6f7;border-radius
           <input type="text" id="shelfFilter" placeholder="棚番で絞り込み（例: A-1）" oninput="filterMasterTable()" style="flex:1;min-width:160px">
           <button class="btn btn-ghost btn-sm" onclick="filterUnassignedShelf()">棚番未設定のみ</button>
           <button class="btn btn-ghost btn-sm" onclick="filterSharedBarcode()">同じバーコードのSKUのみ</button>
+          <button class="btn btn-ghost btn-sm" onclick="filterNoMaterial()">資材未設定のみ</button>
         </div>
         <div class="toolbar">
           <button class="btn btn-ghost btn-sm" onclick="loadMasterItems()">最新の状態に更新</button>
@@ -579,6 +580,13 @@ details.help p{margin:6px 0 0;padding:10px 12px;background:#f4f6f7;border-radius
           <span class="spacer"></span>
           <input type="text" id="batchShelfInput" placeholder="一括設定する棚番" style="width:150px">
           <button class="btn btn-ghost btn-sm" onclick="applyBatchShelf()">表示中の行に棚番を入れる</button>
+        </div>
+        <div class="toolbar">
+          <span style="font-weight:700">📦 資材を棚番ごとに入れる：</span>
+          <span style="font-size:13px;color:var(--muted)">上の「棚番で絞り込み」で棚を選ぶ →</span>
+          <span id="batchMatWrap" style="min-width:150px"></span>
+          <button class="btn btn-ghost btn-sm" onclick="applyBatchMaterial()">表示中の行に資材を入れる</button>
+          <span style="font-size:13px;color:var(--muted)">→「表示中のマスタをまとめて保存」</span>
         </div>
         <div id="masterResultArea"><p class="empty">マスタデータを読み込んでいます…</p></div>
       </div>
@@ -4046,6 +4054,7 @@ window.loadMasterItems = async () => {
     renderMasterTable(masterItemsCache);
     renderSetList();
     renderSetMat();
+    renderBatchMat();
   } catch (err) {
     if (area) area.innerHTML = `<div class="notice warn">マスタを取得できませんでした：${escapeHtml(err.message)}</div>`;
   }
@@ -4116,6 +4125,31 @@ window.filterMasterTable = () => {
     return mKw && mSh;
   });
   renderMasterTable(filtered);
+};
+window.filterNoMaterial = () => {
+  const kw = document.getElementById('masterSearch').value.toLowerCase();
+  const skw = document.getElementById('shelfFilter').value.toLowerCase().trim();
+  renderMasterTable(masterItemsCache.filter(it => {
+    if (it.material) return false;
+    const sh = String(it.shelfNumber || it.shelf_number || '').toLowerCase();
+    const txt = [it.productName || it.product_name, it.skuCode || it.id, it.barcode, sh].join(' ').toLowerCase();
+    return (!kw || txt.includes(kw)) && (!skw || sh.includes(skw));
+  }));
+};
+function renderBatchMat() {
+  const w = document.getElementById('batchMatWrap'); if (!w) return;
+  w.innerHTML = materialSelectHtml('batchMatInput', '');
+}
+window.applyBatchMaterial = () => {
+  const sel = document.getElementById('batchMatInput');
+  if (!sel) return;
+  const val = sel.value;
+  const inputs = document.querySelectorAll('#masterResultArea select[id^="master_mat_"]');
+  if (!inputs.length) { alert('対象の行がありません。'); return; }
+  if (!val && !confirm('「（指定なし）」を選んでいます。表示中の ' + inputs.length + ' 行の資材の指定を外しますか？')) return;
+  inputs.forEach(x => { x.value = val; });
+  const noShelf = [...inputs].filter(x => { const i = x.id.replace('master_mat_', ''); const sh = document.getElementById('master_shelf_' + i); return sh && !sh.value.trim(); }).length;
+  toast(`${inputs.length} 行に資材「${val || '指定なし'}」を入れました。「表示中のマスタをまとめて保存」で確定します` + (noShelf ? `（棚番が空の ${noShelf} 行は保存されません）` : ''));
 };
 window.filterUnassignedShelf = () => { document.getElementById('shelfFilter').value = '空欄'; filterMasterTable(); };
 window.filterSharedBarcode = () => {
