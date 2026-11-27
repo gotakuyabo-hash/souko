@@ -276,6 +276,11 @@
             <div style="margin-top:4px">対象月の月末時点で、保管日から1ヶ月以上たっている在庫の残り点数 × 80円（税抜）を、セラーごとに「保管料」として台帳に入れます。パレット契約のセラーは「枚数 × 単価」の月額で入り、「保管料なし」のセラーは入りません。何回押しても二重には入らず、最新の在庫で置き換わります（請求済みにした分は変えません）。</div>
             <button class="sub" onclick="importHokanFees(this)" style="margin-top:8px;width:100%">対象月の保管料を取り込む</button>
         </div>
+        <div class="note" style="margin-top:10px;border:1px solid #bae6fd;background:#f0f9ff;border-radius:8px;padding:8px 10px">
+            <div style="font-weight:800;color:#0369a1">梱包料（梱包くんの記録から）</div>
+            <div style="margin-top:4px">梱包くんで「梱包OK」になった注文のうち、角栓ピンセットが入っていた注文を対象月で数えて、牛島様に「1件 × 20円」で台帳に入れます（税は記載しません。20円をそのまま請求額にします）。何回押しても二重には入らず、最新の件数で置き換わります（請求済みにした分は変えません）。</div>
+            <button class="sub" onclick="importPackFees(this)" style="margin-top:8px;width:100%">対象月の梱包料を取り込む</button>
+        </div>
         <details class="note" id="fixMinusBox" style="margin-top:10px;display:none">
             <summary>⚠ プラスのままの「補填」があります（マイナスに直す）</summary>
             <div style="margin-top:6px">「補填」「補填・相殺」は請求から差し引く金額なので、マイナスで記録します。以前にプラスで記録した分を、まとめてマイナスに直します。対象は、読み込んだ月の「未請求」の記録だけです（請求済みの記録は変えません）。</div>
@@ -345,7 +350,7 @@
                 <div style="flex: 1;"><label for="eQty">数量</label><input type="number" id="eQty" inputmode="numeric" min="1" step="1"></div>
             </div>
             <label for="eTax">税</label>
-            <select id="eTax"><option value="税込">税込</option><option value="税抜">税抜</option></select>
+            <select id="eTax"><option value="税込">税込</option><option value="税抜">税抜</option><option value="なし">記載なし</option></select>
             <label for="eMemo">メモ</label>
             <textarea id="eMemo" rows="2"></textarea>
             <p id="eTotal" class="hint" style="font-weight: bold;"></p>
@@ -358,7 +363,7 @@
     </dialog>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, limit, serverTimestamp, updateDoc, writeBatch, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, limit, serverTimestamp, updateDoc, writeBatch, setDoc, documentId } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         // ===== Firebase設定（変更なし） =====
         const firebaseConfig = {
@@ -1049,7 +1054,7 @@
                 g.recs.forEach(r => {
                     const a = Number(r.amount) || 0;
                     const tax = r.taxMode || '税抜';
-                    let line = `・${a < 0 ? '差し引き' : '追加請求'}：${enYen(a)}（${tax}${tax === '税抜' ? '／税込 ' + enYen(toInc(a)) : ''}）`;
+                    let line = `・${a < 0 ? '差し引き' : '追加請求'}：${enYen(a)}${tax === 'なし' ? '' : `（${tax}${tax === '税抜' ? '／税込 ' + enYen(toInc(a)) : ''}）`}`;
                     if (Number(r.quantity) > 1) line += `［${enYen(r.unitPrice)}×${r.quantity}］`;
                     line += `　${r.type || ''}${r.memo ? '：' + String(r.memo).replace(/\s+/g, ' ') : ''}`;
                     if (r.trackingNo) line += `　送り状 ${r.trackingNo}`;
@@ -1105,7 +1110,7 @@
                         <span class="kind ${a < 0 ? 'minus' : 'plus'}">${a < 0 ? '差し引き' : '追加請求'}</span>
                         <span class="tag ${r.status === 'billed' ? 'bi' : 'un'}">${r.status === 'billed' ? '請求済み' : '未請求'}</span>
                         <span class="muted" style="flex:1">${esc(md(r.date))}</span>
-                        <b${minusCls(a)}>${yen(a)}</b><span class="muted">（${esc(tax)}${tax === '税抜' ? '／税込 ' + yen(toInc(a)) : ''}）</span>
+                        <b${minusCls(a)}>${yen(a)}</b>${tax === 'なし' ? '' : `<span class="muted">（${esc(tax)}${tax === '税抜' ? '／税込 ' + yen(toInc(a)) : ''}）</span>`}
                     </div>
                     <div style="margin-top:4px"><b>${esc(r.type)}</b>${r.memo ? '：' + esc(r.memo) : ''}${r.trackingNo ? `　📦 ${esc(r.trackingNo)}` : ''}</div>
                     ${big ? '<div class="flag">⚠ 金額が大きい項目です。請求書の備考にも記載を伝えます。</div>' : ''}
@@ -1270,8 +1275,76 @@
             }
         };
 
+        // ===== 梱包料の取り込み（梱包くんの packProgress/{日付} の done.{受注番号}.fees から） =====
+        //   id は梱包くん（pack.html）の PACK_FEES と合わせる。per：'order'＝1注文ごと／'item'＝1個ごと
+        //   管理番号がわかったら kanriNo に入れる（空なら shopName の名前で請求先になります）
+        const PACK_FEES = [
+            { id: 'kakusen', label: '角栓ピンセット', unit: 20, per: 'order', taxMode: 'なし', kanriNo: '', shopName: '牛島様' }
+        ];
+        window.importPackFees = async function (btn) {
+            const ym = document.getElementById('month').value;
+            const msg = document.getElementById('msg');
+            if (!ym) { msg.textContent = '対象月を選んでください'; return; }
+            btn.disabled = true; const label = btn.textContent; btn.textContent = '取り込み中…';
+            try {
+                // 対象月の日付の記録だけ読む（1日1件・最大31件）
+                const snap = await withLogin(() => getDocs(query(collection(db, 'packProgress'),
+                    where(documentId(), '>=', ym + '-01'), where(documentId(), '<=', ym + '-31'))));
+                // 受注番号ごとにまとめる（別の日に梱包し直しても1件）
+                const orders = {};
+                snap.docs.forEach(d => {
+                    const done = d.data().done || {};
+                    Object.entries(done).forEach(([k, v]) => {
+                        if (!v || !v.fees || orders[k]) return;
+                        orders[k] = { date: d.id, orderNo: v.orderNo || k, fees: v.fees };
+                    });
+                });
+                const exist = await withLogin(() => getDocs(query(collection(db, 'billing_records'), where('month', '==', ym))));
+                const old = {};
+                exist.docs.forEach(d => { if (d.data().source === 'packfee') old[d.id] = d.data(); });
+                const by_ = staffName();
+                const writes = [];
+                let skipped = 0;
+                const mm = +ym.slice(5, 7);
+                PACK_FEES.forEach(f => {
+                    const list = Object.values(orders).filter(o => Number(o.fees[f.id]) > 0).sort((a, b) => a.date.localeCompare(b.date));
+                    const id = 'packfee_' + ym + '_' + f.id;
+                    if (old[id] && old[id].status === 'billed') { skipped++; delete old[id]; return; }
+                    delete old[id];
+                    if (!list.length) return;
+                    const pcs = list.reduce((n, o) => n + Number(o.fees[f.id]), 0);
+                    const qty = f.per === 'item' ? pcs : list.length;
+                    writes.push(['set', id, {
+                        type: '梱包料', source: 'packfee', trackingNo: '',
+                        kanriNo: f.kanriNo || '', shopName: f.shopName || '',
+                        date: hkMonthEnd(ym), month: ym,
+                        unitPrice: f.unit, quantity: qty, amount: f.unit * qty, taxMode: f.taxMode,
+                        memo: `${mm}月分 ${f.label}の梱包 ${list.length}件（計${pcs}個）× ${f.unit}円／${f.per === 'item' ? '1個' : '1件'}`,
+                        sourceText: list.map(o => `${md(o.date)}　${o.orderNo}　${o.fees[f.id]}個`).join('\n'),
+                        status: 'unbilled', by: by_, createdAt: serverTimestamp()
+                    }]);
+                });
+                // 対象がなくなった未請求の梱包料は消す
+                Object.keys(old).forEach(id => { if (old[id].status !== 'billed') writes.push(['delete', id]); });
+                if (writes.length) {
+                    const b = writeBatch(db);
+                    writes.forEach(([op, id, data]) => op === 'set' ? b.set(doc(db, 'billing_records', id), data) : b.delete(doc(db, 'billing_records', id)));
+                    await withLogin(() => b.commit());
+                }
+                const sets = writes.filter(w => w[0] === 'set');
+                await loadMonth();
+                msg.textContent = sets.length
+                    ? sets.map(w => `${w[2].memo}（${yen(w[2].amount)}${w[2].taxMode === 'なし' ? '' : '・' + w[2].taxMode}）`).join('／') + ' を取り込みました。' + (skipped ? `請求済みの ${skipped} 件はそのままです。` : '')
+                    : `${ym} の梱包料の対象はありませんでした。` + (skipped ? `（請求済みの ${skipped} 件はそのままです）` : '');
+            } catch (e) {
+                msg.textContent = '梱包料を取り込めませんでした：' + (e.code === 'permission-denied' ? '梱包くんの記録（packProgress）を読む許可がありません。Firestoreのルールを確認してください' : e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = label;
+            }
+        };
+
         // 請求先（管理番号）を後から設定
-        window.setKanri = async function (id) {
+        window.setKanri =async function (id) {
             const r = records.find(x => x._id === id);
             if (!r) return;
             const input = (prompt('請求先の管理番号を入力してください。\n管理番号がない場合は、名前（ショップ名など）を入力してください。', r.kanriNo || r.shopName || '') || '').trim();
@@ -1378,7 +1451,7 @@
 
         // ===== 登録済みの記録を修正 =====
         const editDlg = $('editDialog');
-        const DEFAULT_TYPES = ['着払い立替', '補填', '補填・相殺', '保管料', 'イレギュラー発送'];
+        const DEFAULT_TYPES = ['着払い立替', '補填', '補填・相殺', '保管料', '梱包料', 'イレギュラー発送'];
         const isMinusType = t => MINUS_TYPES.indexOf(t) !== -1;
         let editCtx = null;
 
@@ -1405,7 +1478,7 @@
         function updateEditTotal() {
             const { amount } = editAmount();
             const tax = $('eTax').value;
-            $('eTotal').textContent = `金額：${yen(amount)}（${tax}${tax === '税抜' ? '／税込 ' + yen(toInc(amount)) : ''}）`
+            $('eTotal').textContent = `金額：${yen(amount)}${tax === 'なし' ? '' : `（${tax}${tax === '税抜' ? '／税込 ' + yen(toInc(amount)) : ''}）`}`
                 + (isMinusType($('eType').value.trim()) ? '　※補填は差し引き（マイナス）で記録します' : '');
         }
         ['eUnit', 'eQty', 'eType', 'eTax'].forEach(id => $(id).addEventListener('input', updateEditTotal));
@@ -1424,7 +1497,7 @@
             $('eTracking').value = r.trackingNo || '';
             $('eUnit').value = isMinusType(r.type) ? Math.abs(unit) : unit;
             $('eQty').value = qty;
-            $('eTax').value = (r.taxMode || '税抜') === '税込' ? '税込' : '税抜';
+            $('eTax').value = ['税込', 'なし'].includes(r.taxMode) ? r.taxMode : '税抜';
             $('eMemo').value = r.memo || '';
             $('eErr').textContent = '';
             const types = [...new Set(DEFAULT_TYPES.concat(records.map(x => x.type), currentData.map(x => x.type)).filter(Boolean))];
@@ -1432,6 +1505,7 @@
             const warns = [];
             if (r.status === 'billed') warns.push('⚠ 請求済みの記録です。直した内容は請求担当者にも伝えてください。');
             if (r.source === 'hokan') warns.push('⚠ 保管料は「対象月の保管料を取り込む」を押し直すと上書きされます（請求済みは除く）。');
+            if (r.source === 'packfee') warns.push('⚠ 梱包料は「対象月の梱包料を取り込む」を押し直すと上書きされます（請求済みは除く）。');
             $('eWarn').innerHTML = warns.map(w => `<div class="warn">${escapeHtml(w)}</div>`).join('');
             updateEditTotal();
             editDlg.showModal();
@@ -1509,7 +1583,7 @@
         // 表の形にする（スプレッドシート貼り付け・CSV共通）
         function tableRows() {
             const head = ['日付', '管理番号', 'ショップ名', '種類', '送り状番号', '単価', '数量', '金額', '税', '内容メモ', '状態', '記録者', 'ルーム名'];
-            const rows = shown().map(r => [r.date, r.kanriNo, r.shopName, r.type, r.trackingNo || '', r.unitPrice, r.quantity, r.amount, r.taxMode || '税抜', r.memo,
+            const rows = shown().map(r => [r.date, r.kanriNo, r.shopName, r.type, r.trackingNo || '', r.unitPrice, r.quantity, r.amount, r.taxMode === 'なし' ? '' : (r.taxMode || '税抜'), r.memo,
                 r.status === 'billed' ? '請求済み' : '未請求', r.by, r.roomName]);
             return [head, ...rows];
         }

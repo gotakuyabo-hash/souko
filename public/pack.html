@@ -1032,12 +1032,32 @@ function watchProgress(){
   onSnapshot(doc(db, 'packProgress', todayStr()), snap => { PROG = snap.exists() ? snap.data() : null; renderDayProg(); },
     e => { console.warn('packProgress', e); progWatching = false; });
 }
+/* ---------- 梱包で請求する商品（請求台帳の「梱包料を取り込む」で月ごとに集計） ----------
+   梱包OKになった注文に、商品名（zaicoの名前・QRの商品名）が words を含む商品か、codes のコードがあれば
+   packProgress/{日付} の done.{受注番号}.fees.{id} に個数を残す。金額・請求先は請求台帳（denpyo-post.html）の PACK_FEES で決める */
+const PACK_FEES = [
+  { id: 'kakusen', words: ['角栓ピンセット'], codes: [] }   // 牛島様：角栓ピンセット（コードで決めたいときは codes に zaicoのコードを入れる）
+];
+function packFeesOf(){
+  const out = {};
+  state.items.forEach(x => {
+    const title = String(x.unknown ? (x.name || '') : ((zmap[norm(x.code)] || {}).t || '')).normalize('NFKC');
+    PACK_FEES.forEach(f => {
+      const hit = f.codes.some(c => norm(c) === norm(x.code)) || f.words.some(w => title.includes(String(w).normalize('NFKC')));
+      if (hit) out[f.id] = (out[f.id] || 0) + (Number(x.qty) || 1);
+    });
+  });
+  return out;
+}
 function markPacked(){
   if (state.us || !state.order || state.canceled || holdOf() || !authUser) return;
   const k = cxKey(state.order);
   if (state.doneWritten === k || (PROG && PROG.done && PROG.done[k])) return;
   state.doneWritten = k;
-  setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: { at: new Date().toISOString(), by: holdWho() } } }, { merge: true })
+  const rec = { at: new Date().toISOString(), by: holdWho() };
+  const fees = packFeesOf();
+  if (Object.keys(fees).length) { rec.fees = fees; rec.orderNo = state.order; }
+  setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: rec } }, { merge: true })
     .then(() => countMaterials())
     .catch(e => { console.warn('packProgress', e); state.doneWritten = ''; });
 }
