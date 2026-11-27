@@ -617,6 +617,9 @@ details.log-ok-items > summary{cursor:pointer;font-size:12px;color:var(--muted);
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, query, orderBy, limit, arrayUnion, where, onSnapshot, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+// 品名・記事の欄から受注番号を取り出す：「No:受注番号」は短くても記号（#など）があってもそのまま（例：No:#1163）。それ以外は欄まるごとが番号のときだけ
+const segOrderNo = (t => { t = String(t).trim(); const m = t.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) return m[1].trim(); return /^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t) ? t : ''; });
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -4703,7 +4706,7 @@ function shipKeysK(r){   // コックピットのサーバー（shipKeys）と�
   const keys = new Set(), add = k => { k = String(k || ''); if (k.length >= 4 && k.length <= 60) keys.add(k); };
   add(shipNormK(r.tracking)); add(shipNormK(r.orderNo)); add(shipNormNameK(r.name));
   // 欄まるごとが受注番号のもの（Robot-inの送り状：ヤマトの記事・佐川の品名2「No:受注番号」）を先に入れる（30個までで切れないように）
-  (r.texts || []).forEach(t => { const s = String(t || '').trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNormK(s.replace(/^No[:：.]?\s*/i, ''))); });
+  (r.texts || []).forEach(t => { const s = String(t || '').trim(); const m = s.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) add(shipNormK(m[1])); else if (/^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(s)) add(shipNormK(s.replace(/^No[:：.]?\s*/i, ''))); });
   (r.texts || []).forEach(t => {
     const s = String(t || ''), m = s.match(/No\.?\s*([\d,，、\s]+)/i);
     if (m) m[1].split(/[,，、\s]+/).filter(Boolean).forEach(n => add(String(Number(n))));
@@ -4930,7 +4933,7 @@ async function rbMake(){
   //  Robot-inのデータから作った送り状（まとまるくん含む）：お客様管理番号は別の番号。ヤマトは記事（AG列）に受注番号、佐川は品名2に「No:受注番号」
   ships.forEach(x => {
     const ks = new Set([cleanOrderNoNormalized(x.orderNo)]);
-    String(x.items || '').split(' / ').forEach(t => { if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t.trim())) ks.add(cleanOrderNoNormalized(t.trim())); });
+    String(x.items || '').split(' / ').forEach(t => { const v = segOrderNo(t); if (v) ks.add(cleanOrderNoNormalized(v)); });
     ks.forEach(k => { if (!k) return; if (!byOrder.has(k)) byOrder.set(k, []); byOrder.get(k).push(x); });
   });
   const now = new Date(), today = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;

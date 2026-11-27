@@ -120,6 +120,9 @@ main{ padding:12px 12px 140px; }
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+// 品名・記事の欄から受注番号を取り出す：「No:受注番号」は短くても記号（#など）があってもそのまま（例：No:#1163）。それ以外は欄まるごとが番号のときだけ
+const segOrderNo = (t => { t = String(t).trim(); const m = t.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) return m[1].trim(); return /^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t) ? t : ''; });
+
 
 const app = initializeApp({
   apiKey: "AIzaSyAFeCMbCRN0Rj3dKnLu25Nw6f_M0RG_wg0",
@@ -139,7 +142,7 @@ const norm = s => toHalf(s).trim().toUpperCase();
    ?コード:商品名*数量 ＝ マスタにあるがバーコードなし（おまけ等）、!コード:商品名*数量 ＝ マスタ未登録。どちらも目視で確認 ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', items: [], us: '', nos: [], trk: '', lbl: '' };
+  const out = { order: '', items: [], us: '', nos: [], trk: '' };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
@@ -148,7 +151,6 @@ function parseHash() {
     if (k === 'u') out.us = safeDecode(v);
     if (k === 'n') out.nos = [...new Set(v.split(',').map(Number).filter(Boolean))];
     if (k === 't') out.trk = safeDecode(v);
-    if (k === 'l') out.lbl = safeDecode(v);   // 分割くんの検品書：この注文のShopeeの送り状（追跡番号）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
@@ -758,9 +760,7 @@ function render() {
   renderHold(allOk);
   if (holdOf()) $('allok').classList.remove('show');
   lt.style.background = state.label ? '#e4f3ea' : '#fff4d6'; lt.style.color = state.label ? '#1e7a46' : '#8a5a00';
-  lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）'
-    : state.lbl ? '送り状 未照合：貼るShopeeの送り状のバーコードを読んでください（追跡番号 ' + state.lbl + '）'
-    : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
+  lt.textContent = state.label ? '✓ 送り状照合済み（' + state.label + '）' : '送り状 未照合：貼る送り状のバーコードを読むと、この注文の送り状か確かめます';
   $('allokSub').textContent = state.label ? '次の検品シートのQRを読むと、次の注文に進みます' : '送り状のバーコードを読んで照合してください（そのあと次の検品シートへ）';
 
   $('list').innerHTML = state.items.map((x, i) => [x, i]).sort((a, b) => (a[0].unknown - b[0].unknown) || (a[1] - b[1])).map(([x, i]) => {
@@ -894,37 +894,11 @@ function check(code) {
 const ordKey = v => String(v || '').normalize('NFKC').replace(/^No[:：.]?\s*/i, '').replace(/[\s\-_‐－−ー―]/g, '').toUpperCase();
 function shipOrderKeys(d){
   const ks = new Set([ordKey(d.orderNo)]);
-  String(d.items || '').split(' / ').forEach(t => { t = t.trim(); if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t)) ks.add(ordKey(t)); });
+  String(d.items || '').split(' / ').forEach(t => { const v = segOrderNo(t); if (v) ks.add(ordKey(v)); });
   (d.keys || []).forEach(k => ks.add(String(k)));
   ks.delete(''); return ks;
 }
-// 分割くんの検品書（QRに l=追跡番号 が入っている注文）：Shopeeの送り状をその場で照合する（ログイン・読み取りなし）
-//   送り状の追跡番号（例：TW263519607574O）か、受注番号のバーコードが合えばOK
-const lblNorm = v => String(v || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
-function shopeeLabelCheck(raw){
-  const want = lblNorm(state.lbl); if (!want) return false;
-  const c = lblNorm(raw); if (!c) return false;
-  const sn = ordKey(state.order);
-  const ok = c === want || (c.length > want.length && c.includes(want)) || (sn.length >= 10 && c === sn);
-  if (ok) {
-    state.label = 'Shopee ' + state.lbl; beep(true);
-    const allOk = state.items.every(x => x.scanned === x.qty);
-    flash(true, '✓ 送り状OK', state.lbl + (allOk ? '\n梱包OK・次の検品シートへ' : '\n残りの商品を読んでください'), 1300);
-    render(); return true;
-  }
-  // 形が似ている（同じ頭の英字で長さが近い追跡番号・Shopeeの受注番号の形）→ 別の注文の送り状
-  const p = (want.match(/^[A-Z]+/) || [''])[0];
-  const likeTrk = p && c.startsWith(p) && /\d{8,}/.test(c) && Math.abs(c.length - want.length) <= 3;
-  const likeSn = /^\d{6}[0-9A-Z]{8}$/.test(c) && /^\d{6}[0-9A-Z]{8}$/.test(sn);
-  if (likeTrk || likeSn) {
-    beep(false);
-    flash(false, '✕ 別の注文の送り状です', '読んだ送り状：' + raw + '\nこの注文の送り状：' + state.lbl + '（受注番号 ' + state.order + '）\n貼る送り状を確かめてください（タップ・Escで閉じる）');
-    return true;
-  }
-  return false;
-}
 async function orderLabelCheck(raw){
-  if (shopeeLabelCheck(raw)) return true;
   let c = String(raw || '').normalize('NFKC').toUpperCase().replace(/[^0-9A-Z]/g, '');
   if (/^[A-D]\d+[A-D]$/.test(c)) c = c.slice(1, -1);
   if (!/^\d{10,14}$/.test(c)) return false;

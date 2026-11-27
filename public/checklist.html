@@ -227,7 +227,6 @@ button,input,textarea{font:inherit;color:inherit}
     <div class="row1">
       <a href="index.html" class="back">← ポータル</a>
       <h1 class="apptitle">倉庫管理者 日次報告</h1>
-      <button type="button" class="btn btn-ghost" id="acctBtn" hidden style="min-height:32px;padding:4px 10px;font-size:12px" title="別のアカウントでログインし直す"></button>
       <span class="staff-chip" id="staffChip" hidden>📨 スタッフ依頼 未対応 <span id="staffCount">0</span>件</span>
     </div>
 
@@ -260,7 +259,6 @@ button,input,textarea{font:inherit;color:inherit}
     <div class="statusbar">
       <button type="button" class="btn btn-undo" id="undoBtn" hidden>↩ 元に戻す（<span id="undoCount">0</span>）</button>
       <div class="status" id="statusText" data-state="idle" aria-live="polite">自動保存オン</div>
-      <button type="button" class="btn btn-primary" id="loginNowBtn" hidden>🔑 ログイン</button>
       <button type="button" class="btn" id="saveNowBtn">💾 今すぐ保存</button>
     </div>
   </div>
@@ -378,6 +376,9 @@ button,input,textarea{font:inherit;color:inherit}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 import { getFirestore, doc, setDoc, updateDoc, serverTimestamp, getDoc, getDocs, collection, onSnapshot, query, orderBy, where, limit, documentId, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+// 品名・記事の欄から受注番号を取り出す：「No:受注番号」は短くても記号（#など）があってもそのまま（例：No:#1163）。それ以外は欄まるごとが番号のときだけ
+const segOrderNo = (t => { t = String(t).trim(); const m = t.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) return m[1].trim(); return /^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t) ? t : ''; });
+
 
 /* =========================================================
    設定
@@ -553,9 +554,6 @@ $('confirmYes').onclick = () => { $('confirmModal').hidden = true; const cb = co
    ========================================================= */
 let activeTab = 'checklist';
 const status = { checklist: { state: 'idle', time: '', msg: '' }, shukka: { state: 'idle', time: '', msg: '' } };
-// ログイン状態（権限がないと分かったら「🔑 ログイン」ボタンを出す）
-const AUTH = { mod: null, needLogin: false };
-const NO_PERM_MSG = '権限がありません。「🔑 ログイン」を押して、社内のGoogleアカウントでログインし直してください';
 // ニッシントーア報告タブでは、出荷件数の保存状態を表示する
 const stTab = () => activeTab === 'checklist' ? 'checklist' : 'shukka';
 function setStatus(tab, state, msg = '') {
@@ -574,7 +572,6 @@ function renderStatus() {
     error: s.msg || '保存できませんでした。通信状況を確認して「今すぐ保存」を押してください'
   }[s.state];
   const el = $('statusText'); el.textContent = text; el.dataset.state = s.state;
-  $('loginNowBtn').hidden = !AUTH.needLogin;
   const saver = stTab() === 'checklist' ? CL.saver : SK.saver;
   $('undoBtn').hidden = saver.undo.length === 0;
   $('undoCount').textContent = saver.undo.length;
@@ -596,11 +593,7 @@ class Saver {
     setStatus(this.tab, 'saving');
     this.busy++;
     try { await this.write(JSON.parse(cur), base ? JSON.parse(base) : null); setStatus(this.tab, 'saved'); }
-    catch (e) {
-      console.error(e); this.savedJSON = null;
-      if (e && e.code === 'permission-denied') { AUTH.needLogin = true; setStatus(this.tab, 'error', '保存できませんでした（' + NO_PERM_MSG + '）'); }
-      else setStatus(this.tab, 'error');
-    }
+    catch (e) { console.error(e); this.savedJSON = null; setStatus(this.tab, 'error'); }
     finally { this.busy--; }
   }
   reset(json) { clearTimeout(this.timer); this.timer = null; this.savedJSON = json; this.undo = []; if (this.tab === stTab()) renderStatus(); }
@@ -738,8 +731,7 @@ function clLoad(date) {
     }
   }, err => {
     console.error(err);
-    if (err.code === 'permission-denied') AUTH.needLogin = true;
-    setStatus('checklist', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（' + NO_PERM_MSG + '）' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
+    setStatus('checklist', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（権限がありません）。ログイン設定を確認してください' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
   });
 }
 function clApply(st, remote) {
@@ -1091,8 +1083,7 @@ function skLoad(date) {
     skApply(st, true);
   }, err => {
     console.error(err);
-    if (err.code === 'permission-denied') AUTH.needLogin = true;
-    setStatus('shukka', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（' + NO_PERM_MSG + '）' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
+    setStatus('shukka', 'error', err.code === 'permission-denied' ? 'データを読み込めませんでした（権限がありません）。ログイン設定を確認してください' : 'データを読み込めませんでした。通信状況を確認して再読み込みしてください');
   });
 }
 function skApply(st, remote) {
@@ -1402,7 +1393,7 @@ async function teishaOut(orderNo) {
   const seller = SHIP.sellers.find(sv => String(sv.name || '').indexOf(TEISHA_SELLER_WORD) >= 0);
   if (!seller || !seller.sheetId) { toast('Lazadaくんに定者さんのシートが見つかりません（セラー管理の名前を確認してください）', 'error'); return; }
   const user = await signedInUser();
-  if (!user) { toast('出庫にはログインが必要です。ログインしてから、もう一度押してください', 'error'); reLogin(); return; }
+  if (!user) { toast('出庫にはログインが必要です。このブラウザでLazadaくんを開いてログインしてから、もう一度押してください', 'error'); return; }
 
   TEISHA.busy = orderNo; renderTeisha();
   try {
@@ -1580,7 +1571,7 @@ async function rbRun() {
     const byOrder = new Map();
     ships.forEach(x => {
       const ks = new Set([rbClean(x.orderNo)]);
-      String(x.items || '').split(' / ').forEach(t => { if (/^(No[:：.]?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t.trim())) ks.add(rbClean(t.trim())); });
+      String(x.items || '').split(' / ').forEach(t => { const v = segOrderNo(t); if (v) ks.add(rbClean(v)); });
       ks.forEach(k => { if (!k) return; if (!byOrder.has(k)) byOrder.set(k, []); byOrder.get(k).push(x); });
     });
     const now = new Date(), today = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
@@ -1917,72 +1908,25 @@ setInterval(() => { if (CL.state && !CL.edit && !isTyping('tab-checklist') && CL
 /* =========================================================
    ログイン（任意）
    ========================================================= */
-async function authMod() {
-  if (!AUTH.mod) AUTH.mod = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
-  return AUTH.mod;
-}
-// Googleでログイン（アカウントを選び直せる）。ポップアップが使えないときは画面ごと移動してログイン
-async function googleLogin() {
-  const m = await authMod();
-  const auth = m.getAuth(app);
-  const provider = new m.GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  try { return (await m.signInWithPopup(auth, provider)).user; }
-  catch (e) {
-    if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request', 'auth/web-storage-unsupported'].includes(e.code)) {
-      await m.signInWithRedirect(auth, provider); return null;
-    }
-    if (e.code === 'auth/popup-closed-by-user') return null;
-    throw e;
-  }
-}
-// ログインし直したら、保存してから読み込み直す（新しいアカウントで全部読み直すため）
-async function reLogin() {
-  try {
-    await Promise.all([CL.saver.flush(), SK.saver.flush()]).catch(() => {});
-    const u = await googleLogin();
-    if (u) { toast(`${u.email || ''} でログインしました。読み込み直します`); setTimeout(() => location.reload(), 600); }
-  } catch (e) { console.error(e); toast(`ログインできませんでした（${e.code || e.message}）`, 'error'); }
-}
-$('loginNowBtn').onclick = reLogin;
-$('acctBtn').onclick = () => confirmDialog('別のGoogleアカウントでログインし直しますか？\n（入力中の内容は先に保存します）', 'ログインし直す', reLogin);
-function showAccount(user) {
-  const b = $('acctBtn');
-  if (!user) { b.hidden = true; return; }
-  b.hidden = false;
-  b.textContent = '👤 ' + String(user.email || 'ログイン中').split('@')[0] + ' ▾';
-}
-
 async function ensureLogin() {
-  // ボタンは先に動くようにしておく（読み込みが遅くても押せる）
-  $('loginBtn').onclick = async () => {
-    $('loginErr').textContent = '';
-    $('loginBtn').disabled = true;
-    try { await googleLogin(); }
-    catch (e) { $('loginErr').textContent = `ログインできませんでした（${e.code || e.message}）`; }
-    finally { $('loginBtn').disabled = false; }
-  };
-  let m;
-  try { m = await authMod(); }
-  catch (e) {
-    console.error(e);
-    $('loginModal').hidden = false;
-    $('loginErr').textContent = 'ログインの部品を読み込めませんでした。通信状況を確認して、ページを開き直してください';
-    $('loginBtn').textContent = 'ページを開き直す';
-    $('loginBtn').onclick = () => location.reload();
-    if (REQUIRE_LOGIN) await new Promise(() => {});   // 読み込めるまで先へ進まない
-    return;
-  }
+  if (!REQUIRE_LOGIN) return;
+  const m = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
   const auth = m.getAuth(app);
-  // 画面ごと移動してログインした後の結果（長く待たない）
-  await Promise.race([m.getRedirectResult(auth).catch(e => console.warn(e)), new Promise(r => setTimeout(r, 3000))]);
+  try { await m.getRedirectResult(auth); } catch (e) { console.warn(e); }
   await new Promise(resolve => {
     let done = false;
     m.onAuthStateChanged(auth, user => {
-      showAccount(user);
       if (user) { $('loginModal').hidden = true; if (!done) { done = true; resolve(user); } return; }
-      if (!REQUIRE_LOGIN) { if (!done) { done = true; resolve(null); } return; }
       $('loginModal').hidden = false;
+      $('loginBtn').onclick = async () => {
+        $('loginErr').textContent = '';
+        const provider = new m.GoogleAuthProvider();
+        try { await m.signInWithPopup(auth, provider); }
+        catch (e) {
+          if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request'].includes(e.code)) await m.signInWithRedirect(auth, provider);
+          else $('loginErr').textContent = `ログインできませんでした（${e.code}）`;
+        }
+      };
     });
   });
 }
