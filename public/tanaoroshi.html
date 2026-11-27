@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>棚卸くん</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📋</text></svg>">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0f172a; color:#f8fafc; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .row-done { background:rgba(255,255,255,0.03); }
+  .flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { box-shadow:0 0 0 3px #3b82f6; } to { box-shadow:0 0 0 0 transparent; } }
+</style>
+</head>
+<body class="p-3">
+<div class="max-w-2xl mx-auto">
+
+  <!-- ヘッダー -->
+  <header class="flex justify-between items-start mb-3 gap-2">
+    <div>
+      <h1 class="text-lg font-bold">📋 棚卸くん</h1>
+      <p class="text-[11px] text-slate-400">実数を入力すると差異が出ます（入力はこの端末に自動保存）</p>
+      <p id="dataInfo" class="text-[11px] text-slate-500 mt-0.5"></p>
+    </div>
+    <div class="flex flex-col gap-1.5 shrink-0">
+      <label class="bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-full cursor-pointer text-center">
+        在庫CSV読込
+        <input type="file" id="csvFile" accept=".csv" class="hidden">
+      </label>
+      <button id="exportBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-full">結果CSV出力</button>
+      <button id="resetBtn" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[11px] px-3 py-1.5 rounded-full">入力クリア</button>
+    </div>
+  </header>
+
+  <!-- 集計 -->
+  <div class="grid grid-cols-4 gap-2 mb-3 text-center">
+    <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">全商品</div><div id="sumAll" class="text-lg font-bold">0</div></div>
+    <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">入力済み</div><div id="sumDone" class="text-lg font-bold text-blue-400">0</div></div>
+    <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">差異あり</div><div id="sumDiff" class="text-lg font-bold text-rose-400">0</div></div>
+    <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">未入力</div><div id="sumTodo" class="text-lg font-bold text-amber-400">0</div></div>
+  </div>
+
+  <!-- 検索・絞り込み -->
+  <div class="sticky top-0 z-10 bg-[#0f172a] pb-2 pt-1">
+    <input id="search" type="text" placeholder="🔍 品番・品名・バーコードで検索（バーコードスキャンもOK）"
+      class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm mb-2 focus:outline-none focus:border-blue-500">
+    <select id="sortSel" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs mb-2 focus:outline-none focus:border-blue-500">
+      <option value="totalAsc">↑ 在庫の少ない順</option>
+      <option value="totalDesc">↓ 在庫の多い順</option>
+      <option value="codeAsc">🔤 品番順（A→Z）</option>
+      <option value="flavor">🍏 味ごと（同じ味をまとめる）</option>
+      <option value="shortage">🔴 不足の多い順</option>
+      <option value="absDiff">⚠️ 差異の大きい順（不足・余り）</option>
+      <option value="todoFirst">⏳ 未入力を上に</option>
+      <option value="loc">📍 ロケーション順</option>
+    </select>
+    <div class="flex gap-1.5 text-[11px]">
+      <button data-filter="all" class="filter-btn px-3 py-1 rounded-full">すべて</button>
+      <button data-filter="todo" class="filter-btn px-3 py-1 rounded-full">未入力</button>
+      <button data-filter="diff" class="filter-btn px-3 py-1 rounded-full">差異あり</button>
+      <button data-filter="ok" class="filter-btn px-3 py-1 rounded-full">一致</button>
+    </div>
+  </div>
+
+  <!-- 一覧 -->
+  <div id="list" class="flex flex-col gap-1.5"></div>
+  <p id="empty" class="hidden text-center text-slate-500 text-sm py-8">該当する商品がありません</p>
+</div>
+
+<script>
+// =========================================================
+// 初期データ：商品別在庫情報（2026/11/27 11:35 時点）
+// 「在庫CSV読込」で新しいCSVを読み込むと置き換わります
+// =========================================================
+const DEFAULT_ITEMS = [{"code":"apple","name":"コンディションスティック グリーンアップル味 1本","barcode":"4573310502527","total":750,"avail":750,"loc":"A5"},{"code":"apple-10","name":"コンディションスティック 10本セット グリーンアップル味","barcode":"X001BV1GHD","total":51,"avail":51,"loc":"A5"},{"code":"apple-10-box","name":"コンディションスティック 10本セット グリーンアップル味 (箱入り)","barcode":"4573310502602","total":31,"avail":21,"loc":"A5"},{"code":"apple-10-fl","name":"チラシ　10本セット グリーンアップル味","barcode":"2065186000003","total":1881,"avail":1881,"loc":"A5"},{"code":"apple-20","name":"コンディションスティック 20本セット グリーンアップル味","barcode":"X001BV1H3V","total":197,"avail":197,"loc":"A5"},{"code":"apple-20-fl","name":"チラシ　20本セット グリーンアップル味","barcode":"2065186000007","total":1655,"avail":1655,"loc":"A5"},{"code":"apple-40","name":"コンディションスティック 40本セット グリーンアップル味","barcode":"X001BV7D2F","total":31,"avail":31,"loc":"A5"},{"code":"apple-50","name":"コンディションスティック 50本セット グリーンアップル味","barcode":"X001DCRV5V","total":10,"avail":10,"loc":"A5"},{"code":"apple-80","name":"コンディションスティック 80本セット グリーンアップル味","barcode":"X001DCQ6NT","total":35,"avail":35,"loc":"A5"},{"code":"assort-4","name":"コンディションスティック 4種 お試しセット (4種各1本)","barcode":"X001BV1H2H","total":52,"avail":52,"loc":"A5"},{"code":"assort-4-fl","name":"チラシ　4種 お試しセット (4種各1本)","barcode":"2065186000001","total":2280,"avail":2180,"loc":"A5"},{"code":"assort-40","name":"コンディションスティック 箱入り 4種 アソートセット (4種各10本)","barcode":"X001BUZ30P","total":8,"avail":5,"loc":"A5"},{"code":"assort-80","name":"コンディションスティック 箱入り 4種 アソートセット (4種各20本)","barcode":"B0GYWMH44C","total":1,"avail":1,"loc":"A5"},{"code":"bag-40set","name":"40本セット用袋","barcode":"2065186000010","total":266,"avail":266,"loc":"A5"},{"code":"mango","name":"コンディションスティック マンゴー味 1本","barcode":"4573310502534","total":160,"avail":160,"loc":"A5"},{"code":"mango-10","name":"コンディションスティック 10本セット マンゴー味","barcode":"X001BUZ3I7","total":82,"avail":82,"loc":"A5"},{"code":"mango-10-box","name":"コンディションスティック 10本セット マンゴー味 (箱入り)","barcode":"4573310502619","total":18,"avail":18,"loc":"A5"},{"code":"mango-10-fl","name":"チラシ　10本セット マンゴー味","barcode":"2065186000004","total":1367,"avail":1367,"loc":"A5"},{"code":"mango-20","name":"コンディションスティック 20本セット マンゴー味","barcode":"X001BUZU53","total":107,"avail":107,"loc":"A5"},{"code":"mango-20-fl","name":"チラシ　20本セット マンゴー味","barcode":"2065186000008","total":1939,"avail":1939,"loc":"A5"},{"code":"mango-40","name":"コンディションスティック 40本セット マンゴー味","barcode":"X001BUZ4ZT","total":31,"avail":31,"loc":"A5"},{"code":"mango-50","name":"コンディションスティック 50本セット マンゴー味","barcode":"X001DCV1CP","total":12,"avail":12,"loc":"A5"},{"code":"mango-80","name":"コンディションスティック 80本セット マンゴー味","barcode":"B0GYWHZJ9N","total":3,"avail":3,"loc":"A5"},{"code":"original","name":"コンディションスティック オリジナル味（エナジードリンク味） 1本","barcode":"4573310502510","total":300,"avail":300,"loc":"A5"},{"code":"original-10","name":"コンディションスティック 10本セット オリジナル味","barcode":"X001BV7CWV","total":35,"avail":35,"loc":"A5"},{"code":"original-10-box","name":"コンディションスティック 10本セット オリジナル味 (箱入り)","barcode":"4573310502596","total":17,"avail":17,"loc":"A5"},{"code":"original-10-fl","name":"チラシ　10本セット オリジナル味","barcode":"2065186000002","total":1368,"avail":1368,"loc":"A5"},{"code":"original-20","name":"コンディションスティック 20本セット オリジナル味","barcode":"X001BUZTTP","total":270,"avail":270,"loc":"A5"},{"code":"original-20-fl","name":"チラシ　20本セット オリジナル味","barcode":"2065186000006","total":1220,"avail":1220,"loc":"A5"},{"code":"original-40","name":"コンディションスティック 40本セット オリジナル味","barcode":"X001BUU9HR","total":29,"avail":29,"loc":"A5"},{"code":"original-50","name":"コンディションスティック 50本セット オリジナル味","barcode":"X001DCYNE3","total":15,"avail":15,"loc":"A5"},{"code":"original-80","name":"コンディションスティック 80本セット オリジナル味","barcode":"X001DCRT6H","total":8,"avail":8,"loc":"A5"},{"code":"plum","name":"コンディションスティック プラム味 1本","barcode":"4573310502541","total":300,"avail":300,"loc":"A5"},{"code":"plum-10","name":"コンディションスティック 10本セット プラム味","barcode":"X001BUZTSL","total":124,"avail":124,"loc":"A5"},{"code":"plum-10-box","name":"コンディションスティック 10本セット プラム味 (箱入り)","barcode":"4573310502626","total":117,"avail":117,"loc":"A5"},{"code":"plum-10-fl","name":"チラシ　10本セット プラム味","barcode":"2065186000005","total":1332,"avail":1332,"loc":"A5"},{"code":"plum-20","name":"コンディションスティック 20本セット プラム味","barcode":"X001BV1H1X","total":109,"avail":109,"loc":"A5"},{"code":"plum-20-fl","name":"チラシ　20本セット プラム味","barcode":"2065186000009","total":1895,"avail":1895,"loc":"A5"},{"code":"plum-40","name":"コンディションスティック 40本セット プラム味","barcode":"X001BV7CPX","total":30,"avail":30,"loc":"A5"},{"code":"plum-50","name":"コンディションスティック 50本セット プラム味","barcode":"X001DCEU3R","total":13,"avail":13,"loc":"A5"},{"code":"plum-80","name":"コンディションスティック 80本セット プラム味","barcode":"B0GYWJSW9N","total":2,"avail":2,"loc":"A5"}];
+const DEFAULT_INFO = '在庫データ：2026/11/27 11:35 時点';
+
+const KEY_ITEMS  = 'tanaoroshi_items_v1';
+const KEY_COUNTS = 'tanaoroshi_counts_v1';
+
+let items  = load(KEY_ITEMS) || { info: DEFAULT_INFO, list: DEFAULT_ITEMS };
+let counts = load(KEY_COUNTS) || {};   // { 品番: 実数 }
+let filter = 'all';
+const KEY_SORT = 'tanaoroshi_sort_v1';
+let sortMode = load(KEY_SORT) || 'totalAsc';
+
+function load(k){ try { return JSON.parse(localStorage.getItem(k)); } catch(e){ return null; } }
+function save(k,v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+
+// 並び替え（同じ順位のときは在庫の少ない順 → 品番順）
+function flavorKey(code){ return code.split('-')[0]; }               // apple-20 → apple
+function sizeKey(code){ const m = code.match(/-(\d+)/); return m ? Number(m[1]) : 0; } // apple-20 → 20
+function sorted(){
+  const base = (a,b) => a.total-b.total || a.code.localeCompare(b.code);
+  const big = 1e9; // 未入力は後ろに回す
+  const cmp = {
+    totalAsc:  base,
+    totalDesc: (a,b) => b.total-a.total || a.code.localeCompare(b.code),
+    codeAsc:   (a,b) => a.code.localeCompare(b.code),
+    flavor:    (a,b) => flavorKey(a.code).localeCompare(flavorKey(b.code)) || a.code.includes('-fl')-b.code.includes('-fl') || a.code.includes('-box')-b.code.includes('-box') || sizeKey(a.code)-sizeKey(b.code) || a.code.localeCompare(b.code),
+    shortage:  (a,b) => { const da = diffOf(a), db = diffOf(b);
+                          return (da===null?big:da) - (db===null?big:db) || base(a,b); },
+    absDiff:   (a,b) => { const da = diffOf(a), db = diffOf(b);
+                          return (db===null?-1:Math.abs(db)) - (da===null?-1:Math.abs(da)) || base(a,b); },
+    todoFirst: (a,b) => hasCount(a.code)-hasCount(b.code) || base(a,b),
+    loc:       (a,b) => String(a.loc).localeCompare(String(b.loc), 'ja', {numeric:true}) || base(a,b)
+  }[sortMode] || base;
+  return [...items.list].sort(cmp);
+}
+function hasCount(code){ return counts[code] !== undefined && counts[code] !== ''; }
+function diffOf(it){ return hasCount(it.code) ? Number(counts[it.code]) - it.total : null; }
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function diffHtml(d){
+  if (d === null) return '<span class="text-slate-600">－</span>';
+  if (d === 0) return '<span class="text-emerald-400 font-bold">±0</span>';
+  return d > 0 ? `<span class="text-sky-400 font-bold">+${d}</span>` : `<span class="text-rose-400 font-bold">${d}</span>`;
+}
+
+// ---------- 一覧の描画 ----------
+function render(){
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  let shown = 0;
+
+  sorted().forEach((it, i) => {
+    const d = diffOf(it);
+    if (filter === 'todo' && d !== null) return;
+    if (filter === 'diff' && (d === null || d === 0)) return;
+    if (filter === 'ok'   && d !== 0) return;
+    if (q && !(it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q) || String(it.barcode).toLowerCase() === q || String(it.barcode).toLowerCase().includes(q))) return;
+    shown++;
+
+    const row = document.createElement('div');
+    row.id = 'row-' + it.code;
+    row.className = 'bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 flex items-center gap-2 ' + (d !== null ? 'row-done' : '');
+    const allocNote = it.avail !== it.total
+      ? `<span class="text-amber-400">（引当後 ${it.avail}）</span>` : '';
+    row.innerHTML = `
+      <div class="flex-1 min-w-0">
+        <div class="flex items-baseline gap-2">
+          <span class="text-[10px] text-slate-500">${i+1}</span>
+          <span class="font-bold text-sm">${esc(it.code)}</span>
+          <span class="text-[10px] text-slate-500">${esc(it.loc||'')}</span>
+        </div>
+        <div class="text-[11px] text-slate-400 truncate">${esc(it.name)}</div>
+        <div class="text-[11px] text-slate-300 mt-0.5">理論 <b>${it.total}</b> ${allocNote}</div>
+      </div>
+      <input type="number" inputmode="numeric" min="0" placeholder="実数"
+        class="w-20 bg-slate-800 border border-slate-600 rounded-lg p-2 text-center text-base font-bold focus:outline-none focus:border-blue-500"
+        value="${hasCount(it.code) ? counts[it.code] : ''}" data-code="${esc(it.code)}">
+      <div class="w-12 text-right text-sm diff-cell">${diffHtml(d)}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  document.getElementById('empty').classList.toggle('hidden', shown > 0);
+  updateSummary();
+  updateFilterButtons();
+}
+
+// 入力したら保存して差異だけ更新（再描画しないので入力が途切れない）
+document.getElementById('list').addEventListener('input', e => {
+  const inp = e.target.closest('input[data-code]');
+  if (!inp) return;
+  const code = inp.dataset.code;
+  if (inp.value === '') delete counts[code];
+  else counts[code] = Math.max(0, parseInt(inp.value, 10) || 0);
+  save(KEY_COUNTS, counts);
+  const it = items.list.find(x => x.code === code);
+  const row = inp.closest('[id^="row-"]');
+  row.querySelector('.diff-cell').innerHTML = diffHtml(diffOf(it));
+  row.classList.toggle('row-done', hasCount(code));
+  updateSummary();
+});
+
+// Enterで次の入力欄へ
+document.getElementById('list').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.matches('input[data-code]')) return;
+  e.preventDefault();
+  const inputs = [...document.querySelectorAll('#list input[data-code]')];
+  const next = inputs[inputs.indexOf(e.target) + 1];
+  if (next) { next.focus(); next.select(); } else e.target.blur();
+});
+
+function updateSummary(){
+  const all = items.list.length;
+  const done = items.list.filter(it => hasCount(it.code)).length;
+  const diff = items.list.filter(it => { const d = diffOf(it); return d !== null && d !== 0; }).length;
+  document.getElementById('sumAll').textContent = all;
+  document.getElementById('sumDone').textContent = done;
+  document.getElementById('sumDiff').textContent = diff;
+  document.getElementById('sumTodo').textContent = all - done;
+  document.getElementById('dataInfo').textContent = items.info;
+}
+
+function updateFilterButtons(){
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    const on = b.dataset.filter === filter;
+    b.className = 'filter-btn px-3 py-1 rounded-full ' + (on ? 'bg-blue-600 text-white font-bold' : 'bg-slate-800 text-slate-300');
+  });
+}
+document.querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => { filter = b.dataset.filter; render(); }));
+
+// 並び替えの切り替え（選んだ並びはこの端末に保存）
+const sortSel = document.getElementById('sortSel');
+sortSel.value = sortMode;
+sortSel.addEventListener('change', () => { sortMode = sortSel.value; save(KEY_SORT, sortMode); render(); });
+
+// 検索：バーコードが完全一致したら、その商品の入力欄へ移動
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('search').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const first = document.querySelector('#list input[data-code]');
+  if (first) {
+    first.focus(); first.select();
+    const row = first.closest('[id^="row-"]');
+    row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+  }
+});
+
+// ---------- 在庫CSVの読み込み（商品別在庫情報_YYYYMMDDHHMMSS.csv、Shift-JIS） ----------
+function parseCSV(text){
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i+1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i+1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(v => v !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  if (cur !== '' || row.length) { row.push(cur); if (row.some(v => v !== '')) rows.push(row); }
+  return rows;
+}
+
+document.getElementById('csvFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('shift-jis').decode(buf);
+  if (!text.includes('品番')) text = new TextDecoder('utf-8').decode(buf); // UTF-8のCSVにも対応
+  const rows = parseCSV(text);
+  const h = rows[0] || [];
+  const ix = name => h.indexOf(name);
+  if (ix('品番') < 0 || ix('総在庫数') < 0) {
+    alert('「品番」「総在庫数」の列が見つかりません。商品別在庫情報のCSVを選んでください。');
+    e.target.value = ''; return;
+  }
+  const list = rows.slice(1).filter(r => r[ix('品番')]).map(r => ({
+    code: r[ix('品番')],
+    name: ix('品名') >= 0 ? r[ix('品名')] : '',
+    barcode: ix('バーコード') >= 0 ? r[ix('バーコード')] : '',
+    total: parseInt(r[ix('総在庫数')], 10) || 0,
+    avail: ix('在庫数') >= 0 ? (parseInt(r[ix('在庫数')], 10) || 0) : (parseInt(r[ix('総在庫数')], 10) || 0),
+    loc: ix('ロケーション') >= 0 ? r[ix('ロケーション')] : ''
+  }));
+  const keep = Object.keys(counts).length > 0 &&
+    confirm(`${list.length}商品を読み込みます。\n\n入力済みの実数を残しますか？\n（OK：残す ／ キャンセル：クリアする）`);
+  items = { info: `在庫データ：${file.name}`, list };
+  if (!keep) counts = {};
+  save(KEY_ITEMS, items); save(KEY_COUNTS, counts);
+  e.target.value = '';
+  render();
+});
+
+// ---------- 結果CSV出力（Excelで開けるようにBOM付き） ----------
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const head = ['No','品番','品名','バーコード','ロケーション','総在庫数','在庫数（引当後）','実数','差異'];
+  const lines = [head];
+  sorted().forEach((it, i) => {
+    const d = diffOf(it);
+    lines.push([i+1, it.code, it.name, it.barcode, it.loc, it.total, it.avail,
+      hasCount(it.code) ? counts[it.code] : '', d === null ? '' : d]);
+  });
+  const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
+  const now = new Date();
+  const stamp = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `棚卸結果_${stamp}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('入力した実数をすべてクリアしますか？')) return;
+  counts = {}; save(KEY_COUNTS, counts); render();
+});
+
+render();
+</script>
+</body>
+</html>
