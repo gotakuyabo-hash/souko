@@ -29,11 +29,22 @@
         在庫CSV読込
         <input type="file" id="csvFile" accept=".csv" class="hidden">
       </label>
+      <label class="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-full cursor-pointer text-center">
+        結果CSV読込
+        <input type="file" id="resultFile" accept=".csv" class="hidden">
+      </label>
       <button id="exportBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-full">結果CSV出力</button>
       <button id="resetBtn" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[11px] px-3 py-1.5 rounded-full">入力クリア</button>
     </div>
   </header>
 
+  <!-- 切り替えタブ -->
+  <div class="grid grid-cols-2 gap-1 bg-slate-800/70 rounded-xl p-1 mb-3 text-sm font-bold">
+    <button data-view="input" class="view-btn py-2 rounded-lg">✏️ 入力</button>
+    <button data-view="result" class="view-btn py-2 rounded-lg">📊 棚卸結果</button>
+  </div>
+
+  <div id="inputView">
   <!-- 集計 -->
   <div class="grid grid-cols-4 gap-2 mb-3 text-center">
     <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">全商品</div><div id="sumAll" class="text-lg font-bold">0</div></div>
@@ -67,6 +78,19 @@
   <!-- 一覧 -->
   <div id="list" class="flex flex-col gap-1.5"></div>
   <p id="empty" class="hidden text-center text-slate-500 text-sm py-8">該当する商品がありません</p>
+  </div>
+
+  <!-- 棚卸結果 -->
+  <div id="resultView" class="hidden">
+    <p id="resultInfo" class="text-[11px] text-slate-400 mb-2"></p>
+    <div class="grid grid-cols-4 gap-2 mb-3 text-center">
+      <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">数えた</div><div id="rCount" class="text-lg font-bold text-blue-400">0</div></div>
+      <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">不足</div><div id="rShort" class="text-lg font-bold text-rose-400">0</div></div>
+      <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">余り</div><div id="rOver" class="text-lg font-bold text-sky-400">0</div></div>
+      <div class="bg-slate-800/70 rounded-xl p-2"><div class="text-[10px] text-slate-400">一致</div><div id="rOk" class="text-lg font-bold text-emerald-400">0</div></div>
+    </div>
+    <div id="resultBody" class="flex flex-col gap-4"></div>
+  </div>
 </div>
 
 <script>
@@ -82,6 +106,15 @@ const KEY_COUNTS = 'tanaoroshi_counts_v1';
 
 let items  = load(KEY_ITEMS) || { info: DEFAULT_INFO, list: DEFAULT_ITEMS };
 let counts = load(KEY_COUNTS) || {};   // { 品番: 実数 }
+const KEY_MEMOS = 'tanaoroshi_memos_v1';
+const KEY_META  = 'tanaoroshi_meta_v1';
+let memos = load(KEY_MEMOS) || {};     // { 品番: メモ }（結果CSVから読み込んだもの）
+let meta  = load(KEY_META)  || {};     // { updated: 最終入力日時, source: 読み込んだファイル名 }
+let view  = 'input';
+function touch(source){
+  meta = { updated: new Date().toISOString(), source: source || meta.source || '' };
+  save(KEY_META, meta);
+}
 let filter = 'all';
 const KEY_SORT = 'tanaoroshi_sort_v1';
 let sortMode = load(KEY_SORT) || 'totalAsc';
@@ -171,6 +204,7 @@ document.getElementById('list').addEventListener('input', e => {
   if (inp.value === '') delete counts[code];
   else counts[code] = Math.max(0, parseInt(inp.value, 10) || 0);
   save(KEY_COUNTS, counts);
+  touch('この端末で入力');
   const it = items.list.find(x => x.code === code);
   const row = inp.closest('[id^="row-"]');
   row.querySelector('.diff-cell').innerHTML = diffHtml(diffOf(it));
@@ -277,12 +311,12 @@ document.getElementById('csvFile').addEventListener('change', async e => {
 
 // ---------- 結果CSV出力（Excelで開けるようにBOM付き） ----------
 document.getElementById('exportBtn').addEventListener('click', () => {
-  const head = ['No','品番','品名','バーコード','ロケーション','総在庫数','在庫数（引当後）','実数','差異'];
+  const head = ['No','品番','品名','バーコード','ロケーション','総在庫数','在庫数（引当後）','実数','差異','メモ'];
   const lines = [head];
   sorted().forEach((it, i) => {
     const d = diffOf(it);
     lines.push([i+1, it.code, it.name, it.barcode, it.loc, it.total, it.avail,
-      hasCount(it.code) ? counts[it.code] : '', d === null ? '' : d]);
+      hasCount(it.code) ? counts[it.code] : '', d === null ? '' : d, memos[it.code] || '']);
   });
   const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
@@ -297,10 +331,124 @@ document.getElementById('exportBtn').addEventListener('click', () => {
 
 document.getElementById('resetBtn').addEventListener('click', () => {
   if (!confirm('入力した実数をすべてクリアしますか？')) return;
-  counts = {}; save(KEY_COUNTS, counts); render();
+  counts = {}; memos = {}; save(KEY_COUNTS, counts); save(KEY_MEMOS, memos); touch(''); render();
 });
 
+// ---------- 棚卸結果CSVの読み込み（このアプリの「結果CSV出力」と同じ形式） ----------
+document.getElementById('resultFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf).replace(/^﻿/, '');
+  if (!text.includes('品番')) text = new TextDecoder('shift-jis').decode(buf);
+  const rows = parseCSV(text);
+  const h = rows[0] || [];
+  const ic = h.indexOf('品番'), ir = h.indexOf('実数'), im = h.indexOf('メモ');
+  if (ic < 0 || ir < 0) {
+    alert('「品番」「実数」の列が見つかりません。棚卸結果のCSVを選んでください。');
+    e.target.value = ''; return;
+  }
+  const newCounts = {}, newMemos = {};
+  let n = 0, unknown = [];
+  rows.slice(1).forEach(r => {
+    const code = r[ic]; if (!code) return;
+    if (!items.list.some(it => it.code === code)) { unknown.push(code); return; }
+    const v = String(r[ir] ?? '').replace(/,/g,'').trim();
+    if (v !== '') { newCounts[code] = Math.max(0, parseInt(v, 10) || 0); n++; }
+    if (im >= 0 && r[im]) newMemos[code] = r[im];
+  });
+  if (!confirm(`${file.name}\n\n${n}商品の実数を読み込みます。\n今この端末に入力されている実数は、読み込んだ内容に置き換わります。よろしいですか？`)) {
+    e.target.value = ''; return;
+  }
+  counts = newCounts; memos = newMemos;
+  save(KEY_COUNTS, counts); save(KEY_MEMOS, memos);
+  touch(file.name);
+  e.target.value = '';
+  if (unknown.length) alert('在庫データにない品番は読み飛ばしました：\n' + unknown.join(', '));
+  render(); renderResult(); setView('result');
+});
+
+// ---------- 棚卸結果の表示 ----------
+function fmt(n){ return Number(n).toLocaleString('ja-JP'); }
+function signed(d){ return d > 0 ? '+' + fmt(d) : fmt(d); }
+
+function resultRows(list, color){
+  return list.map(it => {
+    const d = diffOf(it);
+    const memo = memos[it.code] ? `<div class="text-[10px] text-amber-300 mt-0.5">📝 ${esc(memos[it.code])}</div>` : '';
+    return `
+      <div class="bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2 flex items-center gap-2">
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-sm">${esc(it.code)}</div>
+          <div class="text-[10px] text-slate-500 truncate">${esc(it.name)}</div>
+          ${memo}
+        </div>
+        <div class="text-right text-[11px] text-slate-400 leading-tight shrink-0">
+          理論 ${fmt(it.total)}<br>実数 <b class="text-slate-100">${hasCount(it.code) ? fmt(counts[it.code]) : '－'}</b>
+        </div>
+        <div class="w-16 text-right font-bold text-base shrink-0 ${color}">${d === null ? '－' : (d === 0 ? '±0' : signed(d))}</div>
+      </div>`;
+  }).join('');
+}
+
+function section(title, sub, list, color){
+  if (!list.length) return '';
+  return `
+    <div>
+      <div class="flex justify-between items-baseline px-1 mb-1.5">
+        <h2 class="text-sm font-bold">${title} <span class="text-slate-400 font-normal">${list.length}商品</span></h2>
+        <span class="text-[11px] text-slate-400">${sub}</span>
+      </div>
+      <div class="flex flex-col gap-1.5">${resultRows(list, color)}</div>
+    </div>`;
+}
+
+function renderResult(){
+  const all = sorted();
+  const done = all.filter(it => hasCount(it.code));
+  const short = done.filter(it => diffOf(it) < 0).sort((a,b) => diffOf(a) - diffOf(b));
+  const over  = done.filter(it => diffOf(it) > 0).sort((a,b) => diffOf(b) - diffOf(a));
+  const ok    = done.filter(it => diffOf(it) === 0);
+  const todo  = all.filter(it => !hasCount(it.code));
+  const sumShort = short.reduce((s,it) => s + diffOf(it), 0);
+  const sumOver  = over.reduce((s,it) => s + diffOf(it), 0);
+
+  document.getElementById('rCount').textContent = `${done.length}/${all.length}`;
+  document.getElementById('rShort').textContent = short.length;
+  document.getElementById('rOver').textContent  = over.length;
+  document.getElementById('rOk').textContent    = ok.length;
+
+  const when = meta.updated ? new Date(meta.updated).toLocaleString('ja-JP', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '－';
+  document.getElementById('resultInfo').textContent =
+    `最終更新：${when}${meta.source ? '（' + meta.source + '）' : ''} ／ ${items.info}`;
+
+  const body = document.getElementById('resultBody');
+  if (!done.length) {
+    body.innerHTML = '<p class="text-center text-slate-500 text-sm py-8">まだ実数が入力されていません。<br>「入力」タブで数えるか、「結果CSV読込」で読み込んでください。</p>';
+    return;
+  }
+  body.innerHTML =
+    section('🔴 不足', `合計 ${fmt(sumShort)}`, short, 'text-rose-400') +
+    section('🔵 余り', `合計 ${signed(sumOver)}`, over, 'text-sky-400') +
+    section('🟢 一致', '', ok, 'text-emerald-400') +
+    section('⏳ 未カウント', '', todo, 'text-slate-500');
+}
+
+// ---------- 入力／結果の切り替え ----------
+function setView(v){
+  view = v;
+  document.getElementById('inputView').classList.toggle('hidden', v !== 'input');
+  document.getElementById('resultView').classList.toggle('hidden', v !== 'result');
+  document.querySelectorAll('.view-btn').forEach(b => {
+    b.className = 'view-btn py-2 rounded-lg ' + (b.dataset.view === v ? 'bg-blue-600 text-white' : 'text-slate-300');
+  });
+  if (v === 'result') renderResult();
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('.view-btn').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+
 render();
+setView('input');
 </script>
 </body>
 </html>
