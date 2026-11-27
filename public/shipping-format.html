@@ -547,8 +547,9 @@ details.help p{margin:6px 0 0;padding:10px 12px;background:#f4f6f7;border-radius
           </div>
         </div>
         <p class="bulk-help">
-          列は <code>SKUコード</code>（必須）<code>商品名</code> <code>バーコード</code> <code>倍率</code> <code>棚番</code> です。見出し行があれば列の順番は自由、見出しがなければこの順番で読み取ります。<br>
-          同じSKUコードがすでにある場合は「更新」になります。
+          列は <code>SKUコード</code>（必須）<code>商品名</code> <code>バーコード</code> <code>倍率</code> <code>棚番</code> <code>資材</code> です。見出し行があれば列の順番は自由、見出しがなければこの順番で読み取ります。<br>
+          同じSKUコードがすでにある場合は「更新」になります。<br>
+          <b>資材をまとめて入れるとき</b>：「今のマスタをCSVで書き出す」→ Excelで資材の列だけ埋める → ここで取り込む。資材名は資材マスタと同じ名前にしてください。「なし」と書くと指定を外します。セット品の行は資材だけが変わります。
         </p>
         <div class="toolbar" style="margin-top:10px;margin-bottom:0">
           <label class="check" style="font-weight:400"><input type="checkbox" id="bulkKeepBlank" checked onchange="if(bulkRows.length) previewBulk(true)"> 空欄のセルは、今のマスタの値をそのまま残す</label>
@@ -4189,8 +4190,11 @@ const BULK_COLS = [
   { key: 'productName', label: '商品名', alias: ['商品名', '品名', 'name', 'productname', 'product_name', '和名'] },
   { key: 'barcode', label: 'バーコード', alias: ['バーコード', 'jan', 'janコード', 'barcode', 'ean'] },
   { key: 'multiplier', label: '倍率', alias: ['倍率', '入数', 'セット数', 'multiplier'] },
-  { key: 'shelfNumber', label: '棚番', alias: ['棚番', '棚番号', 'ロケ', 'ロケーション', 'shelf', 'shelfnumber', 'shelf_number'] }
+  { key: 'shelfNumber', label: '棚番', alias: ['棚番', '棚番号', 'ロケ', 'ロケーション', 'shelf', 'shelfnumber', 'shelf_number'] },
+  { key: 'material', label: '資材', alias: ['資材', '梱包資材', '指定資材', '資材名', 'material'] }
 ];
+// 資材の欄で「なし」「-」と書くと、指定を外す（空欄は「空欄は今のまま」の設定に従う）
+const BULK_MAT_CLEAR = /^(なし|無し|-|ー|－|×|x)$/i;
 
 function initBulkDrop() {
   const dz = document.getElementById('bulkDrop');
@@ -4250,8 +4254,10 @@ function mapHeader(row) {
   return idx.skuCode !== undefined ? idx : null;
 }
 
-window.previewBulk = (keepScroll = false) => {
+window.previewBulk = async (keepScroll = false) => {
   const text = document.getElementById('bulkPaste').value;
+  await loadPackMaterials();   // 資材名が資材マスタにあるか確かめるため（読み込み済みなら読まない）
+  const matSet = new Set(packMaterialsCache || []);
   const area = document.getElementById('bulkPreviewArea');
   if (!text.trim()) { area.innerHTML = '<div class="notice warn">CSVを選ぶか、データを貼り付けてください。</div>'; return; }
 
@@ -4260,7 +4266,7 @@ window.previewBulk = (keepScroll = false) => {
   const rows = parseDelimited(text, delim);
   let idx = mapHeader(rows[0] || []);
   const hasHeader = !!idx;
-  if (!idx) idx = { skuCode: 0, productName: 1, barcode: 2, multiplier: 3, shelfNumber: 4 };
+  if (!idx) idx = { skuCode: 0, productName: 1, barcode: 2, multiplier: 3, shelfNumber: 4, material: 5 };
   const dataRows = hasHeader ? rows.slice(1) : rows;
   const keepBlank = document.getElementById('bulkKeepBlank').checked;
 
@@ -4275,11 +4281,17 @@ window.previewBulk = (keepScroll = false) => {
       productName: get('productName'),
       barcode: toHalf(get('barcode')).replace(/\s/g, ''),
       multiplier: toHalf(get('multiplier')),
-      shelfNumber: toHalf(get('shelfNumber')).trim()
+      shelfNumber: toHalf(get('shelfNumber')).trim(),
+      material: get('material')
     };
     const errors = [];
+    const isSet = !!(current.get(inp.skuCode) && current.get(inp.skuCode).isSet);
+    // 資材：「なし」なら外す、資材マスタにない名前はエラー
+    let mat = inp.material;
+    if (BULK_MAT_CLEAR.test(mat)) mat = '\u0000clear';
+    else if (mat && !matSet.has(mat)) errors.push(`資材「${mat}」が資材マスタにありません（名前を資材マスタと同じにしてください）`);
     if (!inp.skuCode) errors.push('SKUコードが空です');
-    else if (current.get(inp.skuCode) && current.get(inp.skuCode).isSet) errors.push('セット品のSKUです（「セット品の登録」で編集してください）');
+    else if (isSet && !mat) errors.push('セット品のSKUです（資材だけはCSVで入れられます。そのほかは「セット品の登録」で編集してください）');
     else if (inp.skuCode.includes('/') || inp.skuCode === '.' || inp.skuCode === '..' || /^__.*__$/.test(inp.skuCode)) errors.push('SKUコードに「/」などの使えない文字があります');
     if (/e\+/i.test(inp.barcode)) errors.push('バーコードが「4.9E+12」の形になっています（Excelで列を文字列にしてください）');
     let mult = null;
@@ -4293,7 +4305,8 @@ window.previewBulk = (keepScroll = false) => {
       productName: old.productName || old.product_name || '',
       barcode: old.barcode || '',
       multiplier: old.multiplier || 1,
-      shelfNumber: old.shelfNumber || old.shelf_number || ''
+      shelfNumber: old.shelfNumber || old.shelf_number || '',
+      material: old.material || ''
     } : null;
     const pick = (k, v, emptyVal) => (v === '' || v === null) ? (keepBlank && before ? before[k] : emptyVal) : v;
     const after = {
@@ -4301,11 +4314,14 @@ window.previewBulk = (keepScroll = false) => {
       productName: pick('productName', inp.productName, ''),
       barcode: pick('barcode', inp.barcode, ''),
       multiplier: pick('multiplier', mult, 1),
-      shelfNumber: pick('shelfNumber', inp.shelfNumber, '')
+      shelfNumber: pick('shelfNumber', inp.shelfNumber, ''),
+      material: mat === '\u0000clear' ? '' : pick('material', mat, '')
     };
-    const changed = before ? ['productName', 'barcode', 'multiplier', 'shelfNumber'].filter(k => String(before[k]) !== String(after[k])) : [];
+    // セット品は資材だけ書き換える（中身・名前などはそのまま）
+    if (isSet && before) ['productName', 'barcode', 'multiplier', 'shelfNumber'].forEach(k => { after[k] = before[k]; });
+    const changed = before ? ['productName', 'barcode', 'multiplier', 'shelfNumber', 'material'].filter(k => String(before[k]) !== String(after[k])) : [];
     const status = errors.length ? 'error' : !before ? 'new' : changed.length ? 'update' : 'same';
-    return { lineNo, after, before, changed, status, errors };
+    return { lineNo, after, before, changed, status, errors, isSet };
   });
 
   // 同じSKUが複数行ある場合は、下の行を使う
@@ -4324,7 +4340,8 @@ function renderBulkPreview(hasHeader, delim) {
   const cnt = s => bulkRows.filter(b => b.status === s).length;
   const nNew = cnt('new'), nUpd = cnt('update'), nSame = cnt('same'), nErr = cnt('error'), nDup = cnt('dup');
   const targets = nNew + nUpd;
-  const noShelf = bulkRows.filter(b => (b.status === 'new' || b.status === 'update') && !b.after.shelfNumber).length;
+  const noShelf = bulkRows.filter(b => (b.status === 'new' || b.status === 'update') && !b.isSet && !b.after.shelfNumber).length;
+  const nMat = bulkRows.filter(b => (b.status === 'new' || b.status === 'update') && b.changed.includes('material')).length;
 
   let html = `<div class="toolbar">
     <div class="stats">
@@ -4337,7 +4354,7 @@ function renderBulkPreview(hasHeader, delim) {
     <span class="spacer"></span>
     <button class="btn btn-primary" ${targets ? '' : 'disabled'} onclick="commitBulk()">新規・更新の ${targets} 件を登録する</button>
   </div>
-  <p class="empty" style="margin:0 0 8px">${hasHeader ? '見出し行から列を読み取りました' : '見出し行がないため「SKUコード・商品名・バーコード・倍率・棚番」の順で読み取りました'}（${delim === '\t' ? 'タブ区切り' : 'カンマ区切り'}）。${nErr ? 'エラーの行は登録されません。' : ''}${noShelf ? `棚番が空のまま登録される商品が ${noShelf} 件あります。` : ''}</p>`;
+  <p class="empty" style="margin:0 0 8px">${hasHeader ? '見出し行から列を読み取りました' : '見出し行がないため「SKUコード・商品名・バーコード・倍率・棚番・資材」の順で読み取りました'}（${delim === '\t' ? 'タブ区切り' : 'カンマ区切り'}）。${nErr ? 'エラーの行は登録されません。' : ''}${noShelf ? `棚番が空のまま登録される商品が ${noShelf} 件あります。` : ''}${nMat ? `資材が変わる商品 ${nMat} 件（セット品は資材だけ変わります）。` : ''}</p>`;
 
   const label = { new: '<span class="badge badge-new">新規</span>', update: '<span class="badge badge-upd">更新</span>', same: '<span class="badge badge-same">変更なし</span>', error: '<span class="badge badge-err">エラー</span>', dup: '<span class="badge badge-warn">重複</span>' };
   const cell = (b, k) => {
@@ -4348,7 +4365,7 @@ function renderBulkPreview(hasHeader, delim) {
     return `<td>${escapeHtml(v)}</td>`;
   };
   html += `<div class="table-wrap"><table><thead><tr>
-    <th>行</th><th>判定</th><th>SKUコード</th><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th>
+    <th>行</th><th>判定</th><th>SKUコード</th><th>商品名</th><th>バーコード</th><th>倍率</th><th>棚番</th><th>資材</th>
   </tr></thead><tbody>`;
   // エラー → 新規 → 更新 → その他 の順に表示
   const order = { error: 0, new: 1, update: 2, dup: 3, same: 4 };
@@ -4356,8 +4373,8 @@ function renderBulkPreview(hasHeader, delim) {
     html += `<tr class="${b.status === 'error' ? 'row-err' : ''}">
       <td class="num">${b.lineNo}</td>
       <td>${label[b.status]}${b.errors.length ? `<div style="color:var(--danger);font-size:11px;margin-top:2px">${b.errors.map(escapeHtml).join('<br>')}</div>` : ''}</td>
-      <td><code>${escapeHtml(b.after.skuCode)}</code></td>
-      ${cell(b, 'productName')}${cell(b, 'barcode')}${cell(b, 'multiplier')}${cell(b, 'shelfNumber')}
+      <td><code>${escapeHtml(b.after.skuCode)}</code>${b.isSet ? ' <span class="badge badge-set">セット</span>' : ''}</td>
+      ${cell(b, 'productName')}${cell(b, 'barcode')}${cell(b, 'multiplier')}${cell(b, 'shelfNumber')}${cell(b, 'material')}
     </tr>`;
   });
   html += `</tbody></table></div>`;
@@ -4376,7 +4393,9 @@ window.commitBulk = async () => {
     for (let i = 0; i < targets.length; i += 400) {
       const batch = writeBatch(db);
       targets.slice(i, i + 400).forEach(b => {
-        masterMapCache = null; batch.set(doc(db, "product_masters", b.after.skuCode), { ...b.after, updatedAt: new Date() }, { merge: true });
+        masterMapCache = null;
+        const data = b.isSet ? { material: b.after.material } : b.after;   // セット品は資材だけ
+        batch.set(doc(db, "product_masters", b.after.skuCode), { ...data, updatedAt: new Date() }, { merge: true });
       });
       await batch.commit();
       done += Math.min(400, targets.length - i);
@@ -4404,16 +4423,17 @@ function downloadUtf8Csv(rows, filename) {
 window.downloadMasterTemplate = () => {
   downloadUtf8Csv([
     BULK_COLS.map(c => c.label),
-    ['ABC-001', 'サンプル商品A', '4901234567890', '1', 'A-1-1'],
-    ['ABC-001-2P', 'サンプル商品A 2個セット', '4901234567890', '2', 'A-1-1']
+    ['ABC-001', 'サンプル商品A', '4901234567890', '1', 'A-1-1', 'k60'],
+    ['ABC-001-2P', 'サンプル商品A 2個セット', '4901234567890', '2', 'A-1-1', 'k80']
   ], '商品マスタ_一括登録テンプレート.csv');
 };
 
 window.exportMasterCsv = () => {
   if (!masterItemsCache.length) { alert('マスタがまだ読み込まれていません。'); return; }
-  const rows = [...masterItemsCache].filter(it => !it.isSet)
+  // セット品も出す（取り込むときは資材だけが変わる）。資材の欄を埋めて取り込めば、まとめて資材を登録できる
+  const rows = [...masterItemsCache]
     .sort((a, b) => String(a.skuCode || a.id).localeCompare(String(b.skuCode || b.id)))
-    .map(it => [it.skuCode || it.id, it.productName || it.product_name || '', it.barcode || '', it.multiplier || 1, it.shelfNumber || it.shelf_number || '']);
+    .map(it => [it.skuCode || it.id, it.productName || it.product_name || '', it.isSet ? '' : (it.barcode || ''), it.isSet ? '' : (it.multiplier || 1), it.isSet ? '' : (it.shelfNumber || it.shelf_number || ''), it.material || '']);
   downloadUtf8Csv([BULK_COLS.map(c => c.label), ...rows], `商品マスタ_${getTodayString().replace(/\//g, '')}.csv`);
 };
 
