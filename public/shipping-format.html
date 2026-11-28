@@ -3867,6 +3867,7 @@ function packSkusOf(rows) {
   const enc = list.map(encodeURIComponent).join(',');
   return enc.length <= 160 ? list : [];
 }
+const PACK_QR_MAX_LEN = 120;   // SKUの一覧（k=）を入れてもよいQRの長さ（文字数）
 function packQrDataUrl(orderNo, items, mats, skus) {
   if (typeof qrcode !== 'function') return '';
   const enc = encodeURIComponent;
@@ -3875,7 +3876,12 @@ function packQrDataUrl(orderNo, items, mats, skus) {
     const nm = x.kind ? ':' + enc(String(x.name || '').replace(/\s+/g, ' ').trim().slice(0, 12)) : '';
     return pre + enc(String(x.code).slice(0, 40)) + nm + '*' + x.qty;
   }).join(',');
-  const url = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}` + (skus && skus.length ? '&k=' + skus.map(enc).join(',') : '') + (mats && mats.length ? '&m=' + enc(mats.join('+')) : '');
+  // この注文のSKU（k=）は梱包くんの「資材を直す」にしか使わないので、QRが細かくなりすぎるときは入れない
+  //   （QRは19mm角で印刷するため、長いと1マスが小さくなって読めなくなる。120文字まで＝1マス約0.4mm以上）
+  const base = `${PACK_URL}#o=${enc(String(orderNo).trim())}&i=${list}`;
+  const matPart = mats && mats.length ? '&m=' + enc(mats.join('+')) : '';
+  const withK = skus && skus.length ? base + '&k=' + skus.map(enc).join(',') + matPart : '';
+  const url = withK && withK.length <= PACK_QR_MAX_LEN ? withK : base + matPart;
   try {
     const qr = qrcode(0, 'M');   // 0 = 中身の長さに合わせて自動
     qr.addData(url, 'Byte');
