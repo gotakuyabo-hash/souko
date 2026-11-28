@@ -120,7 +120,7 @@ main{ padding:12px 12px 140px; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, documentId, serverTimestamp, onSnapshot, deleteField, increment, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 // 品名・記事の欄から受注番号を取り出す：「No:受注番号」は短くても記号（#など）があってもそのまま（例：No:#1163）。それ以外は欄まるごとが番号のときだけ
 const segOrderNo = (t => { t = String(t).trim(); const m = t.match(/^No[:：]\s*(\S.{0,60})$/i); if (m) return m[1].trim(); return /^(No\.?\s*)?[0-9A-Za-z][0-9A-Za-z\-]{5,}$/i.test(t) ? t : ''; });
@@ -144,7 +144,7 @@ const norm = s => toHalf(s).trim().toUpperCase();
    ?コード:商品名*数量 ＝ マスタにあるがバーコードなし（おまけ等）、!コード:商品名*数量 ＝ マスタ未登録。どちらも目視で確認 ---------- */
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
-  const out = { order: '', items: [], us: '', nos: [], trk: '', mat: '', skus: [] };
+  const out = { order: '', items: [], us: '', nos: [], trk: '', mat: '', skus: [], cnt: '', cntName: '' };
   h.split('&').forEach(part => {
     const eq = part.indexOf('=');
     if (eq < 0) return;
@@ -154,7 +154,9 @@ function parseHash() {
     if (k === 'n') out.nos = [...new Set(v.split(',').map(Number).filter(Boolean))];
     if (k === 't') out.trk = safeDecode(v);
     if (k === 'k') out.skus = [...new Set(v.split(',').map(safeDecode).map(x => x.trim()).filter(Boolean))].slice(0, 30);   // この注文のSKU（資材を直すとき用）
-    if (k === 'm') out.mat = safeDecode(v).trim().slice(0, 60);   // 指定資材（まとまるくんの商品マスタで登録したもの。複数は「+」区切り）
+    if (k === 'm') out.mat = safeDecode(v).trim().slice(0, 60);
+    if (k === 'c') out.cnt = safeDecode(v).trim().replace(/[^\w\-]/g, '').slice(0, 60);   // 出荷件数に自動で足すデータID（クラファンなど、まとまるくんで数えない注文だけQRに入れる）
+    if (k === 'cn') out.cntName = safeDecode(v).trim().slice(0, 60);   // そのデータの表示名（チェックリストの「サービスを編集」に出る）   // 指定資材（まとまるくんの商品マスタで登録したもの。複数は「+」区切り）
     if (k === 'i') v.split(',').filter(Boolean).forEach(t => {
       const star = t.lastIndexOf('*');
       let code = star >= 0 ? t.slice(0, star) : t;
@@ -1064,7 +1066,78 @@ function markPacked(){
   if (Object.keys(fees).length) { rec.fees = fees; rec.orderNo = state.order; }
   setDoc(doc(db, 'packProgress', todayStr()), { date: todayStr(), done: { [k]: rec } }, { merge: true })
     .then(() => countMaterials())
+    .then(() => countShukka())
     .catch(e => { console.warn('packProgress', e); state.doneWritten = ''; });
+}
+/* ---------- チェックリストの出荷件数に自動で足す（QRに c= があるときだけ） ----------
+   まとまるくんの shukkaAuto と同じ保存の仕方：shukka_auto_ids/{データID}__{日付} に受注番号を貯めて（同じ番号は1件）、
+   shukka_records/{日付} の _meta.auto.{データID} に件数を入れる。足す先のサービスはチェックリストの「サービスを編集」で選ぶ。
+   まとまるくんの注文は送り状を出したときに数えているので、QRに c= を入れない（二重に数えないため） */
+const shukkaAuto = (() => {
+  const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  const num = v => { if (v === '' || v == null) return ''; const n = parseInt(v, 10); return isNaN(n) ? '' : n; };
+  const hashId = str => { let h = 5381; for (const ch of str) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0; return 'n_' + h.toString(36); };
+  function services(d) {
+    const items = Array.isArray(d && d.items) ? d.items.filter(x => x && x.id && typeof x.name === 'string') : null;
+    const names = Array.isArray(d && d.services) ? d.services.filter(x => typeof x === 'string' && x.trim()) : null;
+    if (items && (!names || items.map(x => x.name).join('\u0000') === names.join('\u0000'))) return items.map(x => ({ id: x.id, name: x.name, auto: x.auto || '' }));
+    if (!names || !names.length) return items ? items.map(x => ({ id: x.id, name: x.name, auto: x.auto || '' })) : [];
+    const used = new Set();
+    return names.map(name => { const hit = items && items.find(x => x.name === name && !used.has(x.id)); const id = hit ? hit.id : hashId(name); used.add(id); return { id, name, auto: hit ? (hit.auto || '') : '' }; });
+  }
+  function autoMap(d, svs) {
+    const ids = new Set(svs.map(x => x.id)), m = {};
+    if (d && d.autoMap && typeof d.autoMap === 'object') { Object.keys(d.autoMap).forEach(c => { if (ids.has(d.autoMap[c])) m[c] = d.autoMap[c]; }); return m; }
+    svs.forEach(x => { if (x.auto) m[x.auto] = x.id; });
+    return m;
+  }
+  function rebuild(d, svs, map, auto) {
+    const meta = d._meta || {};
+    const top = {}, counts = {}, names = {}, man = {};
+    svs.forEach(s => {
+      let v;
+      if (meta.manual && Object.prototype.hasOwnProperty.call(meta.manual, s.id)) v = meta.manual[s.id];
+      else if (meta.counts) v = meta.counts[s.id];
+      else v = d[s.name];
+      const mv = num(v);
+      const a = Object.keys(auto).reduce((t, c) => t + (map[c] === s.id ? (parseInt(auto[c], 10) || 0) : 0), 0);
+      names[s.id] = s.name; man[s.id] = mv;
+      if (mv === '' && !a) { top[s.name] = ''; return; }
+      counts[s.id] = (mv === '' ? 0 : mv) + a; top[s.name] = counts[s.id];
+    });
+    return Object.assign(top, { _meta: { counts, manual: man, auto, names, updatedAt: new Date().toISOString(), updatedBy: 'auto:pack.html' } });
+  }
+  async function setCount(date, src, name, n) {
+    await setDoc(doc(db, 'settings', 'shukka_auto_sources'), { [src]: { name: name || src, updatedAt: new Date().toISOString() } }, { merge: true });
+    const sv = await getDoc(doc(db, 'settings', 'shukka_services'));
+    const svData = sv.exists() ? sv.data() : null;
+    const svs = services(svData), map = autoMap(svData, svs);
+    const ref = doc(db, 'shukka_records', date);
+    await runTransaction(db, async tx => {
+      const snap = await tx.get(ref);
+      const d = snap.exists() ? snap.data() : {};
+      const auto = Object.assign({}, (d._meta && d._meta.auto) || {}, { [src]: Math.max(0, parseInt(n, 10) || 0) });
+      if (svs.length && Object.keys(auto).some(c => map[c])) tx.set(ref, rebuild(d, svs, map, auto));
+      else tx.set(ref, { _meta: { auto: { [src]: Math.max(0, parseInt(n, 10) || 0) } } }, { merge: true });
+    });
+    const s = svs.find(x => x.id === map[src]);
+    return { n, to: s ? s.name : '' };
+  }
+  // その日に梱包した受注番号を貯める（同じ番号は何回梱包OKにしても1件）
+  async function addOrder(src, name, date, id) {
+    if (!isDate(date) || !src || !id) return null;
+    const ref = doc(db, 'shukka_auto_ids', src + '__' + date);
+    await setDoc(ref, { src, date, ids: arrayUnion(String(id).trim()), updatedAt: new Date().toISOString() }, { merge: true });
+    const snap = await getDoc(ref);
+    return setCount(date, src, name, ((snap.exists() && snap.data().ids) || []).length);
+  }
+  return { addOrder };
+})();
+function countShukka(){
+  if (!state.cnt || !state.order) return;
+  return shukkaAuto.addOrder(state.cnt, state.cntName || state.cnt, todayStr(), state.order)
+    .then(r => { if (r) $('cacheNote').textContent = 'チェックリストの出荷件数：今日 ' + r.n + '件' + (r.to ? '（「' + r.to + '」に加算）' : '（チェックリストの「サービスを編集」で足す先を選んでください）'); })
+    .catch(e => console.warn('出荷件数を記録できませんでした', e));
 }
 /* ---------- 資材の使用枚数（settings/pack_material_usage の mats.{資材名}.used） ----------
    梱包OKになった注文ごとに、指定資材を1枚ずつ足す（書き込み1回）。
