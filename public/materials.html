@@ -48,9 +48,15 @@ textarea{ width:100%; min-height:140px; font-family:monospace; font-size:12px; p
   <div class="note" style="margin-bottom:10px;color:var(--ink)">📏 <b>大きさ</b>：1つの注文に資材がいくつかあるとき（セット品・複数購入など）は、大きさの数字がいちばん大きい資材を1つだけ使います。<b>全部の資材に入れてください</b>（入っていない資材がある注文は、今までどおり全部の資材が出ます）。あとで間に入れられるよう、10・20・30…のように間をあけるのがおすすめです。</div>
   <div class="note" style="margin-bottom:10px">ここで登録した資材名と写真は、梱包くんで「資材指定」として表示されます（検品書のQRの <code>m=資材名</code> と同じ名前にしてください）。写真は商品ページの画像のURLを貼ります。</div>
   <div class="grid" id="grid"></div>
+  <details class="panel" style="margin-top:16px" open>
+    <summary style="cursor:pointer;font-weight:700">📏 大きさをまとめて入れる</summary>
+    <p class="note">1行に「資材名 大きさ」を書いて「大きさを入れる」を押すと、大きさだけが変わります（写真・URLなどはそのまま）。区切りはスペース・タブ・カンマのどれでも大丈夫です。エクセルの2列をそのまま貼れます。<br>「今の一覧を出す」を押すと、登録済みの資材名と今の大きさが出るので、数字を書き換えて使えます。</p>
+    <textarea id="sizeText" placeholder="k44 10&#10;k60 20&#10;k80 30&#10;PM-M 40&#10;PM-L 50&#10;PM-XL 60"></textarea>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="sizeBtn">大きさを入れる</button><button class="btn ghost" id="sizeListBtn">今の一覧を出す</button></div>
+  </details>
   <details class="panel" style="margin-top:16px">
     <summary style="cursor:pointer;font-weight:700">まとめて取り込む（JSONを貼る）</summary>
-    <p class="note">{"items":{"資材名":{"img":"写真のURL","url":"商品ページのURL","num":"型番","size":大きさの数字}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
+    <p class="note">{"items":{"資材名":{"img":"写真のURL","url":"商品ページのURL","num":"型番","size":大きさの数字}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加されます。登録済みの資材は、JSONに書いた項目だけが変わります（そのあと「保存」を押してください）。</p>
     <textarea id="json" placeholder='{"items":{ "k80": { "img": "https://…", "num": "K-80" } }}'></textarea>
     <div style="margin-top:8px;display:flex;gap:8px"><button class="btn ghost" id="importBtn">取り込む</button><button class="btn ghost" id="exportBtn">今の一覧をJSONで出す</button></div>
   </details>
@@ -195,13 +201,36 @@ $('importBtn').onclick = () => {
   const items = j.items || j; let n = 0;
   Object.entries(items).forEach(([name, v]) => {
     if (!name || typeof v !== 'object') return;
-    const r = { name, img: String(v.img || ''), url: String(v.url || ''), num: String(v.num || ''), shop: String(v.shop || ''), size: v.size ? String(v.size) : '' };
+    // すでにある資材は、JSONに書いてある項目だけ変える（書いていない写真・URLなどは消さない）
     const i = rows.findIndex(x => x.name === name);
+    const base = i >= 0 ? rows[i] : { name, img:'', url:'', num:'', shop:'', size:'' };
+    const r = Object.assign({}, base);
+    ['img','url','num','shop','size'].forEach(k => { if (v[k] !== undefined && v[k] !== null) r[k] = String(v[k]); });
     if (i >= 0) rows[i] = r; else rows.push(r);
     n++;
   });
   if (!n) return setMsg('取り込める資材がありませんでした', 'ng');
   sortRows(); markDirty(); paint(); setMsg(n + '件を取り込みました。内容を確かめて「保存」を押してください', 'ok');
+};
+// 大きさだけをまとめて入れる（「資材名 大きさ」を1行ずつ）。資材マスタにない名前は入れずに知らせる
+$('sizeListBtn').onclick = () => {
+  $('sizeText').value = rows.filter(r => r.name).map(r => r.name + '\t' + (r.size || '')).join('\n');
+};
+$('sizeBtn').onclick = () => {
+  const lines = $('sizeText').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return setMsg('「資材名 大きさ」を1行ずつ入れてください', 'ng');
+  let n = 0; const miss = [], bad = [];
+  lines.forEach(l => {
+    const m = l.match(/^(.+?)[\s,，、\t]+(\d+)\s*$/);
+    if (!m) { bad.push(l); return; }
+    const name = m[1].trim().replace(/^["']|["']$/g, ''), size = String(Number(m[2]));
+    const r = rows.find(x => x.name === name);
+    if (!r) { miss.push(name); return; }
+    if (r.size !== size) { r.size = size; n++; }
+  });
+  if (n) { sortRows(); markDirty(); paint(); }
+  const extra = (miss.length ? '　資材マスタにない名前：' + miss.join('、') : '') + (bad.length ? '　読めなかった行：' + bad.join('、') : '');
+  setMsg(n ? n + '件の大きさを入れました。確かめて「保存」を押してください' + extra : '変わった大きさはありませんでした' + extra, n && !extra ? 'ok' : (n ? '' : 'ng'));
 };
 $('exportBtn').onclick = () => {
   const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; if (Number(r.size) > 0) items[r.name].size = Number(r.size); } });
