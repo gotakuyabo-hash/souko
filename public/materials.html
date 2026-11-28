@@ -45,11 +45,12 @@ textarea{ width:100%; min-height:140px; font-family:monospace; font-size:12px; p
 </header>
 <main>
   <div class="msg" id="msg">読み込み中…</div>
+  <div class="note" style="margin-bottom:10px;color:var(--ink)">📏 <b>大きさ</b>：1つの注文に資材がいくつかあるとき（セット品・複数購入など）は、大きさの数字がいちばん大きい資材を1つだけ使います。<b>全部の資材に入れてください</b>（入っていない資材がある注文は、今までどおり全部の資材が出ます）。あとで間に入れられるよう、10・20・30…のように間をあけるのがおすすめです。</div>
   <div class="note" style="margin-bottom:10px">ここで登録した資材名と写真は、梱包くんで「資材指定」として表示されます（検品書のQRの <code>m=資材名</code> と同じ名前にしてください）。写真は商品ページの画像のURLを貼ります。</div>
   <div class="grid" id="grid"></div>
   <details class="panel" style="margin-top:16px">
     <summary style="cursor:pointer;font-weight:700">まとめて取り込む（JSONを貼る）</summary>
-    <p class="note">{"items":{"資材名":{"img":"写真のURL","url":"商品ページのURL","num":"型番"}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
+    <p class="note">{"items":{"資材名":{"img":"写真のURL","url":"商品ページのURL","num":"型番","size":大きさの数字}, …}} の形を貼って「取り込む」を押すと、画面の一覧に追加・上書きされます（そのあと「保存」を押してください）。</p>
     <textarea id="json" placeholder='{"items":{ "k80": { "img": "https://…", "num": "K-80" } }}'></textarea>
     <div style="margin-top:8px;display:flex;gap:8px"><button class="btn ghost" id="importBtn">取り込む</button><button class="btn ghost" id="exportBtn">今の一覧をJSONで出す</button></div>
   </details>
@@ -99,13 +100,16 @@ async function load(){
     const [d, u] = await Promise.all([getDoc(REF), getDoc(UREF)]);
     usage = (u.exists() && u.data().mats) || {};
     const items = (d.exists() && d.data().items) || {};
-    rows = Object.entries(items).map(([name, v]) => ({ name, img: v.img || '', url: v.url || '', num: v.num || '', shop: v.shop || '' }));
+    rows = Object.entries(items).map(([name, v]) => ({ name, img: v.img || '', url: v.url || '', num: v.num || '', shop: v.shop || '', size: v.size ? String(v.size) : '' }));
+    sortRows();
     dirty = false; $('saveBtn').disabled = true;
     setMsg(rows.length ? '登録済み ' + rows.length + '件' : 'まだ登録がありません。「＋ 資材を追加」か、下の「まとめて取り込む」から登録してください');
     paint();
   } catch (e) { setMsg('読み込めませんでした：' + e.message, 'ng'); }
 }
 
+// 大きさの順（小さい順）に並べる。大きさが入っていない資材は先頭（入れ忘れに気づけるように）
+function sortRows(){ rows.sort((a, b) => (Number(a.size) || 0) - (Number(b.size) || 0)); }
 const fmtDay = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? Number(m[2]) + '/' + Number(m[3]) : ''; };
 const isAlert = name => { const u = usage[name]; return !!(u && Number(u.point) > 0 && (Number(u.used) || 0) >= Number(u.point)); };
 function usageHtml(name){
@@ -124,6 +128,7 @@ function paint(){
     + '<label>商品ページのURL（発注するページ）</label><div style="display:flex;gap:4px"><input data-f="url" value="' + esc(r.url) + '" placeholder="https://…">' + (/^https?:\/\//.test(r.url) ? '<a class="btn ghost" style="padding:4px 8px;font-size:12px;text-decoration:none" href="' + esc(r.url) + '" target="_blank" rel="noopener">開く</a>' : '') + '</div>'
     + '<label>型番</label><input data-f="num" value="' + esc(r.num) + '">'
     + '<label>購入先</label><input data-f="shop" value="' + esc(r.shop) + '" placeholder="空欄＝ダンボールワン">'
+    + '<label>大きさ（数字が大きいほど大きい資材。1つの注文ではいちばん大きい資材を使います）</label><input data-f="size" type="number" min="1" value="' + esc(r.size) + '" placeholder="例：PM-M=10、PM-XL=30"' + (r.size ? '' : ' style="border-color:var(--ng)"') + '>'
     + usageHtml(r.name)
     + '<button class="btn del" data-del="' + i + '">削除</button></div>').join('');
   rows.forEach((r, i) => { if (isAlert(r.name)) document.querySelector('.card[data-i="' + i + '"]').classList.add('alert'); });
@@ -133,7 +138,7 @@ $('grid').addEventListener('input', e => {
   rows[Number(c.dataset.i)][f] = e.target.value.trim(); c.classList.add('dirty'); markDirty();
 });
 // 写真のURLを変えたら、入力欄から出たときに写真を出し直す
-$('grid').addEventListener('change', e => { if (e.target.dataset.f === 'img' || e.target.dataset.f === 'url') paint(); });
+$('grid').addEventListener('change', e => { if (e.target.dataset.f === 'img' || e.target.dataset.f === 'url') paint(); if (e.target.dataset.f === 'size') { sortRows(); paint(); } });
 $('grid').addEventListener('click', e => {
   const b = e.target.closest('[data-del]'); if (!b) return;
   const r = rows[Number(b.dataset.del)];
@@ -162,7 +167,7 @@ $('grid').addEventListener('click', async e => {
     setMsg(name + '：使用枚数を0に戻しました（次の発注点 ' + (point || 'なし') + '）', 'ok'); paint();
   } catch (err) { setMsg('記録できませんでした：' + err.message, 'ng'); }
 });
-$('addBtn').onclick = () => { rows.unshift({ name:'', img:'', url:'', num:'', shop:'' }); markDirty(); paint(); document.querySelector('.card input.name').focus(); };
+$('addBtn').onclick = () => { rows.unshift({ name:'', img:'', url:'', num:'', shop:'', size:'' }); markDirty(); paint(); document.querySelector('.card input.name').focus(); };
 
 $('saveBtn').onclick = async () => {
   const names = rows.map(r => r.name);
@@ -171,7 +176,7 @@ $('saveBtn').onclick = async () => {
   if (dup.length) return setMsg('資材名が重なっています：' + [...new Set(dup)].join('、'), 'ng');
   if (names.some(n => /[+&#=]/.test(n))) return setMsg('資材名に + & # = は使えません（QRで区切りに使うため）', 'ng');
   const items = {};
-  rows.forEach(r => { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; });
+  rows.forEach(r => { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; if (Number(r.size) > 0) items[r.name].size = Number(r.size); });
   $('saveBtn').disabled = true;
   try {
     // merge なしで丸ごと書く（削除した資材も消えるように）
@@ -190,16 +195,16 @@ $('importBtn').onclick = () => {
   const items = j.items || j; let n = 0;
   Object.entries(items).forEach(([name, v]) => {
     if (!name || typeof v !== 'object') return;
-    const r = { name, img: String(v.img || ''), url: String(v.url || ''), num: String(v.num || ''), shop: String(v.shop || '') };
+    const r = { name, img: String(v.img || ''), url: String(v.url || ''), num: String(v.num || ''), shop: String(v.shop || ''), size: v.size ? String(v.size) : '' };
     const i = rows.findIndex(x => x.name === name);
     if (i >= 0) rows[i] = r; else rows.push(r);
     n++;
   });
   if (!n) return setMsg('取り込める資材がありませんでした', 'ng');
-  markDirty(); paint(); setMsg(n + '件を取り込みました。内容を確かめて「保存」を押してください', 'ok');
+  sortRows(); markDirty(); paint(); setMsg(n + '件を取り込みました。内容を確かめて「保存」を押してください', 'ok');
 };
 $('exportBtn').onclick = () => {
-  const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; } });
+  const items = {}; rows.forEach(r => { if (r.name) { items[r.name] = { img: r.img, url: r.url, num: r.num }; if (r.shop) items[r.name].shop = r.shop; if (Number(r.size) > 0) items[r.name].size = Number(r.size); } });
   $('json').value = JSON.stringify({ items }, null, 2);
 };
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });

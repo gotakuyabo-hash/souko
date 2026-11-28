@@ -3846,7 +3846,9 @@ function buildPackItems(rows, masterMap, packHints = null) {
    バーコードで照合 → コード*数量
    おまけ等（バーコードなし） → ?コード:商品名*数量
    マスタ未登録 → !コード:商品名*数量   （商品名はQRが細かくなりすぎないよう12文字まで） */
-/* この注文の指定資材（商品マスタの「資材」）。複数あるときは「+」でつなぐ。セット品は親のSKUの資材を使う */
+/* この注文の指定資材（商品マスタの「資材」）
+   1つの注文に資材がいくつかあるときは、いちばん大きい資材を1つだけ使う（セット品・複数購入も同じ）
+   大きさは資材マスタの「大きさ」で決める。大きさが入っていない資材があるときは、選べないので全部出す（「+」でつなぐ） */
 function packMaterialsOf(rows, masterMap) {
   const set = new Set();
   rows.forEach(r => {
@@ -3854,7 +3856,10 @@ function packMaterialsOf(rows, masterMap) {
     const m = sku ? masterMap.get(sku) : null;
     if (m && m.material) set.add(String(m.material).trim());
   });
-  return [...set].filter(Boolean);
+  const list = [...set].filter(Boolean);
+  if (list.length <= 1) return list;
+  if (list.some(n => !packMaterialSize[n])) return list;
+  return [list.reduce((a, b) => packMaterialSize[b] > packMaterialSize[a] ? b : a)];
 }
 // この注文のSKU（梱包くんで資材を直すとき用）。QRが細かくなりすぎないよう、合わせて160文字まで
 function packSkusOf(rows) {
@@ -3912,6 +3917,8 @@ window.openPrintPreview = async () => {
   // コードが変わった商品に合わせるため、zaicoの在庫の写しを読む（数件の読み取りのみ。5秒で諦めて手元の一覧を使う）
   try { await Promise.race([loadZaicoInventories(), new Promise(r => setTimeout(r, 5000))]); } catch (e) { console.warn('zaicoの在庫一覧を読めませんでした', e); }
   const packHints = buildPackHints();
+  // 資材の大きさ（いちばん大きい資材を選ぶため。読み込み済みなら読まない）
+  try { await loadPackMaterials(); } catch (e) { console.warn(e); }
 
   const todayStr = new Date().toLocaleDateString();
   const koBanIdx = COL.KOBAN;
@@ -4033,11 +4040,15 @@ window.openPrintPreview = async () => {
 /* ---------- 資材マスタ（settings/pack_materials：資材マスタの画面 materials.html で登録） ----------
    商品マスタの「資材」欄の選択肢に使う。商品マスタを開いたときに1回だけ読む */
 let packMaterialsCache = null;
+let packMaterialSize = {};   // 資材名 → 大きさの順番（資材マスタの「大きさ」。数字が大きいほど大きい資材）
 async function loadPackMaterials(force) {
   if (packMaterialsCache && !force) return packMaterialsCache;
   try {
     const d = await getDoc(doc(db, 'settings', 'pack_materials'));
-    packMaterialsCache = Object.keys((d.exists() && d.data().items) || {});
+    const items = (d.exists() && d.data().items) || {};
+    packMaterialsCache = Object.keys(items);
+    packMaterialSize = {};
+    Object.entries(items).forEach(([n, v]) => { const s = Number(v && v.size); if (s > 0) packMaterialSize[n] = s; });
   } catch (e) { console.warn('資材マスタを読めませんでした', e); packMaterialsCache = packMaterialsCache || []; }
   return packMaterialsCache;
 }

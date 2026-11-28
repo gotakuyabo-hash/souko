@@ -795,7 +795,12 @@ async function openMatEdit(){
         await setDoc(doc(db, 'product_masters', skus[i]), { material: next[i], materialAt: now, materialBy: authUser.email || '', materialFrom: '梱包くん' }, { merge: true });
       }
       // この注文の表示も直す（梱包OKのときに数える資材もこれになる）
-      state.mat = [...new Set(next.filter(Boolean))].join('+');
+      // まとまるくんと同じ決まり：資材がいくつかあるときは、資材マスタの「大きさ」がいちばん大きい資材を1つだけ使う
+      //   （大きさが入っていない資材があるときは、選べないので全部）
+      const uniq = [...new Set(next.filter(Boolean))];
+      const sz = n => Number(MAT && MAT.items && MAT.items[n] && MAT.items[n].size) || 0;
+      const pick = uniq.length > 1 && uniq.every(n => sz(n) > 0) ? [uniq.reduce((a, b) => sz(b) > sz(a) ? b : a)] : uniq;
+      state.mat = pick.join('+');
       if (state.mat) loadMaterials(state.mat.split('+'));
       close(); render(); beep(true); flash(true, '資材を直しました', state.mat ? state.mat.split('+').join(' ＋ ') : '指定なし', 1300);
     } catch (e) { btn.disabled = false; btn.textContent = '保存する'; alert('保存できませんでした：' + e.message); }
