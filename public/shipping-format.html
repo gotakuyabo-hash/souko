@@ -1358,6 +1358,12 @@ window.processOrderPickCalculation = async () => {
       s.zaicoItemIdBarcode = (m && m.barcode) ? String(m.barcode).trim() : '';
     });
 
+    // zaicoでコード（バーコード欄）を変えた商品：商品マスタの古いバーコードのままだとzaicoに出庫登録できないので、
+    // マスタに覚えているzaicoの商品IDから今のコードを引いて差し替え、商品マスタも直す
+    try { await Promise.race([loadZaicoInventories(), new Promise(r => setTimeout(r, 5000))]); } catch (e) { console.warn('zaicoの在庫一覧を読めませんでした', e); }
+    const codeFixes = await fixChangedZaicoCodes(skuItems);
+    if (codeFixes.length) toast('zaicoでコードが変わった商品 ' + codeFixes.length + '件を、新しいコードに直しました：' + codeFixes.map(f => f.name + '（' + f.from + '→' + f.to + '）').join('、'));
+
     pickGroups = groupSkuItems(skuItems);
     pickMeta = { excluded, skuCount: skuItems.length };
     lastZaicoSend = null;
@@ -1550,6 +1556,41 @@ async function saveSkuMaster(s) {
     skuCode: s.skuCode, barcode: s.barcode || '', productName: s.productName,
     multiplier: s.multiplier || 1, shelfNumber: s.shelfNumber, zaicoItemId: validZaicoId(s) || null, updatedAt: new Date()
   }, { merge: true });
+}
+
+/* zaicoでコード（バーコード欄）が変わった商品を、今のコードに直す（ピック数算出のときに呼ぶ）
+   条件：商品マスタのバーコードがzaicoの在庫一覧にない ＆ マスタに覚えているzaicoの商品IDがzaicoにあって、コードが違う
+   画面の値（skuItems）を直し、商品マスタ（セット品は中身）にも新しいバーコードを書く。直した一覧を返す */
+async function fixChangedZaicoCodes(items) {
+  if (!zaicoInvLoadedAt || !zaicoInv.length) return [];
+  const codes = new Set(zaicoInv.map(x => x.code).filter(Boolean));
+  const byId = new Map(zaicoInv.map(x => [String(x.id), x]));
+  const fixes = [], seen = new Set(), setUpdates = new Map();
+  for (const s of items) {
+    const bc = String(s.barcode || '').trim();
+    if (!s.zaicoItemId || (bc && codes.has(bc))) continue;
+    const x = byId.get(String(s.zaicoItemId));
+    if (!x || !x.code || x.code === bc) continue;
+    s.barcode = x.code; s.zaicoItemIdBarcode = x.code;
+    const key = (s.fromSet ? s.setCode + '#' + s.compIndex : s.skuCode) || '';
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    fixes.push({ name: s.productName || x.title, from: bc || '（なし）', to: x.code });
+    if (s.fromSet) {
+      const comps = setUpdates.get(s.setCode) || s.setComponents;
+      comps[s.compIndex] = { ...comps[s.compIndex], barcode: x.code };
+      setUpdates.set(s.setCode, comps);
+    } else {
+      try { await setDoc(doc(db, 'product_masters', s.skuCode), { barcode: x.code, barcodeFrom: bc, barcodeFixedAt: new Date().toISOString(), barcodeFixedBy: 'zaicoのコード変更に合わせて自動' }, { merge: true }); }
+      catch (err) { console.warn('商品マスタのバーコードを直せませんでした', s.skuCode, err); }
+    }
+  }
+  for (const [code, comps] of setUpdates) {
+    try { await setDoc(doc(db, 'product_masters', code), { components: comps }, { merge: true }); }
+    catch (err) { console.warn('セットの中身のバーコードを直せませんでした', code, err); }
+  }
+  if (fixes.length) masterMapCache = null;
+  return fixes;
 }
 
 // zaicoの商品IDは、そのIDを覚えたときのバーコードと今のバーコードが同じときだけ使う
